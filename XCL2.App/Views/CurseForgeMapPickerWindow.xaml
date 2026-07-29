@@ -1,0 +1,36 @@
+<Window x:Class="XCL2.App.Views.CurseForgeMapPickerWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="选择地图文件" Height="480" Width="560" WindowStartupLocation="CenterOwner"
+        Background="{StaticResource SideBrush}">
+    <Grid Margin="16">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+        </Grid.RowDefinitions>
+
+        <TextBlock x:Name="TitleText" Grid.Row="0" Text="选择要下载的文件" FontSize="16" FontWeight="Bold" Margin="0,0,0,10"/>
+
+        <ListBox x:Name="FileListBox" Grid.Row="1" BorderThickness="0" Background="{StaticResource PanelBrush}">
+            <ListBox.ItemTemplate>
+                <DataTemplate>
+                    <Grid Margin="6">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <StackPanel>
+                            <TextBlock Text="{Binding DisplayName}" FontSize="14"/>
+                            <TextBlock FontSize="11" Foreground="{StaticResource TextSecondaryBrush}">
+                                <Run Text="{Binding FileName, Mode=OneWay}"/>
+                                <Run Text=" · 支持: "/><Run Text="{Binding GameVersionsText, Mode=OneWay}"/>
+                            </TextBlock>
+                        </StackPanel>
+                        <Button Grid.Column="1" Content="下载" Style="{StaticResource PrimaryButton}"
+                                Tag="{Binding}" Click="Download_Click"/>
+                    </Grid>
+                </DataTemplate>
+            </ListBox.ItemTemplate>
+        </ListBox>
+    </Grid>
+</Window>

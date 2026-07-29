@@ -1,0 +1,441 @@
+using System.IO;
+using System.IO.Compression;
+using System.Net.Http;
+using System.Net.Http.Json;
+using System.Security.Cryptography;
+using System.Text.Json;
+using XCL2.App.Models;
+
+namespace XCL2.App.Services;
+
+public record ProgressInfo(string Stage, int Done, int Total, string CurrentFile);
+
+/// <summary>
+/// 游戏核心文件下载：支持官方源(Mojang/launchermeta)与 BMCLAPI 镜像源切换。
+/// 覆盖：version manifest -> version json -> client jar -> libraries -> natives -> assets。
+/// </summary>
+public class DownloadService : IDisposable
+{
+    private const string OfficialManifestUrl = "https://launchermeta.mojang.com/mc/game/version_manifest_v2.json";
+    private const string BmclManifestUrl = "https://bmclapi2.bangbang93.com/mc/game/version_manifest_v2.json";
+
+    private readonly HttpClient _http = new() { Timeout = TimeSpan.FromMinutes(10) };
+    private readonly DownloadSource _source;
+
+    /// <summary>并发下载信号量：控制"同时进行的单文件下载数"，供 libraries/assets 这类批量小文件
+    /// 场景使用；<see cref="InstallVersionAsync"/> 里单个 client jar 之类的一次性大文件不受影响
+    /// （本来就只有一个，谈不上并发）。maxConcurrency=1 时退化为原来的串行行为。</summary>
+    private readonly SemaphoreSlim _concurrencyGate;
+
+    /// <summary>全局限速器：多线程下载时所有并发连接共享同一个实例，保证限速值是"总速度"而不是
+    /// "单连接速度"。null 表示不限速。</summary>
+    private readonly DownloadRateLimiter? _rateLimiter;
+
+    /// <summary>智能限速监控：非 null 时会持续采样系统网络占用，动态调整 _rateLimiter 的目标速度。
+    /// 生命周期跟 DownloadService 实例绑定，安装流程结束后调用方应该 Dispose 这个 DownloadService。</summary>
+    private readonly SmartBandwidthMonitor? _bandwidthMonitor;
+
+    /// <summary>
+    /// 默认构造：单线程、不限速——保持跟旧版本完全一致的行为，供不关心新特性的旧调用方
+    /// （比如 ClientLoaderInstallService 里的内部 loader 安装逻辑）继续直接
+    /// `new DownloadService(source)` 而不用改动任何调用点。
+    /// </summary>
+    public DownloadService(DownloadSource source) : this(source, maxConcurrency: 1, speedLimitKBps: 0, smartThrottle: false)
+    {
+    }
+
+    /// <summary>
+    /// 完整构造：可指定并发线程数 / 固定限速 / 智能限速。三者语义见 AppConfig 里对应字段的注释：
+    /// AppConfig.MaxDownloadThreads、AppConfig.DownloadSpeedLimitKBps、AppConfig.SmartBandwidthThrottle。
+    /// </summary>
+    public DownloadService(DownloadSource source, int maxConcurrency, int speedLimitKBps, bool smartThrottle)
+    {
+        _source = source;
+        _concurrencyGate = new SemaphoreSlim(Math.Max(1, maxConcurrency));
+
+        if (speedLimitKBps > 0 || smartThrottle)
+        {
+            _rateLimiter = new DownloadRateLimiter(speedLimitKBps > 0 ? speedLimitKBps * 1024L : 0);
+            if (smartThrottle)
+            {
+                _bandwidthMonitor = new SmartBandwidthMonitor(_rateLimiter, speedLimitKBps);
+            }
+        }
+    }
+
+    /// <summary>释放智能限速监控占用的后台采样线程。安装流程结束后（成功/失败/取消都一样）应该调用，
+    /// 避免每次新建 DownloadService 都留下一个永不退出的后台采样循环。不调用也不会导致下载出错，
+    /// 只是那个采样任务会一直跑到进程退出——所以仍然建议显式释放，属于良好习惯而非强制要求。</summary>
+    public void Dispose() => _bandwidthMonitor?.Dispose();
+
+    /// <summary>
+    /// 按用户设置页里的配置创建 DownloadService，供真正会下载"一大批文件"的场景使用
+    /// （目前是 DownloadCenterPage 里的版本安装入口）——集中在这一处做配置到构造参数的映射，
+    /// 避免每个调用点各自读一遍 EnableMultiThreadDownload/MaxDownloadThreads/DownloadSpeedLimitKBps/
+    /// SmartBandwidthThrottle 四个字段、还要各自处理"多线程开关关闭时并发数应该视为 1"这种细节。
+    /// 只是"拉一次版本清单 JSON"这种不涉及批量文件下载的场景，仍然可以直接
+    /// `new DownloadService(source)`，没必要为了一次 HTTP 请求启动限速器/智能监控。
+    /// </summary>
+    public static DownloadService CreateFromConfig(Models.AppConfig cfg)
+    {
+        var threads = cfg.EnableMultiThreadDownload ? Math.Max(1, cfg.MaxDownloadThreads) : 1;
+        return new DownloadService(cfg.Source, threads, cfg.DownloadSpeedLimitKBps, cfg.SmartBandwidthThrottle);
+    }
+
+    public async Task<VersionManifestRoot> GetVersionManifestAsync(CancellationToken ct = default)
+    {
+        var url = _source == DownloadSource.Official ? OfficialManifestUrl : BmclManifestUrl;
+        var resp = await _http.GetAsync(url, ct);
+        resp.EnsureSuccessStatusCode();
+        var json = await resp.Content.ReadAsStringAsync(ct);
+        return JsonSerializer.Deserialize<VersionManifestRoot>(json) ?? new VersionManifestRoot();
+    }
+
+    /// <summary>下载并安装一个原版版本到 .minecraft/versions/{id}/。 progress 用于回报 UI。</summary>
+    public async Task InstallVersionAsync(string minecraftDir, VersionManifestEntry entry,
+        IProgress<ProgressInfo>? progress, CancellationToken ct = default)
+    {
+        var versionDir = Path.Combine(minecraftDir, "versions", entry.Id);
+        Directory.CreateDirectory(versionDir);
+
+        // 1. version json
+        progress?.Report(new ProgressInfo("下载版本信息", 0, 1, entry.Id));
+        var versionJsonUrl = RemapUrl(entry.Url);
+        var versionJsonText = await _http.GetStringAsync(versionJsonUrl, ct);
+        var versionJsonPath = Path.Combine(versionDir, $"{entry.Id}.json");
+        await File.WriteAllTextAsync(versionJsonPath, versionJsonText, ct);
+
+        var detail = JsonSerializer.Deserialize<VersionDetail>(versionJsonText) ?? new VersionDetail();
+        // DownloadLibrariesOnlyAsync 用 detail.Id 推算 natives 输出目录（见该方法注释）；
+        // 极少数官方 version json 可能不带 "id" 字段（或者跟 manifest 里的 entry.Id 不一致），
+        // 这里强制对齐成 entry.Id，保证 natives 目录跟本方法上面已经创建好的 versionDir 是同一个，
+        // 不会因为 json 里的 id 缺失/不一致而把 natives 解到错误的路径。
+        detail.Id = entry.Id;
+
+        // 2. client jar
+        if (detail.Downloads != null && detail.Downloads.TryGetValue("client", out var clientArtifact))
+        {
+            progress?.Report(new ProgressInfo("下载客户端主程序", 0, 1, $"{entry.Id}.jar"));
+            var jarPath = Path.Combine(versionDir, $"{entry.Id}.jar");
+            await DownloadFileAsync(RemapUrl(clientArtifact.Url), jarPath, clientArtifact.Sha1, ct);
+        }
+
+        // 3. libraries + natives
+        await DownloadLibrariesOnlyAsync(minecraftDir, detail, progress, ct);
+
+        // 4. assets
+        if (detail.AssetIndex != null)
+        {
+            await DownloadAssetsAsync(minecraftDir, detail.AssetIndex, progress, ct);
+        }
+
+        progress?.Report(new ProgressInfo("安装完成", 1, 1, entry.Id));
+    }
+
+    /// <summary>
+    /// 只下载/补全 libraries + natives，不碰 version json / client jar / assets。
+    ///
+    /// 抽取自 <see cref="InstallVersionAsync"/> 原本内联的第 3 步，供
+    /// <see cref="ClientLoaderInstallService.InstallFabricClientAsync"/> 复用：Fabric 客户端安装
+    /// 已经从 Fabric Meta 拿到了官方生成好的 version json（含 libraries 列表），不需要重新走
+    /// InstallVersionAsync 完整流程（那会重复下载/覆盖 client jar、重新处理 assets 等，
+    /// Fabric 场景下这些原版部分已经通过安装父版本另外处理过了），只需要单独把这份 json 里
+    /// 列出的库文件和 natives 补齐即可。
+    ///
+    /// natives 输出目录固定为 minecraftDir/versions/{detail.Id}/natives——跟 InstallVersionAsync
+    /// 内联逻辑原来的行为一致（原来是 versionDir/natives，versionDir 就是 versions/{entry.Id}/），
+    /// 这里改用 detail.Id 而不是要求调用方额外传一个 versionDir 参数，是因为 Fabric profile json
+    /// 自带的 id 字段（如 "fabric-loader-0.15.11-1.20.1"）本来就是调用方后续会用来创建版本文件夹的
+    /// 那个 id，两者理应一致，没必要为了同一个值多加一个参数。
+    /// </summary>
+    public async Task DownloadLibrariesOnlyAsync(string minecraftDir, VersionDetail detail,
+        IProgress<ProgressInfo>? progress, CancellationToken ct = default)
+    {
+        var librariesDir = Path.Combine(minecraftDir, "libraries");
+        var versionDir = Path.Combine(minecraftDir, "versions", detail.Id);
+        var nativesDir = Path.Combine(versionDir, "natives");
+        Directory.CreateDirectory(nativesDir);
+
+        var applicable = detail.Libraries.Where(LibraryApplies).ToList();
+
+        // 并发下载：libDone 用 Interlocked 递增，因为多个任务会同时写这个计数器；
+        // progress?.Report 本身只是把一个不可变 record 扔进 IProgress（WPF 场景下底层通常是
+        // Dispatcher.Invoke 编组回 UI 线程），多线程并发调用是安全的，不需要额外加锁。
+        // _concurrencyGate 的初始并发数就是"单线程下载"和"多线程下载"两种模式的唯一区别——
+        // 关闭多线程下载时 maxConcurrency=1，这里的 Task.WhenAll 实际上会退化成完全顺序执行，
+        // 不需要为"是否启用多线程"另外写一份分支逻辑。
+        int libDone = 0;
+        var tasks = applicable.Select(async lib =>
+        {
+            await _concurrencyGate.WaitAsync(ct);
+            try
+            {
+                ct.ThrowIfCancellationRequested();
+                if (lib.Downloads?.Artifact is { } art && !string.IsNullOrEmpty(art.Path))
+                {
+                    var dest = Path.Combine(librariesDir, art.Path.Replace('/', Path.DirectorySeparatorChar));
+                    await DownloadFileAsync(RemapUrl(art.Url), dest, art.Sha1, ct);
+                }
+                else if (!string.IsNullOrEmpty(lib.Url))
+                {
+                    // Fabric/Quilt 风格：没有 downloads 对象，只有 "name" (Maven坐标) + "url" (仓库地址)。
+                    // 之前这种条目被整体跳过，导致 loader 自身的 jar 从未下载，
+                    // 装完之后一启动就因为 classpath 缺 mainClass 所在的 jar 而失败。
+                    var relativePath = lib.GetMavenPath();
+                    if (!string.IsNullOrEmpty(relativePath))
+                    {
+                        var dest = Path.Combine(librariesDir, relativePath.Replace('/', Path.DirectorySeparatorChar));
+                        var baseUrl = lib.Url.EndsWith("/") ? lib.Url : lib.Url + "/";
+                        // Fabric/Quilt 的 name+url 条目没有单独给出 sha1，传空字符串表示不做哈希校验
+                        // （DownloadFileAsync 对已存在的文件本来就会跳过重新下载）。
+                        await DownloadFileAsync(baseUrl + relativePath, dest, "", ct);
+                    }
+                }
+
+                // natives (Windows classifier)
+                if (lib.Natives != null && lib.Natives.TryGetValue("windows", out var classifierKey))
+                {
+                    var key = classifierKey.Replace("${arch}", Environment.Is64BitOperatingSystem ? "64" : "32");
+                    if (lib.Downloads?.Classifiers != null && lib.Downloads.Classifiers.TryGetValue(key, out var nativeArt))
+                    {
+                        var tmp = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".jar");
+                        await DownloadFileAsync(RemapUrl(nativeArt.Url), tmp, nativeArt.Sha1, ct);
+                        ExtractNatives(tmp, nativesDir);
+                        File.Delete(tmp);
+                    }
+                }
+
+                var done = Interlocked.Increment(ref libDone);
+                progress?.Report(new ProgressInfo("下载依赖库", done, applicable.Count, lib.Name));
+            }
+            finally
+            {
+                _concurrencyGate.Release();
+            }
+        });
+
+        await Task.WhenAll(tasks);
+    }
+
+    private async Task DownloadAssetsAsync(string minecraftDir, AssetIndexRef assetIndexRef,
+        IProgress<ProgressInfo>? progress, CancellationToken ct)
+    {
+        var indexesDir = Path.Combine(minecraftDir, "assets", "indexes");
+        Directory.CreateDirectory(indexesDir);
+        var indexPath = Path.Combine(indexesDir, $"{assetIndexRef.Id}.json");
+
+        var indexJson = await _http.GetStringAsync(RemapUrl(assetIndexRef.Url), ct);
+        await File.WriteAllTextAsync(indexPath, indexJson, ct);
+        var index = JsonSerializer.Deserialize<AssetIndexFile>(indexJson) ?? new AssetIndexFile();
+
+        var objectsDir = Path.Combine(minecraftDir, "assets", "objects");
+        int done = 0;
+        var total = index.Objects.Count;
+
+        // assets 通常是数量最多的一批小文件（成百上千个），最能体现多线程下载的收益；
+        // 并发结构跟 DownloadLibrariesOnlyAsync 完全一致，同样复用 _concurrencyGate，
+        // 保证 libraries 和 assets 两个阶段（虽然是先后调用，不会同时跑）用的是同一套并发上限配置。
+        var assetTasks = index.Objects.Select(async pair =>
+        {
+            var (name, obj) = (pair.Key, pair.Value);
+            await _concurrencyGate.WaitAsync(ct);
+            try
+            {
+                ct.ThrowIfCancellationRequested();
+                var prefix = obj.Hash[..2];
+                var dest = Path.Combine(objectsDir, prefix, obj.Hash);
+                if (!File.Exists(dest) || new FileInfo(dest).Length != obj.Size)
+                {
+                    var url = _source == DownloadSource.Official
+                        ? $"https://resources.download.minecraft.net/{prefix}/{obj.Hash}"
+                        : $"https://bmclapi2.bangbang93.com/assets/{prefix}/{obj.Hash}";
+                    await DownloadFileAsync(url, dest, obj.Hash, ct, isSha1: true);
+                }
+                var d = Interlocked.Increment(ref done);
+                if (d % 25 == 0 || d == total)
+                    progress?.Report(new ProgressInfo("下载资源文件", d, total, name));
+            }
+            finally
+            {
+                _concurrencyGate.Release();
+            }
+        });
+
+        await Task.WhenAll(assetTasks);
+    }
+
+    private static bool LibraryApplies(LibraryEntry lib) => lib.IsApplicableToCurrentOs();
+
+    private static void ExtractNatives(string jarPath, string destDir)
+    {
+        try
+        {
+            using var archive = System.IO.Compression.ZipFile.OpenRead(jarPath);
+            foreach (var entry in archive.Entries)
+            {
+                if (entry.FullName.StartsWith("META-INF")) continue;
+                if (entry.Name.EndsWith(".dll") || entry.Name.EndsWith(".so") || entry.Name.EndsWith(".dylib"))
+                {
+                    var dest = Path.Combine(destDir, entry.Name);
+                    if (!File.Exists(dest))
+                    {
+                        using var entryStream = entry.Open();
+                        using var fileStream = File.Create(dest);
+                        entryStream.CopyTo(fileStream);
+                    }
+                }
+            }
+        }
+        catch { /* 部分 native jar 可能已损坏，跳过 */ }
+    }
+
+    /// <summary>
+    /// 下载单个文件并做完整性校验。
+    ///
+    /// 之前版本的 bug（会导致资源"看似装好、实际是坏文件"，比如语言文件
+    /// assets/objects/xx/&lt;zh_cn.json 的 hash&gt; 下载不完整却被当成正常文件）：
+    /// 下载完成后只是简单 `File.Move`，从来没有校验刚下载下来的内容跟 expectedSha1
+    /// 是否一致——只有在"文件已存在、准备决定要不要跳过重新下载"这一处校验过 SHA1。
+    /// 如果网络中途抖动导致连接提前结束但没有抛异常（例如服务端异常关闭连接、
+    /// CDN 返回了不完整的 200 响应体等），CopyToAsync 会静默把不完整的数据写完，
+    /// 这个文件就被当成"下载成功"留在磁盘上。像语言文件这种体积很小、出错也不会导致游戏
+    /// 崩溃的资源，Minecraft 客户端加载失败时只会静默回退到内置英文，用户毫无感知，
+    /// 表现为"选了中文，游戏里还是英文"。
+    ///
+    /// 修复：下载完成后强制校验 SHA1；不一致就重试（最多 3 次，每次换新临时文件，
+    /// 避免复用已污染的连接/缓存）；全部失败则删除坏文件并抛出明确异常，
+    /// 不再让损坏文件蒙混过关。
+    /// </summary>
+    /// <summary>
+    /// 单次下载尝试的独立超时：修复"Fabric/依赖库下载卡住"问题的核心根因——
+    /// 之前完全依赖 HttpClient 级别的整体 Timeout（本类 10 分钟，ClientLoaderInstallService 15 分钟），
+    /// 一旦某次请求"假死"（TCP 连接建立但服务器长时间不回数据/不完整返回，常见于部分镜像源
+    /// 抽风或用户网络中间设备的连接黑洞），单次 GetAsync 就会真的原地卡到那个整体超时才失败，
+    /// 期间 UI 侧收不到任何新的 progress 回报（下载几百个 library 时，卡的是其中一个文件，
+    /// 前面文件早就报过完成，用户看到的就是进度条长时间停在某个数字不动，跟真死锁表现一致）。
+    /// 3 次重试 * 10~15 分钟整体超时，最坏情况下一个文件能卡 30~45 分钟。
+    /// 现在改成每次尝试单独套一个较短的超时（跟每个文件的合理下载时长匹配，而不是跟"整个安装
+    /// 流程要花多久"挂钩），假死的连接能在几十秒内被判定失败、快速进入下一次重试，
+    /// 而不是死等到全局超时。
+    /// </summary>
+    private static readonly TimeSpan SingleAttemptTimeout = TimeSpan.FromSeconds(45);
+
+    private async Task DownloadFileAsync(string url, string destPath, string expectedSha1,
+        CancellationToken ct, bool isSha1 = true)
+    {
+        if (File.Exists(destPath) && VerifySha1(destPath, expectedSha1)) return;
+
+        Directory.CreateDirectory(Path.GetDirectoryName(destPath)!);
+
+        const int maxAttempts = 3;
+        Exception? lastError = null;
+
+        for (var attempt = 1; attempt <= maxAttempts; attempt++)
+        {
+            var tmp = destPath + $".tmp{attempt}";
+            using var attemptCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            attemptCts.CancelAfter(SingleAttemptTimeout);
+            try
+            {
+                using (var resp = await _http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, attemptCts.Token))
+                {
+                    resp.EnsureSuccessStatusCode();
+                    await using (var fs = File.Create(tmp))
+                    {
+                        // 限速/智能限速开启时，不能直接用一次性 CopyToAsync（那样整个文件瞬间灌进去，
+                        // 没有机会在中途插入限速等待）。改成手动分块读写，每读到一块就先向限速器
+                        // "买票"，买不到就异步等待，从而把吞吐量压到目标速率；同时把这一块的字节数
+                        // 上报给智能限速监控，供它估算"本程序自己消耗了多少流量"。
+                        // 不限速时 (_rateLimiter == null) 直接走原来的 CopyToAsync 快速路径，
+                        // 不引入任何额外开销。
+                        if (_rateLimiter == null)
+                        {
+                            await resp.Content.CopyToAsync(fs, attemptCts.Token);
+                        }
+                        else
+                        {
+                            var buffer = new byte[81920];
+                            await using var respStream = await resp.Content.ReadAsStreamAsync(attemptCts.Token);
+                            int read;
+                            while ((read = await respStream.ReadAsync(buffer, attemptCts.Token)) > 0)
+                            {
+                                await _rateLimiter.ConsumeAsync(read, attemptCts.Token);
+                                await fs.WriteAsync(buffer.AsMemory(0, read), attemptCts.Token);
+                                _bandwidthMonitor?.ReportSelfBytes(read);
+                            }
+                        }
+                    }
+                }
+
+                // 关键修复点：下载完成后必须校验，不能假设"没抛异常=内容完整"。
+                if (!VerifySha1(tmp, expectedSha1))
+                {
+                    lastError = new IOException(
+                        $"文件校验失败(SHA1 不匹配)，可能是网络中途中断导致下载不完整: {url}");
+                    TryDelete(tmp);
+                    continue;
+                }
+
+                if (File.Exists(destPath)) File.Delete(destPath);
+                File.Move(tmp, destPath);
+                return;
+            }
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+            {
+                // attemptCts 自己超时触发的取消（不是用户/外部真正取消整个安装），
+                // 视为这次尝试的一次可重试失败，而不是让 OperationCanceledException 原样冒泡出去
+                // 中断整个安装流程——外部调用方看到 OperationCanceledException 通常会当成"用户主动取消"处理。
+                lastError = new TimeoutException(
+                    $"下载单次尝试超时（{SingleAttemptTimeout.TotalSeconds:0}秒内无响应）: {url}");
+                TryDelete(tmp);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                lastError = ex;
+                TryDelete(tmp);
+            }
+        }
+
+        // 三次都失败：不能把半成品/损坏文件留在原位当作"已安装"，
+        // 否则用户完全无法察觉某个资源实际是坏的（正是之前语言文件问题的根源）。
+        throw new IOException($"下载失败，已重试 {maxAttempts} 次仍未通过校验: {url}", lastError);
+    }
+
+    private static void TryDelete(string path)
+    {
+        try { if (File.Exists(path)) File.Delete(path); }
+        catch { /* 忽略清理失败，不影响主流程报错 */ }
+    }
+
+    private static bool VerifySha1(string path, string expectedSha1)
+    {
+        if (string.IsNullOrEmpty(expectedSha1)) return true;
+        try
+        {
+            using var sha1 = SHA1.Create();
+            using var fs = File.OpenRead(path);
+            var hash = Convert.ToHexString(sha1.ComputeHash(fs)).ToLowerInvariant();
+            return hash == expectedSha1.ToLowerInvariant();
+        }
+        catch { return false; }
+    }
+
+    /// <summary>将官方 URL 映射为 BMCLAPI 镜像 URL（当选择镜像源时）。</summary>
+    private string RemapUrl(string officialUrl)
+    {
+        if (_source == DownloadSource.Official) return officialUrl;
+
+        if (officialUrl.Contains("launchermeta.mojang.com") || officialUrl.Contains("launcher.mojang.com"))
+            return officialUrl
+                .Replace("https://launchermeta.mojang.com", "https://bmclapi2.bangbang93.com")
+                .Replace("https://launcher.mojang.com", "https://bmclapi2.bangbang93.com");
+
+        if (officialUrl.Contains("libraries.minecraft.net"))
+            return officialUrl.Replace("https://libraries.minecraft.net", "https://bmclapi2.bangbang93.com/maven");
+
+        if (officialUrl.Contains("resources.download.minecraft.net"))
+            return officialUrl.Replace("https://resources.download.minecraft.net", "https://bmclapi2.bangbang93.com/assets");
+
+        return officialUrl;
+    }
+}

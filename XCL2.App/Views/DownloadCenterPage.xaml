@@ -1,0 +1,458 @@
+<UserControl x:Class="XCL2.App.Views.DownloadCenterPage"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <Grid>
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="150"/>
+            <ColumnDefinition Width="*"/>
+        </Grid.ColumnDefinitions>
+
+        <!-- 左侧分类栏（仿 PCL 下载页的竖排分类图标） -->
+        <Border Grid.Column="0" Background="{StaticResource PanelBrush}" CornerRadius="10" Margin="0,0,10,0" Padding="10">
+            <StackPanel>
+                <TextBlock Text="下载" FontSize="18" FontWeight="Bold" Margin="8,4,0,16" Foreground="{StaticResource AccentBrush}"/>
+
+                <Button Style="{StaticResource PrimaryButton}" Padding="0,10"
+                        Margin="0,0,0,8" HorizontalAlignment="Stretch" Click="QuickStartWizard_Click"
+                        ToolTip="从账户到启动一路走完的新手向导：选版本/加载器，可选装 Mod 和资源包/光影包，最后自动下载并启动游戏">
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                        <TextBlock Text="🚀" FontFamily="Segoe UI Emoji" VerticalAlignment="Center"/>
+                        <TextBlock Text="一键开始游戏" Margin="8,0,0,0" VerticalAlignment="Center"/>
+                    </StackPanel>
+                </Button>
+
+                <!-- 首页磁贴改版后"Mod 管理"不再单独占首页一等入口位，这里补一个次级入口，
+                     避免 ModManagerPage（本地已装 Mod 的启用/禁用/删除/整合包导入导出）变得无处可去。 -->
+                <Button Padding="0,8" Margin="0,0,0,14" HorizontalAlignment="Stretch"
+                        Click="OpenModManager_Click"
+                        ToolTip="查看/启用/禁用/删除已安装的本地 Mod，导入导出整合包">
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                        <TextBlock Text="🧰" FontFamily="Segoe UI Emoji" VerticalAlignment="Center"/>
+                        <TextBlock Text="本地 Mod 管理" Margin="8,0,0,0" VerticalAlignment="Center"/>
+                    </StackPanel>
+                </Button>
+
+                <RadioButton x:Name="CatVersion" Style="{StaticResource DownloadCategoryButton}" IsChecked="True"
+                             Checked="Category_Checked" Tag="version">
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Text="🧊" FontFamily="Segoe UI Emoji" VerticalAlignment="Center"/>
+                        <TextBlock Text="游戏版本" Margin="8,0,0,0" VerticalAlignment="Center"/>
+                    </StackPanel>
+                </RadioButton>
+                <RadioButton x:Name="CatMod" Style="{StaticResource DownloadCategoryButton}"
+                             Checked="Category_Checked" Tag="mod">
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Text="🧩" FontFamily="Segoe UI Emoji" VerticalAlignment="Center"/>
+                        <TextBlock Text="Mod" Margin="8,0,0,0" VerticalAlignment="Center"/>
+                    </StackPanel>
+                </RadioButton>
+                <RadioButton x:Name="CatResourcePack" Style="{StaticResource DownloadCategoryButton}"
+                             Checked="Category_Checked" Tag="resourcepack">
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Text="🎨" FontFamily="Segoe UI Emoji" VerticalAlignment="Center"/>
+                        <TextBlock Text="材质包" Margin="8,0,0,0" VerticalAlignment="Center"/>
+                    </StackPanel>
+                </RadioButton>
+                <RadioButton x:Name="CatDataPack" Style="{StaticResource DownloadCategoryButton}"
+                             Checked="Category_Checked" Tag="datapack">
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Text="📦" FontFamily="Segoe UI Emoji" VerticalAlignment="Center"/>
+                        <TextBlock Text="数据包" Margin="8,0,0,0" VerticalAlignment="Center"/>
+                    </StackPanel>
+                </RadioButton>
+                <RadioButton x:Name="CatShader" Style="{StaticResource DownloadCategoryButton}"
+                             Checked="Category_Checked" Tag="shader">
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Text="✨" FontFamily="Segoe UI Emoji" VerticalAlignment="Center"/>
+                        <TextBlock Text="光影包" Margin="8,0,0,0" VerticalAlignment="Center"/>
+                    </StackPanel>
+                </RadioButton>
+                <RadioButton x:Name="CatMap" Style="{StaticResource DownloadCategoryButton}"
+                             Checked="Category_Checked" Tag="map">
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Text="🗺" FontFamily="Segoe UI Emoji" VerticalAlignment="Center"/>
+                        <TextBlock Text="地图" Margin="8,0,0,0" VerticalAlignment="Center"/>
+                    </StackPanel>
+                </RadioButton>
+                <RadioButton x:Name="CatFavorites" Style="{StaticResource DownloadCategoryButton}"
+                             Checked="Category_Checked" Tag="favorites" Margin="0,12,0,0">
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Text="⭐" FontFamily="Segoe UI Emoji" VerticalAlignment="Center"/>
+                        <TextBlock Text="我的收藏" Margin="8,0,0,0" VerticalAlignment="Center"/>
+                    </StackPanel>
+                </RadioButton>
+            </StackPanel>
+        </Border>
+
+        <!-- 右侧内容区 -->
+        <Border Grid.Column="1" Background="{StaticResource PanelBrush}" CornerRadius="10" Padding="20">
+            <DockPanel>
+
+                <!-- ===== 游戏版本下载面板 ===== -->
+                <Grid x:Name="VersionPanel" DockPanel.Dock="Top" Visibility="Visible">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                    </Grid.RowDefinitions>
+
+                    <Grid Grid.Row="0" Margin="0,0,0,10">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Text="游戏版本下载" FontSize="18" FontWeight="Bold" VerticalAlignment="Center"/>
+                        <ComboBox x:Name="SourceCombo" Style="{StaticResource FilterComboBox}" Grid.Column="1" Width="150" Margin="0,0,10,0"
+                                  SelectionChanged="SourceCombo_SelectionChanged">
+                            <ComboBoxItem Content="官方源 (Mojang)" IsSelected="True"/>
+                            <ComboBoxItem Content="BMCLAPI 镜像源"/>
+                        </ComboBox>
+                        <Button Grid.Column="2" Content="手动刷新" Style="{StaticResource PrimaryButton}" Click="FetchOnline_Click"
+                                ToolTip="列表已自动刷新；网络失败或切换来源后可在此手动重试"/>
+                    </Grid>
+
+                    <!-- 不再有顶部"加载器筛选"预选行（之前需要先切一次顶部单选、再回来点行内按钮，
+                         两步分离容易搞混，且一次只能锁定一种加载器）。现在每一行的"下载安装"按钮
+                         点击后直接弹出 LoaderChoiceWindow，一步选择"原版/Fabric/Forge/NeoForge"，
+                         选完立即进入对应安装流程，见 InstallVersion_Click。 -->
+                    <Grid Grid.Row="1" Margin="0,0,0,10">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="220"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBox x:Name="VersionSearchBox" Style="{StaticResource SearchTextBox}" Grid.Column="0" Padding="8" FontSize="13" Margin="0,0,10,0"
+                                 TextChanged="VersionFilter_Changed"
+                                 ToolTip="按版本号搜索，例如 1.20 或 21w，输入后自动筛选"/>
+                        <ComboBox x:Name="VersionTypeCombo" Style="{StaticResource FilterComboBox}" Grid.Column="1" SelectionChanged="VersionFilter_Changed">
+                            <ComboBoxItem Content="正式版" IsSelected="True" Tag="Release"/>
+                            <ComboBoxItem Content="快照版" Tag="Snapshot"/>
+                            <ComboBoxItem Content="远古版本" Tag="Legacy"/>
+                            <ComboBoxItem Content="愚人节版本" Tag="AprilFools"/>
+                        </ComboBox>
+                    </Grid>
+
+                    <ListBox x:Name="OnlineListBox" Grid.Row="2" BorderThickness="0" Background="Transparent"
+                             ItemContainerStyle="{StaticResource DownloadListItem}" SelectionChanged="OnlineListBox_SelectionChanged">
+                        <ListBox.ItemTemplate>
+                            <DataTemplate>
+                                <Grid Margin="4,6">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel>
+                                        <TextBlock Text="{Binding Id}" FontSize="15"/>
+                                        <TextBlock Text="{Binding ReleaseTime}" FontSize="11" Foreground="{StaticResource TextSecondaryBrush}"/>
+                                    </StackPanel>
+                                    <Button Grid.Column="1" Content="{Binding FavoriteLabel}" Margin="0,0,8,0" Padding="10,6"
+                                            Style="{StaticResource SideNavButton}" Tag="{Binding}" Click="FavoriteVersion_Click"/>
+                                    <Button Grid.Column="2" Content="下载安装" Style="{StaticResource PrimaryButton}"
+                                            Tag="{Binding}" Click="InstallVersion_Click"
+                                            ToolTip="点击后选择安装原版还是 Fabric/Forge/NeoForge 加载器"/>
+                                </Grid>
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
+                </Grid>
+
+                <!-- ===== Modrinth 社区资源面板：材质包/数据包/光影包共用（靠 _currentResourceType 区分） ===== -->
+                <Grid x:Name="ResourcePanel" DockPanel.Dock="Top" Visibility="Collapsed">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                    </Grid.RowDefinitions>
+
+                    <Grid Grid.Row="0" Margin="0,0,0,10">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="170"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBlock x:Name="ResourcePanelTitle" Text="材质包下载" FontSize="18" FontWeight="Bold" VerticalAlignment="Center"/>
+                        <!-- 来源切换：跟 Mod 分类的 ModSourceCombo 是同一个模式。之前这里只有一行
+                             "数据来自 Modrinth" 的静态文字，因为材质包/光影包/数据包只接了 Modrinth 一条来源；
+                             现在 CurseForgeService 补上了 SearchResourcesAsync，这里跟着换成可切换的下拉框。 -->
+                        <ComboBox x:Name="ResourceSourceCombo" Style="{StaticResource FilterComboBox}" Grid.Column="1"
+                                  SelectionChanged="ResourceSourceCombo_SelectionChanged">
+                            <ComboBoxItem Content="综合(Modrinth+CurseForge)" IsSelected="True" Tag="combined"/>
+                            <ComboBoxItem Content="仅 Modrinth" Tag="modrinth"/>
+                            <ComboBoxItem Content="仅 CurseForge" Tag="curseforge"/>
+                        </ComboBox>
+                    </Grid>
+
+                    <Grid Grid.Row="1" Margin="0,0,0,10">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="140"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBox x:Name="ResourceSearchBox" Style="{StaticResource SearchTextBox}" Grid.Column="0" Padding="8" FontSize="13" Margin="0,0,10,0"
+                                 TextChanged="ResourceFilter_Changed"
+                                 ToolTip="搜索关键词，支持中英文，留空浏览热门资源，输入后自动搜索"/>
+                        <TextBox x:Name="ResourceGameVersionBox" Style="{StaticResource SearchTextBox}" Grid.Column="1" Padding="8" FontSize="13" Margin="0,0,10,0"
+                                 TextChanged="ResourceFilter_Changed"
+                                 ToolTip="限定游戏版本，例如 1.20.1；留空不限定"/>
+                        <Button Grid.Column="2" Content="手动刷新" Style="{StaticResource PrimaryButton}" Click="ResourceSearch_Click"
+                                ToolTip="列表已自动刷新；网络失败可在此手动重试"/>
+                    </Grid>
+
+                    <ListBox x:Name="ResourceListBox" Grid.Row="2" BorderThickness="0" Background="Transparent"
+                             ItemContainerStyle="{StaticResource DownloadListItem}" SelectionChanged="ResourceListBox_SelectionChanged">
+                        <ListBox.ItemTemplate>
+                            <DataTemplate>
+                                <Grid Margin="4,8" Cursor="Hand" Background="Transparent" Tag="{Binding}"
+                                      MouseLeftButtonUp="ResourceListItem_Click" ToolTip="点击查看可下载的版本">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+                                    <!-- 资源图标：跟 Mod 列表的图标绑定是同一个模式（DisplayIconUrl 为 null 时
+                                         Image 不画东西，不占版面）。之前这里完全没有图标，只有标题/描述/作者文字。 -->
+                                    <Border Grid.Column="0" Width="40" Height="40" Margin="0,0,10,0" CornerRadius="4"
+                                            Background="{StaticResource SideBrush}" VerticalAlignment="Top">
+                                        <Image Source="{Binding DisplayIconUrl}" Width="40" Height="40" Stretch="UniformToFill"/>
+                                    </Border>
+                                    <StackPanel Grid.Column="1">
+                                        <TextBlock FontSize="15" FontWeight="Bold">
+                                            <Run Text="{Binding Title, Mode=OneWay}"/>
+                                            <Run Text="  ["/><Run Text="{Binding SourceLabel, Mode=OneWay}" FontSize="11" Foreground="{StaticResource AccentBrush}"/><Run Text="]"/>
+                                        </TextBlock>
+                                        <TextBlock Text="{Binding Description}" FontSize="12" TextWrapping="Wrap" MaxHeight="34"
+                                                   Foreground="{StaticResource TextSecondaryBrush}"/>
+                                        <TextBlock FontSize="11" Foreground="{StaticResource TextSecondaryBrush}">
+                                            <Run Text="作者: "/><Run Text="{Binding Author}"/>
+                                            <Run Text="  下载量: "/><Run Text="{Binding Downloads}"/>
+                                        </TextBlock>
+                                    </StackPanel>
+                                </Grid>
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
+                </Grid>
+
+                <!-- ===== 我的收藏：展示已收藏的游戏版本，复用与 VersionPanel 相同的列表项样式 ===== -->
+                <Grid x:Name="FavoritesPanel" DockPanel.Dock="Top" Visibility="Collapsed">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                    </Grid.RowDefinitions>
+
+                    <TextBlock Grid.Row="0" Text="我的收藏" FontSize="18" FontWeight="Bold" Margin="0,0,0,10"/>
+
+                    <ListBox x:Name="FavoritesListBox" Grid.Row="1" BorderThickness="0" Background="Transparent"
+                             ItemContainerStyle="{StaticResource DownloadListItem}">
+                        <ListBox.ItemTemplate>
+                            <DataTemplate>
+                                <Grid Margin="4,6">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel>
+                                        <TextBlock Text="{Binding Id}" FontSize="15"/>
+                                        <TextBlock Text="{Binding ReleaseTime}" FontSize="11" Foreground="{StaticResource TextSecondaryBrush}"/>
+                                    </StackPanel>
+                                    <Button Grid.Column="1" Content="{Binding FavoriteLabel}" Margin="0,0,8,0" Padding="10,6"
+                                            Style="{StaticResource SideNavButton}" Tag="{Binding}" Click="FavoriteVersion_Click"/>
+                                    <Button Grid.Column="2" Content="下载安装" Style="{StaticResource PrimaryButton}"
+                                            Tag="{Binding}" Click="InstallVersion_Click"/>
+                                </Grid>
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
+
+                    <TextBlock x:Name="FavoritesEmptyHint" Grid.Row="1" Text="还没有收藏任何版本，去「游戏版本」分类点击 ☆ 收藏 试试。"
+                               FontSize="13" Foreground="{StaticResource TextSecondaryBrush}"
+                               HorizontalAlignment="Center" VerticalAlignment="Center" Visibility="Collapsed"/>
+                </Grid>
+
+                <!-- ===== 地图分类：接入 CurseForge（Modrinth 没有对应分类） ===== -->
+                <Grid x:Name="MapPanel" DockPanel.Dock="Top" Visibility="Collapsed">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                    </Grid.RowDefinitions>
+
+                    <Grid Grid.Row="0" Margin="0,0,0,10">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Text="地图下载" FontSize="18" FontWeight="Bold" VerticalAlignment="Center"/>
+                        <TextBlock Grid.Column="1" Text="数据来自 CurseForge" FontSize="12" VerticalAlignment="Center"
+                                   Foreground="{StaticResource TextSecondaryBrush}"/>
+                    </Grid>
+
+                    <Grid Grid.Row="1" Margin="0,0,0,10">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="140"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBox x:Name="MapSearchBox" Style="{StaticResource SearchTextBox}" Grid.Column="0" Padding="8" FontSize="13" Margin="0,0,10,0"
+                                 TextChanged="MapFilter_Changed"
+                                 ToolTip="搜索关键词，例如 地图名，留空浏览热门地图，输入后自动搜索"/>
+                        <TextBox x:Name="MapGameVersionBox" Style="{StaticResource SearchTextBox}" Grid.Column="1" Padding="8" FontSize="13" Margin="0,0,10,0"
+                                 TextChanged="MapFilter_Changed"
+                                 ToolTip="限定游戏版本，例如 1.20.1；留空不限定"/>
+                        <Button Grid.Column="2" Content="手动刷新" Style="{StaticResource PrimaryButton}" Click="MapSearch_Click"
+                                ToolTip="列表已自动刷新；网络失败可在此手动重试"/>
+                    </Grid>
+
+                    <ListBox x:Name="MapListBox" Grid.Row="2" BorderThickness="0" Background="Transparent"
+                             ItemContainerStyle="{StaticResource DownloadListItem}">
+                        <ListBox.ItemTemplate>
+                            <DataTemplate>
+                                <Grid Margin="4,8" Cursor="Hand" Background="Transparent" Tag="{Binding}"
+                                      MouseLeftButtonUp="MapListItem_Click" ToolTip="点击查看可下载的版本">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel>
+                                        <TextBlock Text="{Binding Name}" FontSize="15" FontWeight="Bold"/>
+                                        <TextBlock Text="{Binding Summary}" FontSize="12" TextWrapping="Wrap" MaxHeight="34"
+                                                   Foreground="{StaticResource TextSecondaryBrush}"/>
+                                        <TextBlock FontSize="11" Foreground="{StaticResource TextSecondaryBrush}">
+                                            <Run Text="作者: "/><Run Text="{Binding AuthorsDisplay, Mode=OneWay}"/>
+                                            <Run Text="  下载量: "/><Run Text="{Binding DownloadCount}"/>
+                                        </TextBlock>
+                                    </StackPanel>
+                                </Grid>
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
+                </Grid>
+
+                <!-- ===== 地图分类但未配置 CurseForge Key：引导去设置页粘贴 ===== -->
+                <StackPanel x:Name="MapKeyMissingPanel" DockPanel.Dock="Top" Visibility="Collapsed"
+                            HorizontalAlignment="Center" VerticalAlignment="Center" Margin="0,80,0,0">
+                    <TextBlock Text="地图下载需要先配置 CurseForge API Key" FontSize="16" FontWeight="Bold"
+                               Foreground="{StaticResource TextSecondaryBrush}" HorizontalAlignment="Center"/>
+                    <TextBlock Text="去 console.curseforge.com 申请一个 key，然后在「设置」页粘贴保存即可。"
+                               FontSize="12" Foreground="{StaticResource TextSecondaryBrush}" HorizontalAlignment="Center"
+                               Margin="0,6,0,0" TextWrapping="Wrap" MaxWidth="360" TextAlignment="Center"/>
+                    <Button Content="去设置页配置" Style="{StaticResource PrimaryButton}" Margin="0,14,0,0"
+                            HorizontalAlignment="Center" Click="GoToSettingsForKey_Click"/>
+                </StackPanel>
+
+                <!-- ===== Mod 分类：综合搜索 Modrinth + CurseForge，来源可切换；右侧附 MC百科中文名搜索辅助 ===== -->
+                <Grid x:Name="ModPanel" DockPanel.Dock="Top" Visibility="Collapsed">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="220"/>
+                    </Grid.ColumnDefinitions>
+
+                    <Grid Grid.Column="0" Margin="0,0,14,0">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="*"/>
+                        </Grid.RowDefinitions>
+
+                        <Grid Grid.Row="0" Margin="0,0,0,10">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="130"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Text="Mod 下载" FontSize="18" FontWeight="Bold" VerticalAlignment="Center"/>
+                            <ComboBox x:Name="ModSourceCombo" Style="{StaticResource FilterComboBox}" Grid.Column="1" SelectionChanged="ModSourceCombo_SelectionChanged">
+                                <ComboBoxItem Content="综合(Modrinth+CurseForge)" IsSelected="True" Tag="combined"/>
+                                <ComboBoxItem Content="仅 Modrinth" Tag="modrinth"/>
+                                <ComboBoxItem Content="仅 CurseForge" Tag="curseforge"/>
+                            </ComboBox>
+                        </Grid>
+
+                        <Grid Grid.Row="1" Margin="0,0,0,10">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="120"/>
+                                <ColumnDefinition Width="110"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBox x:Name="ModSearchBox" Style="{StaticResource SearchTextBox}" Grid.Column="0" Padding="8" FontSize="13" Margin="0,0,10,0"
+                                     TextChanged="ModFilter_Changed"
+                                     ToolTip="搜索关键词，支持中英文，例如 &quot;JEI&quot; 或 &quot;钠&quot;（自动翻译成 Sodium 搜索），留空浏览热门 Mod，输入后自动搜索"/>
+                            <TextBox x:Name="ModGameVersionBox" Style="{StaticResource SearchTextBox}" Grid.Column="1" Padding="8" FontSize="13" Margin="0,0,10,0"
+                                     TextChanged="ModFilter_Changed"
+                                     ToolTip="限定游戏版本，例如 1.20.1；留空不限定"/>
+                            <ComboBox x:Name="ModLoaderCombo" Style="{StaticResource FilterComboBox}" Grid.Column="2" Margin="0,0,10,0"
+                                      SelectionChanged="ModFilter_SelectionChanged">
+                                <ComboBoxItem Content="不限加载器" IsSelected="True" Tag=""/>
+                                <ComboBoxItem Content="Fabric" Tag="fabric"/>
+                                <ComboBoxItem Content="Forge" Tag="forge"/>
+                                <ComboBoxItem Content="Quilt" Tag="quilt"/>
+                            </ComboBox>
+                            <Button Grid.Column="3" Content="手动刷新" Style="{StaticResource PrimaryButton}" Click="ModSearch_Click"
+                                    ToolTip="列表已自动刷新；网络失败可在此手动重试"/>
+                        </Grid>
+
+                        <!-- 命中中文名词典时展示"已按 XX 搜索"提示，让用户知道中文关键词生效了；
+                             没命中/关键词是英文时这行不显示，不占用界面空间。 -->
+                        <TextBlock x:Name="ModTranslationHintText" Grid.Row="2" Margin="0,0,0,8" FontSize="12"
+                                   TextWrapping="Wrap" Foreground="{StaticResource TextSecondaryBrush}" Visibility="Collapsed"/>
+
+                        <ListBox x:Name="ModListBox" Grid.Row="3" BorderThickness="0" Background="Transparent"
+                                 ItemContainerStyle="{StaticResource DownloadListItem}" SelectionChanged="ModListBox_SelectionChanged">
+                            <ListBox.ItemTemplate>
+                                <DataTemplate>
+                                    <Grid Margin="4,8" Cursor="Hand" Background="Transparent" Tag="{Binding}"
+                                          MouseLeftButtonUp="ModListItem_Click" ToolTip="点击查看可下载的版本">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto"/>
+                                            <ColumnDefinition Width="*"/>
+                                        </Grid.ColumnDefinitions>
+                                        <!-- 模组图标：DisplayIconUrl 在"设置里关闭显示图标"或者这个结果本来就
+                                             没有图标 URL 时会是 null，Image 在 Source=null 时什么都不画，
+                                             不占版面（外层 Border 宽高固定，关闭图标时看起来就是留白，
+                                             暂不做"关闭时收起整列宽度"这种更复杂的动态布局，影响不大）。 -->
+                                        <Border Grid.Column="0" Width="40" Height="40" Margin="0,0,10,0" CornerRadius="4"
+                                                Background="{StaticResource SideBrush}" VerticalAlignment="Top">
+                                            <Image Source="{Binding DisplayIconUrl}" Width="40" Height="40" Stretch="UniformToFill"/>
+                                        </Border>
+                                        <StackPanel Grid.Column="1">
+                                            <TextBlock FontSize="15" FontWeight="Bold">
+                                                <Run Text="{Binding Title, Mode=OneWay}"/>
+                                                <Run Text="  ["/><Run Text="{Binding SourceLabel, Mode=OneWay}" FontSize="11" Foreground="{StaticResource AccentBrush}"/><Run Text="]"/>
+                                            </TextBlock>
+                                            <TextBlock Text="{Binding Description}" FontSize="12" TextWrapping="Wrap" MaxHeight="34"
+                                                       Foreground="{StaticResource TextSecondaryBrush}"/>
+                                            <TextBlock FontSize="11" Foreground="{StaticResource TextSecondaryBrush}">
+                                                <Run Text="作者: "/><Run Text="{Binding Author}"/>
+                                                <Run Text="  下载量: "/><Run Text="{Binding Downloads}"/>
+                                            </TextBlock>
+                                        </StackPanel>
+                                    </Grid>
+                                </DataTemplate>
+                            </ListBox.ItemTemplate>
+                        </ListBox>
+                    </Grid>
+
+                    <!-- MC百科中文名搜索辅助：只提供百科页面链接，不参与下载（见 McModService 类注释） -->
+                    <Border Grid.Column="1" Background="{StaticResource SideBrush}" CornerRadius="8" Padding="10">
+                        <DockPanel>
+                            <TextBlock DockPanel.Dock="Top" Text="MC百科 参考" FontSize="14" FontWeight="Bold" Margin="0,0,0,4"/>
+                            <TextBlock DockPanel.Dock="Top" Text="中文资料辅助，点击跳转百科页面查看详情" FontSize="11"
+                                       Foreground="{StaticResource TextSecondaryBrush}" TextWrapping="Wrap" Margin="0,0,0,8"/>
+                            <ListBox x:Name="McModListBox" BorderThickness="0" Background="Transparent">
+                                <ListBox.ItemTemplate>
+                                    <DataTemplate>
+                                        <Button Content="{Binding Title}" Style="{StaticResource SideNavButton}"
+                                                HorizontalContentAlignment="Left" Padding="6,6" FontSize="12"
+                                                Tag="{Binding}" Click="McModOpen_Click"
+                                                ToolTip="{Binding PageUrl}"/>
+                                    </DataTemplate>
+                                </ListBox.ItemTemplate>
+                            </ListBox>
+                        </DockPanel>
+                    </Border>
+                </Grid>
+
+            </DockPanel>
+        </Border>
+    </Grid>
+</UserControl>

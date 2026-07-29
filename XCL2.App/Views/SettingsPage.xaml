@@ -1,0 +1,248 @@
+<UserControl x:Class="XCL2.App.Views.SettingsPage"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <Border Background="{StaticResource PanelBrush}" CornerRadius="10" Padding="24">
+        <ScrollViewer VerticalScrollBarVisibility="Auto">
+        <StackPanel>
+            <TextBlock Text="设置" FontSize="20" FontWeight="Bold" Margin="0,0,0,16"/>
+
+            <!-- 普通/高手模式：原来这个开关只影响本页"Java 版本/架构/安装方式"等控件的显隐，
+                 选中状态要等用户点最下面"保存设置"才会真正写回 cfg.AdvancedMode。现在这个开关
+                 是全局唯一的模式切换入口（原来首页也有一份，已经搬过来合并成这一处），
+                 所以改成跟原首页版本一样的行为：勾选/取消勾选立即写回配置并保存，不用等
+                 "保存设置"按钮，避免用户切换模式后又在别的地方看到旧状态的不一致体验。 -->
+            <CheckBox x:Name="AdvancedModeCheck" Content="高手模式（可调试 Java 版本 / 架构 / 安装方式、自定义启动参数等）"
+                      Margin="0,0,0,4" Checked="AdvancedModeCheck_Changed" Unchecked="AdvancedModeCheck_Changed"/>
+            <TextBlock x:Name="AdvancedModeHintText" FontSize="12" Foreground="{StaticResource TextSecondaryBrush}"
+                       Margin="0,0,0,16" TextWrapping="Wrap"/>
+
+            <Button Content="🧭 重新打开新手引导" HorizontalAlignment="Left" Padding="10,6" Margin="0,0,0,16"
+                    Click="ReopenWizard_Click"/>
+
+            <!-- 普通模式下才显示：简化版 Java 版本选择，只给 Java 8 / 17 / 21 / 25 四个选项，
+                 每个选项对应一段能大致覆盖的游戏版本区间，帮用户不用去查资料就能选对。
+                 选中项直接决定"一键下载 Java"下载哪个版本；不涉及架构/安装方式，
+                 这两项在普通模式下走固定的推荐值（当前系统架构 + 便携安装），
+                 Java 8 除外——它默认使用 32 位，其余版本默认使用 64 位（见下方架构提示）。 -->
+            <StackPanel x:Name="SimpleJavaPanel" Margin="0,0,0,10">
+                <TextBlock Text="Java 版本（普通）" Margin="0,0,0,4" Foreground="{StaticResource TextSecondaryBrush}" FontSize="12"/>
+                <ComboBox x:Name="SimpleJavaVersionCombo" Width="260" HorizontalAlignment="Left">
+                    <ComboBoxItem Content="Java 8（适用于 1.16 以前的版本）" Tag="8"/>
+                    <ComboBoxItem Content="Java 17（适用于 1.20.5 以前的版本）" Tag="17"/>
+                    <ComboBoxItem Content="Java 21（适用于 1.21.11 以前的版本）" Tag="21"/>
+                    <ComboBoxItem Content="Java 25（适用于 26.1 及以后的版本）" Tag="25"/>
+                </ComboBox>
+                <TextBlock Text="提示：Java 8 默认使用 32 位，其余版本默认使用 64 位。不确定该选哪个可以直接用推荐设置。"
+                           Margin="0,6,0,0" FontSize="11" Foreground="{StaticResource TextSecondaryBrush}" TextWrapping="Wrap"/>
+            </StackPanel>
+
+            <!-- 高级模式下才显示：Java 版本 / 架构 / 安装方式选择。
+                 放在"下载 Java"按钮上面——因为高级模式下点"下载 Java"读的就是这里选的版本/架构/
+                 安装方式，选择应该在动作之前，原来的顺序是反的（选项在下载按钮下面），容易让人先
+                 点了下载才看到还有版本可选，现在调整成先选、后点下载，符合从上到下的操作顺序。 -->
+            <StackPanel x:Name="AdvancedJavaPanel" Margin="0,0,0,10" Visibility="Collapsed">
+                <TextBlock Text="Java 版本 / 架构 / 安装方式（高级）" Margin="0,0,0,4" Foreground="{StaticResource TextSecondaryBrush}" FontSize="12"/>
+                <StackPanel Orientation="Horizontal">
+                    <ComboBox x:Name="JavaVersionCombo" Width="110" Margin="0,0,8,0"/>
+                    <ComboBox x:Name="JavaArchCombo" Width="90" Margin="0,0,8,0">
+                        <ComboBoxItem Content="x64" Tag="x64"/>
+                        <ComboBoxItem Content="x86" Tag="x86"/>
+                    </ComboBox>
+                    <ComboBox x:Name="JavaInstallModeCombo" Width="160">
+                        <ComboBoxItem Content="便携版 (zip，免安装)" Tag="Portable"/>
+                        <ComboBoxItem Content="安装到系统目录 (msi)" Tag="System"/>
+                    </ComboBox>
+                </StackPanel>
+                <TextBlock Text="提示：官方稳定发布的版本主要是 8 / 11 / 17 / 21 / 25 / 26，其余版本号可能没有正式构建。"
+                           Margin="0,6,0,0" FontSize="11" Foreground="{StaticResource TextSecondaryBrush}" TextWrapping="Wrap"/>
+                <!-- 需求 5：高手模式下不做任何自动选择/校验，只把版本-游戏版本区间的对应关系
+                     提示出来，由用户自己判断该给哪个游戏版本配哪个 Java（跟普通模式的四选一
+                     不同，高手模式可以选 8~26 之间任意版本号，所以这里只是提示，不是选项）。 -->
+                <TextBlock Text="参考：Java 8 对应 1.16 以前的版本；Java 17 对应 1.20.5 以前的版本；Java 21 对应 1.21.11 以前的版本；Java 25 对应 26.1 及以后的版本。Java 8 默认 32 位，其余默认 64 位，具体请自行判断。"
+                           Margin="0,4,0,0" FontSize="11" Foreground="{StaticResource TextSecondaryBrush}" TextWrapping="Wrap"/>
+                <!-- 强制使用匹配 Java：默认关闭，只是"建议"（弹窗可以选择仍然使用）。打开后启动前
+                     检测到 Java 版本不匹配会直接自动切换，不再提供"仍然使用"的选项。
+                     见 MainWindow.xaml.cs LaunchInternalAsync 里的版本匹配检查。 -->
+                <CheckBox x:Name="EnforceJavaVersionMatchCheck" Content="强制使用匹配 Java（检测到版本不匹配时直接自动切换，不再询问）"
+                          Margin="0,10,0,0"/>
+            </StackPanel>
+
+            <!-- 需求：去掉这里单独的"Java 路径"输入框——下面的"Java 列表（多 Java 共存）"区块已经
+                 能承担同样的作用（浏览选择/自动探测/全盘扫描都能直接把结果加入列表，并且可以登记
+                 任意多个、按版本/服务器分别指定），保留这个单独的路径框反而是冗余的重复入口，
+                 容易让用户搞不清"这个框"和"下面的列表"到底是什么关系。
+                 "下载 Java"按钮保留，但下载完成后不再写回这里（这个框已经不存在），直接跟以前一样
+                 自动登记进下面的 Java 列表（DownloadJava_Click 里本来就有这一步，没有依赖这个框）。 -->
+            <Grid Margin="0,0,0,10">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <TextBlock Text="下载完成的 Java 会自动加入下方「Java 列表」，无需手动填路径。"
+                           VerticalAlignment="Center" FontSize="12" Foreground="{StaticResource TextSecondaryBrush}" TextWrapping="Wrap"/>
+                <Button Grid.Column="1" x:Name="DownloadJavaBtn" Content="下载 Java" Style="{StaticResource PrimaryButton}" Margin="8,0,0,0" Padding="12,8" Click="DownloadJava_Click"/>
+            </Grid>
+
+            <!-- 全盘扫描默认不开启：只在用户主动点击后才弹二次确认，说明扫描范围，
+                 同意后才会真正开始遍历磁盘；默认行为(FindJava)完全不受影响，只看默认路径。 -->
+            <Button x:Name="ScanDiskForJavaBtn" Content="全盘扫描查找 Java（可选，默认不启用，需二次确认）"
+                    HorizontalAlignment="Left" Padding="10,6" Margin="0,4,0,16"
+                    Click="ScanDiskForJava_Click"/>
+
+            <!-- Java 列表：多个 Java 运行时可以同时登记在案（多 Java 共存），
+                 客户端每个版本、服务器每个实例都能各自从这个列表里选择要用哪一个。 -->
+            <TextBlock Text="Java 列表（多 Java 共存）" FontSize="14" FontWeight="Bold" Margin="0,4,0,4"/>
+            <TextBlock Text="登记多个 Java 运行时后，可以在「版本选择」页为每个客户端版本、以及在「服务器」的创建/编辑里为每个服务器实例，分别选择使用列表里的哪一个 Java。"
+                       FontSize="11" Foreground="{StaticResource TextSecondaryBrush}" Margin="0,0,0,8" TextWrapping="Wrap"/>
+
+            <ListBox x:Name="JavaListBox" Height="120" Margin="0,0,0,8"
+                     DisplayMemberPath="DisplayText"/>
+
+            <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                <Button Content="🔄 刷新（自动探测）" Padding="10,6" Margin="0,0,8,0" Click="RefreshDetectJava_Click"
+                        ToolTip="快速查找本机常见位置(便携版目录/JAVA_HOME/注册表/PATH)已装的 Java，一键批量加入下面的列表；不会遍历整个磁盘，几秒内完成"/>
+                <Button Content="添加：浏览选择" Padding="10,6" Margin="0,0,8,0" Click="AddJavaByBrowse_Click"/>
+                <Button Content="重命名" Padding="10,6" Margin="0,0,8,0" Click="RenameJava_Click"/>
+                <Button Content="移除" Padding="10,6" Click="RemoveJava_Click"/>
+            </StackPanel>
+
+            <TextBlock Text="全局默认 Java（未单独指定版本/服务器 Java 时使用）" Margin="0,0,0,4"/>
+            <ComboBox x:Name="DefaultJavaCombo" Margin="0,0,0,16" Padding="8"
+                      DisplayMemberPath="DisplayText"
+                      ToolTip="从上面的 Java 列表里选一个作为全局默认；选「（不指定，使用自动探测）」则保持原来的自动探测/下载逻辑"/>
+
+
+            <!-- 高手模式下才显示：自定义 JVM 启动参数。全局一份，跟 AdvancedJavaPanel 共享同一个
+                 AdvancedModeCheck 显隐开关，但单独成一个 StackPanel，因为这是不同的关注点
+                 （Java 版本/架构/安装方式 vs 启动参数本身），拆开更清晰。 -->
+            <StackPanel x:Name="CustomJvmArgsPanel" Margin="0,0,0,16" Visibility="Collapsed">
+                <TextBlock Text="自定义 Java 启动参数（高手）" Margin="0,0,0,4" Foreground="{StaticResource TextSecondaryBrush}" FontSize="12"/>
+                <TextBox x:Name="CustomJvmArgsBox" Padding="8" Height="60" TextWrapping="Wrap" AcceptsReturn="True"
+                         VerticalScrollBarVisibility="Auto"
+                         ToolTip="例如：-XX:+UseG1GC -Dsomething=&quot;value with spaces&quot;"/>
+                <TextBlock Text="用空格分隔多个参数；带空格的值请用双引号包裹。这些参数会加在启动器内置参数之后、classpath 之前，如果和内置参数冲突，以你填的为准。留空则不生效。"
+                           Margin="0,6,0,0" FontSize="11" Foreground="{StaticResource TextSecondaryBrush}" TextWrapping="Wrap"/>
+            </StackPanel>
+
+            <TextBlock Text="最小内存 (MB)" Margin="0,0,0,4"/>
+            <TextBox x:Name="MinMemBox" Padding="8" Margin="0,0,0,16"/>
+
+            <TextBlock Text="最大内存 (MB)" Margin="0,0,0,4"/>
+            <TextBox x:Name="MaxMemBox" Padding="8" Margin="0,0,0,16"/>
+
+            <TextBlock Text="游戏窗口大小" Margin="0,0,0,4"/>
+            <StackPanel Orientation="Horizontal" Margin="0,0,0,16">
+                <TextBox x:Name="WidthBox" Width="90" Padding="8"/>
+                <TextBlock Text=" x " VerticalAlignment="Center" Margin="6,0"/>
+                <TextBox x:Name="HeightBox" Width="90" Padding="8"/>
+            </StackPanel>
+
+            <TextBlock Text="下载源" Margin="0,0,0,4"/>
+            <ComboBox x:Name="SourceCombo" Width="220" Margin="0,0,0,20">
+                <ComboBoxItem Content="BMCLAPI 镜像源 (推荐，国内更快)"/>
+                <ComboBoxItem Content="官方源 (Mojang)"/>
+            </ComboBox>
+
+            <!-- CurseForge 地图下载功能使用内置 API Key（见 CurseForgeKeyService.BuiltInKey），
+                 不需要用户自己申请/填写。这里之前有过一个"填 Key"输入框，但内置 key 本来就够用，
+                 输入框常年空着不影响任何功能——反而容易让用户误以为"不填就用不了"，
+                 实际去 CurseForge 官网申请一圈，回来发现填不填都一样，被当成 bug 反馈。
+                 已去掉这个输入框；如果以后确实需要支持用户自定义 key（比如内置 key 被限流/失效），
+                 CurseForgeKeyService.SaveKey/ClearKey 方法还在，直接手动编辑
+                 xcl2/curseforge_key.txt 这个文件仍然生效，只是不再放显眼的设置项引导普通用户去填。 -->
+
+
+            <!-- 游戏内语言：控制 Minecraft 客户端本体的显示语言（写入 options.txt 的 lang 字段），
+                 跟启动器界面本身的语言无关。之前版本完全没有这个选项，导致游戏语言只能依赖
+                 Minecraft 自己的系统语言探测，中文 Windows 上偶尔仍会回退成英文且用户无法手动纠正。 -->
+            <TextBlock Text="游戏内语言" Margin="0,0,0,4"/>
+            <ComboBox x:Name="GameLanguageCombo" Width="220" Margin="0,0,0,20">
+                <ComboBoxItem Content="简体中文" Tag="zh_cn"/>
+                <ComboBoxItem Content="繁體中文（台灣）" Tag="zh_tw"/>
+                <ComboBoxItem Content="English (US)" Tag="en_us"/>
+                <ComboBoxItem Content="日本語" Tag="ja_jp"/>
+                <ComboBoxItem Content="한국어" Tag="ko_kr"/>
+            </ComboBox>
+
+            <!-- 界面切换动画开关：控制左侧导航栏切页时右侧内容区的淡入过渡效果。
+                 默认开启；觉得切页慢/动画多余的用户可以关掉，关闭后切页恢复瞬间直接替换，
+                 不跑任何动画。见 MainWindow.SetMainContent。 -->
+            <CheckBox x:Name="PageAnimationsCheck" Content="界面切换动画（左侧导航栏切页时的淡入过渡效果，关闭后切页瞬间完成）"
+                      Margin="0,0,0,8"/>
+
+            <CheckBox x:Name="InjectionScanCheck" Content="启用注入检测（游戏启动后自动扫描是否有可疑模块/外挂）"
+                      Margin="0,0,0,8"/>
+
+            <CheckBox x:Name="GameConsoleWindowCheck" Content="启动游戏时额外弹出独立 CMD 窗口，实时显示游戏日志（方便在命令行里直接查看）"
+                      Margin="0,0,0,8"/>
+
+            <!-- 下载中心 Mod 搜索结果的图标显示开关：图标从 Modrinth/CurseForge 抓取，
+                 默认显示；网络较差或者不喜欢列表里混图片的用户可以关掉，只影响图标渲染，
+                 不影响搜索/下载本身。 -->
+            <CheckBox x:Name="ShowModIconsCheck" Content="下载中心 Mod 搜索结果显示模组图标（从 Modrinth/CurseForge 抓取，默认开启）"
+                      Margin="0,0,0,8"/>
+
+            <!-- 服务器启动后的外网访问教程弹窗开关：介绍内网穿透/路由器端口映射/云服务器中转，
+                 帮不熟悉这些操作的用户开服后知道下一步该做什么，默认开启，用户可以在这里关掉，
+                 也可以在教程弹窗里直接勾选"不再提示"（效果和这里是同一个开关）。 -->
+            <CheckBox x:Name="ShowServerNetworkGuideCheck" Content="服务器启动成功后自动弹出「如何开放外网访问」教程（默认开启）"
+                      Margin="0,0,0,8"/>
+
+            <CheckBox x:Name="IsolateVersionsCheck" Content="默认按版本隔离 mods / 资源包 / 数据包 / 存档等（推荐开启，与官方启动器行为一致；可在「版本选择」页为单个版本单独覆盖）"
+                      Margin="0,0,0,8"/>
+
+            <!-- 资源包下载作用域：独立于上面的"版本隔离"总开关。默认勾选(材质包/数据包/光影包都
+                 按版本隔离，装进各自版本目录下，互不共用)；取消勾选后改为全局共用一份，装进
+                 .minecraft 根目录的 resourcepacks/shaderpacks，不用每个版本各下一次。
+                 数据包不受这个开关影响，数据包本来就必须挂在具体存档下才生效。
+                 可在「版本选择」页为单个版本单独覆盖，跟上面"版本隔离"覆盖是同一个模式。 -->
+            <CheckBox x:Name="IsolateResourcePacksCheck" Content="资源包/数据包/光影包按版本隔离，互不共用（默认开启；取消勾选=全局共用一份，避免重复下载；可在「版本选择」页为单个版本单独覆盖）"
+                      Margin="0,0,0,20"/>
+
+            <!-- 访客模式：开启后主页/启动游戏永远使用一个只存在于本次运行的临时离线账户，
+                 不使用、也不暴露账户管理页里保存的任何真实账户；关闭启动器时会清理本次会话
+                 新产生的游戏日志/临时下载文件（不影响已安装的游戏本体、mods、存档等）。
+                 适合在别人电脑上临时借用的场景。需要点下面的"保存设置"才会生效。 -->
+            <TextBlock Text="隐私" FontSize="14" FontWeight="Bold" Margin="0,0,0,4"/>
+            <CheckBox x:Name="GuestModeCheck" Content="访客模式（启动游戏使用临时账户，不使用已保存的账户；关闭时清理本次会话产生的日志/临时下载文件）"
+                      ToolTip="开启后：主页「启动游戏」永远用一个仅本次运行有效的临时离线账户，不会读取/写入账户管理页里保存的真实账户；关闭启动器时自动清理这次运行产生的游戏日志和临时下载文件，不影响已安装的游戏本体、Mod、存档。"
+                      Margin="0,0,0,20"/>
+
+            <!-- 万能皮肤补丁(authlib-injector) 使用的皮肤服务地址：默认使用内置公共服务，
+                 有自己皮肤站的用户可以在这里替换成自己的 API Root。只影响"离线账户选择了
+                 自定义皮肤"这一种场景，史蒂夫/艾利克斯默认皮肤不受影响。 -->
+            <TextBlock Text="离线皮肤服务地址（万能皮肤补丁 API Root）" Margin="0,0,0,4"/>
+            <TextBox x:Name="SkinApiRootBox" Padding="8" Margin="0,0,0,4"
+                     ToolTip="账户管理里选择「自定义皮肤」的离线账户会通过这个地址的皮肤服务显示皮肤。默认使用内置公共服务，留空会自动恢复默认值。"/>
+            <TextBlock Text="只影响离线账户里选择了「自定义皮肤」的账户；史蒂夫/艾利克斯默认皮肤、微软账户皮肤不受此项影响。"
+                       FontSize="11" Foreground="{StaticResource TextSecondaryBrush}" Margin="0,0,0,20" TextWrapping="Wrap"/>
+
+            <!-- 下载性能：多线程下载 + 限速。默认多线程开启(8线程)、不限速——大多数用户不需要动这里，
+                 只有网络环境特殊（比如共享宽带、怕抢占其他人/其他程序带宽）的用户才需要调整。
+                 三项是独立开关：可以只开多线程不限速，也可以关掉多线程但仍然手动限速（限速对
+                 单线程场景同样生效，只是此时"总速度"等于"这一个连接的速度"）。 -->
+            <TextBlock Text="下载性能" FontSize="14" FontWeight="Bold" Margin="0,0,0,4"/>
+            <CheckBox x:Name="MultiThreadDownloadCheck" Content="启用多线程下载（并发下载多个文件，显著加快下载速度）"
+                      Margin="0,0,0,8" Checked="MultiThreadDownloadCheck_Changed" Unchecked="MultiThreadDownloadCheck_Changed"/>
+            <StackPanel x:Name="ThreadCountPanel" Orientation="Horizontal" Margin="20,0,0,8">
+                <TextBlock Text="并发线程数：" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                <TextBox x:Name="ThreadCountBox" Width="60" Padding="6"/>
+                <TextBlock Text="（建议 1~32，默认 8）" VerticalAlignment="Center" Margin="8,0,0,0"
+                           FontSize="11" Foreground="{StaticResource TextSecondaryBrush}"/>
+            </StackPanel>
+
+            <TextBlock Text="下载限速 (KB/s，0 表示不限速)" Margin="0,0,0,4"/>
+            <TextBox x:Name="SpeedLimitBox" Width="120" Padding="8" Margin="0,0,0,4" HorizontalAlignment="Left"/>
+            <TextBlock Text="限速是所有并发连接加总的总速度，不是单个连接各自的速度。"
+                       FontSize="11" Foreground="{StaticResource TextSecondaryBrush}" Margin="0,0,0,10" TextWrapping="Wrap"/>
+
+            <CheckBox x:Name="SmartThrottleCheck"
+                      Content="智能限速（自动检测其他程序的网络占用，避免抢占带宽；可与上面的限速同时开启，取两者中更保守的一个）"
+                      Margin="0,0,0,20"/>
+
+            <Button Content="保存设置" Style="{StaticResource PrimaryButton}" Width="140" HorizontalAlignment="Left" Click="Save_Click"/>
+            <TextBlock x:Name="StatusText" Foreground="{StaticResource AccentBrush}" Margin="0,12,0,0"/>
+        </StackPanel>
+        </ScrollViewer>
+    </Border>
+</UserControl>

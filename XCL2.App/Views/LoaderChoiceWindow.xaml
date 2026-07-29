@@ -1,0 +1,70 @@
+<Window x:Class="XCL2.App.Views.LoaderChoiceWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="选择安装方式"
+        Width="420" Height="420" MinHeight="320"
+        WindowStartupLocation="CenterOwner"
+        ResizeMode="CanResizeWithGrip"
+        Background="{DynamicResource PanelBrush}">
+    <!--
+        Round 修复：原来整个内容（标题+说明+四个选项+按钮）塞在一个固定高度 Window 里的单个
+        StackPanel 中，四个选项文字自然换行后总高度会超过窗口可视区域，导致底部"取消/下一步"
+        按钮被挤出窗口外——既点不到按钮，选项区域外面又没有 ScrollViewer 可以滚轮滚动去够，
+        表现就是"无法安装、滚轮也没反应"。
+
+        现在改成 Grid 三行布局：标题/说明固定在顶部，中间选项区域包一层 ScrollViewer（滚轮在
+        这个区域内总是有效），按钮组固定在窗口底部、始终可见可点，不随内容滚动跑出视野。
+        同时把窗口 ResizeMode 从 NoResize 改成 CanResizeWithGrip，用户也可以拖大窗口，
+        进一步减少需要滚动的情况。
+    -->
+    <Grid Margin="20">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <StackPanel Grid.Row="0" Margin="0,0,0,14">
+            <TextBlock x:Name="TitleText" Text="安装 1.20.1" FontSize="17" FontWeight="Bold" Margin="0,0,0,4"/>
+            <TextBlock Text="选择要安装的方式：原版可以直接游玩；如果要装 Mod，需要选择一个加载器。"
+                       FontSize="12" TextWrapping="Wrap" Foreground="{DynamicResource TextSecondaryBrush}"/>
+        </StackPanel>
+
+        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" Padding="0,0,8,0">
+            <StackPanel>
+                <RadioButton x:Name="OptVanilla" GroupName="LoaderChoice" IsChecked="True" Margin="0,0,0,10">
+                    <StackPanel Margin="8,2">
+                        <TextBlock Text="原版 (Vanilla)" FontWeight="Bold" FontSize="14"/>
+                        <TextBlock Text="官方原版游戏，不支持安装 Mod。" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}"/>
+                    </StackPanel>
+                </RadioButton>
+
+                <RadioButton x:Name="OptFabric" GroupName="LoaderChoice" Margin="0,0,0,10">
+                    <StackPanel Margin="8,2">
+                        <TextBlock Text="Fabric" FontWeight="Bold" FontSize="14"/>
+                        <TextBlock Text="轻量加载器，安装快、启动快，多数优化类/内容类 Mod 首选。" FontSize="12" TextWrapping="Wrap" Foreground="{DynamicResource TextSecondaryBrush}"/>
+                    </StackPanel>
+                </RadioButton>
+
+                <RadioButton x:Name="OptForge" GroupName="LoaderChoice" Margin="0,0,0,10">
+                    <StackPanel Margin="8,2">
+                        <TextBlock Text="Forge" FontWeight="Bold" FontSize="14"/>
+                        <TextBlock Text="历史最久、生态最大的加载器，很多大型科技/魔法整合包依赖它。需要本地 Java 运行安装器。" FontSize="12" TextWrapping="Wrap" Foreground="{DynamicResource TextSecondaryBrush}"/>
+                    </StackPanel>
+                </RadioButton>
+
+                <RadioButton x:Name="OptNeoForge" GroupName="LoaderChoice" Margin="0,0,0,4">
+                    <StackPanel Margin="8,2">
+                        <TextBlock Text="NeoForge" FontWeight="Bold" FontSize="14"/>
+                        <TextBlock Text="从 Forge 分支出来的新加载器，新版本 Mod 生态逐步迁移到这里。同样需要本地 Java。" FontSize="12" TextWrapping="Wrap" Foreground="{DynamicResource TextSecondaryBrush}"/>
+                    </StackPanel>
+                </RadioButton>
+            </StackPanel>
+        </ScrollViewer>
+
+        <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,16,0,0">
+            <Button x:Name="CancelBtn" Content="取消" Width="80" Margin="0,0,8,0" Click="Cancel_Click"/>
+            <Button x:Name="OkBtn" Content="下一步" Width="90" Style="{DynamicResource PrimaryButton}" Click="Ok_Click" IsDefault="True"/>
+        </StackPanel>
+    </Grid>
+</Window>

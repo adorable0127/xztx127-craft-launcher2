@@ -1,0 +1,411 @@
+<Application x:Class="XCL2.App.App"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             StartupUri="Views/MainWindow.xaml">
+    <Application.Resources>
+        <ResourceDictionary>
+            <!-- 科技感配色：冷调主蓝 + 青色高亮，白底不变。
+                 AccentBrush 从原来偏暖的 #2F76E0 换成更冷更亮的 #1868E8，
+                 新增 GlowBrush(#00D4FF 青) 用于 focus/hover 发光描边和数据强调色，
+                 边框从纯灰 #DCE2EA 换成半透明蓝灰，让描边看起来像"电路线"而不是普通表单框线。 -->
+            <SolidColorBrush x:Key="AccentBrush" Color="#1868E8"/>
+            <SolidColorBrush x:Key="AccentHoverBrush" Color="#0F52C4"/>
+            <SolidColorBrush x:Key="GlowBrush" Color="#00C2E8"/>
+            <SolidColorBrush x:Key="GlowSoftBrush" Color="#E3F7FC"/>
+            <SolidColorBrush x:Key="PanelBrush" Color="#FFFFFF"/>
+            <SolidColorBrush x:Key="SideBrush" Color="#F4F7FB"/>
+            <SolidColorBrush x:Key="BorderBrush2" Color="#D6E2F0"/>
+            <SolidColorBrush x:Key="BorderHoverBrush" Color="#9DC0EC"/>
+            <SolidColorBrush x:Key="TextPrimaryBrush" Color="#151B26"/>
+            <SolidColorBrush x:Key="TextSecondaryBrush" Color="#6B7686"/>
+            <FontFamily x:Key="MonoFontFamily">Consolas</FontFamily>
+
+            <!-- 通用 focus/hover 发光效果：细而亮的青色描边光晕，替代原来大面积色块高亮，
+                 科技感界面里更常见"边缘发光"而不是"整块填色"。控件模板里用
+                 <Border.Effect><StaticResource GlowEffect"/></Border.Effect> 引用。 -->
+            <DropShadowEffect x:Key="GlowEffect" Color="#00C2E8" BlurRadius="10" ShadowDepth="0" Opacity="0.55"/>
+
+            <!-- 全局窗口图标：不需要挨个给 20 多个弹窗窗口（AccountPickerWindow、
+                 CreateServerWindow 等）单独写 Icon="..."，用不带 x:Key 的隐式 Style
+                 让所有未显式设置 Icon 的 Window 都自动套用同一个应用图标，
+                 任务栏/Alt-Tab/标题栏左上角统一显示，而不是系统默认的白纸图标。
+                 MainWindow.xaml 已经显式设置了同一个 Icon，不受影响。 -->
+            <Style TargetType="Window">
+                <Setter Property="Icon" Value="/Resources/app.ico"/>
+            </Style>
+
+            <Style TargetType="Button" x:Key="PrimaryButton">
+                <Setter Property="Background" Value="{StaticResource AccentBrush}"/>
+                <Setter Property="Foreground" Value="White"/>
+                <Setter Property="FontSize" Value="15"/>
+                <Setter Property="Padding" Value="12,8"/>
+                <Setter Property="BorderThickness" Value="1"/>
+                <Setter Property="BorderBrush" Value="{StaticResource AccentBrush}"/>
+                <Setter Property="Cursor" Value="Hand"/>
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="Button">
+                            <Border x:Name="bd" Background="{TemplateBinding Background}"
+                                    BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}"
+                                    CornerRadius="4" Padding="{TemplateBinding Padding}">
+                                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                            </Border>
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="IsMouseOver" Value="True">
+                                    <Setter TargetName="bd" Property="Effect" Value="{StaticResource GlowEffect}"/>
+                                </Trigger>
+                            </ControlTemplate.Triggers>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+                <Style.Triggers>
+                    <Trigger Property="IsMouseOver" Value="True">
+                        <Setter Property="Background" Value="{StaticResource AccentHoverBrush}"/>
+                    </Trigger>
+                    <Trigger Property="IsEnabled" Value="False">
+                        <Setter Property="Opacity" Value="0.5"/>
+                    </Trigger>
+                </Style.Triggers>
+            </Style>
+
+            <!-- 隐式默认按钮样式：项目里有一批按钮（取消、浏览、删除等）没有显式设置
+                 Style，之前会退化成 WPF 默认的灰色系统按钮，跟其它按钮风格不统一。
+                 这里加一个不带 x:Key 的 Button 样式，效果与 PrimaryButton 一致，
+                 所有未显式指定 Style 的 Button 会自动套用，不用逐个改 XAML。
+                 已经显式引用 PrimaryButton / SideNavButton / TileButton 等具名样式的
+                 按钮不受影响。 -->
+            <Style TargetType="Button">
+                <Setter Property="Background" Value="{StaticResource AccentBrush}"/>
+                <Setter Property="Foreground" Value="White"/>
+                <Setter Property="FontSize" Value="15"/>
+                <Setter Property="Padding" Value="12,8"/>
+                <Setter Property="BorderThickness" Value="1"/>
+                <Setter Property="BorderBrush" Value="{StaticResource AccentBrush}"/>
+                <Setter Property="Cursor" Value="Hand"/>
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="Button">
+                            <Border x:Name="bd" Background="{TemplateBinding Background}"
+                                    BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}"
+                                    CornerRadius="4" Padding="{TemplateBinding Padding}">
+                                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                            </Border>
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="IsMouseOver" Value="True">
+                                    <Setter TargetName="bd" Property="Effect" Value="{StaticResource GlowEffect}"/>
+                                </Trigger>
+                            </ControlTemplate.Triggers>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+                <Style.Triggers>
+                    <Trigger Property="IsMouseOver" Value="True">
+                        <Setter Property="Background" Value="{StaticResource AccentHoverBrush}"/>
+                    </Trigger>
+                    <Trigger Property="IsEnabled" Value="False">
+                        <Setter Property="Opacity" Value="0.5"/>
+                    </Trigger>
+                </Style.Triggers>
+            </Style>
+
+            <Style TargetType="Button" x:Key="SideNavButton">
+                <Setter Property="Background" Value="Transparent"/>
+                <Setter Property="Foreground" Value="{StaticResource TextPrimaryBrush}"/>
+                <Setter Property="HorizontalContentAlignment" Value="Left"/>
+                <Setter Property="Padding" Value="10,10"/>
+                <Setter Property="FontSize" Value="14"/>
+                <Setter Property="BorderThickness" Value="0"/>
+                <Setter Property="Cursor" Value="Hand"/>
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="Button">
+                            <Border x:Name="bd" Background="{TemplateBinding Background}" CornerRadius="4"
+                                    BorderThickness="2,0,0,0" BorderBrush="Transparent">
+                                <ContentPresenter HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
+                                                  VerticalAlignment="Center" Margin="{TemplateBinding Padding}"/>
+                            </Border>
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="IsMouseOver" Value="True">
+                                    <Setter TargetName="bd" Property="Background" Value="{StaticResource GlowSoftBrush}"/>
+                                    <Setter TargetName="bd" Property="BorderBrush" Value="{StaticResource GlowBrush}"/>
+                                </Trigger>
+                            </ControlTemplate.Triggers>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+            </Style>
+
+            <!-- 搜索/筛选输入框：圆角卡片风格，与整体白底蓝色主题保持一致（原先用系统默认方框样式，视觉割裂）。
+                 焦点态用主色描边，给"正在输入会触发自动刷新"一个轻微的视觉反馈。 -->
+            <Style TargetType="TextBox" x:Key="SearchTextBox">
+                <Setter Property="Background" Value="{StaticResource SideBrush}"/>
+                <Setter Property="Foreground" Value="{StaticResource TextPrimaryBrush}"/>
+                <Setter Property="BorderBrush" Value="{StaticResource BorderBrush2}"/>
+                <Setter Property="BorderThickness" Value="1"/>
+                <Setter Property="CaretBrush" Value="{StaticResource AccentBrush}"/>
+                <Setter Property="VerticalContentAlignment" Value="Center"/>
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="TextBox">
+                            <Border x:Name="bd" Background="{TemplateBinding Background}"
+                                    BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}"
+                                    CornerRadius="4">
+                                <ScrollViewer x:Name="PART_ContentHost" Margin="{TemplateBinding Padding}"/>
+                            </Border>
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="IsFocused" Value="True">
+                                    <Setter TargetName="bd" Property="BorderBrush" Value="{StaticResource GlowBrush}"/>
+                                    <Setter TargetName="bd" Property="Effect" Value="{StaticResource GlowEffect}"/>
+                                </Trigger>
+                                <Trigger Property="IsMouseOver" Value="True">
+                                    <Setter TargetName="bd" Property="BorderBrush" Value="{StaticResource BorderHoverBrush}"/>
+                                </Trigger>
+                            </ControlTemplate.Triggers>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+            </Style>
+
+            <!-- 分类/来源筛选下拉框：同样统一成圆角卡片风格，去掉系统默认灰色外观。
+                 不加 x:Key，作为 ComboBox 的默认样式，让全应用所有下拉框（包括"下载源选择"这类
+                 之前完全没套样式、直接用系统默认灰色外观的控件）统一变成现代化的圆角卡片风格，
+                 不需要每个 XAML 逐个手动加 Style="{StaticResource FilterComboBox}"。 -->
+            <Style TargetType="ComboBox">
+                <Setter Property="Background" Value="{StaticResource SideBrush}"/>
+                <Setter Property="Foreground" Value="{StaticResource TextPrimaryBrush}"/>
+                <Setter Property="BorderBrush" Value="{StaticResource BorderBrush2}"/>
+                <Setter Property="BorderThickness" Value="1"/>
+                <Setter Property="Padding" Value="8,6"/>
+                <Setter Property="VerticalContentAlignment" Value="Center"/>
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="ComboBox">
+                            <Grid>
+                                <ToggleButton x:Name="toggle" Background="{TemplateBinding Background}"
+                                              BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}"
+                                              IsChecked="{Binding IsDropDownOpen, Mode=TwoWay, RelativeSource={RelativeSource TemplatedParent}}"
+                                              Focusable="False" ClickMode="Press">
+                                    <ToggleButton.Template>
+                                        <ControlTemplate TargetType="ToggleButton">
+                                            <Border Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}"
+                                                    BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="4">
+                                                <Grid>
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="*"/>
+                                                        <ColumnDefinition Width="20"/>
+                                                    </Grid.ColumnDefinitions>
+                                                    <TextBlock Grid.Column="1" Text="▾" FontSize="10" HorizontalAlignment="Center"
+                                                               VerticalAlignment="Center" Foreground="{StaticResource TextSecondaryBrush}"/>
+                                                </Grid>
+                                            </Border>
+                                        </ControlTemplate>
+                                    </ToggleButton.Template>
+                                </ToggleButton>
+                                <ContentPresenter x:Name="content" IsHitTestVisible="False" Margin="{TemplateBinding Padding}"
+                                                   HorizontalAlignment="Left" VerticalAlignment="Center"
+                                                   Content="{TemplateBinding SelectionBoxItem}"
+                                                   ContentTemplate="{TemplateBinding SelectionBoxItemTemplate}"
+                                                   ContentTemplateSelector="{TemplateBinding ItemTemplateSelector}"
+                                                   ContentStringFormat="{TemplateBinding SelectionBoxItemStringFormat}"/>
+                                <Popup x:Name="popup" IsOpen="{TemplateBinding IsDropDownOpen}" Placement="Bottom"
+                                       AllowsTransparency="True" Focusable="False" PopupAnimation="Fade">
+                                    <Border Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource BorderBrush2}" BorderThickness="1"
+                                            CornerRadius="4" MinWidth="{TemplateBinding ActualWidth}" MaxHeight="260">
+                                        <ScrollViewer>
+                                            <ItemsPresenter/>
+                                        </ScrollViewer>
+                                    </Border>
+                                </Popup>
+                            </Grid>
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="IsMouseOver" Value="True">
+                                    <Setter TargetName="toggle" Property="BorderBrush" Value="{StaticResource BorderHoverBrush}"/>
+                                </Trigger>
+                                <Trigger Property="IsDropDownOpen" Value="True">
+                                    <Setter TargetName="toggle" Property="BorderBrush" Value="{StaticResource GlowBrush}"/>
+                                    <Setter TargetName="toggle" Property="Effect" Value="{StaticResource GlowEffect}"/>
+                                </Trigger>
+                            </ControlTemplate.Triggers>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+            </Style>
+
+            <!-- 兼容旧代码：部分 XAML 显式写了 Style="{StaticResource FilterComboBox}"，
+                 保留这个 key 名并直接复用上面的默认样式，避免逐个改动引用处。 -->
+            <Style TargetType="ComboBox" x:Key="FilterComboBox" BasedOn="{StaticResource {x:Type ComboBox}}"/>
+
+            <!-- 下拉框展开后每一项的外观：默认系统样式选中态是刺眼的蓝色系统高亮条，
+                 这里统一换成跟其它控件一致的浅蓝高亮 + 圆角，避免打开下拉框那一下突然
+                 冒出一块跟整体风格不搭的系统原生蓝条。 -->
+            <Style TargetType="ComboBoxItem">
+                <Setter Property="Padding" Value="8,6"/>
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="ComboBoxItem">
+                            <Border x:Name="bd" Background="Transparent" CornerRadius="4" Padding="{TemplateBinding Padding}">
+                                <ContentPresenter/>
+                            </Border>
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="IsHighlighted" Value="True">
+                                    <Setter TargetName="bd" Property="Background" Value="{StaticResource GlowSoftBrush}"/>
+                                </Trigger>
+                                <Trigger Property="IsSelected" Value="True">
+                                    <Setter TargetName="bd" Property="Background" Value="{StaticResource GlowSoftBrush}"/>
+                                    <Setter Property="Foreground" Value="{StaticResource AccentBrush}"/>
+                                    <Setter Property="FontWeight" Value="SemiBold"/>
+                                </Trigger>
+                            </ControlTemplate.Triggers>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+            </Style>
+
+            <!-- 下载中心列表项外层卡片：hover 时轻微高亮，视觉上明确"这是一个可交互的条目"。 -->
+            <Style TargetType="ListBoxItem" x:Key="DownloadListItem">
+                <Setter Property="Padding" Value="0"/>
+                <Setter Property="Margin" Value="0,2"/>
+                <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="ListBoxItem">
+                            <Border x:Name="bd" Background="Transparent" BorderThickness="1" BorderBrush="Transparent" CornerRadius="4" Padding="4">
+                                <ContentPresenter/>
+                            </Border>
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="IsMouseOver" Value="True">
+                                    <Setter TargetName="bd" Property="Background" Value="{StaticResource GlowSoftBrush}"/>
+                                    <Setter TargetName="bd" Property="BorderBrush" Value="{StaticResource BorderBrush2}"/>
+                                </Trigger>
+                            </ControlTemplate.Triggers>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+            </Style>
+
+            <!-- 全局 CheckBox / RadioButton 样式：之前只有 ComboBox 套了科技感圆角风格，
+                 CheckBox/RadioButton 在各个页面（SettingsPage、ServerPropertiesWindow、
+                 SkinSelectWindow 等）还是系统默认的方框/圆点勾选框，跟其它控件视觉割裂。
+                 这里不加 x:Key，作为全应用默认样式，自动套用到所有未显式设置 Style 的
+                 CheckBox / RadioButton 上，配色跟 ComboBox/PrimaryButton 保持一致：
+                 未选中=浅色描边，hover=浅蓝底+蓝描边，选中=主色描边+青色对勾/圆点+发光。
+                 注意：DownloadCategoryButton 是显式 x:Key 引用，不受这个隐式默认样式影响。 -->
+            <Style TargetType="CheckBox">
+                <Setter Property="Foreground" Value="{StaticResource TextPrimaryBrush}"/>
+                <Setter Property="FontSize" Value="14"/>
+                <Setter Property="Cursor" Value="Hand"/>
+                <Setter Property="VerticalContentAlignment" Value="Center"/>
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="CheckBox">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+                                <Border x:Name="box" Grid.Column="0" Width="18" Height="18" CornerRadius="4"
+                                        Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource BorderBrush2}"
+                                        BorderThickness="1.5" VerticalAlignment="Center">
+                                    <Path x:Name="check" Data="M 2,8 L 6,12 L 14,3" Stroke="White" StrokeThickness="2"
+                                          StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round"
+                                          Opacity="0" Stretch="Uniform" Margin="2"/>
+                                </Border>
+                                <ContentPresenter x:Name="contentPresenter" Grid.Column="1" Margin="8,0,0,0"
+                                                  VerticalAlignment="Center" HorizontalAlignment="Left"
+                                                  RecognizesAccessKey="True"/>
+                            </Grid>
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="IsMouseOver" Value="True">
+                                    <Setter TargetName="box" Property="BorderBrush" Value="{StaticResource BorderHoverBrush}"/>
+                                </Trigger>
+                                <Trigger Property="IsChecked" Value="True">
+                                    <Setter TargetName="box" Property="Background" Value="{StaticResource AccentBrush}"/>
+                                    <Setter TargetName="box" Property="BorderBrush" Value="{StaticResource AccentBrush}"/>
+                                    <Setter TargetName="box" Property="Effect" Value="{StaticResource GlowEffect}"/>
+                                    <Setter TargetName="check" Property="Opacity" Value="1"/>
+                                </Trigger>
+                                <Trigger Property="IsChecked" Value="{x:Null}">
+                                    <Setter TargetName="box" Property="Background" Value="{StaticResource BorderBrush2}"/>
+                                    <Setter TargetName="check" Property="Opacity" Value="1"/>
+                                    <Setter TargetName="check" Property="Data" Value="M 3,7 L 15,7"/>
+                                </Trigger>
+                                <Trigger Property="IsEnabled" Value="False">
+                                    <Setter Property="Opacity" Value="0.5"/>
+                                </Trigger>
+                            </ControlTemplate.Triggers>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+            </Style>
+
+            <Style TargetType="RadioButton">
+                <Setter Property="Foreground" Value="{StaticResource TextPrimaryBrush}"/>
+                <Setter Property="FontSize" Value="14"/>
+                <Setter Property="Cursor" Value="Hand"/>
+                <Setter Property="VerticalContentAlignment" Value="Center"/>
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="RadioButton">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+                                <Border x:Name="circle" Grid.Column="0" Width="18" Height="18" CornerRadius="9"
+                                        Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource BorderBrush2}"
+                                        BorderThickness="1.5" VerticalAlignment="Center">
+                                    <Ellipse x:Name="dot" Width="8" Height="8" Fill="{StaticResource AccentBrush}" Opacity="0"/>
+                                </Border>
+                                <ContentPresenter x:Name="contentPresenter" Grid.Column="1" Margin="8,0,0,0"
+                                                  VerticalAlignment="Center" HorizontalAlignment="Left"
+                                                  RecognizesAccessKey="True"/>
+                            </Grid>
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="IsMouseOver" Value="True">
+                                    <Setter TargetName="circle" Property="BorderBrush" Value="{StaticResource BorderHoverBrush}"/>
+                                </Trigger>
+                                <Trigger Property="IsChecked" Value="True">
+                                    <Setter TargetName="circle" Property="BorderBrush" Value="{StaticResource AccentBrush}"/>
+                                    <Setter TargetName="circle" Property="Effect" Value="{StaticResource GlowEffect}"/>
+                                    <Setter TargetName="dot" Property="Opacity" Value="1"/>
+                                </Trigger>
+                                <Trigger Property="IsEnabled" Value="False">
+                                    <Setter Property="Opacity" Value="0.5"/>
+                                </Trigger>
+                            </ControlTemplate.Triggers>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+            </Style>
+
+            <Style TargetType="RadioButton" x:Key="DownloadCategoryButton">
+                <Setter Property="Foreground" Value="{StaticResource TextPrimaryBrush}"/>
+                <Setter Property="Padding" Value="10,10"/>
+                <Setter Property="FontSize" Value="14"/>
+                <Setter Property="Cursor" Value="Hand"/>
+                <Setter Property="Margin" Value="0,2"/>
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="RadioButton">
+                            <Border x:Name="bd" Background="Transparent" CornerRadius="4"
+                                    BorderThickness="2,0,0,0" BorderBrush="Transparent" Padding="{TemplateBinding Padding}">
+                                <ContentPresenter HorizontalAlignment="Left" VerticalAlignment="Center"/>
+                            </Border>
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="IsMouseOver" Value="True">
+                                    <Setter TargetName="bd" Property="Background" Value="{StaticResource GlowSoftBrush}"/>
+                                </Trigger>
+                                <Trigger Property="IsChecked" Value="True">
+                                    <Setter TargetName="bd" Property="Background" Value="{StaticResource GlowSoftBrush}"/>
+                                    <Setter TargetName="bd" Property="BorderBrush" Value="{StaticResource GlowBrush}"/>
+                                    <Setter Property="Foreground" Value="{StaticResource AccentBrush}"/>
+                                    <Setter Property="FontWeight" Value="SemiBold"/>
+                                </Trigger>
+                            </ControlTemplate.Triggers>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+            </Style>
+        </ResourceDictionary>
+    </Application.Resources>
+</Application>

@@ -1,0 +1,97 @@
+<UserControl x:Class="XCL2.App.Views.VersionSelectPage"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <Grid>
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="220"/>
+            <ColumnDefinition Width="*"/>
+        </Grid.ColumnDefinitions>
+
+        <!-- 文件夹列表（类似 PCL 左侧） -->
+        <Border Grid.Column="0" Background="{StaticResource PanelBrush}" CornerRadius="10" Margin="0,0,10,0" Padding="16">
+            <DockPanel>
+                <StackPanel DockPanel.Dock="Top">
+                    <TextBlock Text="文件夹列表" Foreground="{StaticResource TextSecondaryBrush}" FontSize="13" Margin="0,0,0,8"/>
+                    <ListBox x:Name="FolderListBox" BorderThickness="0" Background="Transparent"
+                             SelectionChanged="FolderListBox_SelectionChanged" MaxHeight="260">
+                        <ListBox.ItemTemplate>
+                            <DataTemplate>
+                                <StackPanel Margin="0,4">
+                                    <TextBlock Text="{Binding Name}" FontSize="15" Foreground="{StaticResource AccentBrush}"/>
+                                    <TextBlock Text="{Binding Path}" FontSize="11" Foreground="{StaticResource TextSecondaryBrush}" TextTrimming="CharacterEllipsis"/>
+                                </StackPanel>
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
+
+                    <TextBlock Text="添加或导入" Foreground="{StaticResource TextSecondaryBrush}" FontSize="13" Margin="0,20,0,8"/>
+                    <Button Content="➕ 添加已有文件夹" Style="{StaticResource SideNavButton}" Click="AddFolder_Click"/>
+                </StackPanel>
+            </DockPanel>
+        </Border>
+
+        <!-- 版本列表 -->
+        <Border Grid.Column="1" Background="{StaticResource PanelBrush}" CornerRadius="10" Padding="20">
+            <DockPanel>
+                <Grid DockPanel.Dock="Top" Margin="0,0,0,12">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Grid.Column="0" Text="已安装版本" FontSize="18" FontWeight="Bold" VerticalAlignment="Center"/>
+                    <Button Grid.Column="1" Content="➕ 安装新版本" Style="{StaticResource PrimaryButton}"
+                            Padding="12,6" Click="InstallNewVersion_Click"/>
+                </Grid>
+
+                <TextBlock DockPanel.Dock="Top" Text="本机已安装版本" FontWeight="Bold" Margin="0,0,0,6" Foreground="{StaticResource TextPrimaryBrush}"/>
+                <ListBox x:Name="InstalledListBox" DockPanel.Dock="Top" MaxHeight="160" BorderThickness="0,0,0,1" BorderBrush="#EEEEEE"
+                         SelectionChanged="InstalledListBox_SelectionChanged" Margin="0,0,0,12">
+                    <ListBox.ItemTemplate>
+                        <DataTemplate>
+                            <StackPanel Orientation="Horizontal" Margin="4">
+                                <TextBlock Text="🧊" FontSize="18" Margin="0,0,10,0"/>
+                                <StackPanel>
+                                    <TextBlock Text="{Binding Id}" FontSize="15"/>
+                                    <TextBlock Text="{Binding SubTitle}" FontSize="12" Foreground="{StaticResource TextSecondaryBrush}"/>
+                                </StackPanel>
+                            </StackPanel>
+                        </DataTemplate>
+                    </ListBox.ItemTemplate>
+                </ListBox>
+
+                <!-- 当前选中版本的单独设置：Java 版本覆盖 + 版本隔离覆盖。
+                     只有选中了某个已安装版本时才显示，选中后自动加载这个版本已有的设置。 -->
+                <Border x:Name="PerVersionSettingsPanel" DockPanel.Dock="Top" Background="{StaticResource SideBrush}"
+                        CornerRadius="6" Padding="12" Margin="0,0,0,12" Visibility="Collapsed">
+                    <StackPanel>
+                        <TextBlock x:Name="PerVersionTitleText" FontWeight="Bold" FontSize="13" Margin="0,0,0,8"/>
+
+                        <TextBlock Text="这个版本使用的 Java 版本" FontSize="12" Foreground="{StaticResource TextSecondaryBrush}" Margin="0,0,0,4"/>
+                        <ComboBox x:Name="VersionJavaListCombo" Margin="0,0,0,4" Padding="6"
+                                  DisplayMemberPath="DisplayText"
+                                  ToolTip="从「设置」页的 Java 列表里为这个版本单独选一个 Java；选「（不指定）」则改用下面填的主版本号自动匹配"/>
+                        <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                            <TextBox x:Name="VersionJavaOverrideBox" Width="80" Padding="6"
+                                     ToolTip="留空 = 自动匹配（读取版本要求 + 已装 mod 的 Java 版本要求，取两者中较高的）；填数字(如 25) = 强制这个版本始终用这个 Java 主版本号"/>
+                            <TextBlock Text="没有在上面选具体的 Java 时才生效：留空自动匹配（推荐）；填数字(如 25)可强制指定主版本号"
+                                       FontSize="11" Foreground="{StaticResource TextSecondaryBrush}" VerticalAlignment="Center"
+                                       Margin="10,0,0,0" TextWrapping="Wrap"/>
+                        </StackPanel>
+
+                        <CheckBox x:Name="VersionIsolationOverrideCheck" Content="为这个版本单独启用「版本隔离」(mods/资源包/存档等独立存放)"
+                                  Margin="0,0,0,4" Checked="VersionIsolationOverrideCheck_Changed" Unchecked="VersionIsolationOverrideCheck_Changed"/>
+                        <TextBlock Text="不勾选则跟随「设置」页里的全局默认值" FontSize="11" Foreground="{StaticResource TextSecondaryBrush}" Margin="0,0,0,8"/>
+
+                        <CheckBox x:Name="VersionResourcePackIsolationOverrideCheck" Content="这个版本的资源包/光影包也单独隔离(不与其他版本共用)"
+                                  Margin="0,0,0,4" Checked="VersionResourcePackIsolationOverrideCheck_Changed" Unchecked="VersionResourcePackIsolationOverrideCheck_Changed"/>
+                        <TextBlock Text="独立于上面的版本隔离开关；不勾选则跟随「设置」页里的资源包全局默认值" FontSize="11"
+                                   Foreground="{StaticResource TextSecondaryBrush}" Margin="0,0,0,8" TextWrapping="Wrap"/>
+
+                        <Button Content="保存这个版本的设置" Style="{StaticResource PrimaryButton}" HorizontalAlignment="Left"
+                                Padding="10,6" Click="SavePerVersionSettings_Click"/>
+                    </StackPanel>
+                </Border>
+            </DockPanel>
+        </Border>
+    </Grid>
+</UserControl>

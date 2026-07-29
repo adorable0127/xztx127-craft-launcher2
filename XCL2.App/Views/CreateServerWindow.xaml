@@ -1,0 +1,119 @@
+<Window x:Class="XCL2.App.Views.CreateServerWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="创建服务器" Height="620" Width="520"
+        WindowStartupLocation="CenterOwner" ResizeMode="NoResize"
+        Background="{StaticResource PanelBrush}">
+    <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="28,24">
+        <StackPanel>
+            <TextBlock Text="创建服务器" FontSize="20" FontWeight="Bold" Margin="0,0,0,4"/>
+            <TextBlock Text="一键完成核心下载与服务器创建，稍后可在服务器列表里随时启动/停止。"
+                       Foreground="{StaticResource TextSecondaryBrush}" FontSize="12" Margin="0,0,0,18" TextWrapping="Wrap"/>
+
+            <TextBlock Text="服务器名称" FontSize="12" Foreground="{StaticResource TextSecondaryBrush}" Margin="0,0,0,4"/>
+            <TextBox x:Name="NameBox" Style="{StaticResource SearchTextBox}" Height="34" Margin="0,0,0,14"/>
+
+            <TextBlock Text="加载器" FontSize="12" Foreground="{StaticResource TextSecondaryBrush}" Margin="0,0,0,4"/>
+            <StackPanel Orientation="Horizontal" Margin="0,0,0,14">
+                <RadioButton x:Name="CoreVanilla" Style="{StaticResource DownloadCategoryButton}" IsChecked="True"
+                             Content="Vanilla" Checked="CoreType_Checked" Tag="Vanilla" Margin="0,0,6,0"/>
+                <RadioButton x:Name="CorePaper" Style="{StaticResource DownloadCategoryButton}"
+                             Content="Paper" Checked="CoreType_Checked" Tag="Paper" Margin="0,0,6,0"/>
+                <RadioButton x:Name="CoreFabric" Style="{StaticResource DownloadCategoryButton}"
+                             Content="Fabric" Checked="CoreType_Checked" Tag="Fabric" Margin="0,0,6,0"/>
+                <RadioButton x:Name="CoreForge" Style="{StaticResource DownloadCategoryButton}"
+                             Content="Forge" Checked="CoreType_Checked" Tag="Forge" Margin="0,0,6,0"/>
+                <RadioButton x:Name="CoreNeoForge" Style="{StaticResource DownloadCategoryButton}"
+                             Content="NeoForge" Checked="CoreType_Checked" Tag="NeoForge"/>
+            </StackPanel>
+
+            <Grid Margin="0,0,0,14">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="10"/>
+                    <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+                <StackPanel Grid.Column="0">
+                    <TextBlock Text="Minecraft 版本" FontSize="12" Foreground="{StaticResource TextSecondaryBrush}" Margin="0,0,0,4"/>
+                    <ComboBox x:Name="McVersionCombo" Style="{StaticResource FilterComboBox}" Height="34"
+                              SelectionChanged="McVersionCombo_SelectionChanged"/>
+                </StackPanel>
+                <StackPanel Grid.Column="2" x:Name="BuildVersionPanel">
+                    <TextBlock x:Name="BuildVersionLabel" Text="构建版本" FontSize="12"
+                               Foreground="{StaticResource TextSecondaryBrush}" Margin="0,0,0,4"/>
+                    <ComboBox x:Name="BuildVersionCombo" Style="{StaticResource FilterComboBox}" Height="34"/>
+                </StackPanel>
+            </Grid>
+
+            <TextBlock Text="安装位置" FontSize="12" Foreground="{StaticResource TextSecondaryBrush}" Margin="0,0,0,4"/>
+            <Grid Margin="0,0,0,14">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <TextBox x:Name="TargetDirBox" Grid.Column="0" Style="{StaticResource SearchTextBox}" Height="34" Margin="0,0,8,0"/>
+                <Button x:Name="BrowseTargetDirBtn" Grid.Column="1" Content="浏览..." Style="{StaticResource PrimaryButton}" Click="BrowseTargetDir_Click"/>
+            </Grid>
+
+            <TextBlock Text="Java 路径" FontSize="12" Foreground="{StaticResource TextSecondaryBrush}" Margin="0,0,0,4"/>
+            <ComboBox x:Name="JavaListCombo" Margin="0,0,0,8" Padding="6" Height="34"
+                      DisplayMemberPath="DisplayText" SelectionChanged="JavaListCombo_SelectionChanged"
+                      ToolTip="从「设置」页登记的 Java 列表里直接选一个给这个服务器用；选「（不指定，自动检测/下载）」则用下面的路径框，创建时按需自动匹配/下载"/>
+            <Grid Margin="0,0,0,14">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <TextBox x:Name="JavaPathBox" Grid.Column="0" Style="{StaticResource SearchTextBox}" Height="34" Margin="0,0,8,0"/>
+                <Button Grid.Column="1" Content="自动检测" Style="{StaticResource PrimaryButton}" Click="AutoDetectJava_Click"/>
+            </Grid>
+            <TextBlock x:Name="JavaRequirementHintText" FontSize="12" Margin="0,-10,0,14" TextWrapping="Wrap"
+                       Foreground="{StaticResource AccentBrush}" Visibility="Collapsed"/>
+
+            <TextBlock Text="内存上限 (MB)" FontSize="12" Foreground="{StaticResource TextSecondaryBrush}" Margin="0,0,0,4"/>
+            <Grid Margin="0,0,0,14">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="10"/>
+                    <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+                <StackPanel Grid.Column="0">
+                    <TextBlock Text="最小 (-Xms)" FontSize="11" Foreground="{StaticResource TextSecondaryBrush}" Margin="0,0,0,2"/>
+                    <TextBox x:Name="MinMemoryBox" Style="{StaticResource SearchTextBox}" Height="34" Text="1024"/>
+                </StackPanel>
+                <StackPanel Grid.Column="2">
+                    <TextBlock Text="最大 (-Xmx)" FontSize="11" Foreground="{StaticResource TextSecondaryBrush}" Margin="0,0,0,2"/>
+                    <TextBox x:Name="MaxMemoryBox" Style="{StaticResource SearchTextBox}" Height="34" Text="4096"/>
+                </StackPanel>
+            </Grid>
+
+            <Grid Margin="0,0,0,4">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="10"/>
+                    <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+                <StackPanel Grid.Column="0">
+                    <TextBlock Text="CPU 上限 % (留空=不限制)" FontSize="11" Foreground="{StaticResource TextSecondaryBrush}" Margin="0,0,0,2"/>
+                    <TextBox x:Name="CpuLimitBox" Style="{StaticResource SearchTextBox}" Height="34"/>
+                </StackPanel>
+                <StackPanel Grid.Column="2">
+                    <TextBlock Text="磁盘上限 MB (留空=不限制)" FontSize="11" Foreground="{StaticResource TextSecondaryBrush}" Margin="0,0,0,2"/>
+                    <TextBox x:Name="DiskLimitBox" Style="{StaticResource SearchTextBox}" Height="34"/>
+                </StackPanel>
+            </Grid>
+            <TextBlock Text="磁盘上限说明：Windows 无法对单个文件夹做硬性磁盘配额限制，此项仅用于运行中的容量监控预警，不会强制阻止写入。"
+                       Foreground="{StaticResource TextSecondaryBrush}" FontSize="10" TextWrapping="Wrap" Margin="0,4,0,18"/>
+
+            <!-- 进度展示 -->
+            <StackPanel x:Name="ProgressPanel" Margin="0,0,0,14" Visibility="Collapsed">
+                <TextBlock x:Name="ProgressStageText" FontSize="13" FontWeight="Bold" Margin="0,0,0,4"/>
+                <TextBlock x:Name="ProgressDetailText" FontSize="12" Foreground="{StaticResource TextSecondaryBrush}" Margin="0,0,0,8"/>
+                <ProgressBar x:Name="ProgressBarCtl" Height="8" Minimum="0" Maximum="1"/>
+            </StackPanel>
+
+            <Button x:Name="CreateBtn" Content="创建服务器" Style="{StaticResource PrimaryButton}"
+                    HorizontalAlignment="Stretch" Padding="0,12" Click="Create_Click"/>
+        </StackPanel>
+    </ScrollViewer>
+</Window>
