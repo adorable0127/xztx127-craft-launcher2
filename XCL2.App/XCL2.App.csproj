@@ -6,27 +6,67 @@
     <Nullable>enable</Nullable>
     <UseWPF>true</UseWPF>
     <ImplicitUsings>enable</ImplicitUsings>
+
     <AssemblyName>XCL2</AssemblyName>
     <RootNamespace>XCL2.App</RootNamespace>
+
     <Platforms>AnyCPU</Platforms>
     <LangVersion>latest</LangVersion>
-    <!-- 应用图标：编译出的 .exe 文件图标来源，Resources/app.ico 是用户提供的成品图标。 -->
+
+    <!-- 图标 -->
     <ApplicationIcon>Resources\app.ico</ApplicationIcon>
+
+    <!-- 运行时 -->
+    <GenerateErrorReport>true</GenerateErrorReport>
+    <RollForward>LatestMinor</RollForward>
+
+    <!-- ================= 发布配置 ================= -->
+
+    <!-- 单文件 -->
+    <PublishSingleFile>true</PublishSingleFile>
+
+    <!-- 自包含（真正单文件） -->
+    <SelfContained>true</SelfContained>
+
+    <!-- 平台 -->
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+
+    <!-- 不裁剪（WPF 不建议开启） -->
+    <PublishTrimmed>false</PublishTrimmed>
+
+    <!-- Native DLL 打包 -->
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+
+    <!-- 压缩 -->
+    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
+
+    <!-- 不生成调试文件 -->
+    <DebugType>none</DebugType>
+    <DebugSymbols>false</DebugSymbols>
+
   </PropertyGroup>
 
   <ItemGroup>
     <PackageReference Include="System.Text.Json" Version="8.0.5" />
-    <!-- 用于"内嵌浏览器窗口直接登录"(免复制验证码)：托管一个现代 Edge 内核的网页控件。
-         需要用户机器已安装 WebView2 Runtime——Windows 10 1803+/Windows 11 默认随 Edge 预装，
-         绝大多数机器无需额外安装；如未安装，首次使用时 WebView2 控件会自动提示下载。 -->
     <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.2792.45" />
   </ItemGroup>
 
   <ItemGroup>
-    <!-- 让 WPF 在运行时也能通过 pack URI "/Resources/app.ico" 找到这个文件
-         （ApplicationIcon 只决定编译出的 .exe 文件本身的图标，不会让 Window.Icon 这种
-         运行时资源引用生效，两者要分开配置）。 -->
     <Resource Include="Resources\app.ico" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="Resources\Terracotta\terracotta-0.4.2-windows-x86_64.exe">
+      <LogicalName>XCL2.App.Resources.Terracotta.terracotta-0.4.2-windows-x86_64.exe</LogicalName>
+    </EmbeddedResource>
+  </ItemGroup>
+
+  <ItemGroup>
+    <ApplicationDefinition Remove="App.xaml" />
+    <Page Include="App.xaml">
+      <Generator>MSBuild:Compile</Generator>
+      <SubType>Designer</SubType>
+    </Page>
   </ItemGroup>
 
 </Project>

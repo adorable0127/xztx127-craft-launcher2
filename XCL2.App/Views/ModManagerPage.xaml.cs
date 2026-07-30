@@ -1,5 +1,6 @@
 using System.Collections.ObjectModel;
 using System.IO;
+using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
 using Microsoft.Win32;
@@ -256,13 +257,21 @@ public partial class ModManagerPage : UserControl
             return;
         }
 
+        // 需求："导出的整合包支持 zip modrinth 的格式"——用 SaveFileDialog 的双过滤项
+        // 让用户二选一，FilterIndex 是 1-based(第一项=1)，据此判断用户选了哪种格式，
+        // 而不是新开一个额外的格式选择弹窗，操作路径不多绕一步。
         var dialog = new SaveFileDialog
         {
             Title = "导出整合包",
-            Filter = "XCL2 整合包 (*.xclpack)|*.xclpack",
+            Filter = "XCL2 整合包 (*.xclpack)|*.xclpack|Modrinth 整合包 (*.mrpack)|*.mrpack",
+            FilterIndex = 1,
             FileName = $"{version.Id}.xclpack"
         };
         if (dialog.ShowDialog() != true) return;
+
+        // 用户可能只在 FilterIndex=2 时手动改了文件名但没带扩展名，或者反过来在 FilterIndex=1
+        // 时手动打了 .mrpack 扩展名——统一以实际文件名的扩展名为准，比只看 FilterIndex 更可靠。
+        var exportAsMrpack = string.Equals(Path.GetExtension(dialog.FileName), ".mrpack", StringComparison.OrdinalIgnoreCase);
 
         var progressWin = new ProgressWindow("正在导出整合包 ...") { Owner = Window.GetWindow(this) };
         progressWin.Show();
@@ -276,7 +285,10 @@ public partial class ModManagerPage : UserControl
                 ModLoaderVersion = version.ModLoaderVersion
             };
             var progress = new Progress<string>(msg => progressWin.Progress.Report(new ProgressInfo("导出中", 0, 1, msg)));
-            _modpackService.Export(gameDir, dialog.FileName, manifest, progress);
+            if (exportAsMrpack)
+                _modpackService.ExportMrpack(gameDir, dialog.FileName, manifest, progress);
+            else
+                _modpackService.Export(gameDir, dialog.FileName, manifest, progress);
             MessageBox.Show($"整合包已导出到：\n{dialog.FileName}", "成功", MessageBoxButton.OK, MessageBoxImage.Information);
         }
         catch (Exception ex)
@@ -290,7 +302,7 @@ public partial class ModManagerPage : UserControl
         }
     }
 
-    private void ImportModpack_Click(object sender, RoutedEventArgs e)
+    private async void ImportModpack_Click(object sender, RoutedEventArgs e)
     {
         var gameDir = GetEffectiveGameDir();
         if (gameDir == null)
@@ -299,13 +311,31 @@ public partial class ModManagerPage : UserControl
             return;
         }
 
-        var dialog = new OpenFileDialog { Title = "导入整合包", Filter = "XCL2 整合包 (*.xclpack)|*.xclpack|所有文件 (*.*)|*.*" };
+        // 需求："导出的整合包支持 zip modrinth 的格式"——导入这边要跟导出对称：不仅认
+        // XCL2 自己的 .xclpack，也要能直接导入标准 Modrinth .mrpack，以及别的启动器/网站上
+        // 下载下来、后缀直接是 .zip 的整合包（比如有些 CurseForge 客户端整合包分享出来就是 .zip）。
+        var dialog = new OpenFileDialog
+        {
+            Title = "导入整合包",
+            Filter = "所有支持的整合包 (*.xclpack;*.mrpack;*.zip)|*.xclpack;*.mrpack;*.zip|" +
+                     "XCL2 整合包 (*.xclpack)|*.xclpack|Modrinth 整合包 (*.mrpack)|*.mrpack|所有文件 (*.*)|*.*"
+        };
         if (dialog.ShowDialog() != true) return;
 
-        var confirm = MessageBox.Show(
-            "导入会把整合包内的 mods/config/resourcepacks/shaderpacks 合并覆盖到当前选中的版本目录，\n" +
-            "同名文件会被整合包内容覆盖。确定要继续吗？",
-            "确认导入", MessageBoxButton.YesNo, MessageBoxImage.Warning);
+        // 格式判断：先看扩展名是不是 .mrpack，再兜底用 ModpackService.IsMrpack 探测 zip 包内部
+        // 有没有 modrinth.index.json——这样即使用户把 .mrpack 文件手动改名成 .zip，或者反过来
+        // 某些来源打包时用了 .zip 后缀但内容其实是标准 mrpack 结构，也能正确识别，不会走错分支
+        // 导致"解压出来空空如也"这种误导性失败。
+        var isMrpack = string.Equals(Path.GetExtension(dialog.FileName), ".mrpack", StringComparison.OrdinalIgnoreCase)
+            || ModpackService.IsMrpack(dialog.FileName);
+
+        var confirmMsg = isMrpack
+            ? "这是一个 Modrinth 整合包(.mrpack)。导入会解压其中的附带文件(config/资源包等)，\n" +
+              "并按清单逐个下载 mod 到当前选中的版本目录，同名文件会被覆盖。\n" +
+              "部分 mod 下载源如果暂时不可用，会跳过并在导入完成后提示，不影响其余内容导入。确定要继续吗？"
+            : "导入会把整合包内的 mods/config/resourcepacks/shaderpacks 合并覆盖到当前选中的版本目录，\n" +
+              "同名文件会被整合包内容覆盖。确定要继续吗？";
+        var confirm = MessageBox.Show(confirmMsg, "确认导入", MessageBoxButton.YesNo, MessageBoxImage.Warning);
         if (confirm != MessageBoxResult.Yes) return;
 
         var progressWin = new ProgressWindow("正在导入整合包 ...") { Owner = Window.GetWindow(this) };
@@ -313,9 +343,23 @@ public partial class ModManagerPage : UserControl
         try
         {
             var progress = new Progress<string>(msg => progressWin.Progress.Report(new ProgressInfo("导入中", 0, 1, msg)));
-            var manifest = _modpackService.Import(dialog.FileName, gameDir, progress);
-            var nameInfo = manifest != null ? $"\n整合包名称：{manifest.Name}" : "";
-            MessageBox.Show($"整合包已导入。{nameInfo}", "成功", MessageBoxButton.OK, MessageBoxImage.Information);
+            if (isMrpack)
+            {
+                var result = await _modpackService.ImportMrpackAsync(dialog.FileName, gameDir, progress);
+                var failedInfo = result.FailedFiles.Count > 0
+                    ? $"\n\n有 {result.FailedFiles.Count} 个文件下载失败，可能是下载源暂时不可用，\n" +
+                      $"可以之后去「Mod 管理」页手动补装：\n" + string.Join("\n", result.FailedFiles.Take(10)) +
+                      (result.FailedFiles.Count > 10 ? $"\n... 等共 {result.FailedFiles.Count} 个" : "")
+                    : "";
+                MessageBox.Show($"整合包已导入。\n整合包名称：{result.Name}{failedInfo}", "成功",
+                    MessageBoxButton.OK, failedInfo.Length > 0 ? MessageBoxImage.Warning : MessageBoxImage.Information);
+            }
+            else
+            {
+                var manifest = _modpackService.Import(dialog.FileName, gameDir, progress);
+                var nameInfo = manifest != null ? $"\n整合包名称：{manifest.Name}" : "";
+                MessageBox.Show($"整合包已导入。{nameInfo}", "成功", MessageBoxButton.OK, MessageBoxImage.Information);
+            }
             RefreshMods();
         }
         catch (Exception ex)

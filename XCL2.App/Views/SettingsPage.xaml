@@ -206,7 +206,18 @@
             <TextBlock Text="隐私" FontSize="14" FontWeight="Bold" Margin="0,0,0,4"/>
             <CheckBox x:Name="GuestModeCheck" Content="访客模式（启动游戏使用临时账户，不使用已保存的账户；关闭时清理本次会话产生的日志/临时下载文件）"
                       ToolTip="开启后：主页「启动游戏」永远用一个仅本次运行有效的临时离线账户，不会读取/写入账户管理页里保存的真实账户；关闭启动器时自动清理这次运行产生的游戏日志和临时下载文件，不影响已安装的游戏本体、Mod、存档。"
-                      Margin="0,0,0,20"/>
+                      Margin="0,0,0,4"/>
+            <TextBlock Text="访客模式开启期间界面会自动切换为黑色配色，关闭后恢复为下面选择的配色皮肤，方便一眼看出是否处于访客模式。"
+                       FontSize="11" Foreground="{StaticResource TextSecondaryBrush}" Margin="0,0,0,20" TextWrapping="Wrap"/>
+
+            <!-- 配色皮肤：White(默认)/Blue/Yellow/Dark 四选一，独立于访客模式手动切换。
+                 访客模式开启时这个选择会被临时覆盖显示为黑色（见 ThemeService 类注释），
+                 但这里选的值仍然会保存，访客模式关闭后自动恢复显示。 -->
+            <TextBlock Text="配色皮肤" FontSize="14" FontWeight="Bold" Margin="0,0,0,4"/>
+            <ComboBox x:Name="UiSkinCombo" Padding="8" Margin="0,0,0,4" HorizontalAlignment="Left" MinWidth="160"
+                      ToolTip="切换启动器整体配色。访客模式开启期间界面会临时强制显示为黑色，与这里的选择无关；访客模式关闭后恢复显示这里选的皮肤。"/>
+            <TextBlock Text="需要点下面的「保存设置」才会生效；预览效果会在保存后立即应用，不需要重启启动器。"
+                       FontSize="11" Foreground="{StaticResource TextSecondaryBrush}" Margin="0,0,0,20" TextWrapping="Wrap"/>
 
             <!-- 万能皮肤补丁(authlib-injector) 使用的皮肤服务地址：默认使用内置公共服务，
                  有自己皮肤站的用户可以在这里替换成自己的 API Root。只影响"离线账户选择了

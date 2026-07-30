@@ -33,6 +33,11 @@
         <Border Grid.Row="2" Background="{StaticResource PanelBrush}" CornerRadius="10" Padding="24">
             <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
             <Grid>
+                <!-- 整页详情容器：点击步骤3的 Mod 条目时盖住整个步骤内容区，展示 ModDetailPage
+                     （AddToWizardList 模式，选具体版本后加入下面的"已选清单"，不在这里直接下载）。
+                     跟 DownloadCenterPage.xaml 里 DetailHost 是同一个模式。 -->
+                <ContentControl x:Name="DetailHost" Visibility="Collapsed"/>
+
                 <!-- 步骤 0：选择来源（新下载 / 使用现有实例 / 傻瓜式启动 / 导入整合包） -->
                 <StackPanel x:Name="Step0Panel" Visibility="Visible">
                     <TextBlock Text="开始之前：怎么玩？" FontSize="18" FontWeight="Bold" Margin="0,0,0,8"/>
@@ -265,11 +270,13 @@
                                Margin="0,4,0,0" TextWrapping="Wrap"/>
                 </StackPanel>
 
-                <!-- 步骤 3：Mod（可跳过） -->
+                <!-- 步骤 3：Mod（可跳过）—— 点击条目跳转 ModDetailPage 选具体版本，选完加入下面的
+                     "已选清单"；不再是"勾选 + 自动匹配最新版"，清单里锁定的是具体版本文件。 -->
                 <StackPanel x:Name="Step3Panel" Visibility="Collapsed">
                     <TextBlock Text="第三步：选 Mod（可跳过）" FontSize="18" FontWeight="Bold" Margin="0,0,0,8"/>
                     <TextBlock x:Name="Step3HintText" TextWrapping="Wrap" Foreground="{StaticResource TextSecondaryBrush}" Margin="0,0,0,12">
-                        搜索想要的 Mod，勾选后会在最后统一下载。原版（没选加载器）无法装 Mod，这一步会自动跳过。
+                        搜索想要的 Mod，点进条目选择具体版本后会加入下面的"已选清单"，最后按清单里锁定的版本下载。
+                        原版（没选加载器）无法装 Mod，这一步会自动跳过。
                     </TextBlock>
                     <Grid Margin="0,0,0,12">
                         <Grid.ColumnDefinitions>
@@ -280,18 +287,38 @@
                                  KeyDown="ModSearchBox_KeyDown"/>
                         <Button Grid.Column="1" Content="搜索" Style="{StaticResource PrimaryButton}" Click="ModSearch_Click"/>
                     </Grid>
-                    <ListBox x:Name="ModResultsList" Height="260" SelectionMode="Multiple" BorderThickness="1"
+                    <ListBox x:Name="ModResultsList" Height="180" BorderThickness="1"
                              BorderBrush="{StaticResource BorderBrush2}">
                         <ListBox.ItemTemplate>
                             <DataTemplate>
-                                <StackPanel Orientation="Horizontal" Margin="4">
-                                    <CheckBox IsChecked="{Binding IsSelected, Mode=TwoWay}" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                                <Grid Margin="4" Tag="{Binding}" MouseLeftButtonUp="ModResultItem_Click" Cursor="Hand">
                                     <StackPanel>
                                         <TextBlock Text="{Binding Title}" FontWeight="Bold" FontSize="13"/>
                                         <TextBlock Text="{Binding Description}" FontSize="11"
                                                    Foreground="{StaticResource TextSecondaryBrush}" TextWrapping="Wrap" MaxWidth="600"/>
                                     </StackPanel>
-                                </StackPanel>
+                                </Grid>
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
+
+                    <TextBlock Text="已选清单" FontWeight="Bold" FontSize="13" Margin="0,14,0,6"/>
+                    <ListBox x:Name="ModSelectedList" Height="140" BorderThickness="1"
+                             BorderBrush="{StaticResource BorderBrush2}">
+                        <ListBox.ItemTemplate>
+                            <DataTemplate>
+                                <Grid Margin="4">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel Grid.Column="0">
+                                        <TextBlock Text="{Binding Title}" FontWeight="Bold" FontSize="13"/>
+                                        <TextBlock Text="{Binding VersionLabel}" FontSize="11"
+                                                   Foreground="{StaticResource TextSecondaryBrush}"/>
+                                    </StackPanel>
+                                    <Button Grid.Column="1" Content="移除" Tag="{Binding}" Click="RemoveModSelection_Click"/>
+                                </Grid>
                             </DataTemplate>
                         </ListBox.ItemTemplate>
                     </ListBox>

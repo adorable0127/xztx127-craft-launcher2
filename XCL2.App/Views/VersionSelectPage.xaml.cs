@@ -100,6 +100,34 @@ public partial class VersionSelectPage : UserControl
         }
     }
 
+    /// <summary>
+    /// 右键菜单"在中文 Minecraft Wiki 中查看"：跳转到 zh.minecraft.wiki 对应版本号的搜索/条目页。
+    /// Wiki 站内条目路径不完全规律(比如 "Java版 1.20.1" 这种命名规则可能随版本命名规则变化)，
+    /// 这里统一走 Special:Search，命中时 MediaWiki 会自动跳到唯一匹配的条目，没命中也能看到
+    /// 搜索结果页而不是 404，比强行拼一个可能拼错的条目直链更稳妥。
+    /// </summary>
+    private void ViewOnWiki_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not MenuItem { Tag: GameVersion v }) return;
+        OpenMinecraftWiki(v.Id);
+    }
+
+    /// <summary>打开系统默认浏览器访问中文 Minecraft Wiki 对给定关键词的搜索结果。
+    /// 用 Process.Start 的 UseShellExecute 方式打开 URL（不直接拼 Process.Start(url) 是因为
+    /// .NET 默认不会把 url 当可执行文件处理，需要显式声明走 Shell 关联程序）。</summary>
+    internal static void OpenMinecraftWiki(string keyword)
+    {
+        try
+        {
+            var url = "https://zh.minecraft.wiki/?search=" + Uri.EscapeDataString(keyword);
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(url) { UseShellExecute = true });
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show("打开浏览器失败：\n" + ex.Message, "错误", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+    }
+
     private void InstalledListBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (InstalledListBox.SelectedItem is GameVersion v)

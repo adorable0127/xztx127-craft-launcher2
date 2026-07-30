@@ -173,10 +173,22 @@ public class AppConfig
 
     /// <summary>
     /// 收藏的游戏版本 ID 列表（来自下载中心的"☆ 收藏"按钮）。
-    /// 这里先只做版本收藏；Mod/资源包/光影/地图等社区资源的收藏，等接入 Modrinth/CurseForge
-    /// 之后再扩展成统一的收藏项结构（当前任务范围只做游戏版本下载）。
+    /// 保留这个字段只是为了兼容老版本配置文件（升级前已经收藏过版本的用户，配置文件里
+    /// 只有这个字段，没有下面的 FavoriteItems）——ConfigService 加载时会把这里的内容
+    /// 一次性搬进 FavoriteItems（Type=Version），此后新增/取消收藏统一走 FavoriteItems，
+    /// 这个列表不再被写入，只在加载老配置时读一次。新代码不要再往这里加东西。
     /// </summary>
     public List<string> FavoriteVersionIds { get; set; } = new();
+
+    /// <summary>
+    /// 统一的"收藏夹"内容：游戏版本 + Modrinth/CurseForge 的 Mod/材质包/数据包/光影包/地图，
+    /// 现在收藏夹不再局限于"游戏版本"这一种类型，下载中心每个分类的卡片上都能收藏，
+    /// 全部汇总展示在"我的收藏"里，按类型分组。
+    /// 去重规则：同一个 (Type, SourceId, Source) 三元组只保留一条，重复收藏视为取消收藏
+    /// （具体判重逻辑见 FavoriteItem.MatchesKey，跟 DownloadCenterPage 里各个 XxxFavorite_Click
+    /// 处理函数配套使用）。
+    /// </summary>
+    public List<FavoriteItem> FavoriteItems { get; set; } = new();
 
     /// <summary>
     /// 是否启用多线程下载（同时并发下载多个库文件/资源文件，而不是逐个串行下载）。
@@ -223,6 +235,13 @@ public class AppConfig
     public bool GuestModeEnabled { get; set; } = false;
 
     /// <summary>
+    /// 界面配色皮肤：White(默认白色)/Blue/Yellow/Dark(黑色，与访客模式自动切换的配色相同)。
+    /// 用户在设置里手动选择，独立于访客模式；访客模式开启期间会临时覆盖显示为 Dark，
+    /// 关闭访客模式后恢复回这里保存的值。见 <see cref="Services.ThemeService"/>。
+    /// </summary>
+    public string UiSkin { get; set; } = "White";
+
+    /// <summary>
     /// 万能皮肤补丁(authlib-injector) 使用的皮肤服务 API Root。默认使用内置的公共服务
     /// (<see cref="Services.SkinService.DefaultSkinApiRoot"/>)；有自己皮肤站的用户可以在设置里替换。
     /// </summary>
@@ -235,4 +254,17 @@ public class AppConfig
     /// 见 MainWindow.SetMainContent。
     /// </summary>
     public bool EnablePageAnimations { get; set; } = true;
+
+    /// <summary>
+    /// 用户手动指定的陶瓦联机(Terracotta)可执行文件路径。陶瓦联机本体是 burningtnt/Terracotta
+    /// 发布的独立可执行程序(基于 EasyTier 的 P2P 联机工具)，不是本启动器能重新实现的协议——
+    /// 真正的建房/加入房间/房间码交互，全部在陶瓦联机自己的界面里完成，见 TerracottaService 类注释。
+    ///
+    /// 启动器已经内置了一份陶瓦联机可执行文件(EmbeddedResource，见 TerracottaService.EnsureExtracted)，
+    /// 默认情况下用户完全不需要碰这一项——首次点"启动陶瓦联机"会自动把内置版本释放到本地并直接运行。
+    /// 这一项只作为"高级覆盖"保留：如果用户想手动换成自己下载的其他版本(比如以后陶瓦联机出了
+    /// 新版本、内置版本还没来得及更新)，可以在联机页手动选择一个 exe 路径覆盖内置版本；
+    /// 留空(默认)则始终使用内置版本。
+    /// </summary>
+    public string? TerracottaExecutablePath { get; set; }
 }

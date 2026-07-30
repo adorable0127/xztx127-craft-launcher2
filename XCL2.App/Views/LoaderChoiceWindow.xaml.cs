@@ -29,7 +29,8 @@ public partial class LoaderChoiceWindow : Window
         SelectedLoader = OptVanilla.IsChecked == true ? ServerCoreType.Vanilla
             : OptFabric.IsChecked == true ? ServerCoreType.Fabric
             : OptForge.IsChecked == true ? ServerCoreType.Forge
-            : ServerCoreType.NeoForge;
+            : OptNeoForge.IsChecked == true ? ServerCoreType.NeoForge
+            : ServerCoreType.Quilt;
 
         DialogResult = true;
         Close();

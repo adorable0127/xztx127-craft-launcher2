@@ -19,6 +19,7 @@
                     <Button Content="🏠 主页" Style="{StaticResource SideNavButton}" Click="NavHome_Click"/>
                     <Button Content="📁 版本选择" Style="{StaticResource SideNavButton}" Click="NavVersions_Click" Margin="0,4,0,0"/>
                     <Button Content="⬇ 下载" Style="{StaticResource SideNavButton}" Click="NavDownload_Click" Margin="0,4,0,0"/>
+                    <Button Content="🌐 联机" Style="{StaticResource SideNavButton}" Click="NavMultiplayer_Click" Margin="0,4,0,0"/>
                     <Button Content="🧩 Mod 管理" Style="{StaticResource SideNavButton}" Click="NavModManager_Click" Margin="0,4,0,0"/>
                     <Button Content="🖥 服务端管理" Style="{StaticResource SideNavButton}" Click="NavServerManager_Click" Margin="0,4,0,0"/>
                     <Button Content="👤 账户管理" Style="{StaticResource SideNavButton}" Click="NavAccounts_Click" Margin="0,4,0,0"/>

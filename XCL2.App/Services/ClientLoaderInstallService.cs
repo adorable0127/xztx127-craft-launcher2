@@ -32,6 +32,10 @@ namespace XCL2.App.Services;
 public class ClientLoaderInstallService : IDisposable
 {
     private const string FabricMetaBase = "https://meta.fabricmc.net/v2";
+    /// <summary>Quilt 官方 Meta API，接口形状(端点路径/返回字段)跟 Fabric Meta 几乎一一对应——
+    /// Quilt 本来就是从 Fabric Loader fork 出来的，两边团队一直保持 Meta API 兼容，
+    /// 这也是下面 Quilt 相关方法能直接照抄 Fabric 那几个方法、只换 base url 和产物文件名前缀的原因。</summary>
+    private const string QuiltMetaBase = "https://meta.quiltmc.org/v3";
     private const string ForgeMavenBase = "https://maven.minecraftforge.net/net/minecraftforge/forge";
     private const string NeoForgeMavenBase = "https://maven.neoforged.net/releases/net/neoforged/neoforge";
 
@@ -88,6 +92,42 @@ public class ClientLoaderInstallService : IDisposable
             {
                 DisplayVersion = v.GetProperty("version").GetString()!,
                 IsRecommended = v.TryGetProperty("stable", out var stable) && stable.GetBoolean()
+            });
+        }
+        return result;
+    }
+
+    /// <summary>Quilt：客户端支持的 MC 版本列表。跟 GetFabricMcVersionsAsync 是同一套过滤逻辑
+    /// (只保留 stable=true 的正式版)，Quilt Meta 的 /versions/game 返回结构跟 Fabric Meta 一致。</summary>
+    public async Task<List<string>> GetQuiltMcVersionsAsync(CancellationToken ct = default)
+    {
+        var json = await _http.GetStringAsync($"{QuiltMetaBase}/versions/game", ct);
+        using var doc = JsonDocument.Parse(json);
+        var result = new List<string>();
+        foreach (var v in doc.RootElement.EnumerateArray())
+        {
+            if (v.TryGetProperty("stable", out var stable) && !stable.GetBoolean()) continue;
+            result.Add(v.GetProperty("version").GetString()!);
+        }
+        return result;
+    }
+
+    /// <summary>Quilt：可用 loader 版本列表。</summary>
+    public async Task<List<ServerCoreBuild>> GetQuiltLoaderVersionsAsync(CancellationToken ct = default)
+    {
+        var json = await _http.GetStringAsync($"{QuiltMetaBase}/versions/loader", ct);
+        using var doc = JsonDocument.Parse(json);
+        var result = new List<ServerCoreBuild>();
+        foreach (var v in doc.RootElement.EnumerateArray())
+        {
+            result.Add(new ServerCoreBuild
+            {
+                DisplayVersion = v.GetProperty("version").GetString()!,
+                // Quilt Meta 的 loader 列表条目本身不像 Fabric 那样带 "stable" 字段，
+                // 官方约定"不含 -beta/-rc 等预发布后缀的版本号"即视为稳定版，
+                // 用字符串是否包含连字符来判断，跟 Quilt 官方文档/其它启动器(PCL2/HMCL)
+                // 采用的判断口径一致。
+                IsRecommended = !v.GetProperty("version").GetString()!.Contains('-')
             });
         }
         return result;
@@ -210,6 +250,104 @@ public class ClientLoaderInstallService : IDisposable
                 progress?.Report(new ProgressInfo(
                     $"Fabric API 下载失败（{ex.Message}），已跳过，不影响 Fabric Loader 本身的安装",
                     1, 1, FabricApiModrinthSlug));
+            }
+        }
+
+        progress?.Report(new ProgressInfo("安装完成", 1, 1, versionId));
+        return versionId;
+    }
+
+    /// <summary>QSL(Quilt Standard Libraries) 在 Modrinth 上的项目 slug，固定值（官方项目，不会变）。</summary>
+    private const string QslModrinthSlug = "qsl";
+
+    /// <summary>
+    /// 安装 Quilt 客户端到 .minecraft/versions/{versionId}/。跟 InstallFabricClientAsync 的整体
+    /// 步骤(装原版父版本 -> 下载官方现成 profile json -> 补库文件)基本一致，只有一处跟 Fabric 不同：
+    /// Quilt Meta 的 profile json 端点是 "/versions/loader/{mc}/{loader}/profile/json"，
+    /// 路径里不含"installer 版本"这一段——Quilt 的服务端把 installer 版本收敛成官方固定值，
+    /// 不需要像 Fabric 那样先单独查一次 installer 列表再拼进 url。
+    ///
+    /// 可选步骤：QSL(Quilt Standard Libraries) 对应 Fabric API 在 Quilt 生态里的角色，同样发布在
+    /// Modrinth 上(slug "qsl")。跟 Fabric API 一样做成可选自动安装项，交给用户在安装界面勾选，
+    /// 不强制默认装——QSL 不是所有 Quilt mod 的通用硬依赖(存在纯用 Quilt 特性、完全不依赖 QSL 的
+    /// mod)，但对绝大多数 Quilt 生态的模组来说都是常见依赖，跟 Fabric API 的定位一致，所以采用
+    /// 同样"可选、默认不勾、失败不影响 Loader 本身安装结果"的处理方式。
+    /// </summary>
+    /// <param name="installQsl">true 时额外从 Modrinth 下载安装 QSL（可选步骤，失败不影响
+    /// Quilt Loader 本身的安装结果——见方法内部注释）。</param>
+    public async Task<string> InstallQuiltClientAsync(string minecraftDir, string mcVersion, string loaderVersion,
+        IProgress<ProgressInfo>? progress, CancellationToken ct = default, bool installQsl = false)
+    {
+        // 1. 确保原版父版本已装好（Quilt 客户端启动同样需要原版 client.jar + assets）
+        var parentVersionDir = Path.Combine(minecraftDir, "versions", mcVersion);
+        if (!File.Exists(Path.Combine(parentVersionDir, $"{mcVersion}.jar")))
+        {
+            progress?.Report(new ProgressInfo("安装原版父版本", 0, 1, mcVersion));
+            var manifest = await _vanillaDownloader.GetVersionManifestAsync(ct);
+            var entry = manifest.Versions.FirstOrDefault(v => v.Id == mcVersion)
+                ?? throw new InvalidOperationException($"在版本清单中找不到 MC 版本 {mcVersion}，无法安装 Quilt 所需的原版父版本。");
+            await _vanillaDownloader.InstallVersionAsync(minecraftDir, entry, progress, ct);
+        }
+
+        // 2. 下载现成的客户端 profile json（Quilt Meta 直接给完整 json，跟 Fabric 一样不需要
+        // 本地跑安装器；路径里没有 installer 版本这一段，见方法上方注释）。
+        var profileUrl = $"{QuiltMetaBase}/versions/loader/{mcVersion}/{loaderVersion}/profile/json";
+        progress?.Report(new ProgressInfo("下载 Quilt 版本信息", 0, 1, "profile/json"));
+        var profileJson = await _http.GetStringAsync(profileUrl, ct);
+
+        var detail = JsonSerializer.Deserialize<VersionDetail>(profileJson)
+            ?? throw new InvalidOperationException("Quilt 返回的版本信息解析失败。");
+
+        // Quilt Meta 返回的 json 里 id 字段形如 "quilt-loader-0.24.0-1.20.1"，直接采用官方给的命名。
+        var versionId = string.IsNullOrEmpty(detail.Id) ? $"quilt-loader-{loaderVersion}-{mcVersion}" : detail.Id;
+        var versionDir = Path.Combine(minecraftDir, "versions", versionId);
+        Directory.CreateDirectory(versionDir);
+
+        var versionJsonPath = Path.Combine(versionDir, $"{versionId}.json");
+        await File.WriteAllTextAsync(versionJsonPath, profileJson, ct);
+
+        // 3. 补下 libraries：Quilt profile json 里的库同样是"name+url"风格(无 downloads 对象)，
+        // 复用跟 Fabric 共用的同一套下载逻辑。
+        progress?.Report(new ProgressInfo("下载 Quilt 加载器库文件", 0, Math.Max(detail.Libraries.Count, 1), versionId));
+        await _vanillaDownloader.DownloadLibrariesOnlyAsync(minecraftDir, detail, progress, ct);
+
+        // 4. 可选：QSL（Quilt 生态里事实上的"标准库"，很多 Quilt 模组依赖它，跟 Fabric API 一样
+        // 常有新手不知道要单独装）。这一步失败不应该让整个 Quilt Loader 安装被判定为失败——
+        // loader 本身已经装好、可以正常启动游戏，QSL 只是常见依赖，装不上顶多是后续装某些 mod
+        // 时提示缺依赖，用户还能再手动装一次，不应该因为网络抖动就让用户以为 Quilt 都没装上。
+        if (installQsl)
+        {
+            progress?.Report(new ProgressInfo("下载 QSL", 0, 1, QslModrinthSlug));
+            try
+            {
+                var versions = await _modrinth.GetVersionsAsync(QslModrinthSlug, mcVersion, ct);
+                // QSL 的 Modrinth 版本列表理论上只发布 Quilt 构建，但保险起见仍按 loaders 字段过滤，
+                // 跟 Fabric API 那边的处理方式保持一致，避免装到不兼容的构建。
+                var qslVersion = versions.FirstOrDefault(v =>
+                    v.Loaders != null && v.Loaders.Any(l => l.Equals("quilt", StringComparison.OrdinalIgnoreCase)))
+                    ?? versions.FirstOrDefault();
+
+                if (qslVersion == null)
+                {
+                    progress?.Report(new ProgressInfo(
+                        $"QSL 没有找到适配 MC {mcVersion} 的版本，已跳过（不影响 Quilt Loader 本身的安装）",
+                        1, 1, QslModrinthSlug));
+                }
+                else
+                {
+                    var qslProgress = new Progress<string>(msg =>
+                        progress?.Report(new ProgressInfo("下载 QSL", 0, 1, msg)));
+                    await _modrinth.DownloadResourceAsync(minecraftDir, ModrinthResourceType.Mod, qslVersion,
+                        qslProgress, saveName: null, ct);
+                }
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                // 同上：QSL 下载失败不应该让整个安装抛异常，只在进度里提示一下，
+                // 让用户知道"loader 装好了，但 QSL 这一步没成功"，而不是笼统地报"安装失败"。
+                progress?.Report(new ProgressInfo(
+                    $"QSL 下载失败（{ex.Message}），已跳过，不影响 Quilt Loader 本身的安装",
+                    1, 1, QslModrinthSlug));
             }
         }
 

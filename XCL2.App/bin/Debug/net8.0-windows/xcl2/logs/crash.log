@@ -1,0 +1,8 @@
+[2026/7/30 21:07:45] [下载失败] System.InvalidOperationException: 这个文件没有可用的下载链接（CurseForge 有部分作者禁止了第三方工具下载，只能去官网手动下载）。
+   at XCL2.App.Services.CurseForgeService.DownloadResourceAsync(String minecraftDir, CurseForgeResourceKind kind, CurseForgeFile file, IProgress`1 progress, String saveName, CancellationToken ct) in D:\xcl\XCL2.App\Services\CurseForgeService.cs:line 206
+   at XCL2.App.Views.DownloadCenterPage.DownloadResourceInlineAsync(UnifiedResourceItem item, InlineVersionEntry entry) in D:\xcl\XCL2.App\Views\DownloadCenterPage.xaml.cs:line 1070
+
+[2026/7/30 21:11:26] [下载失败] System.InvalidOperationException: 这个文件没有可用的下载链接（CurseForge 有部分作者禁止了第三方工具下载，只能去官网手动下载）。
+   at XCL2.App.Services.CurseForgeService.DownloadResourceAsync(String minecraftDir, CurseForgeResourceKind kind, CurseForgeFile file, IProgress`1 progress, String saveName, CancellationToken ct) in D:\xcl\XCL2.App\Services\CurseForgeService.cs:line 206
+   at XCL2.App.Views.DownloadCenterPage.DownloadResourceInlineAsync(UnifiedResourceItem item, InlineVersionEntry entry) in D:\xcl\XCL2.App\Views\DownloadCenterPage.xaml.cs:line 1070
+

@@ -1,8 +1,12 @@
 using System.Collections.ObjectModel;
 using System.IO;
+using System.Linq;
+using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Input;
 using System.Windows.Media;
+using System.Windows.Threading;
 using Microsoft.Win32;
 using XCL2.App.Models;
 using XCL2.App.Services;
@@ -10,9 +14,10 @@ using XCL2.App.Services;
 namespace XCL2.App.Views;
 
 /// <summary>
-/// 服务端管理页：目前只实现"核心下载"这一块（Vanilla/Paper/Fabric 直接下载，Forge/NeoForge
-/// 下载安装器 + 本地运行安装）。服务器列表/插件下载/资源包下载等其余功能先占位，
-/// 待后续按优先级逐项实现，避免一次性铺开导致每块都是半成品。
+/// 服务端管理页：目前实现了"核心下载"（Vanilla/Paper/Fabric 直接下载，Forge/NeoForge
+/// 下载安装器 + 本地运行安装）、"服务器列表"、"资源包下载"（复用 DownloadCenterPage 同一套
+/// Modrinth/CurseForge 搜索+下载逻辑，目标目录换成选中的服务器实例）。"插件下载"仍先占位，
+/// 待后续实现。
 /// </summary>
 public partial class ServerManagerPage : UserControl
 {
@@ -28,12 +33,30 @@ public partial class ServerManagerPage : UserControl
     private ServerCoreDownloadResult? _pendingInstallResult;
     private string? _pendingInstallTargetDir;
 
+    // ===== 资源包下载面板：与 DownloadCenterPage 的材质包分类共用 ModrinthService/CurseForgeService/
+    // ModSearchService（这几个服务类本身不跟 .minecraft 目录绑定，创建成本也很低，没必要要求
+    // MainWindow 注入同一个实例；跟 DownloadCenterPage 保持各自独立一份是这个项目里已有的模式，
+    // 比如 CurseForgeMapPickerWindow/ModManagerPage 也都是各自 new 一份）。
+    private readonly ModrinthService _resourceModrinth = new();
+    private readonly CurseForgeKeyService _resourceCurseForgeKeyService = new();
+    private CurseForgeService? _resourceCurseForge;
+    private ModSearchService? _resourceModSearch;
+    private readonly ObservableCollection<UnifiedResourceItem> _serverResources = new();
+    private ModSource _serverResourceSource = ModSource.Combined;
+    /// <summary>当前"服务端资源下载"面板选中的资源类型，默认插件——服务端场景下插件是最常用的
+    /// 下载需求（Bukkit/Spigot/Paper 生态），跟客户端默认"Mod"分类的默认值不同。</summary>
+    private ModrinthResourceType _serverResourceType = ModrinthResourceType.Plugin;
+    private DispatcherTimer? _serverResourceDebounceTimer;
+    private Action? _pendingServerResourceDebouncedAction;
+    private int _serverResourceSearchSeq;
+    private bool _serverResourcePanelLoaded;
+
     /// <summary>
     /// 是否已经跑完构造函数里的 InitializeComponent()。
     ///
     /// 崩溃根因：与 DownloadCenterPage 完全相同的时序问题——XAML 里左侧分类栏默认选中的
     /// RadioButton 会在 InitializeComponent() 解析阶段同步触发 Checked 事件，但此时
-    /// CorePanel/InstancesPanel/PlaceholderPanel/PlaceholderTitle 等自动生成字段还没赋值，
+    /// CorePanel/InstancesPanel/ServerResourcePanel 等自动生成字段还没赋值，
     /// Category_Checked 一读就是 NullReferenceException。用同一套 _initialized 短路方案。
     /// </summary>
     private bool _initialized;
@@ -49,6 +72,16 @@ public partial class ServerManagerPage : UserControl
 
         TargetDirBox.Text = System.IO.Path.Combine(App.DataDir, "servers");
 
+        ServerResourceListBox.ItemsSource = _serverResources;
+        _serverResourceDebounceTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(500) };
+        _serverResourceDebounceTimer.Tick += (_, _) =>
+        {
+            _serverResourceDebounceTimer.Stop();
+            var action = _pendingServerResourceDebouncedAction;
+            _pendingServerResourceDebouncedAction = null;
+            action?.Invoke();
+        };
+
         _initialized = true;
         Category_Checked(CatCoreDownload, new RoutedEventArgs()); // 补上初始化阶段被跳过的那次面板显隐
 
@@ -63,16 +96,24 @@ public partial class ServerManagerPage : UserControl
 
         CorePanel.Visibility = tag == "core" ? Visibility.Visible : Visibility.Collapsed;
         InstancesPanel.Visibility = tag == "instances" ? Visibility.Visible : Visibility.Collapsed;
-        PlaceholderPanel.Visibility = tag is "core" or "instances" ? Visibility.Collapsed : Visibility.Visible;
+        // "插件下载"和"资源包"现在共用同一个 ServerResourcePanel（内部靠 SrvRes* 单选按钮切换
+        // 具体资源类型），不再是两个分开的入口/占位符。左侧点"插件下载"时把面板内的类型选择器
+        // 也同步切到"插件"，点"资源包"时切到"资源包"，避免出现"点插件却看到材质包"的错觉。
+        ServerResourcePanel.Visibility = tag is "plugins" or "resourcepack" ? Visibility.Visible : Visibility.Collapsed;
 
         if (tag == "instances") RefreshInstanceList();
-
-        PlaceholderTitle.Text = tag switch
+        if (tag == "plugins")
         {
-            "plugins" => "插件下载",
-            "resourcepack" => "服务端资源包下载",
-            _ => ""
-        };
+            InitServerResourcePanel();
+            if (SrvResPlugin.IsChecked != true) SrvResPlugin.IsChecked = true;
+            else RefreshServerResourceTitle();
+        }
+        else if (tag == "resourcepack")
+        {
+            InitServerResourcePanel();
+            if (SrvResResourcePack.IsChecked != true) SrvResResourcePack.IsChecked = true;
+            else RefreshServerResourceTitle();
+        }
     }
 
     private async void CoreType_Checked(object sender, RoutedEventArgs e)
@@ -845,5 +886,344 @@ public partial class ServerManagerPage : UserControl
         var wizard = new CreateServerWindow(_owner, reinstallTarget: instance) { Owner = Window.GetWindow(this) };
         wizard.ShowDialog();
         RefreshInstanceList();
+    }
+
+    // ===== 服务端资源下载面板：统一承载 插件/资源包/数据包/光影包/Mod 五个分类，逻辑结构
+    // 对齐 DownloadCenterPage 材质包分类那一套（SwitchResourceCategory/RunResourceSearchAsync/
+    // ViewResourceVersions_Click），区别是：1) 目标目录来自"选中的服务器实例"而不是
+    // ".minecraft 版本目录"；2) 用 _serverResourceType 记录当前选中的资源类型，所有搜索/下载
+    // 都按这个类型分派，不再像之前那样写死 ModrinthResourceType.ResourcePack。 =====
+
+    private CurseForgeService GetResourceCurseForge() => _resourceCurseForge ??= new CurseForgeService(_resourceCurseForgeKeyService);
+    private ModSearchService GetResourceModSearch() => _resourceModSearch ??= new ModSearchService(_resourceModrinth, GetResourceCurseForge());
+
+    private void ServerResourceDebounce(Action action)
+    {
+        if (!_initialized || _serverResourceDebounceTimer == null) return;
+        _pendingServerResourceDebouncedAction = action;
+        _serverResourceDebounceTimer.Stop();
+        _serverResourceDebounceTimer.Start();
+    }
+
+    /// <summary>第一次切到"插件下载"/"资源包"分类时：填充服务器下拉框 + 触发一次默认搜索（浏览热门）。
+    /// 之后再切回来不重复搜索，跟 DownloadCenterPage 的 _lastLoadedResourceType 是同一个思路——
+    /// 用 _serverResourcePanelLoaded 记录"是否已经初始化过一次"。</summary>
+    private void InitServerResourcePanel()
+    {
+        RefreshServerTargetCombo();
+
+        if (_serverResourcePanelLoaded) return;
+        _serverResourcePanelLoaded = true;
+        _ = RunServerResourceSearchAsync();
+    }
+
+    /// <summary>资源类型切换(插件/资源包/数据包/光影包/Mod)：更新标题文案、决定"目标世界文件夹"
+    /// 输入框是否显示(只有数据包需要)，并重新触发一次搜索——不同类型对应完全不同的 Modrinth
+    /// project_type/CurseForge classId，结果集不能沿用上一个类型的搜索结果。</summary>
+    private void ServerResourceType_Checked(object sender, RoutedEventArgs e)
+    {
+        if (!_initialized) return;
+        if (sender is not RadioButton rb || rb.Tag is not string tag) return;
+        if (!Enum.TryParse<ModrinthResourceType>(tag, out var type)) return;
+
+        _serverResourceType = type;
+        ServerDataPackWorldPanel.Visibility = type == ModrinthResourceType.DataPack ? Visibility.Visible : Visibility.Collapsed;
+        RefreshServerResourceTitle();
+        _ = RunServerResourceSearchAsync();
+    }
+
+    private void RefreshServerResourceTitle()
+    {
+        ServerResourcePanelTitle.Text = _serverResourceType switch
+        {
+            ModrinthResourceType.Plugin => "服务端插件下载",
+            ModrinthResourceType.ResourcePack => "服务端资源包下载",
+            ModrinthResourceType.DataPack => "服务端数据包下载",
+            ModrinthResourceType.Shader => "服务端光影包下载",
+            ModrinthResourceType.Mod => "服务端 Mod 下载",
+            _ => "服务端资源下载"
+        };
+    }
+
+    /// <summary>刷新"下载到服务器"下拉框的候选列表。每次切到这个分类都刷一次（而不是只在
+    /// 首次加载时刷），这样如果用户是先创建了服务器、再回来点资源分类，下拉框也能看到新建的。
+    /// 尽量保留用户原来选中的那一项（按 Id 比较，服务器改名不受影响）。</summary>
+    private void RefreshServerTargetCombo()
+    {
+        var previouslySelected = (ServerTargetCombo.SelectedItem as ServerInstance)?.Id;
+        var instances = _owner.ServerInstanceService.Instances;
+
+        ServerTargetCombo.ItemsSource = instances;
+        if (instances.Count == 0)
+        {
+            ServerResourceNoTargetHint.Visibility = Visibility.Visible;
+            ServerResourceListBox.Visibility = Visibility.Collapsed;
+            return;
+        }
+
+        ServerResourceNoTargetHint.Visibility = Visibility.Collapsed;
+        ServerResourceListBox.Visibility = Visibility.Visible;
+
+        var matched = previouslySelected != null ? instances.FirstOrDefault(i => i.Id == previouslySelected) : null;
+        ServerTargetCombo.SelectedItem = matched ?? instances.FirstOrDefault(i => i.IsDefault) ?? instances[0];
+        RefreshServerResourceModLoaderVisibility();
+    }
+
+    /// <summary>选服务器实例变化时：Mod 分类只有目标是 Fabric/Forge/NeoForge(modded 服务端)才有意义，
+    /// 纯 Vanilla/Paper/Purpur 服务端选中时禁用"Mod"这个类型按钮，避免用户装了一堆装不上的 mod jar。
+    /// 插件(Plugin)不受此限制——插件是 Bukkit/Spigot/Paper 生态的东西，跟 Mod 完全是两回事。</summary>
+    private void ServerTargetCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (!_initialized) return;
+        RefreshServerResourceModLoaderVisibility();
+    }
+
+    private void RefreshServerResourceModLoaderVisibility()
+    {
+        var target = ServerTargetCombo.SelectedItem as ServerInstance;
+        var isModdedCore = target != null && target.CoreType is ServerCoreType.Fabric or ServerCoreType.Forge or ServerCoreType.NeoForge;
+        SrvResMod.IsEnabled = isModdedCore;
+        if (!isModdedCore && SrvResMod.IsChecked == true)
+        {
+            // 当前选的服务器不支持 Mod（比如切到了 Paper），自动退回"插件"分类，
+            // 而不是让用户停留在一个"选了也下载不了"的死状态上。
+            SrvResPlugin.IsChecked = true;
+        }
+    }
+
+    private async void ServerResourceSearch_Click(object sender, RoutedEventArgs e) => await RunServerResourceSearchAsync(showEmptyHint: true);
+
+    /// <summary>"重置条件"：清空名称/游戏版本输入框，重新按当前类型搜索一次（浏览热门资源）。
+    /// 不清空"目标世界文件夹"（数据包场景），也不重置类型/来源/目标服务器——这几个决定的是
+    /// "这次操作的对象是什么"，跟"筛选条件"是两回事，重置筛选不应该连带清空这些选择。</summary>
+    private void ServerResourceFilterReset_Click(object sender, RoutedEventArgs e)
+    {
+        ServerResourceSearchBox.Text = "";
+        ServerResourceGameVersionBox.Text = "";
+        _serverResourceDebounceTimer?.Stop();
+        _ = RunServerResourceSearchAsync(showEmptyHint: true);
+    }
+
+    private void ServerResourceFilter_Changed(object sender, RoutedEventArgs e) => ServerResourceDebounce(() => _ = RunServerResourceSearchAsync());
+
+    private void ServerResourceSourceCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (!_initialized) return;
+        _serverResourceSource = ((ServerResourceSourceCombo.SelectedItem as ComboBoxItem)?.Tag as string) switch
+        {
+            "modrinth" => ModSource.Modrinth,
+            "curseforge" => ModSource.CurseForge,
+            _ => ModSource.Combined
+        };
+        _ = RunServerResourceSearchAsync();
+    }
+
+    private async Task RunServerResourceSearchAsync(bool showEmptyHint = false)
+    {
+        var seq = ++_serverResourceSearchSeq;
+        try
+        {
+            var keyword = ServerResourceSearchBox.Text?.Trim() ?? "";
+            var gameVersion = ServerResourceGameVersionBox.Text?.Trim();
+            // 插件/Mod 可以按目标服务器的核心类型进一步过滤，减少搜到装不上的结果：
+            // - Mod 场景：核心类型就是加载器(Fabric/Forge/NeoForge)，直接传。
+            // - 插件场景：只有 Paper 核心才有意义传"paper"分类facet(Modrinth 插件分类用的是
+            //   paper/spigot/purpur/bukkit/folia 这套词汇，Vanilla/Fabric/Forge/NeoForge
+            //   对插件搜索毫无意义，传了反而会把结果过滤没——所以这里只在核心是 Paper 时才传，
+            //   其余核心类型(包括还没做插件下载的 Vanilla)不加这个 facet，交给用户自己筛选)。
+            var targetCore = (ServerTargetCombo.SelectedItem as ServerInstance)?.CoreType;
+            var loaderFilter = _serverResourceType == ModrinthResourceType.Mod
+                ? targetCore?.ToString()
+                : (_serverResourceType == ModrinthResourceType.Plugin && targetCore == ServerCoreType.Paper
+                    ? "paper" : null);
+            var outcome = await GetResourceModSearch().SearchResourcesAsync(_serverResourceSource, _serverResourceType,
+                keyword, string.IsNullOrEmpty(gameVersion) ? null : gameVersion, modLoader: loaderFilter);
+
+            if (seq != _serverResourceSearchSeq) return; // 期间已有更新的搜索发出，这次结果已过时，丢弃
+
+            _serverResources.Clear();
+            var showIcons = _owner.ConfigService.Config.ShowModIcons;
+            foreach (var item in outcome.Items)
+            {
+                item.ShowIcon = showIcons;
+                _serverResources.Add(item);
+            }
+
+            if (showEmptyHint)
+            {
+                if (outcome.Items.Count == 0 && outcome.Warnings.Count == 0)
+                    MessageBox.Show("没有找到匹配的资源，换个关键词试试。", "提示", MessageBoxButton.OK, MessageBoxImage.Information);
+                else if (outcome.Warnings.Count > 0)
+                    MessageBox.Show(string.Join("\n", outcome.Warnings), "部分来源搜索失败", MessageBoxButton.OK, MessageBoxImage.Warning);
+            }
+        }
+        catch (Exception ex)
+        {
+            if (seq != _serverResourceSearchSeq) return;
+            if (showEmptyHint)
+                ErrorPresenter.ShowFriendlyError("搜索失败，可能是网络连接问题，请检查网络后重试。", $"[搜索失败] {ex}", "搜索失败");
+        }
+    }
+
+    private async void ServerResourceListItem_Click(object sender, MouseButtonEventArgs e)
+    {
+        if (sender is not Grid grid || grid.Tag is not UnifiedResourceItem item) return;
+        await ToggleServerResourceExpandAsync(item);
+    }
+
+    /// <summary>展开/收起服务端资源条目的内联版本面板，跟 DownloadCenterPage.ToggleResourceExpandAsync
+    /// 是同一个思路，区别只在于：1) 下载目标目录是 ServerTargetCombo 选中的服务器实例目录，
+    /// 不是 .minecraft 文件夹；2) 数据包场景下"目标世界文件夹"来自 ServerDataPackWorldBox 这个
+    /// 单一输入框（不是像客户端那样扫描现有存档列表），所以 SaveNames 只填一项。</summary>
+    private async Task ToggleServerResourceExpandAsync(UnifiedResourceItem item)
+    {
+        if (item.IsExpanded)
+        {
+            item.IsExpanded = false;
+            return;
+        }
+
+        if (ServerTargetCombo.SelectedItem is not ServerInstance targetInstance)
+        {
+            MessageBox.Show("请先在上面选择一个要下载到的服务器（还没有服务器的话，先去「服务器列表」创建一个）。",
+                "提示", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        foreach (var other in _serverResources) if (other != item) other.IsExpanded = false;
+        item.IsExpanded = true;
+        if (item.VersionsLoaded) return;
+
+        item.IsDataPack = _serverResourceType == ModrinthResourceType.DataPack;
+        if (item.IsDataPack)
+        {
+            var worldName = string.IsNullOrWhiteSpace(ServerDataPackWorldBox.Text) ? "world" : ServerDataPackWorldBox.Text.Trim();
+            item.SaveNames.Clear();
+            item.SaveNames.Add(worldName);
+            item.SelectedSaveName = worldName;
+        }
+
+        item.IsLoadingVersions = true;
+        try
+        {
+            var gameVersion = ServerResourceGameVersionBox.Text?.Trim();
+            item.Versions.Clear();
+
+            if (item.Source == ModSource.Modrinth)
+            {
+                var versions = await _resourceModrinth.GetVersionsAsync(item.SourceId, string.IsNullOrEmpty(gameVersion) ? null : gameVersion);
+                foreach (var v in versions) item.Versions.Add(new InlineVersionEntry(v));
+            }
+            else if (item.Source == ModSource.CurseForge)
+            {
+                // ModrinthResourceType 和 CurseForgeResourceKind 是两套独立的枚举(历史遗留，
+                // 前者还多一个 Mod 值)；Mod 类型的服务端下载目前只支持 Modrinth 来源
+                // (CurseForgeResourceKind 没有 Mod 这个成员)。
+                if (_serverResourceType == ModrinthResourceType.Mod)
+                {
+                    item.IsExpanded = false;
+                    MessageBox.Show("Mod 类型目前仅支持从 Modrinth 下载，请把上方来源切换为「仅 Modrinth」或「综合」。",
+                        "提示", MessageBoxButton.OK, MessageBoxImage.Information);
+                    return;
+                }
+
+                var modId = int.Parse(item.SourceId);
+                var files = await GetResourceCurseForge().GetFilesAsync(modId, string.IsNullOrEmpty(gameVersion) ? null : gameVersion);
+                foreach (var f in files) item.Versions.Add(new InlineVersionEntry(f));
+            }
+            item.HasNoResults = item.Versions.Count == 0;
+            item.VersionsLoaded = true;
+        }
+        catch (CurseForgeKeyMissingException ex)
+        {
+            item.IsExpanded = false;
+            MessageBox.Show(ex.Message, "未配置 Key", MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+        catch (Exception ex)
+        {
+            item.IsExpanded = false;
+            ErrorPresenter.ShowFriendlyError("获取版本列表失败，可能是网络连接问题或下载源暂时不可用，请检查网络后重试。", $"[获取版本列表失败] {ex}", "获取版本列表失败");
+        }
+        finally
+        {
+            item.IsLoadingVersions = false;
+        }
+    }
+
+    /// <summary>展开面板里点"下载"：这里的 Tag 是 InlineVersionEntry，服务端场景的宿主条目
+    /// 只可能来自 _serverResources（跟 DownloadCenterPage 的 Mod/Resource 两种面板是不同的
+    /// ObservableCollection 实例，不会混淆），所以直接在 _serverResources 里按引用找宿主，
+    /// 不需要像 DownloadCenterPage 那样沿可视化树查找——这个页面的展开面板只服务一种场景。</summary>
+    private async void InlineVersionDownload_Click(object sender, RoutedEventArgs e)
+    {
+        // 同 DownloadCenterPage：这个处理器挂在 ListBox 上接收冒泡的 Button.Click，
+        // 因为按钮的 DataTemplate 定义在 App.xaml 全局资源里，不能直接在按钮上写 Click=。
+        if (FindAncestorButton(e.OriginalSource as DependencyObject) is not Button btn) return;
+        if (btn.Tag is not InlineVersionEntry entry) return;
+        var host = _serverResources.FirstOrDefault(r => r.IsExpanded && r.Versions.Contains(entry));
+        if (host == null) return;
+        await DownloadServerResourceInlineAsync(host, entry);
+    }
+
+    /// <summary>从事件原始来源沿可视化树向上找到最近的 Button。</summary>
+    private static Button? FindAncestorButton(DependencyObject? start)
+    {
+        var current = start;
+        while (current != null)
+        {
+            if (current is Button btn) return btn;
+            current = VisualTreeHelper.GetParent(current);
+        }
+        return null;
+    }
+
+    private async Task DownloadServerResourceInlineAsync(UnifiedResourceItem item, InlineVersionEntry entry)
+    {
+        if (ServerTargetCombo.SelectedItem is not ServerInstance targetInstance)
+        {
+            MessageBox.Show("请先在上面选择一个要下载到的服务器。", "提示", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+        if (item.IsDataPack && string.IsNullOrEmpty(item.SelectedSaveName))
+        {
+            MessageBox.Show("请先填写要安装到哪个存档（数据包必须放进具体存档才会生效）。",
+                "提示", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        var progressWin = new ProgressWindow($"正在下载 {entry.Name} ...") { Owner = Window.GetWindow(this) };
+        progressWin.Show();
+        try
+        {
+            var progress = new Progress<string>(msg => progressWin.Progress.Report(new ProgressInfo("下载中", 0, 1, msg)));
+            string path;
+            if (entry.Source == ModSource.Modrinth)
+            {
+                path = await _resourceModrinth.DownloadResourceAsync(targetInstance.Directory, _serverResourceType,
+                    (ModrinthVersion)entry.RawVersion, progress, item.IsDataPack ? item.SelectedSaveName : null);
+            }
+            else
+            {
+                var kind = _serverResourceType switch
+                {
+                    ModrinthResourceType.Plugin => CurseForgeResourceKind.Plugin,
+                    ModrinthResourceType.ResourcePack => CurseForgeResourceKind.ResourcePack,
+                    ModrinthResourceType.Shader => CurseForgeResourceKind.Shader,
+                    ModrinthResourceType.DataPack => CurseForgeResourceKind.DataPack,
+                    _ => throw new ArgumentOutOfRangeException()
+                };
+                path = await GetResourceCurseForge().DownloadResourceAsync(targetInstance.Directory, kind,
+                    (CurseForgeFile)entry.RawVersion, progress, item.IsDataPack ? item.SelectedSaveName : null);
+            }
+            MessageBox.Show($"下载完成：\n{path}", "成功", MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+        catch (Exception ex)
+        {
+            ErrorPresenter.ShowFriendlyError("下载失败，可能是网络连接问题或下载源暂时不可用，请检查网络后重试。", $"[下载失败] {ex}", "下载失败");
+        }
+        finally
+        {
+            progressWin.Close();
+        }
     }
 }

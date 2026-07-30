@@ -69,6 +69,23 @@ public partial class QuickStartWizardWindow : Window
     private readonly ObservableCollection<SelectableModItem> _modResults = new();
     private readonly ObservableCollection<SelectableResourceItem> _resourceResults = new();
 
+    /// <summary>步骤3"已选清单"：点进 ModDetailPage（AddToWizardList 模式）选中具体版本后加入这里，
+    /// 步骤5下载时按这里锁定的 InlineVersionEntry 下载，不再自动匹配"最新版"。</summary>
+    private readonly ObservableCollection<WizardModSelection> _modSelections = new();
+
+    /// <summary>整页详情显示/收起，同 DownloadCenterPage.ShowDetail/HideDetail 的写法。</summary>
+    private void ShowDetail(ModDetailPage page)
+    {
+        DetailHost.Content = page;
+        DetailHost.Visibility = Visibility.Visible;
+    }
+
+    private void HideDetail()
+    {
+        DetailHost.Visibility = Visibility.Collapsed;
+        DetailHost.Content = null;
+    }
+
     /// <summary>导入整合包成功后会跳过"选版本/选Mod/选资源包"，标记这个状态，步骤 5 的下载编排
     /// 需要区分"走正常流程装的版本/Mod/资源包"和"整合包已经把这些都装好了，只需要装 Java + 启动"。</summary>
     private bool _importedModpack;
@@ -89,6 +106,7 @@ public partial class QuickStartWizardWindow : Window
         BuildVersionCombo.DisplayMemberPath = nameof(ServerCoreBuild.DisplayVersion);
         ModResultsList.ItemsSource = _modResults;
         ResourceResultsList.ItemsSource = _resourceResults;
+        ModSelectedList.ItemsSource = _modSelections;
 
         UpdateAccountStatusText();
         RefreshExistingAccountCombo();
@@ -569,8 +587,93 @@ public partial class QuickStartWizardWindow : Window
 
     private void UpdateModSelectedCount()
     {
-        var count = _modResults.Count(m => m.IsSelected);
+        var count = _modSelections.Count;
         ModSelectedCountText.Text = count > 0 ? $"已选 {count} 个 Mod" : "";
+    }
+
+    /// <summary>点击搜索结果里的一个 Mod 条目：跳转整页详情（AddToWizardList 模式），
+    /// 选具体版本后加入"已选清单"，不在这里下载任何东西——跟 DownloadCenterPage.OpenModDetailAsync
+    /// 是同一个"构造详情页 + 异步拉版本 + ShowGroups"套路，只是模式换成 AddToWizardList。</summary>
+    private async void ModResultItem_Click(object sender, System.Windows.Input.MouseButtonEventArgs e)
+    {
+        if (sender is not Grid grid || grid.Tag is not SelectableModItem selectable) return;
+        var item = selectable.Item;
+
+        var sourceUrl = item.RawItem switch
+        {
+            ModrinthSearchHit h => $"https://modrinth.com/mod/{h.Slug}",
+            CurseForgeMod m => m.Links?.WebsiteUrl,
+            _ => null
+        };
+
+        var detail = new ModDetailPage(
+            ModDetailPage.DetailMode.AddToWizardList,
+            item.Title, item.Description, item.IconUrl, item.Author, item.Downloads,
+            item.SourceLabel, sourceUrl, item, isFavorite: false,
+            onFavoriteToggle: null,
+            onBack: HideDetail,
+            onAddToList: (entry, _) =>
+            {
+                AddOrReplaceModSelection(item, entry);
+                HideDetail();
+            });
+
+        ShowDetail(detail);
+
+        detail.ShowLoading();
+        var groups = await LoadModVersionGroupsAsync(item);
+        detail.ShowGroups(groups);
+    }
+
+    /// <summary>拉取一个 Mod 条目的版本列表并按"加载器+游戏版本"分组——跟
+    /// DownloadCenterPage.LoadModVersionsAsync 是同一套逻辑，这里独立实现一份而不是共享那个方法，
+    /// 因为那个方法直接写回 UnifiedModItem.Versions/Groups（下载中心自己的展示状态），
+    /// 向导这边不需要长期持有这份状态，选完版本就丢弃，直接返回分组列表即可。</summary>
+    private async Task<List<VersionGroup>> LoadModVersionGroupsAsync(UnifiedModItem item)
+    {
+        var mcVersion = McVersionCombo.SelectedItem as string;
+        var entries = new List<InlineVersionEntry>();
+        try
+        {
+            if (item.Source == ModSource.Modrinth)
+            {
+                var versions = await _modrinth.GetVersionsAsync(item.SourceId, mcVersion);
+                foreach (var v in versions) entries.Add(new InlineVersionEntry(v));
+            }
+            else if (item.Source == ModSource.CurseForge)
+            {
+                var modId = int.Parse(item.SourceId);
+                var files = await GetCurseForge().GetFilesAsync(modId, mcVersion);
+                foreach (var f in files) entries.Add(new InlineVersionEntry(f));
+            }
+        }
+        catch (Exception ex)
+        {
+            ErrorPresenter.ShowFriendlyError("获取版本列表失败，可能是网络连接问题或下载源暂时不可用，请检查网络后重试。",
+                $"[一键启动向导 - 获取Mod版本列表失败] {ex}", "获取版本列表失败");
+            return new List<VersionGroup>();
+        }
+
+        var groups = ModVersionGrouping.Group(entries);
+        if (groups.Count > 0) groups[0].IsExpanded = true;
+        return groups;
+    }
+
+    /// <summary>加入"已选清单"：同一个 Mod（按 Source+SourceId 判断）重复选择会替换掉旧的选择，
+    /// 而不是重复添加两条——用户在详情页里换了个版本重新点"加入清单"，应该理解成"改选这个版本"。</summary>
+    private void AddOrReplaceModSelection(UnifiedModItem item, InlineVersionEntry entry)
+    {
+        var existing = _modSelections.FirstOrDefault(s => s.Source == item.Source && s.SourceId == item.SourceId);
+        if (existing != null) _modSelections.Remove(existing);
+        _modSelections.Add(new WizardModSelection(item, entry));
+        UpdateModSelectedCount();
+    }
+
+    private void RemoveModSelection_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button btn || btn.Tag is not WizardModSelection selection) return;
+        _modSelections.Remove(selection);
+        UpdateModSelectedCount();
     }
 
     // ========== 步骤 4：资源包/光影包 ==========
@@ -772,7 +875,7 @@ public partial class QuickStartWizardWindow : Window
         var acc = _owner.ConfigService.GetSelectedAccount();
         var loaderDesc = _selectedLoaderType == ServerCoreType.Vanilla ? "原版" : _selectedLoaderType.ToString();
         var mcVersion = McVersionCombo.SelectedItem as string ?? "(未选择)";
-        var modCount = _modResults.Count(m => m.IsSelected);
+        var modCount = _modSelections.Count;
         var resCount = _resourceResults.Count(r => r.IsSelected);
 
         SummaryText.Text =
@@ -905,14 +1008,15 @@ public partial class QuickStartWizardWindow : Window
                     throw new CriticalStepFailedException("安装版本/加载器", ex);
                 }
 
-                // 3) 下载选中的 Mod：次要步骤，单条失败跳过、不中止整个流程。
-                var selectedMods = _modResults.Where(m => m.IsSelected).ToList();
-                for (var i = 0; i < selectedMods.Count; i++)
+                // 3) 下载"已选清单"里锁定的具体版本：次要步骤，单条失败跳过、不中止整个流程。
+                //    不再自动匹配"最新版"——清单里的 InlineVersionEntry 就是用户在 ModDetailPage
+                //    里明确选中的那个文件。
+                for (var i = 0; i < _modSelections.Count; i++)
                 {
-                    var mod = selectedMods[i];
-                    var pct = 50 + (selectedMods.Count > 0 ? (double)i / selectedMods.Count * 20 : 0);
-                    ReportRun("下载 Mod", mod.Title, pct);
-                    await DownloadModSafeAsync(folderPath, mcVersion, mod);
+                    var selection = _modSelections[i];
+                    var pct = 50 + (_modSelections.Count > 0 ? (double)i / _modSelections.Count * 20 : 0);
+                    ReportRun("下载 Mod", selection.Title, pct);
+                    await DownloadModSelectionSafeAsync(folderPath, selection);
                 }
 
                 // 4) 下载选中的资源包/光影包：同样次要步骤，单条失败跳过。
@@ -1044,43 +1148,28 @@ public partial class QuickStartWizardWindow : Window
     }
 
     /// <summary>
-    /// 自动选匹配当前游戏版本的最新版下载一个 Mod，不弹交互式选择器（那是给"精确选某个版本"
-    /// 场景设计的，向导场景应该零交互）。找不到匹配版本/下载失败都不抛异常，只在运行日志里
-    /// 提示跳过，不阻断整个流程——原则跟 ClientLoaderInstallService 里 Fabric API 那部分一致。
+    /// 按"已选清单"里锁定的具体版本（WizardModSelection.Entry）下载，不再重新查询/匹配"最新版"——
+    /// 用户在 ModDetailPage 里选的是哪个文件，这里就下载哪个文件。下载失败/次要步骤异常不阻断整体
+    /// 流程，只记录到运行详情文本里，原则跟 ClientLoaderInstallService 里 Fabric API 那部分一致。
     /// </summary>
-    private async Task DownloadModSafeAsync(string minecraftDir, string mcVersion, SelectableModItem mod)
+    private async Task DownloadModSelectionSafeAsync(string minecraftDir, WizardModSelection selection)
     {
         try
         {
-            if (mod.Source == ModSource.Modrinth)
+            if (selection.Source == ModSource.Modrinth && selection.Entry.RawVersion is ModrinthVersion version)
             {
-                var versions = await _modrinth.GetVersionsAsync(mod.SourceId, mcVersion);
-                var pick = versions.FirstOrDefault();
-                if (pick == null)
-                {
-                    ReportRun("下载 Mod", $"{mod.Title}：没有匹配 {mcVersion} 的版本，已跳过", RunBar.Value);
-                    return;
-                }
-                await _modrinth.DownloadResourceAsync(minecraftDir, ModrinthResourceType.Mod, pick, null, saveName: null);
+                await _modrinth.DownloadResourceAsync(minecraftDir, ModrinthResourceType.Mod, version, null, saveName: null);
             }
-            else if (mod.Source == ModSource.CurseForge)
+            else if (selection.Source == ModSource.CurseForge && selection.Entry.RawVersion is CurseForgeFile file)
             {
-                var modId = int.Parse(mod.SourceId);
-                var files = await GetCurseForge().GetFilesAsync(modId, mcVersion);
-                var pick = files.FirstOrDefault();
-                if (pick == null)
-                {
-                    ReportRun("下载 Mod", $"{mod.Title}：没有匹配 {mcVersion} 的文件，已跳过", RunBar.Value);
-                    return;
-                }
-                await GetCurseForge().DownloadModAsync(minecraftDir, pick, null);
+                await GetCurseForge().DownloadModAsync(minecraftDir, file, null);
             }
         }
         catch (Exception ex)
         {
             // 次要步骤失败不中止整体流程，只记录到运行详情文本里（用户在步骤 5 界面能看到这行
             // 一闪而过；更完整的记录可以在后续版本里接入 LogsPage，这里先保证不阻断主流程）。
-            ReportRun("下载 Mod", $"{mod.Title}：下载失败（{ex.Message}），已跳过", RunBar.Value);
+            ReportRun("下载 Mod", $"{selection.Title}：下载失败（{ex.Message}），已跳过", RunBar.Value);
         }
     }
 
@@ -1137,6 +1226,25 @@ public class SelectableModItem
     public string SourceId => Item.SourceId;
 
     public SelectableModItem(UnifiedModItem item) => Item = item;
+}
+
+/// <summary>步骤3"已选清单"里的一条记录：来源 Mod（UnifiedModItem）+ 用户在 ModDetailPage 里
+/// 明确选中的具体版本文件（InlineVersionEntry），步骤5下载时直接用 Entry.RawVersion 下载，
+/// 不再重新查询"匹配当前游戏版本的最新版"。</summary>
+public class WizardModSelection
+{
+    public UnifiedModItem Item { get; }
+    public InlineVersionEntry Entry { get; }
+    public string Title => Item.Title;
+    public ModSource Source => Item.Source;
+    public string SourceId => Item.SourceId;
+    public string VersionLabel => $"{Entry.Name}（{Entry.GameVersionsText}）";
+
+    public WizardModSelection(UnifiedModItem item, InlineVersionEntry entry)
+    {
+        Item = item;
+        Entry = entry;
+    }
 }
 
 /// <summary>同上，资源包/光影包搜索结果的可勾选包装类。</summary>

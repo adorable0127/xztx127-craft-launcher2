@@ -8,6 +8,12 @@ namespace XCL2.App.Models;
 /// 本地编译（耗时且依赖用户机器上的 JDK/网络环境，技术路线和上面几种完全不同，风险点也不同，
 /// 不应该和已经验证过的下载型核心混在同一批一起做，留到下一批单独实现）。
 /// Purpur 有官方直发 jar（api.purpurmc.org），后续接入时可以复用 Vanilla/Paper 那套"直接下载 jar"的模式。
+///
+/// Quilt：这个枚举原本主要给"服务端核心"用，Quilt 官方没有独立的服务端核心分发(Quilt 服务端
+/// 就是"原版服务端 jar + Quilt Loader 安装器"，跟 Fabric 服务端的搭建方式是同一套思路)，
+/// 所以 Quilt 这一项目前只在"客户端加载器安装"(ClientLoaderInstallService/
+/// InstallClientLoaderWindow/LoaderChoiceWindow)路径上使用，ServerCoreDownloadService
+/// 里的 switch 分支不需要处理 Quilt，未涉及的分支保持原样即可。
 /// </summary>
 public enum ServerCoreType
 {
@@ -15,7 +21,8 @@ public enum ServerCoreType
     Paper,
     Fabric,
     Forge,
-    NeoForge
+    NeoForge,
+    Quilt
 }
 
 /// <summary>某个 Minecraft 版本下，某个核心类型可选的"构建/加载器版本"列表里的一项。</summary>

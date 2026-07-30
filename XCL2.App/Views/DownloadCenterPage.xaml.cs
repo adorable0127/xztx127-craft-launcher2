@@ -37,6 +37,12 @@ public partial class DownloadCenterPage : UserControl
     private ModSource _currentResourceSource = ModSource.Combined;
 
     private readonly ObservableCollection<VersionListItem> _favorites = new();
+    /// <summary>"我的收藏"面板里的三个社区资源分组：Mod / (材质包+数据包+光影包合并展示) / 地图。
+    /// 分开成三个集合而不是复用 _mods/_resources/_maps，是因为那三个字段是"搜索结果"，
+    /// 会被下一次搜索整体清空重填；收藏内容需要独立维护，不应该被搜索行为影响。</summary>
+    private readonly ObservableCollection<UnifiedModItem> _favoriteMods = new();
+    private readonly ObservableCollection<UnifiedResourceItem> _favoriteResources = new();
+    private readonly ObservableCollection<FavoriteItem> _favoriteMaps = new();
 
     private readonly CurseForgeKeyService _curseForgeKeyService = new();
     private CurseForgeService? _curseForge;
@@ -91,6 +97,32 @@ public partial class DownloadCenterPage : UserControl
     private int _resourceSearchSeq;
     private int _mapSearchSeq;
 
+    /// <summary>
+    /// 四个面板（Mod / 资源包 / 地图 / 游戏版本）各自独立的当前页码，从 0 开始，页大小固定 20。
+    /// Mod/资源包/地图三个走真 API 分页（offset = pageIndex * PageSize，直接传给
+    /// ModSearchService/CurseForgeService）；游戏版本面板数据本身是本地缓存的整份 manifest，
+    /// 分页是纯本地 Skip/Take，不发网络请求，见 ApplyVersionFilter。
+    /// </summary>
+    private const int PageSize = 20;
+    private int _modPageIndex;
+    private int _resourcePageIndex;
+    private int _mapPageIndex;
+    private int _versionPageIndex;
+
+    /// <summary>整页详情组件显示/收起：显示时不隐藏底下的 DockPanel 各面板——它们的筛选条件/
+    /// 分页页码天然保留，回退直接露出原样，不需要额外保存/恢复状态。</summary>
+    private void ShowDetail(ModDetailPage page)
+    {
+        DetailHost.Content = page;
+        DetailHost.Visibility = Visibility.Visible;
+    }
+
+    private void HideDetail()
+    {
+        DetailHost.Visibility = Visibility.Collapsed;
+        DetailHost.Content = null;
+    }
+
     public DownloadCenterPage(MainWindow owner)
     {
         _owner = owner;
@@ -98,6 +130,9 @@ public partial class DownloadCenterPage : UserControl
         OnlineListBox.ItemsSource = _online;
         ResourceListBox.ItemsSource = _resources;
         FavoritesListBox.ItemsSource = _favorites;
+        FavoriteModsListBox.ItemsSource = _favoriteMods;
+        FavoriteResourcesListBox.ItemsSource = _favoriteResources;
+        FavoriteMapsListBox.ItemsSource = _favoriteMaps;
         MapListBox.ItemsSource = _maps;
         ModListBox.ItemsSource = _mods;
         McModListBox.ItemsSource = _mcModHits;
@@ -200,6 +235,20 @@ public partial class DownloadCenterPage : UserControl
     private void GoToSettingsForKey_Click(object sender, RoutedEventArgs e) => _owner.NavigateToSettings();
 
     /// <summary>
+    /// 供其他页面跳转时调用：切到「Mod」分类，把搜索框填成给定关键词，并立即触发一次搜索。
+    /// 目前用于「联机」页"一键搜索安装红石联机模组"的入口——不重新实现下载逻辑，
+    /// 直接复用这里现成的 Modrinth 综合搜索 + 卡片内联展开下载。
+    /// </summary>
+    public void SelectModCategoryAndSearch(string keyword)
+    {
+        CatMod.IsChecked = true; // 触发 Category_Checked，切换到 Mod 面板
+        _autoLoadedCategories.Add("mod"); // 标记已加载，避免 Category_Checked 里再触发一次空关键词搜索
+        ModSearchBox.Text = keyword;
+        _modPageIndex = 0;
+        _ = RunModSearchAsync(showHints: true);
+    }
+
+    /// <summary>
     /// 切换材质包/数据包/光影包分类的实际执行逻辑。
     ///
     /// 修复"社区资源分类之间来回切换时刷新不及时"的 bug：这三个分类共用同一个 ResourcePanel/
@@ -223,11 +272,56 @@ public partial class DownloadCenterPage : UserControl
         ResourcePanelTitle.Text = title;
         ResourcePanel.Visibility = Visibility.Visible;
 
+        // 同步面板内"类型"下拉框的选中项，让左侧导航栏切换分类时，面板内的下拉框显示保持一致，
+        // 不会出现"标题写着数据包下载，类型下拉框却还停在材质包"这种不一致。用 _syncingResourceType
+        // 短路 ResourceTypeCombo_SelectionChanged 里会再次触发的 SwitchResourceCategory，避免死循环。
+        _syncingResourceType = true;
+        foreach (ComboBoxItem candidate in ResourceTypeCombo.Items)
+        {
+            if (candidate.Tag is string tag && Enum.TryParse<ModrinthResourceType>(tag, out var candidateType) && candidateType == type)
+            {
+                ResourceTypeCombo.SelectedItem = candidate;
+                break;
+            }
+        }
+        _syncingResourceType = false;
+
         if (_lastLoadedResourceType != type)
         {
             _lastLoadedResourceType = type;
+            _resourcePageIndex = 0;
             _ = RunResourceSearchAsync();
         }
+    }
+
+    private bool _syncingResourceType;
+
+    /// <summary>面板内"类型"下拉框直接切换材质包/数据包/光影包，不需要用户回到左侧导航栏。
+    /// 顺带把左侧对应的 RadioButton 也勾上，保持两处入口的选中状态一致。</summary>
+    private void ResourceTypeCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (!_initialized || _syncingResourceType) return;
+        if (ResourceTypeCombo.SelectedItem is not ComboBoxItem item || item.Tag is not string tag) return;
+        if (!Enum.TryParse<ModrinthResourceType>(tag, out var type)) return;
+
+        switch (type)
+        {
+            case ModrinthResourceType.ResourcePack: CatResourcePack.IsChecked = true; break;
+            case ModrinthResourceType.DataPack: CatDataPack.IsChecked = true; break;
+            case ModrinthResourceType.Shader: CatShader.IsChecked = true; break;
+        }
+    }
+
+    /// <summary>"重置条件"：清空名称/游戏版本输入框，重新按当前类型搜索一次（浏览热门资源）。
+    /// 不重置"类型"和"来源"——这两个是这次要看哪一类资源的主要选择，重置筛选条件不应该
+    /// 连带把用户特意选的类型也弹回默认值。</summary>
+    private void ResourceFilterReset_Click(object sender, RoutedEventArgs e)
+    {
+        ResourceSearchBox.Text = "";
+        ResourceGameVersionBox.Text = "";
+        _resourcePageIndex = 0;
+        _debounceTimer.Stop();
+        _ = RunResourceSearchAsync(showEmptyHint: true);
     }
 
     /// <summary>
@@ -235,31 +329,86 @@ public partial class DownloadCenterPage : UserControl
     /// 所以如果用户还没在"游戏版本"分类点过"刷新版本列表"，这里没有清单可查，只能提示先去刷新一次，
     /// 而不是在收藏页里重新发一次网络请求（收藏页本身不需要联网，除非缓存是空的）。
     /// </summary>
+    /// <summary>
+    /// 刷新"我的收藏"里的四个分组：游戏版本 / Mod / 材质包+数据包+光影包 / 地图。
+    /// 版本收藏跟之前一样要靠 _manifestCache 反查条目详情；社区资源收藏在收藏时已经存了
+    /// 一份展示快照（标题/作者/图标/下载量），不需要联网就能直接展示，只有真正点"下载安装"
+    /// 才会按 SourceId 重新向 Modrinth/CurseForge 查询最新版本列表。
+    /// </summary>
     private void RefreshFavorites()
     {
         _favorites.Clear();
-        var favoriteIds = _owner.ConfigService.Config.FavoriteVersionIds;
+        _favoriteMods.Clear();
+        _favoriteResources.Clear();
+        _favoriteMaps.Clear();
+
+        var items = _owner.ConfigService.Config.FavoriteItems;
+        var versionItems = items.Where(f => f.Type == FavoriteItemType.Version).ToList();
 
         if (_manifestCache != null)
         {
-            foreach (var id in favoriteIds)
+            foreach (var f in versionItems)
             {
-                var entry = _manifestCache.Versions.FirstOrDefault(v => v.Id == id);
+                var entry = _manifestCache.Versions.FirstOrDefault(v => v.Id == f.SourceId);
                 if (entry != null) _favorites.Add(new VersionListItem(entry, true));
             }
         }
 
-        var showEmpty = favoriteIds.Count == 0;
-        var showManifestHint = favoriteIds.Count > 0 && _manifestCache == null;
+        foreach (var f in items.Where(f => f.Type == FavoriteItemType.Mod))
+            _favoriteMods.Add(FavoriteItemToModDisplay(f));
+
+        foreach (var f in items.Where(f => f.Type is FavoriteItemType.ResourcePack or FavoriteItemType.DataPack or FavoriteItemType.Shader))
+            _favoriteResources.Add(FavoriteItemToResourceDisplay(f));
+
+        foreach (var f in items.Where(f => f.Type == FavoriteItemType.Map))
+            _favoriteMaps.Add(f);
+
+        var showEmpty = items.Count == 0;
+        var showManifestHint = versionItems.Count > 0 && _manifestCache == null;
 
         FavoritesEmptyHint.Visibility = showEmpty ? Visibility.Visible : Visibility.Collapsed;
         FavoritesEmptyHint.Text = showManifestHint
-            ? "已收藏，但还没拉取过版本清单，请先去「游戏版本」分类点一次「刷新版本列表」。"
-            : "还没有收藏任何版本，去「游戏版本」分类点击 ☆ 收藏 试试。";
+            ? "已收藏版本，但还没拉取过版本清单，请先去「游戏版本」分类点一次「刷新版本列表」。"
+            : "还没有收藏任何内容，去「游戏版本」/「Mod」/「材质包」等分类点击 ☆ 收藏 试试。";
         if (showManifestHint) FavoritesEmptyHint.Visibility = Visibility.Visible;
 
         FavoritesListBox.Visibility = _favorites.Count == 0 ? Visibility.Collapsed : Visibility.Visible;
+        FavoriteModsListBox.Visibility = _favoriteMods.Count == 0 ? Visibility.Collapsed : Visibility.Visible;
+        FavoriteResourcesListBox.Visibility = _favoriteResources.Count == 0 ? Visibility.Collapsed : Visibility.Visible;
+        FavoriteMapsListBox.Visibility = _favoriteMaps.Count == 0 ? Visibility.Collapsed : Visibility.Visible;
+
+        FavoriteModsHeader.Visibility = _favoriteMods.Count == 0 ? Visibility.Collapsed : Visibility.Visible;
+        FavoriteResourcesHeader.Visibility = _favoriteResources.Count == 0 ? Visibility.Collapsed : Visibility.Visible;
+        FavoriteMapsHeader.Visibility = _favoriteMaps.Count == 0 ? Visibility.Collapsed : Visibility.Visible;
     }
+
+    /// <summary>把一条 FavoriteItem(Mod) 还原成 UnifiedModItem 展示用（用收藏时存的快照字段，
+    /// 不重新联网查询）。RawItem 留空——"我的收藏"面板的 Mod 卡片不支持直接展开下载版本，
+    /// 只做展示+取消收藏，要下载的话引导用户去「Mod」分类重新搜索一次（真实文件列表可能已更新）。</summary>
+    private static UnifiedModItem FavoriteItemToModDisplay(FavoriteItem f) => new()
+    {
+        Source = f.Source,
+        SourceId = f.SourceId,
+        Title = f.Title,
+        Description = f.Description,
+        Author = f.Author,
+        IconUrl = f.IconUrl,
+        Downloads = f.Downloads,
+        IsFavorite = true
+    };
+
+    private static UnifiedResourceItem FavoriteItemToResourceDisplay(FavoriteItem f) => new()
+    {
+        Source = f.Source,
+        SourceId = f.SourceId,
+        Title = f.Title,
+        Description = f.Description,
+        Author = f.Author,
+        IconUrl = f.IconUrl,
+        Downloads = f.Downloads,
+        FavoriteType = f.Type,
+        IsFavorite = true
+    };
 
     /// <summary>
     /// XAML 里 SourceCombo 的顺序是 索引0=官方源、索引1=BMCLAPI镜像源（默认选中官方源，见 AppConfig.Source 注释）。
@@ -299,9 +448,28 @@ public partial class DownloadCenterPage : UserControl
     /// 避免用户每敲一个字符就重新渲染一次列表。过滤是纯本地操作（基于已缓存的 _manifestCache），
     /// 不发网络请求，防抖主要是为了避免频繁重建 ListBox 内容造成的界面抖动。
     /// </summary>
-    private void VersionFilter_Changed(object sender, RoutedEventArgs e) => Debounce(ApplyVersionFilter);
+    private void VersionFilter_Changed(object sender, RoutedEventArgs e)
+    {
+        _versionPageIndex = 0; // 筛选条件变了，之前翻到的页码对新结果集没有意义，回到第一页
+        Debounce(ApplyVersionFilter);
+    }
 
-    /// <summary>根据分类下拉框(正式版/快照/远古版/愚人节版)和搜索框内容过滤已缓存的版本清单。</summary>
+    private void VersionPrevPage_Click(object sender, RoutedEventArgs e)
+    {
+        if (_versionPageIndex <= 0) return;
+        _versionPageIndex--;
+        ApplyVersionFilter();
+    }
+
+    private void VersionNextPage_Click(object sender, RoutedEventArgs e)
+    {
+        _versionPageIndex++;
+        ApplyVersionFilter();
+    }
+
+    /// <summary>根据分类下拉框(正式版/快照/远古版/愚人节版)和搜索框内容过滤已缓存的版本清单，
+    /// 再按 _versionPageIndex 做纯本地分页（数据本身已经整份缓存在 _manifestCache，不需要、
+    /// 也不能对 manifest 做真 API 分页——manifest 接口本身不支持分页参数）。</summary>
     private void ApplyVersionFilter()
     {
         if (_manifestCache == null) return;
@@ -314,11 +482,22 @@ public partial class DownloadCenterPage : UserControl
         var filtered = _manifestCache.Versions
             .Where(v => v.GetCategory() == category)
             .Where(v => keyword.Length == 0 || v.Id.Contains(keyword, StringComparison.OrdinalIgnoreCase))
-            .Take(200); // 远古版本/快照数量较多，限制条数避免一次性渲染卡顿
+            .ToList();
+
+        var totalPages = filtered.Count == 0 ? 0 : (int)Math.Ceiling(filtered.Count / (double)PageSize);
+        if (_versionPageIndex < 0) _versionPageIndex = 0;
+        if (totalPages > 0 && _versionPageIndex > totalPages - 1) _versionPageIndex = totalPages - 1;
+
+        var page = filtered.Skip(_versionPageIndex * PageSize).Take(PageSize);
 
         _online.Clear();
-        var favorites = _owner.ConfigService.Config.FavoriteVersionIds;
-        foreach (var v in filtered) _online.Add(new VersionListItem(v, favorites.Contains(v.Id)));
+        var favoriteIds = _owner.ConfigService.Config.FavoriteItems
+            .Where(f => f.Type == FavoriteItemType.Version).Select(f => f.SourceId).ToHashSet();
+        foreach (var v in page) _online.Add(new VersionListItem(v, favoriteIds.Contains(v.Id)));
+
+        VersionPageSummaryText.Text = totalPages > 0 ? $"第 {_versionPageIndex + 1} 页 / 共 {totalPages} 页" : "第 1 页";
+        VersionPrevPageButton.IsEnabled = _versionPageIndex > 0;
+        VersionNextPageButton.IsEnabled = _versionPageIndex < totalPages - 1;
     }
 
     private void OnlineListBox_SelectionChanged(object sender, SelectionChangedEventArgs e) { }
@@ -380,25 +559,147 @@ public partial class DownloadCenterPage : UserControl
         }
     }
 
-    /// <summary>收藏/取消收藏一个版本，写入 AppConfig.FavoriteVersionIds 并持久化。</summary>
+    /// <summary>右键菜单"在中文 Minecraft Wiki 中查看"（下载中心的"游戏版本"列表）：
+    /// 复用 VersionSelectPage.OpenMinecraftWiki 的跳转逻辑，两处右键菜单行为保持一致。</summary>
+    private void ViewVersionOnWiki_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not MenuItem { Tag: VersionListItem item }) return;
+        VersionSelectPage.OpenMinecraftWiki(item.Id);
+    }
+
+    /// <summary>收藏/取消收藏一个游戏版本，写入 AppConfig.FavoriteItems 并持久化。</summary>
     private void FavoriteVersion_Click(object sender, RoutedEventArgs e)
     {
         if (sender is not Button btn || btn.Tag is not VersionListItem item) return;
         var cfg = _owner.ConfigService.Config;
 
-        if (cfg.FavoriteVersionIds.Contains(item.Entry.Id))
+        var existing = cfg.FavoriteItems.FirstOrDefault(f => f.MatchesKey(FavoriteItemType.Version, item.Entry.Id, ModSource.Combined));
+        if (existing != null)
         {
-            cfg.FavoriteVersionIds.Remove(item.Entry.Id);
+            cfg.FavoriteItems.Remove(existing);
             item.IsFavorite = false;
         }
         else
         {
-            cfg.FavoriteVersionIds.Add(item.Entry.Id);
+            cfg.FavoriteItems.Add(new FavoriteItem { Type = FavoriteItemType.Version, Source = ModSource.Combined, SourceId = item.Entry.Id });
             item.IsFavorite = true;
         }
         _owner.ConfigService.Save();
 
+        // 版本列表(OnlineListBox)和"我的收藏"面板可能同时展示同一个版本对应的两个不同
+        // VersionListItem 实例(各自 ObservableCollection 独立包装)，切换其中一处的收藏状态后，
+        // 另一处的按钮文案/状态需要跟着同步，不能只改点击的这一个实例。
+        SyncFavoriteVersionState(item.Entry.Id, item.IsFavorite);
+
         if (FavoritesPanel.Visibility == Visibility.Visible) RefreshFavorites();
+    }
+
+    /// <summary>把某个版本 ID 的收藏状态同步到 _online 和 _favorites 里所有匹配的 VersionListItem 实例上。</summary>
+    private void SyncFavoriteVersionState(string versionId, bool isFavorite)
+    {
+        foreach (var v in _online.Where(v => v.Id == versionId)) v.IsFavorite = isFavorite;
+        foreach (var v in _favorites.Where(v => v.Id == versionId)) v.IsFavorite = isFavorite;
+    }
+
+    /// <summary>收藏/取消收藏一个 Mod（Modrinth/CurseForge 综合搜索结果里的卡片）。
+    /// 收藏时把展示字段(标题/作者/图标/下载量)拷贝一份快照存进 FavoriteItem，
+    /// 见 FavoriteItem 类注释——这样"我的收藏"面板不需要联网就能展示。</summary>
+    private void FavoriteMod_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button btn || btn.Tag is not UnifiedModItem item) return;
+        ToggleCommunityFavorite(FavoriteItemType.Mod, item.Source, item.SourceId,
+            item.Title, item.Description, item.Author, item.IconUrl, item.Downloads, out var nowFavorite);
+
+        // 同步所有集合里同一个 (Source, SourceId) 对应的卡片实例。
+        foreach (var m in _mods.Where(m => m.Source == item.Source && m.SourceId == item.SourceId)) m.IsFavorite = nowFavorite;
+        foreach (var m in _favoriteMods.Where(m => m.Source == item.Source && m.SourceId == item.SourceId)) m.IsFavorite = nowFavorite;
+
+        if (FavoritesPanel.Visibility == Visibility.Visible) RefreshFavorites();
+    }
+
+    /// <summary>收藏/取消收藏一条材质包/数据包/光影包资源。</summary>
+    private void FavoriteResource_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button btn || btn.Tag is not UnifiedResourceItem item) return;
+        ToggleCommunityFavorite(item.FavoriteType, item.Source, item.SourceId,
+            item.Title, item.Description, item.Author, item.IconUrl, item.Downloads, out var nowFavorite);
+
+        foreach (var r in _resources.Where(r => r.Source == item.Source && r.SourceId == item.SourceId)) r.IsFavorite = nowFavorite;
+        foreach (var r in _favoriteResources.Where(r => r.Source == item.Source && r.SourceId == item.SourceId)) r.IsFavorite = nowFavorite;
+
+        if (FavoritesPanel.Visibility == Visibility.Visible) RefreshFavorites();
+    }
+
+    /// <summary>收藏/取消收藏一张地图（CurseForge 搜索结果）。</summary>
+    private void FavoriteMap_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button btn || btn.Tag is not CurseForgeMod item) return;
+        ToggleCommunityFavorite(FavoriteItemType.Map, ModSource.CurseForge, item.Id.ToString(),
+            item.Name, item.Summary, item.AuthorsDisplay, item.Logo?.ThumbnailUrl, item.DownloadCount, out var nowFavorite);
+
+        item.IsFavorite = nowFavorite;
+        foreach (var m in _maps.Where(m => m.Id == item.Id)) m.IsFavorite = nowFavorite;
+
+        if (FavoritesPanel.Visibility == Visibility.Visible) RefreshFavorites();
+    }
+
+    /// <summary>"我的收藏"面板里点某条社区资源的"取消收藏"：直接按 FavoriteItem 记录移除，
+    /// 不需要反查 _mods/_resources/_maps（那些是搜索结果集合，收藏面板打开时未必有对应搜索结果）。</summary>
+    private void UnfavoriteItem_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button btn) return;
+        FavoriteItemType type; ModSource source; string sourceId;
+        switch (btn.Tag)
+        {
+            case UnifiedModItem m: type = FavoriteItemType.Mod; source = m.Source; sourceId = m.SourceId; break;
+            case UnifiedResourceItem r: type = r.FavoriteType; source = r.Source; sourceId = r.SourceId; break;
+            case FavoriteItem f: type = f.Type; source = f.Source; sourceId = f.SourceId; break;
+            default: return;
+        }
+
+        var cfg = _owner.ConfigService.Config;
+        var existing = cfg.FavoriteItems.FirstOrDefault(x => x.MatchesKey(type, sourceId, source));
+        if (existing != null)
+        {
+            cfg.FavoriteItems.Remove(existing);
+            _owner.ConfigService.Save();
+        }
+
+        // 同步搜索结果集合里对应卡片的收藏按钮状态（如果用户之前搜索过同一条资源）。
+        foreach (var m in _mods.Where(m => m.Source == source && m.SourceId == sourceId && type == FavoriteItemType.Mod)) m.IsFavorite = false;
+        foreach (var r in _resources.Where(r => r.Source == source && r.SourceId == sourceId && r.FavoriteType == type)) r.IsFavorite = false;
+        foreach (var mp in _maps.Where(mp => type == FavoriteItemType.Map && mp.Id.ToString() == sourceId)) mp.IsFavorite = false;
+
+        RefreshFavorites();
+    }
+
+    /// <summary>收藏/取消收藏一条社区资源的公共逻辑：存在则移除(取消收藏)，不存在则新增并拷贝展示快照。</summary>
+    private void ToggleCommunityFavorite(FavoriteItemType type, ModSource source, string sourceId,
+        string title, string description, string author, string? iconUrl, long downloads, out bool nowFavorite)
+    {
+        var cfg = _owner.ConfigService.Config;
+        var existing = cfg.FavoriteItems.FirstOrDefault(f => f.MatchesKey(type, sourceId, source));
+        if (existing != null)
+        {
+            cfg.FavoriteItems.Remove(existing);
+            nowFavorite = false;
+        }
+        else
+        {
+            cfg.FavoriteItems.Add(new FavoriteItem
+            {
+                Type = type,
+                Source = source,
+                SourceId = sourceId,
+                Title = title,
+                Description = description,
+                Author = author,
+                IconUrl = iconUrl,
+                Downloads = downloads
+            });
+            nowFavorite = true;
+        }
+        _owner.ConfigService.Save();
     }
 
     private async void ResourceSearch_Click(object sender, RoutedEventArgs e) => await RunResourceSearchAsync(showEmptyHint: true);
@@ -407,7 +708,24 @@ public partial class DownloadCenterPage : UserControl
     /// 搜索框/游戏版本号输入变化：走防抖，不打断用户打字，也不在每次搜索为空时弹提示框打扰（
     /// 静默完成即可，只有用户主动点"手动刷新"按钮时才在无结果时弹提示，见 showEmptyHint 参数）。
     /// </summary>
-    private void ResourceFilter_Changed(object sender, RoutedEventArgs e) => Debounce(() => _ = RunResourceSearchAsync());
+    private void ResourceFilter_Changed(object sender, RoutedEventArgs e)
+    {
+        _resourcePageIndex = 0;
+        Debounce(() => _ = RunResourceSearchAsync());
+    }
+
+    private void ResourcePrevPage_Click(object sender, RoutedEventArgs e)
+    {
+        if (_resourcePageIndex <= 0) return;
+        _resourcePageIndex--;
+        _ = RunResourceSearchAsync();
+    }
+
+    private void ResourceNextPage_Click(object sender, RoutedEventArgs e)
+    {
+        _resourcePageIndex++;
+        _ = RunResourceSearchAsync();
+    }
 
     /// <summary>
     /// 材质包/数据包/光影包三个分类共用同一个搜索方法（靠 _currentResourceType 区分接口参数）。
@@ -424,17 +742,30 @@ public partial class DownloadCenterPage : UserControl
             var keyword = ResourceSearchBox.Text?.Trim() ?? "";
             var gameVersion = ResourceGameVersionBox.Text?.Trim();
             var outcome = await GetModSearch().SearchResourcesAsync(_currentResourceSource, _currentResourceType,
-                keyword, string.IsNullOrEmpty(gameVersion) ? null : gameVersion);
+                keyword, string.IsNullOrEmpty(gameVersion) ? null : gameVersion, _resourcePageIndex, PageSize);
 
             if (seq != _resourceSearchSeq) return; // 期间已有更新的搜索发出，这次结果已过时，丢弃
 
             _resources.Clear();
             var showIcons = _owner.ConfigService.Config.ShowModIcons;
+            var favoriteType = _currentResourceType switch
+            {
+                ModrinthResourceType.DataPack => FavoriteItemType.DataPack,
+                ModrinthResourceType.Shader => FavoriteItemType.Shader,
+                _ => FavoriteItemType.ResourcePack
+            };
+            var favorites = _owner.ConfigService.Config.FavoriteItems;
             foreach (var item in outcome.Items)
             {
                 item.ShowIcon = showIcons;
+                item.FavoriteType = favoriteType;
+                item.IsFavorite = favorites.Any(f => f.MatchesKey(favoriteType, item.SourceId, item.Source));
                 _resources.Add(item);
             }
+
+            UpdatePageSummary(ResourcePageSummaryText, _resourcePageIndex, outcome.ModrinthTotal, outcome.CurseForgeTotal);
+            ResourcePrevPageButton.IsEnabled = _resourcePageIndex > 0;
+            ResourceNextPageButton.IsEnabled = HasMorePages(_resourcePageIndex, outcome.ModrinthTotal, outcome.CurseForgeTotal);
 
             if (showEmptyHint)
             {
@@ -465,17 +796,20 @@ public partial class DownloadCenterPage : UserControl
             "curseforge" => ModSource.CurseForge,
             _ => ModSource.Combined
         };
+        _resourcePageIndex = 0;
         _ = RunResourceSearchAsync();
     }
 
     private void ResourceListBox_SelectionChanged(object sender, SelectionChangedEventArgs e) { }
 
-    /// <summary>整行点击进"查看版本"，同 ModListItem_Click 的思路（Button 会 Handle 掉点击不冒泡，
-    /// 所以点在"查看版本"按钮上只会触发 ViewResourceVersions_Click，不会重复触发这里）。</summary>
-    private void ResourceListItem_Click(object sender, MouseButtonEventArgs e)
+    /// <summary>整行点击：切换卡片内联展开（仿 PCL），取代原来弹出 ModrinthVersionPickerWindow/
+    /// CurseForgeResourcePickerWindow 独立窗口的做法。第一次展开某个条目时才异步拉取版本列表，
+    /// 之后收起再展开直接复用已经拉到的结果，不重复打网络请求；点在"下载"按钮上会被 Button
+    /// 吃掉事件不冒泡到这里，跟原来的判断逻辑一致（见 ModListItem_Click 的注释）。</summary>
+    private async void ResourceListItem_Click(object sender, MouseButtonEventArgs e)
     {
         if (sender is not Grid grid || grid.Tag is not UnifiedResourceItem item) return;
-        ViewResourceVersions_Click(new Button { Tag = item }, new RoutedEventArgs());
+        await OpenResourceDetailAsync(item);
     }
 
     /// <summary>
@@ -503,10 +837,14 @@ public partial class DownloadCenterPage : UserControl
         return isolate ? Path.Combine(folderPath, "versions", versionId) : folderPath;
     }
 
-    private async void ViewResourceVersions_Click(object sender, RoutedEventArgs e)
+    /// <summary>
+    /// 点击资源条目：整页跳转到 ModDetailPage（取代原来的原地手风琴展开），逻辑跟
+    /// OpenModDetailAsync 对称。数据包场景需要先扫描存档列表并检查非空，检查通不过就不打开详情页
+    /// （跟原来 ToggleResourceExpandAsync 里"展开前先校验"的顺序保持一致，不让用户先看到
+    /// 详情页再被弹窗打断）。
+    /// </summary>
+    private async Task OpenResourceDetailAsync(UnifiedResourceItem item)
     {
-        if (sender is not Button btn || btn.Tag is not UnifiedResourceItem item) return;
-
         var folder = _owner.ConfigService.Config.Folders
             .FirstOrDefault(f => f.Path == _owner.ConfigService.Config.SelectedFolderPath)
             ?? _owner.ConfigService.Config.Folders.FirstOrDefault();
@@ -517,75 +855,86 @@ public partial class DownloadCenterPage : UserControl
             return;
         }
 
+        item.IsDataPack = _currentResourceType == ModrinthResourceType.DataPack;
+        if (item.IsDataPack && item.SaveNames.Count == 0)
+        {
+            foreach (var name in _folderService.ScanSaves(folder.Path)) item.SaveNames.Add(name);
+            if (item.SaveNames.Count == 0)
+            {
+                MessageBox.Show("当前文件夹下还没有任何存档，数据包必须安装到具体存档里，请先创建一个存档再来下载。",
+                    "提示", MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+            item.SelectedSaveName = item.SaveNames[0];
+        }
+
+        var sourceUrl = item.RawItem switch
+        {
+            ModrinthSearchHit h => $"https://modrinth.com/{ModrinthProjectTypeSlug(_currentResourceType)}/{h.Slug}",
+            CurseForgeMod m => m.Links?.WebsiteUrl,
+            _ => null
+        };
+
+        var detail = new ModDetailPage(
+            ModDetailPage.DetailMode.DirectDownload,
+            item.Title, item.Description, item.IconUrl, item.Author, item.Downloads,
+            item.SourceLabel, sourceUrl, item, item.IsFavorite,
+            onFavoriteToggle: nowFavorite => FavoriteResource_Toggle(item, nowFavorite),
+            onBack: HideDetail,
+            onDownload: entry => DownloadResourceInlineAsync(item, entry),
+            isDataPack: item.IsDataPack,
+            saveNames: item.SaveNames);
+
+        ShowDetail(detail);
+
+        if (item.VersionsLoaded)
+        {
+            detail.ShowGroups(item.Groups);
+            return;
+        }
+
+        detail.ShowLoading();
+        await LoadResourceVersionsAsync(item, ResourceGameVersionBox.Text?.Trim());
+        detail.ShowGroups(item.Groups);
+    }
+
+    /// <summary>Modrinth 项目页 URL 里的类型段（用于拼"转到来源"按钮的链接），跟 project_type
+    /// 在 Modrinth 网站路由里的写法一致：资源包/光影包走 resourcepack/shader，数据包本质上是
+    /// project_type=mod 打了 datapack 分类标签，页面路由仍然是 /mod/{slug}。</summary>
+    private static string ModrinthProjectTypeSlug(ModrinthResourceType type) => type switch
+    {
+        ModrinthResourceType.ResourcePack => "resourcepack",
+        ModrinthResourceType.Shader => "shader",
+        ModrinthResourceType.DataPack => "mod",
+        _ => "mod"
+    };
+
+    /// <summary>拉取一个资源条目的版本列表并分组，从原来 ToggleResourceExpandAsync 里抽出来的
+    /// 共享逻辑，供整页详情复用。</summary>
+    private async Task LoadResourceVersionsAsync(UnifiedResourceItem item, string? gameVersion)
+    {
+        item.IsLoadingVersions = true;
         try
         {
-            var gameVersion = ResourceGameVersionBox.Text?.Trim();
-
+            item.Versions.Clear();
             if (item.Source == ModSource.Modrinth)
             {
                 var versions = await _modrinth.GetVersionsAsync(item.SourceId, string.IsNullOrEmpty(gameVersion) ? null : gameVersion);
-                if (versions.Count == 0)
-                {
-                    MessageBox.Show("这个资源暂无可下载的版本（可能是筛选的游戏版本不匹配）。",
-                        "提示", MessageBoxButton.OK, MessageBoxImage.Information);
-                    return;
-                }
-
-                var saveNames = _currentResourceType == ModrinthResourceType.DataPack
-                    ? _folderService.ScanSaves(folder.Path)
-                    : new List<string>();
-
-                if (_currentResourceType == ModrinthResourceType.DataPack && saveNames.Count == 0)
-                {
-                    MessageBox.Show("当前文件夹下还没有任何存档，数据包必须安装到具体存档里，请先创建一个存档再来下载。",
-                        "提示", MessageBoxButton.OK, MessageBoxImage.Information);
-                    return;
-                }
-
-                var effectiveDir = _currentResourceType == ModrinthResourceType.DataPack
-                    ? folder.Path // 数据包必须挂在具体存档下，走 folder.Path + saveName 拼接，不受资源包作用域设置影响
-                    : GetEffectiveResourceDir(folder.Path);
-                var picker = new ModrinthVersionPickerWindow(_modrinth, effectiveDir, _currentResourceType,
-                    item.Title, versions, saveNames) { Owner = Window.GetWindow(this) };
-                picker.ShowDialog();
+                foreach (var v in versions) item.Versions.Add(new InlineVersionEntry(v));
             }
             else if (item.Source == ModSource.CurseForge)
             {
                 var modId = int.Parse(item.SourceId);
                 var files = await GetCurseForge().GetFilesAsync(modId, string.IsNullOrEmpty(gameVersion) ? null : gameVersion);
-                if (files.Count == 0)
-                {
-                    MessageBox.Show("这个资源暂无可下载的文件（可能是筛选的游戏版本不匹配）。",
-                        "提示", MessageBoxButton.OK, MessageBoxImage.Information);
-                    return;
-                }
-
-                var saveNames = _currentResourceType == ModrinthResourceType.DataPack
-                    ? _folderService.ScanSaves(folder.Path)
-                    : new List<string>();
-
-                if (_currentResourceType == ModrinthResourceType.DataPack && saveNames.Count == 0)
-                {
-                    MessageBox.Show("当前文件夹下还没有任何存档，数据包必须安装到具体存档里，请先创建一个存档再来下载。",
-                        "提示", MessageBoxButton.OK, MessageBoxImage.Information);
-                    return;
-                }
-
-                var kind = _currentResourceType switch
-                {
-                    ModrinthResourceType.ResourcePack => CurseForgeResourceKind.ResourcePack,
-                    ModrinthResourceType.Shader => CurseForgeResourceKind.Shader,
-                    ModrinthResourceType.DataPack => CurseForgeResourceKind.DataPack,
-                    _ => throw new ArgumentOutOfRangeException()
-                };
-
-                var effectiveDir = _currentResourceType == ModrinthResourceType.DataPack
-                    ? folder.Path
-                    : GetEffectiveResourceDir(folder.Path);
-                var picker = new CurseForgeResourcePickerWindow(GetCurseForge(), effectiveDir, kind,
-                    item.Title, files, saveNames) { Owner = Window.GetWindow(this) };
-                picker.ShowDialog();
+                foreach (var f in files) item.Versions.Add(new InlineVersionEntry(f));
             }
+            item.HasNoResults = item.Versions.Count == 0;
+
+            item.Groups.Clear();
+            foreach (var g in ModVersionGrouping.Group(item.Versions)) item.Groups.Add(g);
+            if (item.Groups.Count > 0) item.Groups[0].IsExpanded = true;
+
+            item.VersionsLoaded = true;
         }
         catch (CurseForgeKeyMissingException ex)
         {
@@ -595,12 +944,168 @@ public partial class DownloadCenterPage : UserControl
         {
             ErrorPresenter.ShowFriendlyError("获取版本列表失败，可能是网络连接问题或下载源暂时不可用，请检查网络后重试。", $"[获取版本列表失败] {ex}", "获取版本列表失败");
         }
+        finally
+        {
+            item.IsLoadingVersions = false;
+        }
+    }
+
+    /// <summary>ModDetailPage 收藏按钮回调专用，逻辑跟 FavoriteMod_Toggle 对称。</summary>
+    private void FavoriteResource_Toggle(UnifiedResourceItem item, bool nowFavorite)
+    {
+        var cfg = _owner.ConfigService.Config;
+        var existing = cfg.FavoriteItems.FirstOrDefault(f => f.MatchesKey(item.FavoriteType, item.SourceId, item.Source));
+        if (nowFavorite && existing == null)
+        {
+            cfg.FavoriteItems.Add(new FavoriteItem
+            {
+                Type = item.FavoriteType,
+                Source = item.Source,
+                SourceId = item.SourceId,
+                Title = item.Title,
+                Description = item.Description,
+                Author = item.Author,
+                IconUrl = item.IconUrl,
+                Downloads = item.Downloads
+            });
+        }
+        else if (!nowFavorite && existing != null)
+        {
+            cfg.FavoriteItems.Remove(existing);
+        }
+        _owner.ConfigService.Save();
+
+        item.IsFavorite = nowFavorite;
+        foreach (var r in _resources.Where(r => r.Source == item.Source && r.SourceId == item.SourceId)) r.IsFavorite = nowFavorite;
+        foreach (var r in _favoriteResources.Where(r => r.Source == item.Source && r.SourceId == item.SourceId)) r.IsFavorite = nowFavorite;
+
+        if (FavoritesPanel.Visibility == Visibility.Visible) RefreshFavorites();
+    }
+
+    /// <summary>展开面板里点"下载"：按钮的 DataContext 是 InlineVersionEntry，
+    /// 需要顺着可视化树找到外层承载的 UnifiedModItem/UnifiedResourceItem 才知道下载到哪个目录/
+    /// 用哪个资源类型——这里靠 FrameworkElement.DataContext 沿着 Parent 链往上找第一个非
+    /// InlineVersionEntry 的 DataContext，等价于原来弹窗构造函数里已经绑定好的 _type/_kind 字段，
+    /// 只是从"构造函数参数"变成"运行时沿可视化树查找"，因为现在同一个模板要同时服务
+    /// Mod 面板(DownloadCenterPage)、资源面板(DownloadCenterPage)、服务端资源面板
+    /// (ServerManagerPage)三处不同的宿主，各自的目录解析逻辑不一样，不能写死在共享模板里。</summary>
+    private async void InlineVersionDownload_Click(object sender, RoutedEventArgs e)
+    {
+        // 这个处理器现在挂在 ListBox 上，通过 Button.Click 路由事件冒泡触发（因为按钮所在的
+        // DataTemplate 定义在 App.xaml 全局资源里，直接在按钮上写 Click= 会被解析成 App 类的方法，
+        // 找不到就编译报错。所以改成在按钮的宿主 ListBox 上订阅冒泡的 Button.Click，
+        // 真正被点击的按钮要从 e.OriginalSource 沿可视化树网上找。
+        if (FindAncestorButton(e.OriginalSource as DependencyObject) is not Button btn) return;
+        if (btn.Tag is not InlineVersionEntry entry) return;
+        var host = FindHostItem(btn);
+        if (host is UnifiedModItem modItem) { await DownloadModInlineAsync(modItem, entry); return; }
+        if (host is UnifiedResourceItem resItem) { await DownloadResourceInlineAsync(resItem, entry); return; }
+    }
+
+    /// <summary>从事件的原始来源（可能是 Button 内部的 TextBlock/ContentPresenter 等子元素）
+    /// 沿可视化树向上找到最近的 Button 本身。</summary>
+    private static Button? FindAncestorButton(DependencyObject? start)
+    {
+        var current = start;
+        while (current != null)
+        {
+            if (current is Button btn) return btn;
+            current = System.Windows.Media.VisualTreeHelper.GetParent(current);
+        }
+        return null;
+    }
+
+    /// <summary>沿可视化树向上找到第一个 DataContext 是 UnifiedModItem 或 UnifiedResourceItem 的祖先元素，
+    /// 即这个"下载"按钮所属的外层卡片条目。</summary>
+    private static object? FindHostItem(DependencyObject start)
+    {
+        var current = System.Windows.Media.VisualTreeHelper.GetParent(start);
+        while (current != null)
+        {
+            if (current is FrameworkElement fe && fe.DataContext is (UnifiedModItem or UnifiedResourceItem))
+                return fe.DataContext;
+            current = System.Windows.Media.VisualTreeHelper.GetParent(current);
+        }
+        return null;
+    }
+
+    private async Task DownloadResourceInlineAsync(UnifiedResourceItem item, InlineVersionEntry entry)
+    {
+        if (item.IsDataPack && string.IsNullOrEmpty(item.SelectedSaveName))
+        {
+            MessageBox.Show("请先选择要安装到哪个存档（数据包必须放进具体存档才会生效）。",
+                "提示", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        var folder = _owner.ConfigService.Config.Folders
+            .FirstOrDefault(f => f.Path == _owner.ConfigService.Config.SelectedFolderPath)
+            ?? _owner.ConfigService.Config.Folders.FirstOrDefault();
+        if (folder == null) return; // 展开阶段已经校验过，这里理论上不会触发
+
+        var effectiveDir = item.IsDataPack
+            ? folder.Path // 数据包必须挂在具体存档下，走 folder.Path + saveName 拼接，不受资源包作用域设置影响
+            : GetEffectiveResourceDir(folder.Path);
+
+        var progressWin = new ProgressWindow($"正在下载 {entry.Name} ...") { Owner = Window.GetWindow(this) };
+        progressWin.Show();
+        try
+        {
+            var progress = new Progress<string>(msg => progressWin.Progress.Report(new ProgressInfo("下载中", 0, 1, msg)));
+            string path;
+            if (entry.Source == ModSource.Modrinth)
+            {
+                path = await _modrinth.DownloadResourceAsync(effectiveDir, _currentResourceType,
+                    (ModrinthVersion)entry.RawVersion, progress, item.IsDataPack ? item.SelectedSaveName : null);
+            }
+            else
+            {
+                var kind = _currentResourceType switch
+                {
+                    ModrinthResourceType.ResourcePack => CurseForgeResourceKind.ResourcePack,
+                    ModrinthResourceType.Shader => CurseForgeResourceKind.Shader,
+                    ModrinthResourceType.DataPack => CurseForgeResourceKind.DataPack,
+                    _ => throw new ArgumentOutOfRangeException()
+                };
+                path = await GetCurseForge().DownloadResourceAsync(effectiveDir, kind,
+                    (CurseForgeFile)entry.RawVersion, progress, item.IsDataPack ? item.SelectedSaveName : null);
+            }
+            MessageBox.Show($"下载完成：\n{path}", "成功", MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+        catch (Exception ex)
+        {
+            ErrorPresenter.ShowFriendlyError("下载失败，可能是网络连接问题或下载源暂时不可用，请检查网络后重试。", $"[下载失败] {ex}", "下载失败");
+        }
+        finally
+        {
+            progressWin.Close();
+        }
     }
 
     /// <summary>
     /// 每次搜索前都重新创建一次 CurseForgeService：key 可能是用户刚在设置页改的，
     /// 用一个新实例保证一定用最新 key，不需要处理"旧实例缓存了旧 key"的问题。
     /// </summary>
+    /// <summary>
+    /// 计算并展示"第 N 页 / 共 M 页"文案。综合模式下总页数取两个来源里页数较多的那个
+    /// （见 ModSearchService.SearchAsync 类注释的"并列分页"语义），单一来源时就是那个来源自己的页数。
+    /// modrinthTotal/curseForgeTotal 为 0 且当前页也没有更多结果时，只显示"第 N 页"，不硬凑一个"共 0 页"。
+    /// </summary>
+    private static void UpdatePageSummary(TextBlock text, int pageIndex, int modrinthTotal, int curseForgeTotal)
+    {
+        var totalPages = Math.Max(
+            modrinthTotal > 0 ? (int)Math.Ceiling(modrinthTotal / (double)PageSize) : 0,
+            curseForgeTotal > 0 ? (int)Math.Ceiling(curseForgeTotal / (double)PageSize) : 0);
+        text.Text = totalPages > 0 ? $"第 {pageIndex + 1} 页 / 共 {totalPages} 页" : $"第 {pageIndex + 1} 页";
+    }
+
+    /// <summary>是否还有下一页：只要任意一个来源的总条数大于"下一页的起始 offset"就有。</summary>
+    private static bool HasMorePages(int pageIndex, int modrinthTotal, int curseForgeTotal)
+    {
+        var nextOffset = (pageIndex + 1) * PageSize;
+        return nextOffset < modrinthTotal || nextOffset < curseForgeTotal;
+    }
+
     private CurseForgeService GetCurseForge() => _curseForge ??= new CurseForgeService(_curseForgeKeyService);
 
     /// <summary>同理，ModSearchService 内部持有 CurseForgeService，每次搜索前重建以拿到最新 key。</summary>
@@ -615,19 +1120,53 @@ public partial class DownloadCenterPage : UserControl
             "curseforge" => ModSource.CurseForge,
             _ => ModSource.Combined
         };
+        _modPageIndex = 0; // 换来源后结果集完全不同，页码回到第一页
         _ = RunModSearchAsync(); // 切换来源后用同一个关键词立即重新搜索一次，不需要用户再点搜索按钮
     }
 
-    /// <summary>搜索框/游戏版本号/加载器下拉框变化：走防抖，停顿后自动重新搜索。</summary>
-    private void ModFilter_Changed(object sender, RoutedEventArgs e) => Debounce(() => _ = RunModSearchAsync());
+    /// <summary>搜索框/游戏版本号/加载器下拉框变化：走防抖，停顿后自动重新搜索。筛选条件变了，
+    /// 之前翻到的页码对新结果集没有意义，回到第一页。</summary>
+    private void ModFilter_Changed(object sender, RoutedEventArgs e)
+    {
+        _modPageIndex = 0;
+        Debounce(() => _ = RunModSearchAsync());
+    }
 
     private void ModFilter_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (!_initialized) return;
+        _modPageIndex = 0;
         Debounce(() => _ = RunModSearchAsync());
     }
 
     private async void ModSearch_Click(object sender, RoutedEventArgs e) => await RunModSearchAsync(showHints: true);
+
+    /// <summary>"重置条件"：清空名称/游戏版本输入框，加载器下拉恢复到"不限加载器"，
+    /// 然后立即按重置后的条件重新搜索一次（回到"浏览热门 Mod"的状态）。
+    /// 改控件值会顺带触发 ModFilter_Changed/ModFilter_SelectionChanged，把防抖计时器又启动一次；
+    /// 这里先停掉计时器再立即搜索，避免 500ms 后计时器到点又重复搜一次。</summary>
+    private void ModFilterReset_Click(object sender, RoutedEventArgs e)
+    {
+        ModSearchBox.Text = "";
+        ModGameVersionBox.Text = "";
+        ModLoaderCombo.SelectedIndex = 0;
+        _modPageIndex = 0;
+        _debounceTimer.Stop();
+        _ = RunModSearchAsync(showHints: true);
+    }
+
+    private void ModPrevPage_Click(object sender, RoutedEventArgs e)
+    {
+        if (_modPageIndex <= 0) return;
+        _modPageIndex--;
+        _ = RunModSearchAsync();
+    }
+
+    private void ModNextPage_Click(object sender, RoutedEventArgs e)
+    {
+        _modPageIndex++;
+        _ = RunModSearchAsync();
+    }
 
     /// <summary>
     /// Mod 综合搜索（Modrinth + CurseForge，支持中英文关键词）。由五处触发：
@@ -646,17 +1185,24 @@ public partial class DownloadCenterPage : UserControl
         {
             var outcome = await GetModSearch().SearchAsync(_currentModSource, keyword,
                 string.IsNullOrEmpty(gameVersion) ? null : gameVersion,
-                string.IsNullOrEmpty(loaderTag) ? null : loaderTag);
+                string.IsNullOrEmpty(loaderTag) ? null : loaderTag,
+                _modPageIndex, PageSize);
 
             if (seq != _modSearchSeq) return; // 期间已有更新的搜索发出，这次结果已过时，丢弃
 
             _mods.Clear();
             var showIcons = _owner.ConfigService.Config.ShowModIcons;
+            var favorites = _owner.ConfigService.Config.FavoriteItems;
             foreach (var item in outcome.Items)
             {
                 item.ShowIcon = showIcons;
+                item.IsFavorite = favorites.Any(f => f.MatchesKey(FavoriteItemType.Mod, item.SourceId, item.Source));
                 _mods.Add(item);
             }
+
+            UpdatePageSummary(ModPageSummaryText, _modPageIndex, outcome.ModrinthTotal, outcome.CurseForgeTotal);
+            ModPrevPageButton.IsEnabled = _modPageIndex > 0;
+            ModNextPageButton.IsEnabled = HasMorePages(_modPageIndex, outcome.ModrinthTotal, outcome.CurseForgeTotal);
 
             // 命中中文名词典时提示用户实际搜索用的英文名，避免看着结果全是英文标题却不知道为什么。
             var hasChinese = keyword.Any(ch => ch is >= '\u4e00' and <= '\u9fff');
@@ -730,24 +1276,28 @@ public partial class DownloadCenterPage : UserControl
     private void ModListBox_SelectionChanged(object sender, SelectionChangedEventArgs e) { }
 
     /// <summary>
-    /// 整行点击进入"查看版本"（下载详情）界面。之前只有右侧一个小按钮能点，条目本身点击没反应，
-    /// 用户体验上不直观（很容易点在标题/描述文字上误以为没反应）。
+    /// 整行点击：切换卡片内联展开（仿 PCL），取代原来弹出 ModrinthVersionPickerWindow/
+    /// CurseForgeModPickerWindow 独立窗口的做法。
     ///
     /// 之所以能跟 Button 的 Click 共存不冲突：WPF 里 Button 在按下时会把鼠标事件标记为
     /// Handled=true（内置行为），Handled 的路由事件不会再向上冒泡触发外层 Grid 的
-    /// MouseLeftButtonUp，所以点在"查看版本"按钮上时只会触发 ViewModVersions_Click，
+    /// MouseLeftButtonUp，所以点在展开面板里"下载"按钮上时只会触发 InlineVersionDownload_Click，
     /// 不会重复触发这里；点在按钮以外的任何位置（图标/标题/描述/作者/下载量）才会触发这里。
     /// </summary>
-    private void ModListItem_Click(object sender, MouseButtonEventArgs e)
+    private async void ModListItem_Click(object sender, MouseButtonEventArgs e)
     {
         if (sender is not Grid grid || grid.Tag is not UnifiedModItem item) return;
-        ViewModVersions_Click(new Button { Tag = item }, new RoutedEventArgs());
+        await OpenModDetailAsync(item);
     }
 
-    private async void ViewModVersions_Click(object sender, RoutedEventArgs e)
+    /// <summary>
+    /// 点击 Mod 条目：整页跳转到 ModDetailPage（取代原来的原地手风琴展开）。
+    /// 详情页构造好之后立即塞进 DetailHost 并显示"加载中"，再异步拉取版本列表——
+    /// 跟原来 ToggleModExpandAsync 的"先展开、后台拉取"体验一致，只是载体从"卡片下方
+    /// 内联面板"换成了"整页详情"。
+    /// </summary>
+    private async Task OpenModDetailAsync(UnifiedModItem item)
     {
-        if (sender is not Button btn || btn.Tag is not UnifiedModItem item) return;
-
         var folder = _owner.ConfigService.Config.Folders
             .FirstOrDefault(f => f.Path == _owner.ConfigService.Config.SelectedFolderPath)
             ?? _owner.ConfigService.Config.Folders.FirstOrDefault();
@@ -758,39 +1308,65 @@ public partial class DownloadCenterPage : UserControl
             return;
         }
 
-        var gameVersion = ModGameVersionBox.Text?.Trim();
+        var sourceUrl = item.RawItem switch
+        {
+            ModrinthSearchHit h => $"https://modrinth.com/mod/{h.Slug}",
+            CurseForgeMod m => m.Links?.WebsiteUrl,
+            _ => null
+        };
 
+        var detail = new ModDetailPage(
+            ModDetailPage.DetailMode.DirectDownload,
+            item.Title, item.Description, item.IconUrl, item.Author, item.Downloads,
+            item.SourceLabel, sourceUrl, item, item.IsFavorite,
+            onFavoriteToggle: nowFavorite => FavoriteMod_Toggle(item, nowFavorite),
+            onBack: HideDetail,
+            onDownload: entry => DownloadModInlineAsync(item, entry));
+
+        ShowDetail(detail);
+
+        if (item.VersionsLoaded)
+        {
+            detail.ShowGroups(item.Groups);
+            return;
+        }
+
+        detail.ShowLoading();
+        await LoadModVersionsAsync(item, ModGameVersionBox.Text?.Trim());
+        detail.ShowGroups(item.Groups);
+    }
+
+    /// <summary>拉取一个 Mod 条目的版本列表并按"加载器+游戏版本"分组，填进 item.Groups——
+    /// 从原来 ToggleModExpandAsync 里抽出来的共享逻辑，供整页详情复用，不需要重复实现
+    /// "按 Source 拉版本 + 分组"这段。失败时用 MessageBox/ErrorPresenter 提示，但不再需要
+    /// 收起手风琴（详情页场景下没有"收起"的概念，出错留在详情页上即可，用户点返回箭头即可离开）。</summary>
+    private async Task LoadModVersionsAsync(UnifiedModItem item, string? gameVersion)
+    {
+        item.IsLoadingVersions = true;
         try
         {
+            item.Versions.Clear();
             if (item.Source == ModSource.Modrinth)
             {
                 var versions = await _modrinth.GetVersionsAsync(item.SourceId, string.IsNullOrEmpty(gameVersion) ? null : gameVersion);
-                if (versions.Count == 0)
-                {
-                    MessageBox.Show("这个 Mod 暂无可下载的版本（可能是筛选的游戏版本不匹配）。",
-                        "提示", MessageBoxButton.OK, MessageBoxImage.Information);
-                    return;
-                }
-
-                var picker = new ModrinthVersionPickerWindow(_modrinth, folder.Path, ModrinthResourceType.Mod,
-                    item.Title, versions, new List<string>()) { Owner = Window.GetWindow(this) };
-                picker.ShowDialog();
+                foreach (var v in versions) item.Versions.Add(new InlineVersionEntry(v));
             }
             else if (item.Source == ModSource.CurseForge)
             {
                 var modId = int.Parse(item.SourceId);
                 var files = await GetCurseForge().GetFilesAsync(modId, string.IsNullOrEmpty(gameVersion) ? null : gameVersion);
-                if (files.Count == 0)
-                {
-                    MessageBox.Show("这个 Mod 暂无可下载的文件（可能是筛选的游戏版本不匹配）。",
-                        "提示", MessageBoxButton.OK, MessageBoxImage.Information);
-                    return;
-                }
-
-                var picker = new CurseForgeModPickerWindow(GetCurseForge(), folder.Path, item.Title, files)
-                    { Owner = Window.GetWindow(this) };
-                picker.ShowDialog();
+                foreach (var f in files) item.Versions.Add(new InlineVersionEntry(f));
             }
+            item.HasNoResults = item.Versions.Count == 0;
+
+            // 按"加载器 + 游戏版本"重新分组展示（截图2/3那种"NeoForge 26.2"/"Fabric 26.2"可折叠分组样式）。
+            // 第一个分组默认展开，方便用户不用再点一次就能直接看到最新版本可下的文件，
+            // 其余分组保持折叠减少初次展开时的视觉噪音。
+            item.Groups.Clear();
+            foreach (var g in ModVersionGrouping.Group(item.Versions)) item.Groups.Add(g);
+            if (item.Groups.Count > 0) item.Groups[0].IsExpanded = true;
+
+            item.VersionsLoaded = true;
         }
         catch (CurseForgeKeyMissingException ex)
         {
@@ -800,12 +1376,113 @@ public partial class DownloadCenterPage : UserControl
         {
             ErrorPresenter.ShowFriendlyError("获取版本列表失败，可能是网络连接问题或下载源暂时不可用，请检查网络后重试。", $"[获取版本列表失败] {ex}", "获取版本列表失败");
         }
+        finally
+        {
+            item.IsLoadingVersions = false;
+        }
     }
 
-    private async void MapSearch_Click(object sender, RoutedEventArgs e) => await RunMapSearchAsync(showHints: true);
+    /// <summary>ModDetailPage 收藏按钮回调专用：按目标收藏状态直接设置（不是"翻转"），
+    /// 因为详情页自己已经翻转过一次本地按钮文案，这里只需要把结果同步进 FavoriteItems +
+    /// 各集合里对应卡片实例，逻辑复用 ToggleCommunityFavorite。</summary>
+    private void FavoriteMod_Toggle(UnifiedModItem item, bool nowFavorite)
+    {
+        var cfg = _owner.ConfigService.Config;
+        var existing = cfg.FavoriteItems.FirstOrDefault(f => f.MatchesKey(FavoriteItemType.Mod, item.SourceId, item.Source));
+        if (nowFavorite && existing == null)
+        {
+            cfg.FavoriteItems.Add(new FavoriteItem
+            {
+                Type = FavoriteItemType.Mod,
+                Source = item.Source,
+                SourceId = item.SourceId,
+                Title = item.Title,
+                Description = item.Description,
+                Author = item.Author,
+                IconUrl = item.IconUrl,
+                Downloads = item.Downloads
+            });
+        }
+        else if (!nowFavorite && existing != null)
+        {
+            cfg.FavoriteItems.Remove(existing);
+        }
+        _owner.ConfigService.Save();
+
+        item.IsFavorite = nowFavorite;
+        foreach (var m in _mods.Where(m => m.Source == item.Source && m.SourceId == item.SourceId)) m.IsFavorite = nowFavorite;
+        foreach (var m in _favoriteMods.Where(m => m.Source == item.Source && m.SourceId == item.SourceId)) m.IsFavorite = nowFavorite;
+
+        if (FavoritesPanel.Visibility == Visibility.Visible) RefreshFavorites();
+    }
+
+    /// <summary>
+    /// 分组标题条点击：翻转对应 VersionGroup.IsExpanded（仿截图2/3里点"Fabric 26.2"这一行
+    /// 展开/收起该分组下的前置资源+版本列表）。跟 ModListItem_Click 是同一个"Tag 绑定数据项 +
+    /// MouseLeftButtonUp"套路，只是这次翻转的是分组自己的展开状态，不需要重新发网络请求——
+    /// 分组数据在 ToggleModExpandAsync 展开外层卡片时已经一次性全部生成好了，点分组标题条
+    /// 只是切换本地已有数据的显示/隐藏，不存在"加载中"状态。
+    /// </summary>
+    private void VersionGroupHeader_Click(object sender, MouseButtonEventArgs e)
+    {
+        if (sender is not Grid grid || grid.Tag is not VersionGroup group) return;
+        group.IsExpanded = !group.IsExpanded;
+    }
+
+    private async Task DownloadModInlineAsync(UnifiedModItem item, InlineVersionEntry entry)
+    {
+        var folder = _owner.ConfigService.Config.Folders
+            .FirstOrDefault(f => f.Path == _owner.ConfigService.Config.SelectedFolderPath)
+            ?? _owner.ConfigService.Config.Folders.FirstOrDefault();
+        if (folder == null) return; // 展开阶段已经校验过
+
+        var progressWin = new ProgressWindow($"正在下载 {entry.Name} ...") { Owner = Window.GetWindow(this) };
+        progressWin.Show();
+        try
+        {
+            var progress = new Progress<string>(msg => progressWin.Progress.Report(new ProgressInfo("下载中", 0, 1, msg)));
+            string path;
+            if (entry.Source == ModSource.Modrinth)
+                path = await _modrinth.DownloadResourceAsync(folder.Path, ModrinthResourceType.Mod, (ModrinthVersion)entry.RawVersion, progress);
+            else
+                path = await GetCurseForge().DownloadModAsync(folder.Path, (CurseForgeFile)entry.RawVersion, progress);
+            MessageBox.Show($"Mod 已安装到：\n{path}", "成功", MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+        catch (Exception ex)
+        {
+            ErrorPresenter.ShowFriendlyError("下载失败，可能是网络连接问题或下载源暂时不可用，请检查网络后重试。", $"[下载失败] {ex}", "下载失败");
+        }
+        finally
+        {
+            progressWin.Close();
+        }
+    }
+
+    private async void MapSearch_Click(object sender, RoutedEventArgs e)
+    {
+        _mapPageIndex = 0;
+        await RunMapSearchAsync(showHints: true);
+    }
 
     /// <summary>搜索框/游戏版本号变化：走防抖，停顿后自动重新搜索。</summary>
-    private void MapFilter_Changed(object sender, RoutedEventArgs e) => Debounce(() => _ = RunMapSearchAsync());
+    private void MapFilter_Changed(object sender, RoutedEventArgs e)
+    {
+        _mapPageIndex = 0;
+        Debounce(() => _ = RunMapSearchAsync());
+    }
+
+    private void MapPrevPage_Click(object sender, RoutedEventArgs e)
+    {
+        if (_mapPageIndex <= 0) return;
+        _mapPageIndex--;
+        _ = RunMapSearchAsync();
+    }
+
+    private void MapNextPage_Click(object sender, RoutedEventArgs e)
+    {
+        _mapPageIndex++;
+        _ = RunMapSearchAsync();
+    }
 
     /// <summary>
     /// 地图搜索（CurseForge）。由三处触发："地图"分类第一次打开时自动调用一次、
@@ -818,12 +1495,23 @@ public partial class DownloadCenterPage : UserControl
         {
             var keyword = MapSearchBox.Text?.Trim() ?? "";
             var gameVersion = MapGameVersionBox.Text?.Trim();
-            var result = await GetCurseForge().SearchMapsAsync(keyword, string.IsNullOrEmpty(gameVersion) ? null : gameVersion);
+            var result = await GetCurseForge().SearchMapsAsync(keyword, string.IsNullOrEmpty(gameVersion) ? null : gameVersion,
+                _mapPageIndex, PageSize);
 
             if (seq != _mapSearchSeq) return; // 期间已有更新的搜索发出，这次结果已过时，丢弃
 
             _maps.Clear();
-            foreach (var mod in result.Data) _maps.Add(mod);
+            var favorites = _owner.ConfigService.Config.FavoriteItems;
+            foreach (var mod in result.Data)
+            {
+                mod.IsFavorite = favorites.Any(f => f.MatchesKey(FavoriteItemType.Map, mod.Id.ToString(), ModSource.CurseForge));
+                _maps.Add(mod);
+            }
+
+            var mapTotal = result.Pagination?.TotalCount ?? result.Data.Count;
+            UpdatePageSummary(MapPageSummaryText, _mapPageIndex, mapTotal, 0);
+            MapPrevPageButton.IsEnabled = _mapPageIndex > 0;
+            MapNextPageButton.IsEnabled = HasMorePages(_mapPageIndex, mapTotal, 0);
 
             if (showHints && result.Data.Count == 0)
                 MessageBox.Show("没有找到匹配的地图，换个关键词试试。", "提示", MessageBoxButton.OK, MessageBoxImage.Information);
@@ -845,17 +1533,25 @@ public partial class DownloadCenterPage : UserControl
         }
     }
 
-    /// <summary>整行点击进"查看版本"，同 ModListItem_Click 的思路。</summary>
-    private void MapListItem_Click(object sender, MouseButtonEventArgs e)
+    /// <summary>整行点击进详情页，同 ModListItem_Click 的思路。地图原来是弹
+    /// CurseForgeMapPickerWindow 独立窗口，现在改成走 ModDetailPage 整页详情，
+    /// CurseForgeMapPickerWindow.xaml(.cs) 文件本身保留不删，只是不再从这个入口调用。</summary>
+    private async void MapListItem_Click(object sender, MouseButtonEventArgs e)
     {
         if (sender is not Grid grid || grid.Tag is not CurseForgeMod mod) return;
-        ViewMapVersions_Click(new Button { Tag = mod }, new RoutedEventArgs());
+        await OpenMapDetailAsync(mod);
     }
 
     private async void ViewMapVersions_Click(object sender, RoutedEventArgs e)
     {
         if (sender is not Button btn || btn.Tag is not CurseForgeMod mod) return;
+        await OpenMapDetailAsync(mod);
+    }
 
+    /// <summary>点击地图条目：整页跳转到 ModDetailPage。地图只有 CurseForge 一个来源，
+    /// 不需要像 Mod/资源那样按 Source 区分拉取哪一边的接口，直接调用 GetFilesAsync。</summary>
+    private async Task OpenMapDetailAsync(CurseForgeMod mod)
+    {
         var folder = _owner.ConfigService.Config.Folders
             .FirstOrDefault(f => f.Path == _owner.ConfigService.Config.SelectedFolderPath)
             ?? _owner.ConfigService.Config.Folders.FirstOrDefault();
@@ -866,31 +1562,90 @@ public partial class DownloadCenterPage : UserControl
             return;
         }
 
+        var detail = new ModDetailPage(
+            ModDetailPage.DetailMode.DirectDownload,
+            mod.Name, mod.Summary, mod.Logo?.ThumbnailUrl, mod.AuthorsDisplay, mod.DownloadCount,
+            "CurseForge", mod.Links?.WebsiteUrl, mod, mod.IsFavorite,
+            onFavoriteToggle: nowFavorite => FavoriteMap_Toggle(mod, nowFavorite),
+            onBack: HideDetail,
+            onDownload: entry => DownloadMapInlineAsync(folder.Path, mod, entry));
+
+        ShowDetail(detail);
+        detail.ShowLoading();
+
         try
         {
             var gameVersion = MapGameVersionBox.Text?.Trim();
             var files = await GetCurseForge().GetFilesAsync(mod.Id, string.IsNullOrEmpty(gameVersion) ? null : gameVersion);
-
-            if (files.Count == 0)
-            {
-                MessageBox.Show("这个地图暂无可下载的文件（可能是筛选的游戏版本不匹配）。",
-                    "提示", MessageBoxButton.OK, MessageBoxImage.Information);
-                return;
-            }
-
-            var picker = new CurseForgeMapPickerWindow(GetCurseForge(), folder.Path, mod.Name, files)
-                { Owner = Window.GetWindow(this) };
-            picker.ShowDialog();
+            var entries = files.Select(f => new InlineVersionEntry(f)).ToList();
+            var groups = ModVersionGrouping.Group(entries).ToList();
+            if (groups.Count > 0) groups[0].IsExpanded = true;
+            detail.ShowGroups(groups);
         }
         catch (CurseForgeKeyMissingException ex)
         {
+            detail.ShowGroups(Enumerable.Empty<VersionGroup>());
             MessageBox.Show(ex.Message, "未配置 Key", MessageBoxButton.OK, MessageBoxImage.Information);
-            Category_Checked(CatMap, new RoutedEventArgs());
         }
         catch (Exception ex)
         {
+            detail.ShowGroups(Enumerable.Empty<VersionGroup>());
             ErrorPresenter.ShowFriendlyError("获取文件列表失败，可能是网络连接问题，请检查网络后重试。", $"[获取文件列表失败] {ex}", "获取文件列表失败");
         }
+    }
+
+    /// <summary>地图详情页里点"下载"：直接下载并解压到当前 .minecraft 文件夹的 saves 目录下，
+    /// 复用 CurseForgeService.DownloadMapAsync——跟原来 CurseForgeMapPickerWindow.Download_Click
+    /// 调用的是同一个方法，只是调用点从弹窗换成了详情页回调。</summary>
+    private async Task DownloadMapInlineAsync(string folderPath, CurseForgeMod mod, InlineVersionEntry entry)
+    {
+        var progressWin = new ProgressWindow($"正在下载 {entry.Name} ...") { Owner = Window.GetWindow(this) };
+        progressWin.Show();
+        try
+        {
+            var progress = new Progress<string>(msg => progressWin.Progress.Report(new ProgressInfo("下载中", 0, 1, msg)));
+            var path = await GetCurseForge().DownloadMapAsync(folderPath, (CurseForgeFile)entry.RawVersion, progress);
+            MessageBox.Show($"地图已下载到：\n{path}", "成功", MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+        catch (Exception ex)
+        {
+            ErrorPresenter.ShowFriendlyError("下载失败，可能是网络连接问题或下载源暂时不可用，请检查网络后重试。", $"[下载失败] {ex}", "下载失败");
+        }
+        finally
+        {
+            progressWin.Close();
+        }
+    }
+
+    /// <summary>ModDetailPage 收藏按钮回调专用（地图），逻辑跟 FavoriteMod_Toggle 对称。</summary>
+    private void FavoriteMap_Toggle(CurseForgeMod mod, bool nowFavorite)
+    {
+        var cfg = _owner.ConfigService.Config;
+        var existing = cfg.FavoriteItems.FirstOrDefault(f => f.MatchesKey(FavoriteItemType.Map, mod.Id.ToString(), ModSource.CurseForge));
+        if (nowFavorite && existing == null)
+        {
+            cfg.FavoriteItems.Add(new FavoriteItem
+            {
+                Type = FavoriteItemType.Map,
+                Source = ModSource.CurseForge,
+                SourceId = mod.Id.ToString(),
+                Title = mod.Name,
+                Description = mod.Summary,
+                Author = mod.AuthorsDisplay,
+                IconUrl = mod.Logo?.ThumbnailUrl,
+                Downloads = mod.DownloadCount
+            });
+        }
+        else if (!nowFavorite && existing != null)
+        {
+            cfg.FavoriteItems.Remove(existing);
+        }
+        _owner.ConfigService.Save();
+
+        mod.IsFavorite = nowFavorite;
+        foreach (var m in _maps.Where(m => m.Id == mod.Id)) m.IsFavorite = nowFavorite;
+
+        if (FavoritesPanel.Visibility == Visibility.Visible) RefreshFavorites();
     }
 }
 

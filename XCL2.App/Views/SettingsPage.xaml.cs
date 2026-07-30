@@ -75,6 +75,17 @@ public partial class SettingsPage : UserControl
         UpdateAdvancedVisibility();
 
         GuestModeCheck.IsChecked = cfg.GuestModeEnabled;
+
+        // 配色皮肤下拉框：内容项在这里现填而不是写死在 XAML 里，这样 ThemeService.AllSkins
+        // 以后新增皮肤时只需要改 ThemeService 一个地方，不用再回来同步 XAML。
+        UiSkinCombo.Items.Clear();
+        foreach (var skin in ThemeService.AllSkins)
+        {
+            UiSkinCombo.Items.Add(new ComboBoxItem { Content = ThemeService.GetDisplayName(skin), Tag = skin });
+        }
+        SelectComboByTag(UiSkinCombo, cfg.UiSkin);
+        if (UiSkinCombo.SelectedItem == null) UiSkinCombo.SelectedIndex = 0; // 兜底：配置文件里存了非法值时退回第一项(白色)
+
         SkinApiRootBox.Text = cfg.SkinApiRoot;
 
         RefreshJavaList();
@@ -512,6 +523,13 @@ public partial class SettingsPage : UserControl
         var guestModeChanged = cfg.GuestModeEnabled != (GuestModeCheck.IsChecked == true);
         cfg.GuestModeEnabled = GuestModeCheck.IsChecked == true;
 
+        // 配色皮肤：同样只是先写回配置，实际应用画刷的动作跟访客模式共用下面
+        // RefreshGuestModeState/ThemeService.ApplyForCurrentState 那一次调用，
+        // 不需要在这里单独再调一次 ThemeService，避免访客模式和皮肤同时变化时重复刷新两次。
+        var uiSkinChanged = cfg.UiSkin != ((UiSkinCombo.SelectedItem as ComboBoxItem)?.Tag as string ?? cfg.UiSkin);
+        if ((UiSkinCombo.SelectedItem as ComboBoxItem)?.Tag is string selectedSkin)
+            cfg.UiSkin = selectedSkin;
+
         var skinApiRoot = SkinApiRootBox.Text?.Trim();
         cfg.SkinApiRoot = string.IsNullOrEmpty(skinApiRoot) ? SkinService.DefaultSkinApiRoot : skinApiRoot;
 
@@ -558,7 +576,10 @@ public partial class SettingsPage : UserControl
         // 访客模式开关状态发生变化时，让 MainWindow 立即重新计算"当前应该用哪个账户"
         // （开启时切到临时访客账户，关闭时切回真实保存的账户），并刷新侧边栏显示，
         // 不需要用户重启启动器才能看到效果。
-        if (guestModeChanged) _owner.RefreshGuestModeState();
+        // 访客模式开关变化 或 皮肤选择变化，任一发生都需要重算当前应该显示的配色——
+        // RefreshGuestModeState 内部已经会调用 ThemeService.ApplyForCurrentState，
+        // 两个条件合并只调一次，避免访客模式没变但只改了皮肤时画面没反应。
+        if (guestModeChanged || uiSkinChanged) _owner.RefreshGuestModeState();
         _owner.RefreshSidebar();
 
         StatusText.Text = "设置已保存。";

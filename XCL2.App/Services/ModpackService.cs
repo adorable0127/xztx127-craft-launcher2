@@ -228,6 +228,98 @@ public class ModpackService
         return new MrpackImportResult(index.Name, index.Dependencies?.Minecraft, failed);
     }
 
+    /// <summary>
+    /// 导出为 Modrinth 格式(.mrpack)。
+    ///
+    /// 跟导入方向的 ImportMrpackAsync 不对称：真正"标准"的 .mrpack 导出应该在 modrinth.index.json
+    /// 的 files[] 里给每个 mod 写一条 Modrinth 下载直链 + sha1，本地不含 jar 实体，体积很小。
+    /// 但本地已安装的 mod jar 并不会记录自己当初是从哪个 Modrinth 项目/版本下载来的
+    /// (LocalModInfo 只有文件路径/大小，没有 project id / version id / 直链这些字段)，
+    /// 没有可靠依据去反查"这个 jar 对应 Modrinth 上的哪个版本"，勉强去猜(比如按文件名模糊匹配)
+    /// 很容易匹配错，导入方拿到错的 mod 版本比拿不到更糟。
+    ///
+    /// 所以这里采用 Modrinth 官方 mrpack 格式规范里明确允许的另一种合法用法：
+    /// files[] 留空，把 mods/config/resourcepacks/shaderpacks 全部实体文件放进 overrides/ 目录
+    /// (跟 ImportMrpackAsync 读 overrides/ 的逻辑对称)。这样生成的 .mrpack：
+    /// - 严格符合 modrinth.index.json 的 schema(games/formatVersion/name/dependencies 齐全)，
+    ///   能被 Modrinth App、PrismLauncher 等其它启动器正常识别为 mrpack 并导入；
+    /// - 不依赖任何"猜测"的下载直链，内容 100% 就是用户本地实际在用的文件，不会出现导入后
+    ///   版本对不上的问题；
+    /// - 代价是文件体积等同于内容本身(不是纯清单)，这是"能追溯来源"与"能保证正确性"之间的
+    ///   权衡，这里选择保证正确性。
+    /// </summary>
+    public void ExportMrpack(string versionDir, string destMrpackPath, ModpackManifest manifest,
+        IProgress<string>? progress = null)
+    {
+        if (File.Exists(destMrpackPath)) File.Delete(destMrpackPath);
+
+        var tmpDir = Path.Combine(Path.GetTempPath(), $"xcl2_mrpack_{Guid.NewGuid():N}");
+        Directory.CreateDirectory(tmpDir);
+
+        try
+        {
+            var index = new MrpackIndex
+            {
+                Name = string.IsNullOrWhiteSpace(manifest.Name) ? "XCL2 整合包" : manifest.Name,
+                Dependencies = new MrpackDependencies
+                {
+                    Minecraft = manifest.McVersion,
+                    FabricLoader = string.Equals(manifest.ModLoader, "Fabric", StringComparison.OrdinalIgnoreCase)
+                        ? manifest.ModLoaderVersion : null,
+                    Forge = string.Equals(manifest.ModLoader, "Forge", StringComparison.OrdinalIgnoreCase)
+                        ? manifest.ModLoaderVersion : null,
+                    NeoForge = string.Equals(manifest.ModLoader, "NeoForge", StringComparison.OrdinalIgnoreCase)
+                        ? manifest.ModLoaderVersion : null,
+                },
+                // Files 有意留空，见上方注释：所有实体内容走 overrides/，不写远程直链。
+                Files = new List<MrpackFile>(),
+            };
+
+            progress?.Report("生成 modrinth.index.json ...");
+            var indexJson = JsonSerializer.Serialize(index, new JsonSerializerOptions
+            {
+                WriteIndented = true,
+                DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+            });
+            // Modrinth 官方规范要求 index.json 里还有一个 formatVersion 和 game 字段，
+            // MrpackIndex 模型目前只映射了导入用得到的字段(见类定义处注释)，这里手动
+            // 补上这两个固定字段而不改动导入路径用的模型，避免影响 ImportMrpackAsync。
+            var indexObj = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(indexJson)!;
+            var withHeader = new Dictionary<string, object?>
+            {
+                ["formatVersion"] = 1,
+                ["game"] = "minecraft",
+                ["versionId"] = manifest.ExportedAtUtc,
+            };
+            foreach (var kv in indexObj) withHeader[kv.Key] = kv.Value;
+            File.WriteAllText(Path.Combine(tmpDir, "modrinth.index.json"),
+                JsonSerializer.Serialize(withHeader, new JsonSerializerOptions { WriteIndented = true }));
+
+            var overridesDir = Path.Combine(tmpDir, "overrides");
+            var foldersFound = 0;
+            foreach (var folder in IncludedFolders)
+            {
+                var src = Path.Combine(versionDir, folder);
+                if (!Directory.Exists(src)) continue;
+
+                progress?.Report($"打包 {folder} ...");
+                CopyDirectory(src, Path.Combine(overridesDir, folder));
+                foldersFound++;
+            }
+
+            if (foldersFound == 0)
+                throw new InvalidOperationException("这个版本下没有找到 mods/config/resourcepacks/shaderpacks 中任何一个文件夹，没有可打包的内容。");
+
+            progress?.Report("生成压缩包 ...");
+            ZipFile.CreateFromDirectory(tmpDir, destMrpackPath, CompressionLevel.Optimal, includeBaseDirectory: false);
+            progress?.Report("导出完成");
+        }
+        finally
+        {
+            try { Directory.Delete(tmpDir, recursive: true); } catch { /* 忽略临时目录清理失败 */ }
+        }
+    }
+
     private static void CopyDirectory(string sourceDir, string destDir)
     {
         Directory.CreateDirectory(destDir);

@@ -50,11 +50,30 @@ public class ConfigService
         Config.Folders ??= new List<GameFolder>();
         Config.LastSelectedAccountId ??= "";
         Config.FavoriteVersionIds ??= new List<string>();
+        Config.FavoriteItems ??= new List<FavoriteItem>();
+        Config.FavoriteItems.RemoveAll(f => f == null);
         Config.VersionIsolationOverrides ??= new Dictionary<string, bool>();
         Config.VersionJavaOverrides ??= new Dictionary<string, int>();
         Config.InstalledJavas ??= new List<InstalledJava>();
         Config.InstalledJavas.RemoveAll(j => j == null); // 清理数组中可能存在的 null 元素
         Config.VersionJavaIdOverrides ??= new Dictionary<string, string>();
+
+        // 老配置文件迁移：只要有 FavoriteVersionIds 里的旧版本收藏、并且还没搬进
+        // FavoriteItems（避免每次启动重复搬运出现重复项），就补一条 Type=Version 的记录。
+        // 迁移后不清空 FavoriteVersionIds（万一用户还开着旧版本启动器共用一份配置文件，
+        // 保留旧字段能让旧版本继续正常读到收藏；新版本此后只读写 FavoriteItems）。
+        foreach (var versionId in Config.FavoriteVersionIds)
+        {
+            if (!Config.FavoriteItems.Any(f => f.MatchesKey(FavoriteItemType.Version, versionId, ModSource.Combined)))
+            {
+                Config.FavoriteItems.Add(new FavoriteItem
+                {
+                    Type = FavoriteItemType.Version,
+                    Source = ModSource.Combined,
+                    SourceId = versionId
+                });
+            }
+        }
 
         try
         {

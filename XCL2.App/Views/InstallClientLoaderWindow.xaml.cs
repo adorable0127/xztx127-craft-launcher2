@@ -84,6 +84,7 @@ public partial class InstallClientLoaderWindow : Window
                 case ServerCoreType.Fabric: LoaderFabric.IsChecked = true; break;
                 case ServerCoreType.Forge: LoaderForge.IsChecked = true; break;
                 case ServerCoreType.NeoForge: LoaderNeoForge.IsChecked = true; break;
+                case ServerCoreType.Quilt: LoaderQuilt.IsChecked = true; break;
             }
             BuildVersionPanel.Visibility = loaderType == ServerCoreType.NeoForge ? Visibility.Collapsed : Visibility.Visible;
             BuildVersionLabel.Text = loaderType == ServerCoreType.Forge ? "安装器版本" : "构建版本";
@@ -93,11 +94,16 @@ public partial class InstallClientLoaderWindow : Window
             // 原版：没有独立的加载器/构建版本这一级，直接隐藏该面板。
             BuildVersionPanel.Visibility = Visibility.Collapsed;
         }
+        // Quilt 跟 Fabric 一样不需要本地 Java；Fabric 对应可选的"Fabric API"，Quilt 对应可选的
+        // "QSL"（见 ClientLoaderInstallService.InstallQuiltClientAsync 的注释），两者分别只在
+        // 各自加载器类型下显示。
         FabricNoJavaHintText.Visibility = _selectedLoaderType == ServerCoreType.Fabric ? Visibility.Visible : Visibility.Collapsed;
         InstallFabricApiCheck.Visibility = _selectedLoaderType == ServerCoreType.Fabric ? Visibility.Visible : Visibility.Collapsed;
-        // 原版完全不需要本地 Java（游戏本身运行仍会在启动时自动匹配/下载 Java，
-        // 但"安装"这一步不需要），整块 Java 路径区域直接隐藏，避免用户误以为必填。
-        JavaPathPanel.Visibility = _selectedLoaderType == ServerCoreType.Vanilla ? Visibility.Collapsed : Visibility.Visible;
+        InstallQslCheck.Visibility = _selectedLoaderType == ServerCoreType.Quilt ? Visibility.Visible : Visibility.Collapsed;
+        // 原版/Fabric/Quilt 都不需要本地 Java 来完成"安装"这一步，只有 Forge/NeoForge 需要
+        // （游戏本身运行仍会在启动时自动匹配/下载 Java，跟这里的"安装期 Java"是两回事）。
+        JavaPathPanel.Visibility = _selectedLoaderType is ServerCoreType.Vanilla or ServerCoreType.Quilt
+            ? Visibility.Collapsed : Visibility.Visible;
 
         _initialized = true;
         _ = LoadMcVersionsAsync();
@@ -113,21 +119,27 @@ public partial class InstallClientLoaderWindow : Window
         // NeoForge 的"版本"下拉框里选的就是完整版本号本身，没有独立的"构建版本"这一级；
         // 原版同样没有"构建版本"这一级（原版一个 MC 版本就对应唯一一个 client jar），
         // 跟 CreateServerWindow 里对 NeoForge 的处理是同一个道理，Vanilla 直接照搬。
+        // Quilt 跟 Fabric 一样只有"Loader 版本"这一级构建版本选择，没有 NeoForge/Vanilla 那种
+        // "没有独立构建版本"的情况，所以只在 NeoForge/Vanilla 时隐藏该面板，Quilt 沿用默认可见。
         BuildVersionPanel.Visibility = loaderType is ServerCoreType.NeoForge or ServerCoreType.Vanilla
             ? Visibility.Collapsed : Visibility.Visible;
         BuildVersionLabel.Text = loaderType switch
         {
             ServerCoreType.Fabric => "Loader 版本",
+            ServerCoreType.Quilt => "Loader 版本",
             ServerCoreType.Forge => "安装器版本",
             _ => "构建版本"
         };
 
-        // Fabric 走 Fabric Meta 的现成 profile json，不需要本地跑安装器，也就不强制要求 Java；
+        // Fabric/Quilt 都走各自 Meta API 的现成 profile json，不需要本地跑安装器，不强制要求 Java；
         // Forge/NeoForge 必须本地跑安装器，缺 Java 无法继续。
         FabricNoJavaHintText.Visibility = loaderType == ServerCoreType.Fabric ? Visibility.Visible : Visibility.Collapsed;
-        // Fabric API 只对 Fabric 有意义（Forge/NeoForge 生态没有这个概念），切换加载器类型时同步隐藏。
+        // Fabric API 只对 Fabric 有意义，QSL 只对 Quilt 有意义（Forge/NeoForge 生态没有这类概念），
+        // 切换加载器类型时同步显示/隐藏各自对应的可选安装项。
         InstallFabricApiCheck.Visibility = loaderType == ServerCoreType.Fabric ? Visibility.Visible : Visibility.Collapsed;
-        JavaPathPanel.Visibility = loaderType == ServerCoreType.Vanilla ? Visibility.Collapsed : Visibility.Visible;
+        InstallQslCheck.Visibility = loaderType == ServerCoreType.Quilt ? Visibility.Visible : Visibility.Collapsed;
+        JavaPathPanel.Visibility = loaderType is ServerCoreType.Vanilla or ServerCoreType.Quilt
+            ? Visibility.Collapsed : Visibility.Visible;
 
         await LoadMcVersionsAsync();
         UpdateJavaRequirementHint();
@@ -161,6 +173,7 @@ public partial class InstallClientLoaderWindow : Window
                     ServerCoreType.Fabric => await _loaderService.GetFabricMcVersionsAsync(),
                     ServerCoreType.Forge => await _loaderService.GetForgeVersionsAsync(),
                     ServerCoreType.NeoForge => await _loaderService.GetNeoForgeVersionsAsync(),
+                    ServerCoreType.Quilt => await _loaderService.GetQuiltMcVersionsAsync(),
                     _ => new List<string>()
                 };
             }
@@ -195,6 +208,7 @@ public partial class InstallClientLoaderWindow : Window
             {
                 ServerCoreType.Fabric => await _loaderService.GetFabricLoaderVersionsAsync(),
                 ServerCoreType.Forge => await _loaderService.GetForgeInstallerVersionsAsync(mcVersion),
+                ServerCoreType.Quilt => await _loaderService.GetQuiltLoaderVersionsAsync(),
                 _ => new List<ServerCoreBuild>()
             };
             foreach (var b in builds) _buildVersions.Add(b);
@@ -215,7 +229,10 @@ public partial class InstallClientLoaderWindow : Window
     /// </summary>
     private void UpdateJavaRequirementHint()
     {
-        if (_selectedLoaderType == ServerCoreType.Fabric || McVersionCombo.SelectedItem is not string mcVersion)
+        // Quilt 跟 Fabric 一样不需要本地 Java 来完成"安装"这一步（见类头/InstallQuiltClientAsync 注释），
+        // 一并跳过这个提示。
+        if (_selectedLoaderType is ServerCoreType.Fabric or ServerCoreType.Quilt
+            || McVersionCombo.SelectedItem is not string mcVersion)
         {
             JavaRequirementHintText.Visibility = Visibility.Collapsed;
             return;
@@ -230,7 +247,7 @@ public partial class InstallClientLoaderWindow : Window
     private void AutoDetectJava_Click(object sender, RoutedEventArgs e)
     {
         int? preferMajor = null;
-        if (_selectedLoaderType != ServerCoreType.Fabric && McVersionCombo.SelectedItem is string mcVersion)
+        if (_selectedLoaderType is not (ServerCoreType.Fabric or ServerCoreType.Quilt) && McVersionCombo.SelectedItem is string mcVersion)
             preferMajor = ServerJavaRequirement.EstimateMajorVersionForMcVersion(mcVersion);
 
         var found = _javaService.FindJava(null, preferMajor);
@@ -258,9 +275,10 @@ public partial class InstallClientLoaderWindow : Window
             return;
         }
 
-        // 原版走 Mojang 官方直装，本地不需要跑任何安装器；Fabric 客户端安装同样不需要本地 Java
-        // （见 FabricNoJavaHintText）；只有 Forge/NeoForge 必须本地跑安装器，需要有效 Java。
-        if (_selectedLoaderType is not (ServerCoreType.Fabric or ServerCoreType.Vanilla) &&
+        // 原版走 Mojang 官方直装，本地不需要跑任何安装器；Fabric/Quilt 客户端安装同样不需要本地 Java
+        // （见 FabricNoJavaHintText / InstallQuiltClientAsync 注释）；只有 Forge/NeoForge 必须
+        // 本地跑安装器，需要有效 Java。
+        if (_selectedLoaderType is not (ServerCoreType.Fabric or ServerCoreType.Quilt or ServerCoreType.Vanilla) &&
             (string.IsNullOrWhiteSpace(JavaPathBox.Text) || !File.Exists(JavaPathBox.Text)))
         {
             MessageBox.Show("请提供一个有效的 Java 路径（点击「自动检测」或手动填写），Forge/NeoForge 安装器需要本地 Java 才能运行。",
@@ -311,6 +329,15 @@ public partial class InstallClientLoaderWindow : Window
                 versionId = await _loaderService.InstallFabricClientAsync(
                     minecraftDir, mcVersion, buildVersion!, progress,
                     installFabricApi: InstallFabricApiCheck.IsChecked == true);
+            }
+            else if (_selectedLoaderType == ServerCoreType.Quilt)
+            {
+                // Quilt 走独立的 InstallQuiltClientAsync，不能落到下面 Forge/NeoForge 那个
+                // else 分支——那个分支调的是 InstallForgeOrNeoForgeClientAsync，会对 Quilt
+                // 走本地跑安装器那一套逻辑，Quilt 根本没有安装器 jar，会直接报错。
+                versionId = await _loaderService.InstallQuiltClientAsync(
+                    minecraftDir, mcVersion, buildVersion!, progress,
+                    installQsl: InstallQslCheck.IsChecked == true);
             }
             else
             {

@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.Diagnostics;
 using System.Windows;
 using System.Windows.Controls;
 using XCL2.App.Models;
@@ -105,6 +106,37 @@ public partial class LoginPage : UserControl
 
     private async void AddMicrosoftEmbedded_Click(object sender, RoutedEventArgs e)
     {
+        // WebView2 相关类型只在真正点击"内嵌登录"这里才会被用到/加载，不会跟主界面一起加载
+        // (MainWindow/App.xaml 都不引用 WebView2 控件)。这里先做一次轻量探测：本机是否已经
+        // 装了 WebView2 Runtime——如果没装，与其打开一个注定会失败、只能等 EnsureCoreWebView2Async
+        // 抛异常才知道原因的空窗口，不如现在就提示清楚，让用户直接去下载运行时或者改用浏览器登录。
+        if (!WebView2RuntimeDetector.IsAvailable())
+        {
+            var choice = MessageBox.Show(
+                "本机未检测到 WebView2 运行时，无法使用内嵌登录。\n\n" +
+                "点「是」前往下载 WebView2 运行时（安装后重启本程序即可使用内嵌登录）；\n" +
+                "点「否」改用「浏览器登录」（不需要 WebView2，效果相同，只是登录过程会在系统默认浏览器里完成，需要手动复制验证码/等待自动跳转）。",
+                "未检测到 WebView2 运行时", MessageBoxButton.YesNo, MessageBoxImage.Warning);
+
+            if (choice == MessageBoxResult.Yes)
+            {
+                try
+                {
+                    Process.Start(new ProcessStartInfo(WebView2RuntimeDetector.DownloadUrl) { UseShellExecute = true });
+                }
+                catch (Exception ex)
+                {
+                    ErrorPresenter.LogTechnicalDetail($"打开 WebView2 下载页失败: {ex}");
+                    StatusText.Text = $"打开下载页失败，请手动访问：{WebView2RuntimeDetector.DownloadUrl}";
+                }
+            }
+            else
+            {
+                StatusText.Text = "已取消内嵌登录，可以点击「浏览器登录」改用系统浏览器完成登录。";
+            }
+            return;
+        }
+
         StatusText.Text = "正在打开内嵌登录窗口...";
 
         MicrosoftAuthService auth;

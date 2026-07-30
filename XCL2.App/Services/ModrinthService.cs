@@ -34,6 +34,9 @@ public class ModrinthService
     {
         var projectType = (type == ModrinthResourceType.DataPack || type == ModrinthResourceType.Mod)
             ? "mod" : ToProjectTypeString(type);
+        // Plugin 在 Modrinth 是独立的 project_type("plugin")，跟 Mod 的 "mod" 不是一回事——
+        // 服务端插件(Bukkit/Spigot/Paper 生态)跟客户端 Mod(Fabric/Forge 生态)完全不通用，
+        // 不能像 DataPack 那样借用 "mod" 这个 project_type。
 
         var facetGroups = new List<string> { $"[\"project_type:{projectType}\"]" };
         if (type == ModrinthResourceType.DataPack)
@@ -41,6 +44,9 @@ public class ModrinthService
         // Mod 是加载器相关的（Fabric/Forge/NeoForge/Quilt 各自的 jar 互不通用），
         // 传了加载器就按 categories facet 过滤，避免用户装错加载器版本的 mod 导致游戏打不开。
         if (type == ModrinthResourceType.Mod && !string.IsNullOrWhiteSpace(modLoader))
+            facetGroups.Add($"[\"categories:{modLoader.ToLowerInvariant()}\"]");
+        // 插件同理可按服务端核心类型(paper/spigot/purpur/bukkit/folia)过滤。
+        if (type == ModrinthResourceType.Plugin && !string.IsNullOrWhiteSpace(modLoader))
             facetGroups.Add($"[\"categories:{modLoader.ToLowerInvariant()}\"]");
         if (!string.IsNullOrWhiteSpace(gameVersion))
             facetGroups.Add($"[\"versions:{gameVersion}\"]");
@@ -111,6 +117,8 @@ public class ModrinthService
                 ModrinthResourceType.ResourcePack => "resourcepacks",
                 ModrinthResourceType.Shader => "shaderpacks",
                 ModrinthResourceType.Mod => "mods",
+                // minecraftDir 参数在插件场景下调用方传入的其实是"服务器实例目录"。
+                ModrinthResourceType.Plugin => "plugins",
                 _ => throw new ArgumentOutOfRangeException(nameof(type))
             };
             destDir = Path.Combine(minecraftDir, subDir);
@@ -163,6 +171,7 @@ public class ModrinthService
         ModrinthResourceType.Shader => "shader",
         ModrinthResourceType.DataPack => "mod",
         ModrinthResourceType.Mod => "mod",
+        ModrinthResourceType.Plugin => "plugin",
         _ => throw new ArgumentOutOfRangeException(nameof(type))
     };
 

@@ -3,7 +3,7 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
     <Grid>
         <Grid.ColumnDefinitions>
-            <ColumnDefinition Width="150"/>
+            <ColumnDefinition Width="180"/>
             <ColumnDefinition Width="*"/>
         </Grid.ColumnDefinitions>
 
@@ -170,14 +170,157 @@
                     </ScrollViewer>
                 </Grid>
 
-                <!-- ===== 占位面板：其余服务端管理功能尚未实现 ===== -->
-                <Grid x:Name="PlaceholderPanel" DockPanel.Dock="Top" Visibility="Collapsed">
-                    <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center">
-                        <TextBlock x:Name="PlaceholderTitle" FontSize="16" FontWeight="Bold"
-                                   HorizontalAlignment="Center" Margin="0,0,0,8"/>
-                        <TextBlock Text="该功能正在开发中，敬请期待。" Foreground="{StaticResource TextSecondaryBrush}"
-                                   HorizontalAlignment="Center"/>
+                <!-- ===== 服务端资源下载面板：统一承载 插件/资源包/数据包/光影包/Mod 五个分类，
+                     复用同一套 Modrinth/CurseForge 搜索+下载逻辑，只是把下载目标从 .minecraft 版本
+                     目录换成"选中的服务器实例目录"。之前这里只做了资源包一种，插件/数据包/光影包/Mod
+                     在服务端场景下完全没有支持——现在通过顶部的类型选择器统一收敛到一个面板里，
+                     避免为每种资源类型各写一份几乎一样的面板代码。
+                     注意：服务端场景的"Mod"仅在核心类型是 Fabric/Forge/NeoForge（modded 服务端）时才有意义，
+                     纯 Vanilla/Paper/Purpur 服务端不支持 Mod，插件(Plugin)才是这些服务端场景该用的东西——
+                     两者在 Minecraft 生态里是完全不同的概念，UI 上也分开展示，不会把插件错叫成"模组"。 -->
+                <Grid x:Name="ServerResourcePanel" DockPanel.Dock="Top" Visibility="Collapsed">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                    </Grid.RowDefinitions>
+
+                    <TextBlock Grid.Row="0" x:Name="ServerResourcePanelTitle" Text="服务端插件下载" FontSize="18" FontWeight="Bold" Margin="0,0,0,10"/>
+
+                    <!-- 资源类型选择：插件(默认)/资源包/数据包/光影包/Mod。不同分类的下载入口
+                         (Category_Checked 里的 tag)各自独立，但落到同一个物理面板复用逻辑，
+                         这一排按钮才是真正决定"这次搜索/下载哪种资源"的开关。 -->
+                    <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="0,0,0,10">
+                        <RadioButton x:Name="SrvResPlugin" Style="{StaticResource DownloadCategoryButton}" IsChecked="True"
+                                     Content="插件" Checked="ServerResourceType_Checked" Tag="Plugin" Margin="0,0,6,0"/>
+                        <RadioButton x:Name="SrvResResourcePack" Style="{StaticResource DownloadCategoryButton}"
+                                     Content="资源包" Checked="ServerResourceType_Checked" Tag="ResourcePack" Margin="0,0,6,0"/>
+                        <RadioButton x:Name="SrvResDataPack" Style="{StaticResource DownloadCategoryButton}"
+                                     Content="数据包" Checked="ServerResourceType_Checked" Tag="DataPack" Margin="0,0,6,0"/>
+                        <RadioButton x:Name="SrvResShader" Style="{StaticResource DownloadCategoryButton}"
+                                     Content="光影包" Checked="ServerResourceType_Checked" Tag="Shader" Margin="0,0,6,0"/>
+                        <RadioButton x:Name="SrvResMod" Style="{StaticResource DownloadCategoryButton}"
+                                     Content="Mod(需 Fabric/Forge/NeoForge 服务端)" Checked="ServerResourceType_Checked" Tag="Mod"/>
                     </StackPanel>
+
+                    <!-- 仿 PCL「搜索 Mod」筛选栏：名称/来源 一行，版本/(数据包场景下是"目标世界文件夹") 一行，
+                         两列网格 + 搜索/重置按钮，跟 DownloadCenterPage 的 Mod/资源面板同一套结构。
+                         "下载到服务器"单独放在筛选卡片上方——它决定的是"下载到哪"而不是"筛选什么"，
+                         跟名称/来源/版本这几个真正的筛选条件放一起容易混淆，所以保留独立一行。 -->
+                    <Grid Grid.Row="2" Margin="0,0,0,10">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="*"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Text="下载到服务器：" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                        <ComboBox x:Name="ServerTargetCombo" Style="{StaticResource FilterComboBox}" Grid.Column="1"
+                                  DisplayMemberPath="DisplayName" HorizontalAlignment="Stretch"
+                                  SelectionChanged="ServerTargetCombo_SelectionChanged"/>
+                    </Grid>
+
+                    <Border Grid.Row="3" Background="{StaticResource SideBrush}" BorderBrush="{StaticResource BorderBrush2}"
+                            BorderThickness="1" CornerRadius="8" Padding="14" Margin="0,0,0,10">
+                        <Grid>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                            </Grid.RowDefinitions>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="14"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+
+                            <StackPanel Grid.Row="0" Grid.Column="0">
+                                <TextBlock Text="名称" FontSize="12" Foreground="{StaticResource TextSecondaryBrush}" Margin="0,0,0,4"/>
+                                <TextBox x:Name="ServerResourceSearchBox" Style="{StaticResource SearchTextBox}" Padding="8" FontSize="13"
+                                         TextChanged="ServerResourceFilter_Changed"
+                                         ToolTip="搜索关键词，支持中英文，留空浏览热门资源，输入后自动搜索"/>
+                            </StackPanel>
+                            <StackPanel Grid.Row="0" Grid.Column="2">
+                                <TextBlock Text="来源" FontSize="12" Foreground="{StaticResource TextSecondaryBrush}" Margin="0,0,0,4"/>
+                                <ComboBox x:Name="ServerResourceSourceCombo" Style="{StaticResource FilterComboBox}"
+                                          SelectionChanged="ServerResourceSourceCombo_SelectionChanged">
+                                    <ComboBoxItem Content="综合(Modrinth+CurseForge)" IsSelected="True" Tag="combined"/>
+                                    <ComboBoxItem Content="仅 Modrinth" Tag="modrinth"/>
+                                    <ComboBoxItem Content="仅 CurseForge" Tag="curseforge"/>
+                                </ComboBox>
+                            </StackPanel>
+
+                            <StackPanel Grid.Row="1" Grid.Column="0" Margin="0,10,0,0">
+                                <TextBlock Text="版本" FontSize="12" Foreground="{StaticResource TextSecondaryBrush}" Margin="0,0,0,4"/>
+                                <TextBox x:Name="ServerResourceGameVersionBox" Style="{StaticResource SearchTextBox}" Padding="8" FontSize="13"
+                                         TextChanged="ServerResourceFilter_Changed"
+                                         ToolTip="限定游戏版本，例如 1.20.1；留空不限定"/>
+                            </StackPanel>
+                            <!-- 数据包必须落在具体存档下(world/datapacks/)，跟客户端"数据包必须选存档"是
+                                 同一个道理；服务端一般只有一个 world，这里默认给出该服务器实例目录下的
+                                 world 文件夹名，理论上支持多世界(Bukkit/Paper 的 world_nether 等)时用户
+                                 也可以手动改这个文本框指定别的世界文件夹名。只在数据包类型时显示，
+                                 其它类型这一格留空，不占用视觉重量。 -->
+                            <StackPanel Grid.Row="1" Grid.Column="2" Margin="0,10,0,0"
+                                        x:Name="ServerDataPackWorldPanel" Visibility="Collapsed">
+                                <TextBlock Text="目标世界文件夹" FontSize="12" Foreground="{StaticResource TextSecondaryBrush}" Margin="0,0,0,4"/>
+                                <TextBox x:Name="ServerDataPackWorldBox" Style="{StaticResource SearchTextBox}"
+                                         Padding="8" FontSize="13" Text="world"
+                                         ToolTip="服务端存档目录名，默认 world；如果服主自定义了 level-name，请改成对应名称"/>
+                            </StackPanel>
+
+                            <StackPanel Grid.Row="2" Grid.Column="0" Grid.ColumnSpan="3" Orientation="Horizontal" Margin="0,14,0,0">
+                                <Button Content="搜索" Style="{StaticResource PrimaryButton}" Padding="20,8" Click="ServerResourceSearch_Click"
+                                        ToolTip="列表已自动刷新；网络失败或想立即按当前条件重新搜索时可点这里"/>
+                                <Button Content="重置条件" Style="{StaticResource SecondaryButton}" Padding="20,8" Margin="10,0,0,0"
+                                        Click="ServerResourceFilterReset_Click" ToolTip="清空名称/版本筛选，恢复到浏览热门资源"/>
+                            </StackPanel>
+                        </Grid>
+                    </Border>
+
+                    <ListBox x:Name="ServerResourceListBox" Grid.Row="4" BorderThickness="0" Background="Transparent"
+                             ItemContainerStyle="{StaticResource DownloadListItem}"
+                             Button.Click="InlineVersionDownload_Click">
+                        <ListBox.ItemTemplate>
+                            <DataTemplate>
+                                <StackPanel>
+                                <Grid Margin="4,8" Cursor="Hand" Background="Transparent" Tag="{Binding}"
+                                      MouseLeftButtonUp="ServerResourceListItem_Click" ToolTip="点击展开/收起可下载的版本">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+                                    <Border Grid.Column="0" Width="40" Height="40" Margin="0,0,10,0" CornerRadius="4"
+                                            Background="{StaticResource SideBrush}" VerticalAlignment="Top">
+                                        <Image Source="{Binding DisplayIconUrl}" Width="40" Height="40" Stretch="UniformToFill"/>
+                                    </Border>
+                                    <StackPanel Grid.Column="1">
+                                        <TextBlock FontSize="15" FontWeight="Bold">
+                                            <Run Text="{Binding Title, Mode=OneWay}"/>
+                                            <Run Text="  ["/><Run Text="{Binding SourceLabel, Mode=OneWay}" FontSize="11" Foreground="{StaticResource AccentBrush}"/><Run Text="]"/>
+                                        </TextBlock>
+                                        <TextBlock Text="{Binding Description}" FontSize="12" TextWrapping="Wrap" MaxHeight="34"
+                                                   Foreground="{StaticResource TextSecondaryBrush}"/>
+                                        <TextBlock FontSize="11" Foreground="{StaticResource TextSecondaryBrush}">
+                                            <Run Text="作者: "/><Run Text="{Binding Author}"/>
+                                            <Run Text="  下载量: "/><Run Text="{Binding Downloads}"/>
+                                        </TextBlock>
+                                    </StackPanel>
+                                </Grid>
+                                <!-- 卡片内联展开：仿 PCL，取代原来的 ModrinthVersionPickerWindow/
+                                     CurseForgeResourcePickerWindow 弹窗。下载目标目录是服务器实例目录，
+                                     具体在 code-behind InlineVersionDownload_Click 里按 ServerTargetCombo
+                                     选中的实例解析，跟原来 ViewServerResourceVersionsAsync 的目录逻辑一致。 -->
+                                <ContentPresenter Content="{Binding}" ContentTemplate="{StaticResource InlineVersionExpandPanel_Resource}"/>
+                                </StackPanel>
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
+
+                    <TextBlock x:Name="ServerResourceNoTargetHint" Grid.Row="4"
+                               Text="还没有创建任何服务器，请先去「服务器列表」创建一个再来下载资源。"
+                               FontSize="13" Foreground="{StaticResource TextSecondaryBrush}"
+                               HorizontalAlignment="Center" VerticalAlignment="Center" Visibility="Collapsed"/>
                 </Grid>
 
             </DockPanel>

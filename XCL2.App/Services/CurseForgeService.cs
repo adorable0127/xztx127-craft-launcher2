@@ -68,6 +68,7 @@ public class CurseForgeService
         CurseForgeResourceKind.ResourcePack => CurseForgeConstants.ResourcePacksClassId,
         CurseForgeResourceKind.Shader => CurseForgeConstants.ShaderPacksClassId,
         CurseForgeResourceKind.DataPack => CurseForgeConstants.DataPacksClassId,
+        CurseForgeResourceKind.Plugin => CurseForgeConstants.BukkitPluginsClassId,
         _ => throw new ArgumentOutOfRangeException(nameof(kind))
     };
 
@@ -213,7 +214,15 @@ public class CurseForgeService
         }
         else
         {
-            var subDir = kind == CurseForgeResourceKind.ResourcePack ? "resourcepacks" : "shaderpacks";
+            // minecraftDir 参数对插件场景传入的其实是"服务器实例目录"（跟 Modrinth 那边一致，
+            // 调用方负责传对目录，这里只管按 kind 拼子目录名），插件必须落在 plugins/ 下
+            // 服务端才认得到，跟 resourcepacks/shaderpacks 是完全独立的目录含义。
+            var subDir = kind switch
+            {
+                CurseForgeResourceKind.ResourcePack => "resourcepacks",
+                CurseForgeResourceKind.Plugin => "plugins",
+                _ => "shaderpacks"
+            };
             destDir = Path.Combine(minecraftDir, subDir);
         }
 

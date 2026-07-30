@@ -19,7 +19,10 @@ public enum ModrinthResourceType
     ResourcePack,
     DataPack,
     Shader,
-    Mod
+    Mod,
+    /// <summary>服务端插件(Bukkit/Spigot/Paper/Purpur plugin jar)。Modrinth 项目类型为
+    /// "project_type:plugin"，下载落地目录是服务器实例的 plugins/ 文件夹。</summary>
+    Plugin
 }
 
 /// <summary>GET /v2/search 的返回结构。</summary>
@@ -56,6 +59,23 @@ public class ModrinthVersion
     [JsonPropertyName("date_published")] public string DatePublished { get; set; } = "";
     [JsonPropertyName("downloads")] public long Downloads { get; set; }
     [JsonPropertyName("files")] public List<ModrinthFile> Files { get; set; } = new();
+
+    /// <summary>这个版本依赖的其他项目/版本，真实对应 Modrinth API 的 version.dependencies 字段
+    /// （见 https://docs.modrinth.com/api/operations/getversionfromidornumber/）。用于在版本详情里
+    /// 展示"前置资源"（比如 Iris Shaders 依赖 Sodium）。dependency_type 为 "required" 的才需要
+    /// 提示用户一并安装，"optional"/"incompatible"/"embedded" 不在"前置资源"里强调。</summary>
+    [JsonPropertyName("dependencies")] public List<ModrinthDependency> Dependencies { get; set; } = new();
+}
+
+/// <summary>version.dependencies 数组里的一项。project_id/version_id 都可能是 null——
+/// 有的依赖只锁定到具体某个 version_id，有的只声明 project_id（不锁定具体版本，装最新的即可），
+/// 两者不总是同时存在，实际使用时优先认 project_id（用来反查该依赖项目当前的图标/名称/详情页）。</summary>
+public class ModrinthDependency
+{
+    [JsonPropertyName("version_id")] public string? VersionId { get; set; }
+    [JsonPropertyName("project_id")] public string? ProjectId { get; set; }
+    [JsonPropertyName("file_name")] public string? FileName { get; set; }
+    [JsonPropertyName("dependency_type")] public string DependencyType { get; set; } = "";
 }
 
 public class ModrinthFile

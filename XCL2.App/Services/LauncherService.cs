@@ -11,6 +11,24 @@ namespace XCL2.App.Services;
 /// 负责根据版本 json、账户信息、Java 路径拼装启动参数并启动游戏进程，
 /// 同时支持把等价的启动命令导出为 .bat 脚本（"加入到导出启动脚本"需求）。
 /// </summary>
+/// <summary>
+/// 启动时发现依赖库文件缺失（常见于远古版本如 1.8 及更早）时抛出，携带结构化的
+/// VersionId，让 UI 层能直接调用 DownloadService.DownloadLibrariesOnlyAsync
+/// 做"一键补全依赖库后自动重试启动"，不需要用户手动去"版本选择"页重装整个版本。
+/// </summary>
+public class MissingLibrariesException : InvalidOperationException
+{
+    public IReadOnlyList<string> MissingLibraryNames { get; }
+    public string VersionId { get; }
+
+    public MissingLibrariesException(string versionId, List<string> missingLibraryNames, string message)
+        : base(message)
+    {
+        VersionId = versionId;
+        MissingLibraryNames = missingLibraryNames;
+    }
+}
+
 public class LauncherService
 {
     public class LaunchOptions
@@ -130,6 +148,21 @@ public class LauncherService
         }
         catch { /* 读取/解析失败时静默忽略这一路来源 */ }
 
+        // 修复：1.17 之前的原版 version json 根本不会写 javaVersion 字段(Mojang 从 1.17 起
+        // 才开始发布这个字段)，也不一定顺着 inheritsFrom 能找到，导致 fromVersionJson 和
+        // fromMods 都是 null，上层就完全不限定版本，随手抓到系统里第一个 Java(常见是新装的
+        // Java 21+)去启动 1.16 及更早的游戏，结果崩溃。这里在两路都拿不到结果时，兜底按
+        // Mojang 官方"最低 Java 主版本要求"历史表估算一个版本号，跟 ServerJavaRequirement
+        // 用的是同一套换算规则(1.16 及更早 -> Java 8；1.17 -> Java 16；1.18~1.20.4 -> Java 17；
+        // 1.20.5+ -> Java 21 等)，不再让旧版本"裸奔"去匹配任意 Java。
+        if (fromVersionJson == null && fromMods == null)
+        {
+            var baseMcVersion = ExtractBaseMinecraftVersion(versionId);
+            if (baseMcVersion != null)
+                return ServerJavaRequirement.EstimateMajorVersionForMcVersion(baseMcVersion);
+            return null;
+        }
+
         if (fromVersionJson == null) return fromMods;
         if (fromMods == null) return fromVersionJson;
         return Math.Max(fromVersionJson.Value, fromMods.Value);
@@ -159,6 +192,17 @@ public class LauncherService
             if (require is int r && (max == null || r > max)) max = r;
         }
         return max;
+    }
+
+    /// <summary>从版本 ID 里提取出基础原版 Minecraft 版本号，用于兜底估算 Java 要求。
+    /// 兼容常见命名：纯原版 "1.16.5"、带加载器后缀 "1.16.5-forge-36.2.34"、
+    /// "fabric-loader-0.15.0-1.16.5"、"1.16.5-Fabric 0.15.0" 等——按顺序在整个字符串里找
+    /// 第一段形如 "1.x" 或 "1.x.y" 的数字序列即可，不需要认出具体是哪个加载器。</summary>
+    internal static string? ExtractBaseMinecraftVersion(string versionId)
+    {
+        if (string.IsNullOrWhiteSpace(versionId)) return null;
+        var match = System.Text.RegularExpressions.Regex.Match(versionId, @"1\.\d{1,2}(?:\.\d{1,2})?");
+        return match.Success ? match.Value : null;
     }
 
     /// <summary>从单个 mod jar 里读取 fabric.mod.json 的 depends.java (或 requires.java) 字段，
@@ -483,11 +527,12 @@ public class LauncherService
 
         if (missingLibraries.Count > 0)
         {
-            throw new InvalidOperationException(
-                $"以下 {missingLibraries.Count} 个依赖库文件在本地不存在，无法启动（很可能是 Fabric/Forge 等加载器的库没有下载完整）：\n" +
+            throw new MissingLibrariesException(opts.VersionId, missingLibraries,
+                $"以下 {missingLibraries.Count} 个依赖库文件在本地不存在，无法启动（很可能是远古版本的 lwjgl/jinput/twitch 等" +
+                "natives 库或 Fabric/Forge 等加载器的库没有下载完整）：\n" +
                 string.Join("\n", missingLibraries.Take(10)) +
                 (missingLibraries.Count > 10 ? $"\n...等共 {missingLibraries.Count} 个" : "") +
-                "\n\n请重新安装/补全该版本的依赖库后再试。");
+                "\n\n可以点「自动补全」尝试自动下载补齐这些库。");
         }
 
         if (clientJar == null)
@@ -524,7 +569,21 @@ public class LauncherService
             ["natives_directory"] = nativesDir,
             ["launcher_name"] = "XCL2",
             ["launcher_version"] = "1",
-            ["classpath"] = string.Join(";", classpath.Distinct())
+            ["classpath"] = string.Join(";", classpath.Distinct()),
+            // 根因（NeoForge "Your NeoForge installation is corrupted. Please try to reinstall
+            // NeoForge." / 日志里 "Libraries directory is not readable: ${library_directory}"）：
+            // 现代 NeoForge(以及新版 Forge)的 version json 用模块路径(-p/--module-path)启动，
+            // JVM 参数里会有 "-DlibraryDirectory=${library_directory}"、"-p" "${library_directory}/..."
+            // 这类条目，NeoForge 的 bootstrap 启动阶段要靠这个目录去定位/校验它自己那批模块化的
+            // jar。之前 variables 字典里完全没有这个 key，替换完还是原样的字符串
+            // "${library_directory}"，NeoForge 拿着这个不存在的路径去读目录，读不到就直接判定
+            // "installation is corrupted"——实际上库文件本身可能一个都没少，纯粹是启动器没把
+            // 这个变量填进去。值就是 .minecraft/libraries 的绝对路径，跟上面 librariesDir 是同一个。
+            ["library_directory"] = librariesDir,
+            // 同一批新版 loader 的模块路径参数里还会出现 "${classpath_separator}"，用来拼接
+            // 多个模块路径条目——Windows 上是分号 ';'，直接给固定值即可，不需要跟着 classpath
+            // 变量走(那个是给 -cp 用的完整分类路径字符串，两者含义不同，不能混用)。
+            ["classpath_separator"] = ";",
         };
         var resolvedJvmArgsFromJson = jvmArgsFromJson
             .Select(a => SubstituteVariables(a, variables))
@@ -628,17 +687,57 @@ public class LauncherService
         if (parent?.Arguments?.Game != null) gameArgsFromJson.AddRange(ParseArgumentEntries(parent.Arguments.Game));
         if (detail.Arguments?.Game != null) gameArgsFromJson.AddRange(ParseArgumentEntries(detail.Arguments.Game));
 
-        var resolvedGameArgsFromJson = gameArgsFromJson
-            .Select(a => SubstituteVariables(a, variables))
-            .Where(a => !string.IsNullOrWhiteSpace(a))
-            .ToList();
-
         // 已经手写过的这些键（连同各自的值）不再从 json 里重复追加，避免同一个参数出现两次。
         var alreadyHandledKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
             "--username", "--version", "--gameDir", "--assetsDir", "--assetIndex", "--uuid",
             "--accessToken", "--userType", "--versionType", "--width", "--height"
         };
+
+        // 根因（"Only one quick play option can be specified" 崩溃，1.20.6+ 的 Fabric/Forge/
+        // NeoForge/Quilt/纯原版都会中招）：Mojang 从 1.20.6 起在 version json 的 arguments.game
+        // 里声明了 --quickPlayPath/--quickPlaySingleplayer/--quickPlayMultiplayer/--quickPlayRealms
+        // 这四个参数，值统一写成 "${quickPlayPath}" 这种占位符，指望启动器要么把它替换成真正的值、
+        // 要么在没有值的时候把这一对 "--xxx value" 整体从命令行里去掉。SubstituteVariables
+        // 只认识 variables 字典里那几个 key（natives_directory 等），quickPlay 相关的占位符
+        // 根本不在里面，替换完还是原样的字符串 "${quickPlayPath}"——这是一个非空字符串，
+        // Minecraft 收到参数后一看"这四个 quickPlay 选项全都有值(哪怕值是一串占位符文本)"，
+        // 直接判定"同时指定了多个 quickPlay 选项"并抛异常崩溃，游戏窗口能起来、JVM/Loader
+        // 都正常初始化完，但一进 Main.main() 解析参数这一步就死。
+        // 修复：值仍然包含未被替换掉的 "${...}" 占位符，说明这个参数我们给不出真实值，
+        // 按官方规范应该整体不传这一对参数（key 和它的 value 都不加），而不是把占位符原样
+        // 传过去。quickPlay 系列参数本身就是可选功能（游戏内手动选存档/服务器仍然完全正常），
+        // 不传不影响正常进入游戏，只是不会自动跳转到指定存档/服务器——这个功能本来就没做，
+        // 现在只是让它"什么都不做"而不是"把游戏炸掉"。
+        static bool HasUnresolvedPlaceholder(string s) =>
+            s.Contains("${") && s.Contains('}');
+
+        var resolvedGameArgsFromJson = new List<string>();
+        {
+            var rawTokens = gameArgsFromJson
+                .Select(a => SubstituteVariables(a, variables))
+                .Where(a => !string.IsNullOrWhiteSpace(a))
+                .ToList();
+
+            for (var i = 0; i < rawTokens.Count; i++)
+            {
+                var token = rawTokens[i];
+                if (token.StartsWith("--"))
+                {
+                    var hasValue = i + 1 < rawTokens.Count && !rawTokens[i + 1].StartsWith("--");
+                    var value = hasValue ? rawTokens[i + 1] : null;
+                    if (value != null && HasUnresolvedPlaceholder(value))
+                    {
+                        // 整对 key+value 都跳过：只丢 value、留下裸的 "--quickPlayPath" 这种 key
+                        // 同样会让部分版本的参数解析报错(缺值)，必须连 key 一起丢。
+                        i++; // 跳过 value，下一轮循环从 value 之后的 token 开始
+                        continue;
+                    }
+                }
+                resolvedGameArgsFromJson.Add(token);
+            }
+        }
+
         for (var i = 0; i < resolvedGameArgsFromJson.Count; i++)
         {
             var token = resolvedGameArgsFromJson[i];

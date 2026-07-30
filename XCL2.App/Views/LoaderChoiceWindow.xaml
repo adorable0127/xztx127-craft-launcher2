@@ -53,10 +53,17 @@
                     </StackPanel>
                 </RadioButton>
 
-                <RadioButton x:Name="OptNeoForge" GroupName="LoaderChoice" Margin="0,0,0,4">
+                <RadioButton x:Name="OptNeoForge" GroupName="LoaderChoice" Margin="0,0,0,10">
                     <StackPanel Margin="8,2">
                         <TextBlock Text="NeoForge" FontWeight="Bold" FontSize="14"/>
                         <TextBlock Text="从 Forge 分支出来的新加载器，新版本 Mod 生态逐步迁移到这里。同样需要本地 Java。" FontSize="12" TextWrapping="Wrap" Foreground="{DynamicResource TextSecondaryBrush}"/>
+                    </StackPanel>
+                </RadioButton>
+
+                <RadioButton x:Name="OptQuilt" GroupName="LoaderChoice" Margin="0,0,0,4">
+                    <StackPanel Margin="8,2">
+                        <TextBlock Text="Quilt" FontWeight="Bold" FontSize="14"/>
+                        <TextBlock Text="从 Fabric 分支出来的加载器，兼容大部分 Fabric Mod，同时提供一些额外的模组开发特性。安装方式和 Fabric 一样，不需要本地 Java。" FontSize="12" TextWrapping="Wrap" Foreground="{DynamicResource TextSecondaryBrush}"/>
                     </StackPanel>
                 </RadioButton>
             </StackPanel>

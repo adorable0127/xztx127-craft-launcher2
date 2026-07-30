@@ -245,51 +245,91 @@ public class ServerCoreDownloadService
     private async Task<ServerCoreDownloadResult> DownloadPaperAsync(ServerCoreDownloadRequest req,
         IProgress<ProgressInfo>? progress, CancellationToken ct)
     {
-        var build = req.BuildOrLoaderVersion;
-        if (string.IsNullOrEmpty(build))
+        // fill.papermc.io 的 /builds 列表偶尔会把一个刚被下架/还没完成上传的 build 标成
+        // "存在且 recommended"，实际请求它的下载端点会 404（这不是我们这边缓存过期，是上游
+        // 列表接口和下载 CDN 之间短暂不一致）。之前的做法是拿到 build 号就直接下，404 了只会
+        // 对同一个坏 URL 重试 3 次，注定失败。现在改成：一旦某个 build 下载 404，就自动按
+        // "新到旧"顺序尝试列表里的下一个 build，直到成功或者候选耗尽。
+        List<string> candidateBuilds;
+        if (!string.IsNullOrEmpty(req.BuildOrLoaderVersion))
         {
-            progress?.Report(new ProgressInfo("查询最新构建", 0, 2, req.McVersion));
-            var builds = await GetPaperBuildsAsync(req.McVersion, ct);
-            build = builds.FirstOrDefault(b => b.IsRecommended)?.DisplayVersion ?? builds.FirstOrDefault()?.DisplayVersion;
-            if (build == null)
-                throw new InvalidOperationException($"Paper 没有找到 MC {req.McVersion} 对应的可用构建。");
-        }
-
-        // v3 下载端点：/v3/projects/paper/versions/{mcVersion}/builds/{build}/downloads/{fileName}
-        // 文件名规律固定为 paper-{mcVersion}-{build}.jar，但为稳妥起见先查一次 build 详情确认真实文件名，
-        // 避免第三方 API 未来调整命名规则导致直接拼错 URL。
-        progress?.Report(new ProgressInfo("查询构建详情", 1, 2, build));
-        var buildDetailJson = await _http.GetStringAsync(
-            $"{PaperApiBase}/projects/paper/versions/{req.McVersion}/builds/{build}", ct);
-        using var buildDoc = JsonDocument.Parse(buildDetailJson);
-
-        string fileName;
-        string? sha256 = null;
-        var downloadsEl = buildDoc.RootElement.GetProperty("downloads");
-        if (downloadsEl.TryGetProperty("server:default", out var serverDl))
-        {
-            fileName = serverDl.GetProperty("name").GetString()!;
-            if (serverDl.TryGetProperty("checksums", out var checksums) && checksums.TryGetProperty("sha256", out var sh))
-                sha256 = sh.GetString();
+            candidateBuilds = new List<string> { req.BuildOrLoaderVersion };
         }
         else
         {
-            // 兜底：按官方文档记录的固定命名规则拼接
-            fileName = $"paper-{req.McVersion}-{build}.jar";
+            progress?.Report(new ProgressInfo("查询可用构建", 0, 2, req.McVersion));
+            var builds = await GetPaperBuildsAsync(req.McVersion, ct);
+            if (builds.Count == 0)
+                throw new InvalidOperationException($"Paper 没有找到 MC {req.McVersion} 对应的可用构建。");
+            // 优先推荐版，其余按新到旧排列作为兜底候选（GetPaperBuildsAsync 已经是新到旧）。
+            var recommended = builds.Where(b => b.IsRecommended).Select(b => b.DisplayVersion);
+            var rest = builds.Select(b => b.DisplayVersion);
+            candidateBuilds = recommended.Concat(rest).Distinct().ToList();
         }
 
-        var url = $"{PaperApiBase}/projects/paper/versions/{req.McVersion}/builds/{build}/downloads/{fileName}";
+        Exception? lastFailure = null;
+        var succeeded = false;
         var destPath = Path.Combine(req.TargetDir, "server.jar");
-
-        progress?.Report(new ProgressInfo("下载服务端主程序", 2, 2, fileName));
-        // Paper 用 sha256 而不是 sha1，DownloadFileAsync 目前只支持 sha1 校验；
-        // 这里改用不做哈希强校验的下载路径，只做基本的文件大小/完整性检查（HttpClient 层面）。
-        await DownloadFileNoHashCheckAsync(url, destPath, ct);
-        if (sha256 != null)
+        for (var i = 0; i < candidateBuilds.Count; i++)
         {
-            var actualSha256 = ComputeSha256(destPath);
-            if (!string.Equals(actualSha256, sha256, StringComparison.OrdinalIgnoreCase))
-                throw new IOException("Paper 服务端下载文件 SHA256 校验失败，文件可能损坏，请重试。");
+            var build = candidateBuilds[i];
+            try
+            {
+                // v3 下载端点：/v3/projects/paper/versions/{mcVersion}/builds/{build}/downloads/{fileName}
+                // 文件名规律固定为 paper-{mcVersion}-{build}.jar，但为稳妥起见先查一次 build 详情确认真实文件名，
+                // 避免第三方 API 未来调整命名规则导致直接拼错 URL。
+                progress?.Report(new ProgressInfo("查询构建详情", 1, 2, build));
+                var buildDetailJson = await _http.GetStringAsync(
+                    $"{PaperApiBase}/projects/paper/versions/{req.McVersion}/builds/{build}", ct);
+                using var buildDoc = JsonDocument.Parse(buildDetailJson);
+
+                string fileName;
+                string? sha256 = null;
+                var downloadsEl = buildDoc.RootElement.GetProperty("downloads");
+                if (downloadsEl.TryGetProperty("server:default", out var serverDl))
+                {
+                    fileName = serverDl.GetProperty("name").GetString()!;
+                    if (serverDl.TryGetProperty("checksums", out var checksums) && checksums.TryGetProperty("sha256", out var sh))
+                        sha256 = sh.GetString();
+                }
+                else
+                {
+                    // 兜底：按官方文档记录的固定命名规则拼接
+                    fileName = $"paper-{req.McVersion}-{build}.jar";
+                }
+
+                var url = $"{PaperApiBase}/projects/paper/versions/{req.McVersion}/builds/{build}/downloads/{fileName}";
+
+                progress?.Report(new ProgressInfo(
+                    i == 0 ? "下载服务端主程序" : $"该构建已不可用，改用 build {build} 重试",
+                    2, 2, fileName));
+                // Paper 用 sha256 而不是 sha1，DownloadFileAsync 目前只支持 sha1 校验；
+                // 这里改用不做哈希强校验的下载路径，只做基本的文件大小/完整性检查（HttpClient 层面）。
+                await DownloadFileNoHashCheckAsync(url, destPath, ct);
+                if (sha256 != null)
+                {
+                    var actualSha256 = ComputeSha256(destPath);
+                    if (!string.Equals(actualSha256, sha256, StringComparison.OrdinalIgnoreCase))
+                        throw new IOException("Paper 服务端下载文件 SHA256 校验失败，文件可能损坏，请重试。");
+                }
+
+                succeeded = true;
+                break;
+            }
+            catch (Exception ex) when (IsNotFoundFailure(ex) && i < candidateBuilds.Count - 1)
+            {
+                // 这个 build 下架了/暂时拿不到，记下来，换列表里下一个候选继续试，
+                // 而不是直接把用户扔进"重试 3 次全 404"的死胡同。
+                lastFailure = ex;
+            }
+        }
+
+        if (!succeeded)
+        {
+            throw new IOException(
+                $"Paper MC {req.McVersion} 尝试了 {candidateBuilds.Count} 个构建都下载失败" +
+                "（该版本近期的构建可能都已从官方仓库下架），建议换一个相近的 MC 版本重试。",
+                lastFailure);
         }
 
         return new ServerCoreDownloadResult
@@ -589,6 +629,24 @@ public class ServerCoreDownloadService
             ? "\n这通常是因为该版本的安装器/核心文件已从官方仓库下架，建议换一个相近的版本重试。"
             : "";
         throw new IOException($"下载失败（已重试 {maxAttempts} 次）: {url}{hintb}", lastError);
+    }
+
+    /// <summary>判断一次下载失败是否是"目标 build 已经 404"（值得换下一个候选 build 重试），
+    /// 而不是网络抖动等其他原因。DownloadFileNoHashCheckAsync 内部已经重试过 3 次，最终抛出的是
+    /// 包了一层的 IOException，真正的 HttpRequestException 在 InnerException 里，这里要往里挖一层。
+    /// buildDetailJson 那次查询（GetStringAsync）如果 build 本身不存在，也是直接抛 HttpRequestException，
+    /// 不经过 DownloadFileNoHashCheckAsync 包装，所以两种形态都要判断。</summary>
+    private static bool IsNotFoundFailure(Exception ex)
+    {
+        var probe = ex;
+        while (probe != null)
+        {
+            if (probe is HttpRequestException hre &&
+                (hre.StatusCode == System.Net.HttpStatusCode.NotFound || hre.Message.Contains("404")))
+                return true;
+            probe = probe.InnerException;
+        }
+        return false;
     }
 
     private static bool VerifySha1(string filePath, string expectedSha1)

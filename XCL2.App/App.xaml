@@ -1,7 +1,11 @@
 <Application x:Class="XCL2.App.App"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-             StartupUri="Views/MainWindow.xaml">
+             xmlns:models="clr-namespace:XCL2.App.Models">
+    <!-- StartupUri 移除：改由 Program.cs 里自定义的 Main 入口先做 .NET8 运行时前置检测，
+         检测通过后才 new App().Run(new MainWindow())，保证"你需要安装 .NET8 运行时才可以
+         继续使用本程序"这句中文提示能在窗口真正创建前弹出，而不是等 WPF 初始化过程中途
+         才失败。 -->
     <Application.Resources>
         <ResourceDictionary>
             <!-- 科技感配色：冷调主蓝 + 青色高亮，白底不变。
@@ -19,6 +23,10 @@
             <SolidColorBrush x:Key="TextPrimaryBrush" Color="#151B26"/>
             <SolidColorBrush x:Key="TextSecondaryBrush" Color="#6B7686"/>
             <FontFamily x:Key="MonoFontFamily">Consolas</FontFamily>
+
+            <!-- 卡片内联展开（仿 PCL）通用：IsExpanded/IsLoadingVersions 都是 bool，
+                 直接用 WPF 内置转换器绑定到 Visibility，不需要自己写 IValueConverter。 -->
+            <BooleanToVisibilityConverter x:Key="BoolToVis"/>
 
             <!-- 通用 focus/hover 发光效果：细而亮的青色描边光晕，替代原来大面积色块高亮，
                  科技感界面里更常见"边缘发光"而不是"整块填色"。控件模板里用
@@ -102,6 +110,41 @@
                     <Trigger Property="IsMouseOver" Value="True">
                         <Setter Property="Background" Value="{StaticResource AccentHoverBrush}"/>
                     </Trigger>
+                    <Trigger Property="IsEnabled" Value="False">
+                        <Setter Property="Opacity" Value="0.5"/>
+                    </Trigger>
+                </Style.Triggers>
+            </Style>
+
+            <!-- 描边按钮：仿 PCL 筛选栏里"重置条件"那种样式——跟 PrimaryButton 的实心强调色不同，
+                 这里是透明背景 + 边框，用在"次要操作"上（重置筛选条件），避免跟"搜索"这个主操作
+                 抢视觉焦点。结构基本照抄 PrimaryButton，只是配色反过来。 -->
+            <Style TargetType="Button" x:Key="SecondaryButton">
+                <Setter Property="Background" Value="Transparent"/>
+                <Setter Property="Foreground" Value="{StaticResource AccentBrush}"/>
+                <Setter Property="FontSize" Value="15"/>
+                <Setter Property="Padding" Value="12,8"/>
+                <Setter Property="BorderThickness" Value="1"/>
+                <Setter Property="BorderBrush" Value="{StaticResource BorderBrush2}"/>
+                <Setter Property="Cursor" Value="Hand"/>
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="Button">
+                            <Border x:Name="bd" Background="{TemplateBinding Background}"
+                                    BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}"
+                                    CornerRadius="4" Padding="{TemplateBinding Padding}">
+                                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                            </Border>
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="IsMouseOver" Value="True">
+                                    <Setter TargetName="bd" Property="BorderBrush" Value="{StaticResource GlowBrush}"/>
+                                    <Setter TargetName="bd" Property="Effect" Value="{StaticResource GlowEffect}"/>
+                                </Trigger>
+                            </ControlTemplate.Triggers>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+                <Style.Triggers>
                     <Trigger Property="IsEnabled" Value="False">
                         <Setter Property="Opacity" Value="0.5"/>
                     </Trigger>
@@ -406,6 +449,49 @@
                     </Setter.Value>
                 </Setter>
             </Style>
+
+            <!-- 资源面板(材质包/数据包/光影包/服务端插件等)版本：比 Mod 那份多一个"数据包安装到哪个存档"的
+                 下拉框，其余结构一致。数据包场景下必须先选存档才允许点下载，由宿主
+                 InlineVersionDownload_Click 里做校验（跟原来弹窗里 SaveCombo 校验逻辑一致）。 -->
+            <DataTemplate x:Key="InlineVersionExpandPanel_Resource" DataType="{x:Type models:UnifiedResourceItem}">
+                <Border Visibility="{Binding IsExpanded, Converter={StaticResource BoolToVis}}"
+                        Background="{StaticResource SideBrush}" CornerRadius="6" Margin="0,6,0,0" Padding="10">
+                    <StackPanel>
+                        <TextBlock Text="正在加载版本列表..." FontSize="12" Foreground="{StaticResource TextSecondaryBrush}"
+                                   Visibility="{Binding IsLoadingVersions, Converter={StaticResource BoolToVis}}"/>
+                        <StackPanel Visibility="{Binding IsDataPack, Converter={StaticResource BoolToVis}}" Margin="0,0,0,8">
+                            <TextBlock Text="安装到哪个存档：" FontSize="12" Foreground="{StaticResource TextSecondaryBrush}" Margin="0,0,0,4"/>
+                            <ComboBox ItemsSource="{Binding SaveNames}" SelectedItem="{Binding SelectedSaveName, Mode=TwoWay}"/>
+                        </StackPanel>
+                        <TextBlock Text="没有找到匹配的版本（可能是筛选的游戏版本不匹配）。" FontSize="12"
+                                   Foreground="{StaticResource TextSecondaryBrush}" Margin="0,4"
+                                   Visibility="{Binding HasNoResults, Converter={StaticResource BoolToVis}}"/>
+                        <ItemsControl ItemsSource="{Binding Versions}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate DataType="{x:Type models:InlineVersionEntry}">
+                                    <Border Background="{StaticResource PanelBrush}" CornerRadius="4" Margin="0,3" Padding="8">
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="Auto"/>
+                                            </Grid.ColumnDefinitions>
+                                            <StackPanel>
+                                                <TextBlock Text="{Binding Name}" FontSize="13"/>
+                                                <TextBlock FontSize="11" Foreground="{StaticResource TextSecondaryBrush}">
+                                                    <Run Text="{Binding VersionNumber, Mode=OneWay}"/>
+                                                    <Run Text=" · 支持: "/><Run Text="{Binding GameVersionsText, Mode=OneWay}"/>
+                                                </TextBlock>
+                                            </StackPanel>
+                                            <Button Grid.Column="1" Content="下载" Style="{StaticResource PrimaryButton}"
+                                                    Padding="10,5" FontSize="13" Tag="{Binding}"/>
+                                        </Grid>
+                                    </Border>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </StackPanel>
+                </Border>
+            </DataTemplate>
         </ResourceDictionary>
     </Application.Resources>
 </Application>

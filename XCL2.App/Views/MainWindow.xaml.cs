@@ -113,6 +113,13 @@ public partial class MainWindow : Window
         {
             ConfigService.GuestAccount = null;
         }
+
+        // 访客模式开关一变化就立即重算配色：开启时不管用户平时选的是哪套"持久皮肤"
+        // (cfg.UiSkin)，都强制切黑色；关闭时恢复回 cfg.UiSkin。构造函数里第一次调用
+        // RefreshGuestModeState 时也会走到这里，保证"启动时访客模式就是开启状态"这种
+        // 情况下界面从一开始显示就是黑的，不会先白一下再跳黑。
+        ThemeService.ApplyForCurrentState(ConfigService.Config.GuestModeEnabled, ConfigService.Config.UiSkin);
+
         RefreshSidebar();
     }
 
@@ -197,6 +204,26 @@ public partial class MainWindow : Window
 
     /// <summary>供其他页面/窗口调用的公开导航方法，跳转到下载中心。</summary>
     public void NavigateToDownloadCenter() => SetMainContent(new DownloadCenterPage(this));
+
+    private void NavMultiplayer_Click(object sender, RoutedEventArgs e)
+    {
+        SetMainContent(new MultiplayerPage(this));
+    }
+
+    /// <summary>供其他页面调用的公开导航方法，跳转到「联机」页（陶瓦联机/红石联机入口）。</summary>
+    public void NavigateToMultiplayer() => SetMainContent(new MultiplayerPage(this));
+
+    /// <summary>
+    /// 从「联机」页跳转到下载中心并直接按给定关键词搜索 Mod——用于"红石联机"的
+    /// 一键搜索安装入口，复用下载中心现成的 Mod 分类 + Modrinth 综合搜索逻辑，
+    /// 不需要在联机页里重新实现一遍下载/安装流程。
+    /// </summary>
+    public void NavigateToDownloadCenterWithModSearch(string keyword)
+    {
+        var page = new DownloadCenterPage(this);
+        SetMainContent(page);
+        page.SelectModCategoryAndSearch(keyword);
+    }
 
     private void NavModManager_Click(object sender, RoutedEventArgs e)
     {
@@ -545,14 +572,81 @@ public partial class MainWindow : Window
 
             // 导出启动脚本只是附加功能，不应该在失败时阻止真正的游戏启动
             // （之前 GBK 编码问题就是在这一步抛异常，导致下面的 Launch 根本没执行到）。
+            // MissingLibrariesException 在这里也可能抛出，但那是"下面 Launch() 也一定会
+            // 遇到的同一个问题"，不属于导出脚本独有的失败，放过它冒泡到下面统一处理。
             try { launcher.ExportLaunchScript(options); }
+            catch (MissingLibrariesException) { /* 留给下面 Launch() 统一处理 */ }
             catch (Exception exportEx)
             {
                 File.AppendAllText(Path.Combine(App.DataDir, "logs", "crash.log"),
                     $"[{DateTime.Now}] 导出启动脚本失败(不影响启动): {exportEx}\n\n");
             }
 
-            var processInfo = launcher.Launch(options);
+            GameProcessInfo processInfo;
+            try
+            {
+                processInfo = launcher.Launch(options);
+            }
+            catch (MissingLibrariesException mle)
+            {
+                // 远古版本(1.8 及更早)最容易触发这个分支：lwjgl-platform/jinput-platform/
+                // twitch-platform 等 natives 库在早期安装时经常因为老版本 classifier 规则
+                // 没跟上而遗漏。之前只会弹"请重新安装/补全依赖库"的死路提示，用户还得自己
+                // 想办法去哪里"重新安装"——现在提供"自动补全"，复用
+                // DownloadService.DownloadLibrariesOnlyAsync 补齐缺失库后原地重试启动。
+                var repair = MessageBox.Show(
+                    mle.Message + "\n\n是否现在自动下载补全这些缺失的库？",
+                    "缺少依赖库", MessageBoxButton.YesNo, MessageBoxImage.Warning);
+                if (repair != MessageBoxResult.Yes) return;
+
+                var repairWin = new ProgressWindow("正在补全缺失的依赖库...");
+                repairWin.Owner = this;
+                repairWin.Show();
+                try
+                {
+                    var versionDir = Path.Combine(folder.Path, "versions", mle.VersionId);
+                    var versionJsonPath = File.Exists(Path.Combine(versionDir, $"{mle.VersionId}.json"))
+                        ? Path.Combine(versionDir, $"{mle.VersionId}.json")
+                        : Directory.GetFiles(versionDir, "*.json").FirstOrDefault();
+                    if (versionJsonPath == null)
+                        throw new InvalidOperationException("找不到该版本的 version json，无法确定需要补全哪些库。");
+
+                    var detail = System.Text.Json.JsonSerializer.Deserialize<VersionDetail>(
+                        File.ReadAllText(versionJsonPath)) ?? new VersionDetail();
+                    detail.Id = mle.VersionId;
+
+                    using var repairDownloader = DownloadService.CreateFromConfig(cfg);
+                    // 有 inheritsFrom 时(Fabric/Forge 等)，缺库也可能来自父版本(原版)的库列表，
+                    // 两份都要补，跟 BuildArguments 里 AddLibs 对父子两份 json 都扫描的逻辑一致。
+                    if (!string.IsNullOrEmpty(detail.InheritsFrom))
+                    {
+                        var parentDir = Path.Combine(folder.Path, "versions", detail.InheritsFrom);
+                        var parentJsonPath = File.Exists(Path.Combine(parentDir, $"{detail.InheritsFrom}.json"))
+                            ? Path.Combine(parentDir, $"{detail.InheritsFrom}.json")
+                            : (Directory.Exists(parentDir) ? Directory.GetFiles(parentDir, "*.json").FirstOrDefault() : null);
+                        if (parentJsonPath != null)
+                        {
+                            var parentDetail = System.Text.Json.JsonSerializer.Deserialize<VersionDetail>(
+                                File.ReadAllText(parentJsonPath)) ?? new VersionDetail();
+                            parentDetail.Id = detail.InheritsFrom;
+                            await repairDownloader.DownloadLibrariesOnlyAsync(folder.Path, parentDetail, repairWin.Progress);
+                        }
+                    }
+                    await repairDownloader.DownloadLibrariesOnlyAsync(folder.Path, detail, repairWin.Progress);
+                }
+                catch (Exception repairEx)
+                {
+                    repairWin.Close();
+                    ErrorPresenter.ShowFriendlyError(
+                        "自动补全依赖库失败，请检查网络连接后重试，或前往「版本选择」页重新安装该版本。",
+                        $"[补全依赖库失败] {repairEx}", "补全失败");
+                    return;
+                }
+                repairWin.Close();
+
+                // 补库之后原地重试一次启动，不需要用户再点一次"启动游戏"按钮。
+                processInfo = launcher.Launch(options);
+            }
             ProcessManager.Register(processInfo);
             RefreshSidebar();
 

@@ -19,7 +19,9 @@
                 <RadioButton x:Name="LoaderForge" Style="{StaticResource DownloadCategoryButton}"
                              Content="Forge" Checked="LoaderType_Checked" Tag="Forge" Margin="0,0,6,0"/>
                 <RadioButton x:Name="LoaderNeoForge" Style="{StaticResource DownloadCategoryButton}"
-                             Content="NeoForge" Checked="LoaderType_Checked" Tag="NeoForge"/>
+                             Content="NeoForge" Checked="LoaderType_Checked" Tag="NeoForge" Margin="0,0,6,0"/>
+                <RadioButton x:Name="LoaderQuilt" Style="{StaticResource DownloadCategoryButton}"
+                             Content="Quilt" Checked="LoaderType_Checked" Tag="Quilt"/>
             </StackPanel>
 
             <Grid Margin="0,0,0,14">
@@ -60,6 +62,9 @@
                        Text="Fabric 客户端安装本身不需要本地运行安装器，不填 Java 也可以安装；启动这个版本时仍会照常自动匹配/下载所需 Java。"/>
 
             <CheckBox x:Name="InstallFabricApiCheck" Content="同时安装 Fabric API（很多 Fabric 模组依赖它，建议勾选）"
+                      IsChecked="True" Margin="0,-6,0,14" Visibility="Collapsed"/>
+
+            <CheckBox x:Name="InstallQslCheck" Content="同时安装 QSL（Quilt Standard Libraries，很多 Quilt 模组依赖它，建议勾选）"
                       IsChecked="True" Margin="0,-6,0,14" Visibility="Collapsed"/>
 
             <!-- 进度展示 -->

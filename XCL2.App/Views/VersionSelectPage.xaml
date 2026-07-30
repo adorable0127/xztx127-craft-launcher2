@@ -49,6 +49,15 @@
                     <ListBox.ItemTemplate>
                         <DataTemplate>
                             <StackPanel Orientation="Horizontal" Margin="4">
+                                <StackPanel.ContextMenu>
+                                    <!-- 右键菜单：查看这个版本对应的中文 Minecraft Wiki 页面。
+                                         Tag="{Binding}" 把当前行绑定的 GameVersion 传给菜单项，
+                                         点击时从 Tag 里取回 Id 拼 Wiki 搜索链接，见 ViewOnWiki_Click。 -->
+                                    <ContextMenu>
+                                        <MenuItem Header="在中文 Minecraft Wiki 中查看"
+                                                  Tag="{Binding}" Click="ViewOnWiki_Click"/>
+                                    </ContextMenu>
+                                </StackPanel.ContextMenu>
                                 <TextBlock Text="🧊" FontSize="18" Margin="0,0,10,0"/>
                                 <StackPanel>
                                     <TextBlock Text="{Binding Id}" FontSize="15"/>
