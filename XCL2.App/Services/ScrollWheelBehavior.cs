@@ -68,6 +68,25 @@ public static class ScrollWheelBehavior
     {
         if (sender is not ScrollViewer sv) return;
 
+        // 修复"内嵌 ListBox/列表控件里滚轮不起作用"：这个事件处理器订阅的是 PreviewMouseWheel，
+        // 而 Preview 系列事件是"隧道"路由——从最外层的元素开始，一路向下传到鼠标实际所在的
+        // 那个子控件，沿途每一层都会先经过这里。之前的写法不管鼠标在哪儿，只要事件路过这个
+        // 外层 ScrollViewer 就无条件 e.Handled = true 并滚动"外层"的偏移量——这样一来，事件
+        // 根本传不到内层的 ListBox（比如 Java 列表、已安装版本列表）自己的 ScrollViewer 那里，
+        // 内层列表自身永远收不到 MouseWheel，表现就是"鼠标悬停在这些列表上划滚轮，列表纹丝
+        // 不动"（而外层大页面又可能因为这一小块区域根本没跨越可视边界，看起来跟没反应一样）。
+        //
+        // 修法：先检查鼠标当前是否正处于某个"自己能滚、并且还没滚到头"的内层滚动控件之上
+        // （ListBox/ListView/ComboBox 等自带 ScrollViewer 的控件，或用户手动嵌套的 ScrollViewer）。
+        // 如果是，就把这次事件让给它自己处理（不设 e.Handled，交由路由继续走到 Bubble 阶段，
+        // 内层控件的默认滚动逻辑会接管），外层这里直接 return，不抢它的滚动。只有当鼠标不在
+        // 任何内层可滚动控件上、或者内层已经滚到顶/底再滚不动了，才由外层这个 ScrollViewer
+        // 接管，实现类似浏览器"子容器滚到头之后，继续滚动带动外层页面"的直觉行为。
+        if (e.OriginalSource is DependencyObject source && HasScrollableAncestorBefore(source, sv, e.Delta))
+        {
+            return;
+        }
+
         // 根因：之前这里直接调用 sv.ScrollToVerticalOffset(newOffset)——这是同步的、
         // 立即完成的一次性跳转，每次 MouseWheel 事件（快速划动时一秒能触发几十次）都会
         // 各自强制走一次完整的布局(layout)+排版(arrange)。设置页控件多、内容高，一次布局
@@ -102,6 +121,36 @@ public static class ScrollWheelBehavior
 
         sv.BeginAnimation(ScrollViewerOffsetHelper.VerticalOffsetProperty, animation);
         e.Handled = true;
+    }
+
+    /// <summary>从事件真正的来源(originalSource)往上找，直到碰到外层这个 ScrollViewer(outer)为止——
+    /// 途中如果先遇到一个自己内部还能再滚(没滚到顶/底)的可滚动控件，就返回 true，表示这次滚轮
+    /// 应该交给那个内层控件自己处理，外层不要抢。ListBox/ListView/ComboBox 等控件的默认模板里
+    /// 都内嵌了一个 ScrollViewer，所以只需要找"内层 ScrollViewer"即可，不需要特判具体控件类型。</summary>
+    private static bool HasScrollableAncestorBefore(DependencyObject source, ScrollViewer outer, int wheelDelta)
+    {
+        var current = source;
+        while (current != null && !ReferenceEquals(current, outer))
+        {
+            if (current is ScrollViewer inner && !ReferenceEquals(inner, outer))
+            {
+                // wheelDelta > 0 是向上滚：只要还没到顶（VerticalOffset > 0）就还有空间可滚。
+                // wheelDelta < 0 是向下滚：只要还没到底（ScrollableHeight - VerticalOffset 还有余量）。
+                var canScrollUp = inner.VerticalOffset > 0.0;
+                var canScrollDown = inner.VerticalOffset < inner.ScrollableHeight;
+                if ((wheelDelta > 0 && canScrollUp) || (wheelDelta < 0 && canScrollDown))
+                {
+                    return true;
+                }
+                // 内层已经滚到头，滚不动了——不 return，继续往上找（让事件最终交给外层处理，
+                // 实现"内层滚到底后自动带动外层继续滚"的效果）。
+            }
+
+            current = current is Visual || current is System.Windows.Media.Media3D.Visual3D
+                ? System.Windows.Media.VisualTreeHelper.GetParent(current)
+                : LogicalTreeHelper.GetParent(current);
+        }
+        return false;
     }
 }
 

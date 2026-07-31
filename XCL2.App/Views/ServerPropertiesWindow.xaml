@@ -1,6 +1,7 @@
 <Window x:Class="XCL2.App.Views.ServerPropertiesWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:services="clr-namespace:XCL2.App.Services"
         Title="服务器设置"
         Width="720" Height="640"
         WindowStartupLocation="CenterOwner"
@@ -17,7 +18,7 @@
             <TextBlock Text="快捷设置您的服务器基本设置。" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="12"/>
         </StackPanel>
 
-        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
+        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" services:ScrollWheelBehavior.EnableFastWheel="True">
             <StackPanel>
                 <TextBlock Text="server.properties" FontSize="15" FontWeight="Bold" FontFamily="{DynamicResource MonoFontFamily}" Margin="0,0,0,2"/>
                 <TextBlock Text="server.properties 文件快捷设置。设置后需要重启才能生效。"

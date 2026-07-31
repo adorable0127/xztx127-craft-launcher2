@@ -1,6 +1,7 @@
 <Window x:Class="XCL2.App.Views.MultiLoaderInstallWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:services="clr-namespace:XCL2.App.Services"
         Title="实验性内容1：安装多个加载器"
         Width="560" Height="640"
         WindowStartupLocation="CenterOwner"
@@ -18,7 +19,7 @@
                        Foreground="{DynamicResource TextSecondaryBrush}" FontSize="12" TextWrapping="Wrap"/>
         </StackPanel>
 
-        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
+        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" services:ScrollWheelBehavior.EnableFastWheel="True">
             <StackPanel>
 
                 <!-- ============ 第一屏：风险提示 + Token 校验（未通过前，下面的安装区不可见） ============ -->

@@ -1,6 +1,7 @@
 <UserControl x:Class="XCL2.App.Views.ServerManagerPage"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:services="clr-namespace:XCL2.App.Services">
     <UserControl.Resources>
         <!-- 磁贴样式：跟 HomePage.xaml 里那一套"首页四宫格"磁贴保持完全一致的视觉语言
              (描边发光 hover + 轻微上浮)，这里复制一份而不是共享同一个 x:Key，因为
@@ -335,7 +336,7 @@
                                 Padding="16,10" Click="CreateServer_Click"/>
                     </Grid>
 
-                    <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
+                    <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" services:ScrollWheelBehavior.EnableFastWheel="True">
                         <StackPanel x:Name="InstanceListPanel"/>
                     </ScrollViewer>
                 </Grid>

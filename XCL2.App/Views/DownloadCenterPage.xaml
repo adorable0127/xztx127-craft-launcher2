@@ -1,7 +1,8 @@
 <UserControl x:Class="XCL2.App.Views.DownloadCenterPage"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-             xmlns:models="clr-namespace:XCL2.App.Models">
+             xmlns:models="clr-namespace:XCL2.App.Models"
+             xmlns:services="clr-namespace:XCL2.App.Services">
     <UserControl.Resources>
         <ResourceDictionary>
             <!-- ===== [已废弃，仅作参照，无任何引用] 卡片内联展开面板：点击条目后卡片下方直接展开版本/文件列表。
@@ -446,7 +447,7 @@
 
                     <TextBlock Grid.Row="0" Text="我的收藏" FontSize="18" FontWeight="Bold" Margin="0,0,0,10"/>
 
-                    <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
+                    <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" services:ScrollWheelBehavior.EnableFastWheel="True">
                         <StackPanel>
                             <TextBlock Text="游戏版本" FontWeight="Bold" FontSize="13" Margin="0,0,0,6"/>
                             <ListBox x:Name="FavoritesListBox" BorderThickness="0" Background="Transparent"

@@ -99,11 +99,17 @@ public partial class MainWindow : Window
         _pruneTimer.Tick += (_, _) => ProcessManager.PruneExited();
         _pruneTimer.Start();
 
-        // 「自动循环」深浅色模式：每分钟检查一次是否需要按计划切换，够用了——用户不会
-        // 精确到秒去纠结切换时间点。启动时立即校验一次（见 ReevaluateAutoThemeCycle），
-        // 保证"上次关闭时是深色，但现在已经过了浅色模式开始时间"这种情况一打开就是对的，
-        // 不用等到第一次定时 Tick。
-        _autoThemeCycleTimer = new DispatcherTimer { Interval = TimeSpan.FromMinutes(1) };
+        // 「自动循环」深浅色模式：之前是每分钟检查一次。反馈里出现过"到了设定的切换时间，
+        // 界面没有自动变成深色，非要重启启动器一次才生效"的情况——ReevaluateAutoThemeCycle
+        // 本身的判断逻辑没问题（按小时比较+去重的 slot 标识），但1分钟的间隔在一些机器上
+        // （比如系统进入过短暂休眠/UI 线程短暂阻塞导致某次 Tick 被跳过、或者用户就是没那么
+        // 巧等到下一次整分钟 Tick）会让人感觉"过了好一会儿还没切换"，容易被误判成"完全不生效"，
+        // 直到重启走一遍构造函数里那次立即校验（见下面 ReevaluateAutoThemeCycle() 调用）才
+        // 骤然发现变了，看起来就像"必须重启才生效"。
+        // 改成每 1 秒检查一次：DispatcherTimer 本身开销很小（ReevaluateAutoThemeCycle 内部
+        // 大部分时间是"当前 slot 没变，直接 return"的快速路径，真正切换配色的分支一小时最多
+        // 触发一次），一秒级的粒度足够消除上述"感觉卡住不切换"的体验问题，用户不需要再重启。
+        _autoThemeCycleTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
         _autoThemeCycleTimer.Tick += (_, _) => ReevaluateAutoThemeCycle();
         _autoThemeCycleTimer.Start();
         ReevaluateAutoThemeCycle();

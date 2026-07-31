@@ -1,7 +1,8 @@
 <UserControl x:Class="XCL2.App.Views.ModDetailPage"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-             xmlns:models="clr-namespace:XCL2.App.Models">
+             xmlns:models="clr-namespace:XCL2.App.Models"
+             xmlns:services="clr-namespace:XCL2.App.Services">
     <!-- 根因修复（"穿模"：详情页内容和下层列表/搜索框/分页按钮混叠在一起）：
          这个 UserControl 是以"整页覆盖层"的方式塞进宿主页面的 DetailHost(ContentControl) 里，
          直接叠加显示在原有的列表面板（搜索框、分页按钮等）之上，靠肉眼视觉制造"整页跳转"的
@@ -35,7 +36,7 @@
         </Border>
 
         <!-- ===== 主体内容：滚动区域，依次是"简介卡片"和"版本分组列表"。 ===== -->
-        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" Padding="0,10,0,0">
+        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" Padding="0,10,0,0" services:ScrollWheelBehavior.EnableFastWheel="True">
             <StackPanel Margin="0,0,0,10">
 
                 <!-- 简介卡片：图标 + 标题 + 简介 + 元信息一行，下面是操作按钮行
