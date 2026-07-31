@@ -62,8 +62,16 @@ public partial class FirstRunWizardWindow : Window
         {
             if (!_completed)
             {
+                // 注意：这里不能调用 Complete()，因为 Complete() 内部会调用 Close()——
+                // 而当前正处于 Closing 事件回调中，窗口本身已经在关闭流程里，此时再次
+                // 调用 Close()/Show()/ShowDialog() 或修改 Visibility 会被 WPF 直接拒绝，
+                // 抛出 InvalidOperationException("在窗口关闭期间，无法...")。
+                // 所以这里只做「标记完成 + 保存配置」，不再触发第二次 Close()。
+                _completed = true;
                 ApplyFolderAndLanguage();
-                Complete(markCompleted: true);
+                _owner.ConfigService.Config.FirstRunWizardCompleted = true;
+                _owner.ConfigService.Save();
+                _owner.RefreshSidebar();
             }
         };
 
