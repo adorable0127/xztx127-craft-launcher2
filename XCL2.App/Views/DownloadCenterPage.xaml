@@ -11,12 +11,12 @@
                  不影响编译。 -->
             <DataTemplate x:Key="InlineVersionExpandPanel_Mod" DataType="{x:Type models:UnifiedModItem}">
                 <Border Visibility="{Binding IsExpanded, Converter={StaticResource BoolToVis}}"
-                        Background="{StaticResource SideBrush}" CornerRadius="6" Margin="0,6,0,0" Padding="10">
+                        Background="{DynamicResource SideBrush}" CornerRadius="6" Margin="0,6,0,0" Padding="10">
                     <StackPanel>
-                        <TextBlock Text="正在加载版本列表..." FontSize="12" Foreground="{StaticResource TextSecondaryBrush}"
+                        <TextBlock Text="正在加载版本列表..." FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}"
                                    Visibility="{Binding IsLoadingVersions, Converter={StaticResource BoolToVis}}"/>
                         <TextBlock Text="没有找到匹配的版本（可能是筛选的游戏版本不匹配）。" FontSize="12"
-                                   Foreground="{StaticResource TextSecondaryBrush}" Margin="0,4"
+                                   Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,4"
                                    Visibility="{Binding HasNoResults, Converter={StaticResource BoolToVis}}"/>
 
                         <!-- 按"加载器 + 游戏版本"分组展示(仿截图2/3)：每组一个可折叠标题条("NeoForge 26.2"这种)，
@@ -27,7 +27,7 @@
                         <ItemsControl ItemsSource="{Binding Groups}">
                             <ItemsControl.ItemTemplate>
                                 <DataTemplate DataType="{x:Type models:VersionGroup}">
-                                    <Border Background="{StaticResource PanelBrush}" CornerRadius="4" Margin="0,3" Padding="0">
+                                    <Border Background="{DynamicResource PanelBrush}" CornerRadius="4" Margin="0,3" Padding="0">
                                         <StackPanel>
                                             <!-- 分组标题条：整条可点击展开/收起，右侧箭头随 IsExpanded 状态旋转，
                                                  视觉上跟截图2里"Fabric 26.2 ⌄/⌃"的交互一致。 -->
@@ -38,9 +38,9 @@
                                                     <ColumnDefinition Width="Auto"/>
                                                 </Grid.ColumnDefinitions>
                                                 <TextBlock Grid.Column="0" Text="{Binding GroupTitle}" FontSize="14" FontWeight="SemiBold"
-                                                           Padding="10,10" Foreground="{StaticResource TextPrimaryBrush}"/>
+                                                           Padding="10,10" Foreground="{DynamicResource TextPrimaryBrush}"/>
                                                 <TextBlock Grid.Column="1" Padding="10,10" FontSize="13" VerticalAlignment="Center"
-                                                           Foreground="{StaticResource TextSecondaryBrush}">
+                                                           Foreground="{DynamicResource TextSecondaryBrush}">
                                                     <TextBlock.Style>
                                                         <Style TargetType="TextBlock">
                                                             <Setter Property="Text" Value="⌄"/>
@@ -66,12 +66,12 @@
                                                 <StackPanel Visibility="{Binding HasRequiredDependencies, Converter={StaticResource BoolToVis}}"
                                                             Margin="0,8,0,4">
                                                     <TextBlock Text="前置资源" FontSize="12" FontWeight="SemiBold"
-                                                               Foreground="{StaticResource TextSecondaryBrush}" Margin="0,0,0,4"/>
+                                                               Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4"/>
                                                     <ItemsControl ItemsSource="{Binding RequiredDependencies}">
                                                         <ItemsControl.ItemTemplate>
                                                             <DataTemplate DataType="{x:Type models:ModrinthDependency}">
-                                                                <Border Background="{StaticResource SideBrush}" CornerRadius="4" Margin="0,2" Padding="8,6">
-                                                                    <TextBlock FontSize="12" Foreground="{StaticResource TextPrimaryBrush}" TextWrapping="Wrap">
+                                                                <Border Background="{DynamicResource SideBrush}" CornerRadius="4" Margin="0,2" Padding="8,6">
+                                                                    <TextBlock FontSize="12" Foreground="{DynamicResource TextPrimaryBrush}" TextWrapping="Wrap">
                                                                         <Run Text="项目 ID: "/><Run Text="{Binding ProjectId, Mode=OneWay}"/>
                                                                         <Run Text="  文件名: "/><Run Text="{Binding FileName, Mode=OneWay}"/>
                                                                     </TextBlock>
@@ -82,11 +82,11 @@
                                                 </StackPanel>
 
                                                 <TextBlock Text="版本列表" FontSize="12" FontWeight="SemiBold"
-                                                           Foreground="{StaticResource TextSecondaryBrush}" Margin="0,4,0,4"/>
+                                                           Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,4,0,4"/>
                                                 <ItemsControl ItemsSource="{Binding Entries}">
                                                     <ItemsControl.ItemTemplate>
                                                         <DataTemplate DataType="{x:Type models:InlineVersionEntry}">
-                                                            <Border Background="{StaticResource SideBrush}" CornerRadius="4" Margin="0,2" Padding="8">
+                                                            <Border Background="{DynamicResource SideBrush}" CornerRadius="4" Margin="0,2" Padding="8">
                                                                 <Grid>
                                                                     <Grid.ColumnDefinitions>
                                                                         <ColumnDefinition Width="*"/>
@@ -94,13 +94,13 @@
                                                                     </Grid.ColumnDefinitions>
                                                                     <StackPanel>
                                                                         <TextBlock Text="{Binding Name}" FontSize="13"/>
-                                                                        <TextBlock FontSize="11" Foreground="{StaticResource TextSecondaryBrush}">
+                                                                        <TextBlock FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}">
                                                                             <Run Text="{Binding VersionNumber, Mode=OneWay}"/>
                                                                             <Run Text=" · 支持: "/><Run Text="{Binding GameVersionsText, Mode=OneWay}"/>
                                                                         </TextBlock>
                                                                     </StackPanel>
                                                                     <Button Grid.Column="1" Content="下载" Style="{StaticResource PrimaryButton}"
-                                                                            Padding="10,5" FontSize="13" Tag="{Binding}"/>
+                                                                            Padding="14,6" FontSize="13" Tag="{Binding}"/>
                                                                 </Grid>
                                                             </Border>
                                                         </DataTemplate>
@@ -117,16 +117,20 @@
             </DataTemplate>
         </ResourceDictionary>
     </UserControl.Resources>
-    <Grid>
+    <Grid Margin="0">
         <Grid.ColumnDefinitions>
             <ColumnDefinition Width="180"/>
+            <ColumnDefinition Width="10"/>
             <ColumnDefinition Width="*"/>
         </Grid.ColumnDefinitions>
 
-        <!-- 左侧分类栏（仿 PCL 下载页的竖排分类图标） -->
-        <Border x:Name="ListRootLeft" Grid.Column="0" Background="{StaticResource PanelBrush}" CornerRadius="10" Margin="0,0,10,0" Padding="10">
+        <!-- 左侧分类栏（仿 PCL 下载页的竖排分类图标）。修复：之前左侧用 Margin="0,0,10,0" 撑出间距，
+             右侧面板紧贴列边界，两侧 Padding/CornerRadius 渲染基准不同导致视觉上相差 1px 且不对称；
+             现在改为用一列宽度恰好 10 的空 Column 隔开两个面板，左右面板各自都不再带不对称 Margin，
+             间距由 Grid 布局保证，不会再有像素级偏差。 -->
+        <Border x:Name="ListRootLeft" Grid.Column="0" Background="{DynamicResource PanelBrush}" CornerRadius="10" Padding="10">
             <StackPanel>
-                <TextBlock Text="下载" FontSize="18" FontWeight="Bold" Margin="8,4,0,16" Foreground="{StaticResource AccentBrush}"/>
+                <TextBlock Text="下载" FontSize="18" FontWeight="Bold" Margin="8,4,0,16" Foreground="{DynamicResource AccentBrush}"/>
 
                 <Button Style="{StaticResource PrimaryButton}" Padding="6,10"
                         Margin="0,0,0,8" HorizontalAlignment="Stretch" Click="QuickStartWizard_Click"
@@ -203,7 +207,7 @@
         </Border>
 
         <!-- 右侧内容区 -->
-        <Border x:Name="ListRootRight" Grid.Column="1" Background="{StaticResource PanelBrush}" CornerRadius="10" Padding="20">
+        <Border x:Name="ListRootRight" Grid.Column="2" Background="{DynamicResource PanelBrush}" CornerRadius="10" Padding="20">
             <Grid>
             <!-- 列表态：Mod/资源包/地图/游戏版本/收藏 等各分类面板，跟之前完全一样。点击某个
                  条目后"整页跳转"到详情时，靠下面同级的 DetailHost 盖住整个内容区，而不是真的
@@ -275,7 +279,7 @@
                                     </Grid.ContextMenu>
                                     <StackPanel>
                                         <TextBlock Text="{Binding Id}" FontSize="15"/>
-                                        <TextBlock Text="{Binding ReleaseTime}" FontSize="11" Foreground="{StaticResource TextSecondaryBrush}"/>
+                                        <TextBlock Text="{Binding ReleaseTime}" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}"/>
                                     </StackPanel>
                                     <Button Grid.Column="1" Content="{Binding FavoriteLabel}" Margin="0,0,8,0" Padding="10,6"
                                             Style="{StaticResource SideNavButton}" Tag="{Binding}" Click="FavoriteVersion_Click"/>
@@ -298,14 +302,20 @@
                         <Button Grid.Column="0" x:Name="VersionPrevPageButton" Content="◀ 上一页" Style="{StaticResource SecondaryButton}"
                                 Padding="12,6" Click="VersionPrevPage_Click"/>
                         <TextBlock Grid.Column="1" x:Name="VersionPageSummaryText" HorizontalAlignment="Center"
-                                   VerticalAlignment="Center" FontSize="12" Foreground="{StaticResource TextSecondaryBrush}"/>
+                                   VerticalAlignment="Center" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}"/>
                         <Button Grid.Column="2" x:Name="VersionNextPageButton" Content="下一页 ▶" Style="{StaticResource SecondaryButton}"
                                 Padding="12,6" Click="VersionNextPage_Click"/>
                     </Grid>
                 </Grid>
 
-                <!-- ===== Modrinth 社区资源面板：材质包/数据包/光影包共用（靠 _currentResourceType 区分） ===== -->
-                <Grid x:Name="ResourcePanel" DockPanel.Dock="Top" Visibility="Collapsed">
+                <!-- ===== Modrinth 社区资源面板：材质包/数据包/光影包共用（靠 _currentResourceType 区分） =====
+                     修复"社区资源页面太通透，看不清楚"：这个 Grid 之前没设 Background，下面的
+                     ResourceListBox 又显式设成 Transparent，实际展示区域完全没有不透明底色，
+                     跟外层 ListRootRight（Border，PanelBrush 纯白）之间只隔着这层透明，视觉上
+                     内容区跟外层窗口背景（可能带模糊/半透明特效）混在一起，文字看不清楚。
+                     这里直接给 ResourcePanel 一层纯白不透明底色（PanelBrush），列表本身的
+                     Transparent 保留（用来透出这层纯白底色，而不是透到窗口背景）。 -->
+                <Grid x:Name="ResourcePanel" DockPanel.Dock="Top" Visibility="Collapsed" Background="{DynamicResource PanelBrush}">
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto"/>
                         <RowDefinition Height="Auto"/>
@@ -320,7 +330,7 @@
                          不是面板内部可选项，所以这里的"类型"下拉框用来展示当前选中的类型，
                          并让用户可以在不切回左侧导航的情况下直接在这个面板内切换三种类型——
                          比如正在看材质包搜索结果时，想顺手看看光影包，不需要来回点左侧栏。 -->
-                    <Border Grid.Row="1" Background="{StaticResource SideBrush}" BorderBrush="{StaticResource BorderBrush2}"
+                    <Border Grid.Row="1" Background="{DynamicResource SideBrush}" BorderBrush="{DynamicResource BorderBrush2}"
                             BorderThickness="1" CornerRadius="8" Padding="14" Margin="0,0,0,10">
                         <Grid>
                             <Grid.RowDefinitions>
@@ -335,13 +345,13 @@
                             </Grid.ColumnDefinitions>
 
                             <StackPanel Grid.Row="0" Grid.Column="0">
-                                <TextBlock Text="名称" FontSize="12" Foreground="{StaticResource TextSecondaryBrush}" Margin="0,0,0,4"/>
+                                <TextBlock Text="名称" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4"/>
                                 <TextBox x:Name="ResourceSearchBox" Style="{StaticResource SearchTextBox}" Padding="8" FontSize="13"
                                          TextChanged="ResourceFilter_Changed"
                                          ToolTip="搜索关键词，支持中英文，留空浏览热门资源，输入后自动搜索"/>
                             </StackPanel>
                             <StackPanel Grid.Row="0" Grid.Column="2">
-                                <TextBlock Text="来源" FontSize="12" Foreground="{StaticResource TextSecondaryBrush}" Margin="0,0,0,4"/>
+                                <TextBlock Text="来源" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4"/>
                                 <ComboBox x:Name="ResourceSourceCombo" Style="{StaticResource FilterComboBox}"
                                           SelectionChanged="ResourceSourceCombo_SelectionChanged">
                                     <ComboBoxItem Content="综合(Modrinth+CurseForge)" IsSelected="True" Tag="combined"/>
@@ -351,13 +361,13 @@
                             </StackPanel>
 
                             <StackPanel Grid.Row="1" Grid.Column="0" Margin="0,10,0,0">
-                                <TextBlock Text="版本" FontSize="12" Foreground="{StaticResource TextSecondaryBrush}" Margin="0,0,0,4"/>
+                                <TextBlock Text="版本" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4"/>
                                 <TextBox x:Name="ResourceGameVersionBox" Style="{StaticResource SearchTextBox}" Padding="8" FontSize="13"
                                          TextChanged="ResourceFilter_Changed"
                                          ToolTip="限定游戏版本，例如 1.20.1；留空不限定"/>
                             </StackPanel>
                             <StackPanel Grid.Row="1" Grid.Column="2" Margin="0,10,0,0">
-                                <TextBlock Text="类型" FontSize="12" Foreground="{StaticResource TextSecondaryBrush}" Margin="0,0,0,4"/>
+                                <TextBlock Text="类型" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4"/>
                                 <ComboBox x:Name="ResourceTypeCombo" Style="{StaticResource FilterComboBox}"
                                           SelectionChanged="ResourceTypeCombo_SelectionChanged">
                                     <ComboBoxItem Content="材质包" IsSelected="True" Tag="ResourcePack"/>
@@ -388,17 +398,17 @@
                                         <ColumnDefinition Width="Auto"/>
                                     </Grid.ColumnDefinitions>
                                     <Border Grid.Column="0" Width="40" Height="40" Margin="0,0,10,0" CornerRadius="4"
-                                            Background="{StaticResource SideBrush}" VerticalAlignment="Top">
+                                            Background="{DynamicResource SideBrush}" VerticalAlignment="Top">
                                         <Image Source="{Binding DisplayIconUrl}" Width="40" Height="40" Stretch="UniformToFill"/>
                                     </Border>
                                     <StackPanel Grid.Column="1">
                                         <TextBlock FontSize="15" FontWeight="Bold">
                                             <Run Text="{Binding Title, Mode=OneWay}"/>
-                                            <Run Text="  ["/><Run Text="{Binding SourceLabel, Mode=OneWay}" FontSize="11" Foreground="{StaticResource AccentBrush}"/><Run Text="]"/>
+                                            <Run Text="  ["/><Run Text="{Binding SourceLabel, Mode=OneWay}" FontSize="11" Foreground="{DynamicResource AccentBrush}"/><Run Text="]"/>
                                         </TextBlock>
                                         <TextBlock Text="{Binding Description}" FontSize="12" TextWrapping="Wrap" MaxHeight="34"
-                                                   Foreground="{StaticResource TextSecondaryBrush}"/>
-                                        <TextBlock FontSize="11" Foreground="{StaticResource TextSecondaryBrush}">
+                                                   Foreground="{DynamicResource TextSecondaryBrush}"/>
+                                        <TextBlock FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}">
                                             <Run Text="作者: "/><Run Text="{Binding Author}"/>
                                             <Run Text="  下载量: "/><Run Text="{Binding Downloads}"/>
                                         </TextBlock>
@@ -421,7 +431,7 @@
                         <Button Grid.Column="0" x:Name="ResourcePrevPageButton" Content="◀ 上一页" Style="{StaticResource SecondaryButton}"
                                 Padding="12,6" Click="ResourcePrevPage_Click"/>
                         <TextBlock Grid.Column="1" x:Name="ResourcePageSummaryText" HorizontalAlignment="Center"
-                                   VerticalAlignment="Center" FontSize="12" Foreground="{StaticResource TextSecondaryBrush}"/>
+                                   VerticalAlignment="Center" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}"/>
                         <Button Grid.Column="2" x:Name="ResourceNextPageButton" Content="下一页 ▶" Style="{StaticResource SecondaryButton}"
                                 Padding="12,6" Click="ResourceNextPage_Click"/>
                     </Grid>
@@ -451,7 +461,7 @@
                                             </Grid.ColumnDefinitions>
                                             <StackPanel>
                                                 <TextBlock Text="{Binding Id}" FontSize="15"/>
-                                                <TextBlock Text="{Binding ReleaseTime}" FontSize="11" Foreground="{StaticResource TextSecondaryBrush}"/>
+                                                <TextBlock Text="{Binding ReleaseTime}" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}"/>
                                             </StackPanel>
                                             <Button Grid.Column="1" Content="{Binding FavoriteLabel}" Margin="0,0,8,0" Padding="10,6"
                                                     Style="{StaticResource SideNavButton}" Tag="{Binding}" Click="FavoriteVersion_Click"/>
@@ -474,17 +484,17 @@
                                                 <ColumnDefinition Width="Auto"/>
                                             </Grid.ColumnDefinitions>
                                             <Border Grid.Column="0" Width="40" Height="40" Margin="0,0,10,0" CornerRadius="4"
-                                                    Background="{StaticResource SideBrush}" VerticalAlignment="Top">
+                                                    Background="{DynamicResource SideBrush}" VerticalAlignment="Top">
                                                 <Image Source="{Binding DisplayIconUrl}" Width="40" Height="40" Stretch="UniformToFill"/>
                                             </Border>
                                             <StackPanel Grid.Column="1">
                                                 <TextBlock FontSize="15" FontWeight="Bold">
                                                     <Run Text="{Binding Title, Mode=OneWay}"/>
-                                                    <Run Text="  ["/><Run Text="{Binding SourceLabel, Mode=OneWay}" FontSize="11" Foreground="{StaticResource AccentBrush}"/><Run Text="]"/>
+                                                    <Run Text="  ["/><Run Text="{Binding SourceLabel, Mode=OneWay}" FontSize="11" Foreground="{DynamicResource AccentBrush}"/><Run Text="]"/>
                                                 </TextBlock>
                                                 <TextBlock Text="{Binding Description}" FontSize="12" TextWrapping="Wrap" MaxHeight="34"
-                                                           Foreground="{StaticResource TextSecondaryBrush}"/>
-                                                <TextBlock FontSize="11" Foreground="{StaticResource TextSecondaryBrush}">
+                                                           Foreground="{DynamicResource TextSecondaryBrush}"/>
+                                                <TextBlock FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}">
                                                     <Run Text="作者: "/><Run Text="{Binding Author}"/>
                                                     <Run Text="  下载量: "/><Run Text="{Binding Downloads}"/>
                                                 </TextBlock>
@@ -509,17 +519,17 @@
                                                 <ColumnDefinition Width="Auto"/>
                                             </Grid.ColumnDefinitions>
                                             <Border Grid.Column="0" Width="40" Height="40" Margin="0,0,10,0" CornerRadius="4"
-                                                    Background="{StaticResource SideBrush}" VerticalAlignment="Top">
+                                                    Background="{DynamicResource SideBrush}" VerticalAlignment="Top">
                                                 <Image Source="{Binding DisplayIconUrl}" Width="40" Height="40" Stretch="UniformToFill"/>
                                             </Border>
                                             <StackPanel Grid.Column="1">
                                                 <TextBlock FontSize="15" FontWeight="Bold">
                                                     <Run Text="{Binding Title, Mode=OneWay}"/>
-                                                    <Run Text="  ["/><Run Text="{Binding SourceLabel, Mode=OneWay}" FontSize="11" Foreground="{StaticResource AccentBrush}"/><Run Text="]"/>
+                                                    <Run Text="  ["/><Run Text="{Binding SourceLabel, Mode=OneWay}" FontSize="11" Foreground="{DynamicResource AccentBrush}"/><Run Text="]"/>
                                                 </TextBlock>
                                                 <TextBlock Text="{Binding Description}" FontSize="12" TextWrapping="Wrap" MaxHeight="34"
-                                                           Foreground="{StaticResource TextSecondaryBrush}"/>
-                                                <TextBlock FontSize="11" Foreground="{StaticResource TextSecondaryBrush}">
+                                                           Foreground="{DynamicResource TextSecondaryBrush}"/>
+                                                <TextBlock FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}">
                                                     <Run Text="作者: "/><Run Text="{Binding Author}"/>
                                                     <Run Text="  下载量: "/><Run Text="{Binding Downloads}"/>
                                                 </TextBlock>
@@ -545,8 +555,8 @@
                                             <StackPanel>
                                                 <TextBlock FontSize="15" FontWeight="Bold" Text="{Binding Title}"/>
                                                 <TextBlock Text="{Binding Description}" FontSize="12" TextWrapping="Wrap" MaxHeight="34"
-                                                           Foreground="{StaticResource TextSecondaryBrush}"/>
-                                                <TextBlock FontSize="11" Foreground="{StaticResource TextSecondaryBrush}">
+                                                           Foreground="{DynamicResource TextSecondaryBrush}"/>
+                                                <TextBlock FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}">
                                                     <Run Text="作者: "/><Run Text="{Binding Author}"/>
                                                     <Run Text="  下载量: "/><Run Text="{Binding Downloads}"/>
                                                 </TextBlock>
@@ -562,12 +572,12 @@
                     </ScrollViewer>
 
                     <TextBlock x:Name="FavoritesEmptyHint" Grid.Row="1" Text="还没有收藏任何内容，去「游戏版本」/「Mod」/「材质包」等分类点击 ☆ 收藏 试试。"
-                               FontSize="13" Foreground="{StaticResource TextSecondaryBrush}"
+                               FontSize="13" Foreground="{DynamicResource TextSecondaryBrush}"
                                HorizontalAlignment="Center" VerticalAlignment="Center" Visibility="Collapsed"/>
                 </Grid>
 
                 <!-- ===== 地图分类：接入 CurseForge（Modrinth 没有对应分类） ===== -->
-                <Grid x:Name="MapPanel" DockPanel.Dock="Top" Visibility="Collapsed">
+                <Grid x:Name="MapPanel" DockPanel.Dock="Top" Visibility="Collapsed" Background="{DynamicResource PanelBrush}">
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto"/>
                         <RowDefinition Height="Auto"/>
@@ -582,7 +592,7 @@
                         </Grid.ColumnDefinitions>
                         <TextBlock Text="地图下载" FontSize="18" FontWeight="Bold" VerticalAlignment="Center"/>
                         <TextBlock Grid.Column="1" Text="数据来自 CurseForge" FontSize="12" VerticalAlignment="Center"
-                                   Foreground="{StaticResource TextSecondaryBrush}"/>
+                                   Foreground="{DynamicResource TextSecondaryBrush}"/>
                     </Grid>
 
                     <Grid Grid.Row="1" Margin="0,0,0,10">
@@ -616,8 +626,8 @@
                                     <StackPanel>
                                         <TextBlock Text="{Binding Name}" FontSize="15" FontWeight="Bold"/>
                                         <TextBlock Text="{Binding Summary}" FontSize="12" TextWrapping="Wrap" MaxHeight="34"
-                                                   Foreground="{StaticResource TextSecondaryBrush}"/>
-                                        <TextBlock FontSize="11" Foreground="{StaticResource TextSecondaryBrush}">
+                                                   Foreground="{DynamicResource TextSecondaryBrush}"/>
+                                        <TextBlock FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}">
                                             <Run Text="作者: "/><Run Text="{Binding AuthorsDisplay, Mode=OneWay}"/>
                                             <Run Text="  下载量: "/><Run Text="{Binding DownloadCount}"/>
                                         </TextBlock>
@@ -640,7 +650,7 @@
                         <Button Grid.Column="0" x:Name="MapPrevPageButton" Content="◀ 上一页" Style="{StaticResource SecondaryButton}"
                                 Padding="12,6" Click="MapPrevPage_Click"/>
                         <TextBlock Grid.Column="1" x:Name="MapPageSummaryText" HorizontalAlignment="Center"
-                                   VerticalAlignment="Center" FontSize="12" Foreground="{StaticResource TextSecondaryBrush}"/>
+                                   VerticalAlignment="Center" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}"/>
                         <Button Grid.Column="2" x:Name="MapNextPageButton" Content="下一页 ▶" Style="{StaticResource SecondaryButton}"
                                 Padding="12,6" Click="MapNextPage_Click"/>
                     </Grid>
@@ -650,16 +660,16 @@
                 <StackPanel x:Name="MapKeyMissingPanel" DockPanel.Dock="Top" Visibility="Collapsed"
                             HorizontalAlignment="Center" VerticalAlignment="Center" Margin="0,80,0,0">
                     <TextBlock Text="地图下载需要先配置 CurseForge API Key" FontSize="16" FontWeight="Bold"
-                               Foreground="{StaticResource TextSecondaryBrush}" HorizontalAlignment="Center"/>
+                               Foreground="{DynamicResource TextSecondaryBrush}" HorizontalAlignment="Center"/>
                     <TextBlock Text="去 console.curseforge.com 申请一个 key，然后在「设置」页粘贴保存即可。"
-                               FontSize="12" Foreground="{StaticResource TextSecondaryBrush}" HorizontalAlignment="Center"
+                               FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" HorizontalAlignment="Center"
                                Margin="0,6,0,0" TextWrapping="Wrap" MaxWidth="360" TextAlignment="Center"/>
                     <Button Content="去设置页配置" Style="{StaticResource PrimaryButton}" Margin="0,14,0,0"
                             HorizontalAlignment="Center" Click="GoToSettingsForKey_Click"/>
                 </StackPanel>
 
                 <!-- ===== Mod 分类：综合搜索 Modrinth + CurseForge，来源可切换；右侧附 MC百科中文名搜索辅助 ===== -->
-                <Grid x:Name="ModPanel" DockPanel.Dock="Top" Visibility="Collapsed">
+                <Grid x:Name="ModPanel" DockPanel.Dock="Top" Visibility="Collapsed" Background="{DynamicResource PanelBrush}">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="*"/>
                         <ColumnDefinition Width="220"/>
@@ -681,7 +691,7 @@
                              之前是"一行塞下所有筛选框+一个手动刷新按钮"，跟截图1的 PCL 布局差异较大，
                              这里改成结构一致的两列网格，同时保留原有的自动搜索(TextChanged/SelectionChanged
                              防抖触发)行为——"搜索"按钮只是补一个跟 PCL 一样的手动触发入口，不是唯一触发方式。 -->
-                        <Border Grid.Row="1" Background="{StaticResource SideBrush}" BorderBrush="{StaticResource BorderBrush2}"
+                        <Border Grid.Row="1" Background="{DynamicResource SideBrush}" BorderBrush="{DynamicResource BorderBrush2}"
                                 BorderThickness="1" CornerRadius="8" Padding="14" Margin="0,0,0,10">
                             <Grid>
                                 <Grid.RowDefinitions>
@@ -696,13 +706,13 @@
                                 </Grid.ColumnDefinitions>
 
                                 <StackPanel Grid.Row="0" Grid.Column="0">
-                                    <TextBlock Text="名称" FontSize="12" Foreground="{StaticResource TextSecondaryBrush}" Margin="0,0,0,4"/>
+                                    <TextBlock Text="名称" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4"/>
                                     <TextBox x:Name="ModSearchBox" Style="{StaticResource SearchTextBox}" Padding="8" FontSize="13"
                                              TextChanged="ModFilter_Changed"
                                              ToolTip="搜索关键词，支持中英文，例如 &quot;JEI&quot; 或 &quot;钠&quot;（自动翻译成 Sodium 搜索），留空浏览热门 Mod，输入后自动搜索"/>
                                 </StackPanel>
                                 <StackPanel Grid.Row="0" Grid.Column="2">
-                                    <TextBlock Text="来源" FontSize="12" Foreground="{StaticResource TextSecondaryBrush}" Margin="0,0,0,4"/>
+                                    <TextBlock Text="来源" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4"/>
                                     <ComboBox x:Name="ModSourceCombo" Style="{StaticResource FilterComboBox}" SelectionChanged="ModSourceCombo_SelectionChanged">
                                         <ComboBoxItem Content="综合(Modrinth+CurseForge)" IsSelected="True" Tag="combined"/>
                                         <ComboBoxItem Content="仅 Modrinth" Tag="modrinth"/>
@@ -711,13 +721,13 @@
                                 </StackPanel>
 
                                 <StackPanel Grid.Row="1" Grid.Column="0" Margin="0,10,0,0">
-                                    <TextBlock Text="版本" FontSize="12" Foreground="{StaticResource TextSecondaryBrush}" Margin="0,0,0,4"/>
+                                    <TextBlock Text="版本" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4"/>
                                     <TextBox x:Name="ModGameVersionBox" Style="{StaticResource SearchTextBox}" Padding="8" FontSize="13"
                                              TextChanged="ModFilter_Changed"
                                              ToolTip="限定游戏版本，例如 1.20.1；留空不限定"/>
                                 </StackPanel>
                                 <StackPanel Grid.Row="1" Grid.Column="2" Margin="0,10,0,0">
-                                    <TextBlock Text="类型 (加载器)" FontSize="12" Foreground="{StaticResource TextSecondaryBrush}" Margin="0,0,0,4"/>
+                                    <TextBlock Text="类型 (加载器)" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4"/>
                                     <ComboBox x:Name="ModLoaderCombo" Style="{StaticResource FilterComboBox}"
                                               SelectionChanged="ModFilter_SelectionChanged">
                                         <ComboBoxItem Content="不限加载器" IsSelected="True" Tag=""/>
@@ -739,7 +749,7 @@
                         <!-- 命中中文名词典时展示"已按 XX 搜索"提示，让用户知道中文关键词生效了；
                              没命中/关键词是英文时这行不显示，不占用界面空间。 -->
                         <TextBlock x:Name="ModTranslationHintText" Grid.Row="2" Margin="0,0,0,8" FontSize="12"
-                                   TextWrapping="Wrap" Foreground="{StaticResource TextSecondaryBrush}" Visibility="Collapsed"/>
+                                   TextWrapping="Wrap" Foreground="{DynamicResource TextSecondaryBrush}" Visibility="Collapsed"/>
 
                         <ListBox x:Name="ModListBox" Grid.Row="3" BorderThickness="0" Background="Transparent"
                                  ItemContainerStyle="{StaticResource DownloadListItem}" SelectionChanged="ModListBox_SelectionChanged">
@@ -756,17 +766,17 @@
                                             <ColumnDefinition Width="Auto"/>
                                         </Grid.ColumnDefinitions>
                                         <Border Grid.Column="0" Width="40" Height="40" Margin="0,0,10,0" CornerRadius="4"
-                                                Background="{StaticResource SideBrush}" VerticalAlignment="Top">
+                                                Background="{DynamicResource SideBrush}" VerticalAlignment="Top">
                                             <Image Source="{Binding DisplayIconUrl}" Width="40" Height="40" Stretch="UniformToFill"/>
                                         </Border>
                                         <StackPanel Grid.Column="1">
                                             <TextBlock FontSize="15" FontWeight="Bold">
                                                 <Run Text="{Binding Title, Mode=OneWay}"/>
-                                                <Run Text="  ["/><Run Text="{Binding SourceLabel, Mode=OneWay}" FontSize="11" Foreground="{StaticResource AccentBrush}"/><Run Text="]"/>
+                                                <Run Text="  ["/><Run Text="{Binding SourceLabel, Mode=OneWay}" FontSize="11" Foreground="{DynamicResource AccentBrush}"/><Run Text="]"/>
                                             </TextBlock>
                                             <TextBlock Text="{Binding Description}" FontSize="12" TextWrapping="Wrap" MaxHeight="34"
-                                                       Foreground="{StaticResource TextSecondaryBrush}"/>
-                                            <TextBlock FontSize="11" Foreground="{StaticResource TextSecondaryBrush}">
+                                                       Foreground="{DynamicResource TextSecondaryBrush}"/>
+                                            <TextBlock FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}">
                                                 <Run Text="作者: "/><Run Text="{Binding Author}"/>
                                                 <Run Text="  下载量: "/><Run Text="{Binding Downloads}"/>
                                             </TextBlock>
@@ -790,18 +800,18 @@
                             <Button Grid.Column="0" x:Name="ModPrevPageButton" Content="◀ 上一页" Style="{StaticResource SecondaryButton}"
                                     Padding="12,6" Click="ModPrevPage_Click"/>
                             <TextBlock Grid.Column="1" x:Name="ModPageSummaryText" HorizontalAlignment="Center"
-                                       VerticalAlignment="Center" FontSize="12" Foreground="{StaticResource TextSecondaryBrush}"/>
+                                       VerticalAlignment="Center" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}"/>
                             <Button Grid.Column="2" x:Name="ModNextPageButton" Content="下一页 ▶" Style="{StaticResource SecondaryButton}"
                                     Padding="12,6" Click="ModNextPage_Click"/>
                         </Grid>
                     </Grid>
 
                     <!-- MC百科中文名搜索辅助：只提供百科页面链接，不参与下载（见 McModService 类注释） -->
-                    <Border Grid.Column="1" Background="{StaticResource SideBrush}" CornerRadius="8" Padding="10">
+                    <Border Grid.Column="1" Background="{DynamicResource SideBrush}" CornerRadius="8" Padding="10">
                         <DockPanel>
                             <TextBlock DockPanel.Dock="Top" Text="MC百科 参考" FontSize="14" FontWeight="Bold" Margin="0,0,0,4"/>
                             <TextBlock DockPanel.Dock="Top" Text="中文资料辅助，点击跳转百科页面查看详情" FontSize="11"
-                                       Foreground="{StaticResource TextSecondaryBrush}" TextWrapping="Wrap" Margin="0,0,0,8"/>
+                                       Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap" Margin="0,0,0,8"/>
                             <ListBox x:Name="McModListBox" BorderThickness="0" Background="Transparent">
                                 <ListBox.ItemTemplate>
                                     <DataTemplate>
@@ -823,7 +833,7 @@
                  铺满整个右侧内容区，视觉上盖住上面的列表面板——即"整页跳转，顶部有返回箭头"，
                  而不是原来的"原地手风琴展开"。ModDetailPage 内部返回箭头回调(onBack)会把这里
                  收回 Collapsed、Content 清空，露出底下原封不动的列表状态。 -->
-            <ContentControl x:Name="DetailHost" Visibility="Collapsed"/>
+            <ContentControl x:Name="DetailHost" Visibility="Collapsed" Background="{DynamicResource PanelBrush}"/>
             </Grid>
         </Border>
     </Grid>

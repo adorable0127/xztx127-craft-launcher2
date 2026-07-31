@@ -3,7 +3,16 @@ namespace XCL2.App.Models;
 public enum AccountType
 {
     Offline,
-    Microsoft
+    Microsoft,
+
+    /// <summary>
+    /// 通过第三方认证服务器（Yggdrasil 协议兼容的"皮肤站"，例如基于 authlib-injector 的
+    /// 统一通行证/blessing-skin 类服务）登录的账户。跟 Offline/Microsoft 是完全独立的第三种
+    /// 类型，不复用/不影响原有两种账户类型的任何处理逻辑——LauncherService、SkinService、
+    /// LoginPage 里所有原来 "account.Type == AccountType.Offline" / "== AccountType.Microsoft"
+    /// 的判断分支保持原样不动，这个新类型只在各自新增的 else/switch 分支里被处理。
+    /// </summary>
+    AuthServer
 }
 
 /// <summary>
@@ -33,6 +42,22 @@ public class Account
     /// <summary>access token 过期时间（UTC），到期前会自动用 refresh token 静默刷新</summary>
     public DateTime? AccessTokenExpiresAtUtc { get; set; }
 
+    /// <summary>
+    /// 认证服务器（皮肤站）账户专用：登录时使用的 Yggdrasil API 根地址（例如
+    /// "https://example.com/api/yggdrasil"），游戏启动时会用这个地址给
+    /// authlib-injector 挂 -javaagent，让客户端向这个地址而不是 Mojang 官方服务器
+    /// 请求会话校验/皮肤，这样才能真正以这个账户的身份、皮肤进入游戏。
+    /// 只对 Type=AuthServer 有意义。
+    /// </summary>
+    public string? AuthServerApiRoot { get; set; }
+
+    /// <summary>
+    /// 认证服务器（皮肤站）账户专用：登录时服务端生成/返回的 clientToken，
+    /// 用于以后调用 /refresh 静默刷新会话而不需要用户重新输入密码。
+    /// 只对 Type=AuthServer 有意义。
+    /// </summary>
+    public string? AuthServerClientToken { get; set; }
+
     /// <summary>是否为当前选中使用的账户</summary>
     public bool IsSelected { get; set; }
 
@@ -61,9 +86,12 @@ public class Account
     /// </summary>
     public bool CustomSkinSlim { get; set; }
 
-    public string DisplayLabel => Type == AccountType.Microsoft
-        ? $"{Username} (微软账户)"
-        : IsGuest ? $"{Username} (访客)" : $"{Username} (离线账户)";
+    public string DisplayLabel => Type switch
+    {
+        AccountType.Microsoft => $"{Username} (微软账户)",
+        AccountType.AuthServer => $"{Username} (认证服务器账户)",
+        _ => IsGuest ? $"{Username} (访客)" : $"{Username} (离线账户)"
+    };
 }
 
 /// <summary>离线账户的皮肤来源：不设置、内置史蒂夫/艾利克斯、或用户自定义上传。</summary>

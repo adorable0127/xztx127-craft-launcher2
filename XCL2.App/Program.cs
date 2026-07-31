@@ -46,6 +46,28 @@ public static class Program
 
         var app = new App();
         app.InitializeComponent();
+
+        // 修复"切换页面后才会变黑/侧边栏和底部账户区一直是浅色"：WPF 的 Style 只在第一次
+        // 真正被套用到控件上时才会 Seal（连带把它引用的画刷值一起冻结定型）。之前的做法是
+        // 先 new MainWindow()（构造函数里 InitializeComponent() 一执行，侧边栏 SideNavButton
+        // 等样式立刻用当前资源字典里的默认浅色 Seal 掉），再在构造函数内部调用
+        // ThemeService.ApplyForCurrentState 试图"事后"把已经 Seal 的样式解封重上——这个
+        // 事后补救对大多数元素有效，但对这个时间点上还没真正走完一次布局/渲染的部分控件
+        // （典型就是嵌套在 ControlTemplate 里的子元素，比如 SideNavButton 内层的 Border）
+        // 不完全可靠，导致侧边栏和底部账户信息区第一屏还是浅色，只有切一次页面后才补上
+        // （因为切页面时对应的 Page/UserControl 是延迟构造的，那时候资源字典已经是深色了，
+        // Seal 用的就是正确的颜色，不需要"补救"这一步）。
+        //
+        // 现在把"读配置 + 应用主题"整体提到 MainWindow 构造之前：这样 MainWindow.xaml 及其
+        // 侧边栏在 InitializeComponent() 第一次执行、第一次 Seal 样式的那一刻，资源字典里
+        // 已经是正确的皮肤颜色了，不再需要任何"事后刷新"，从第一帧画面开始就是对的。
+        // 这里单独 new 一个 ConfigService 只是为了在窗口存在之前读一次持久化的皮肤/访客模式
+        // 配置，跟 MainWindow 自己持有的 ConfigService 实例互不冲突（各自独立 Load 一次，
+        // 读的是同一份 config.json，开销可忽略）。
+        var earlyConfig = new Services.ConfigService();
+        earlyConfig.Load();
+        Services.ThemeService.ApplyForCurrentState(earlyConfig.Config.GuestModeEnabled, earlyConfig.Config.UiSkin, earlyConfig.Config.IsDarkMode);
+
         var exitCode = app.Run(new Views.MainWindow());
         return exitCode;
     }

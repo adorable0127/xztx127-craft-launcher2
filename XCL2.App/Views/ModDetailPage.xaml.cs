@@ -107,6 +107,12 @@ public partial class ModDetailPage : UserControl
 
     private readonly string? _sourceUrl;
 
+    /// <summary>保存最近一次拉到的扁平版本列表，供"显示预览版"按钮切换时本地重新分组用，
+    /// 不需要重新发网络请求——预览版本来就在这批数据里，只是 ModVersionGrouping.Group
+    /// 默认把它们过滤掉了。</summary>
+    private List<InlineVersionEntry> _flatEntries = new();
+    private bool _includePreview;
+
     /// <summary>展开状态：调用方在拿到分组数据后调用这个方法一次性填充展示。
     /// 跟旧版 ToggleModExpandAsync/ToggleResourceExpandAsync 里"填充 Groups"是同一批数据，
     /// 只是现在不需要"展开/收起"这一层，页面本身就是详情页，进来就直接显示。</summary>
@@ -116,6 +122,26 @@ public partial class ModDetailPage : UserControl
         GroupsList.ItemsSource = list;
         NoResultText.Visibility = list.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
         LoadingText.Visibility = Visibility.Collapsed;
+    }
+
+    /// <summary>跟 ShowGroups 配套：额外传入这批版本对应的扁平列表，好让"显示预览版"
+    /// 按钮之后能本地重新分组。调用方（DownloadCenterPage）在 LoadModVersionsAsync/
+    /// LoadResourceVersionsAsync 里 item.Versions 填充完成后一并传进来。不强制要求调用——
+    /// 不传时 _flatEntries 保持为空，"显示预览版"点了也只是空列表，不会报错。</summary>
+    public void SetFlatEntries(IEnumerable<InlineVersionEntry> entries)
+    {
+        _flatEntries = entries.ToList();
+        _includePreview = false;
+        TogglePreviewButton.Content = "显示预览版";
+    }
+
+    private void TogglePreview_Click(object sender, RoutedEventArgs e)
+    {
+        _includePreview = !_includePreview;
+        TogglePreviewButton.Content = _includePreview ? "隐藏预览版" : "显示预览版";
+        var groups = ModVersionGrouping.Group(_flatEntries, _includePreview);
+        if (groups.Count > 0) groups[0].IsExpanded = true;
+        ShowGroups(groups);
     }
 
     public void ShowLoading()

@@ -85,6 +85,17 @@ public class LauncherService
         /// 失败了应该让用户自己发现（通过日志），而不是把游戏也一起卡住。
         /// </summary>
         public string? PreLaunchCommand { get; set; }
+
+        /// <summary>
+        /// 启动后自动加入的服务器地址（形如 "play.example.com" 或 "1.2.3.4:25565"），
+        /// 对应 Minecraft 1.20+ 支持的 --quickPlayMultiplayer 启动参数：游戏加载完主菜单后
+        /// 会跳过手动进多人游戏列表点服务器这一步，直接尝试连接这个地址。
+        /// 为空/null 时不传这个参数，行为等同于之前（游戏正常进主菜单，不自动连接任何服务器）。
+        /// 只有当前正在启动的这个 version json 的 arguments.game 里真的声明了
+        /// --quickPlayMultiplayer 这个键时才会生效（1.20.6 以前的版本没有这个参数，
+        /// 传了也不会有任何效果，BuildArguments 内部会自动判断，不需要调用方关心版本号）。
+        /// </summary>
+        public string? AutoJoinServerAddress { get; set; }
     }
 
     /// <summary>
@@ -659,7 +670,7 @@ public class LauncherService
             "--assetsDir", Path.Combine(opts.MinecraftDir, "assets"),
             "--assetIndex", assetsId,
             "--uuid", opts.Account.Uuid.Replace("-", ""),
-            "--accessToken", opts.Account.Type == AccountType.Microsoft
+            "--accessToken", opts.Account.Type is AccountType.Microsoft or AccountType.AuthServer
                 ? (opts.Account.MinecraftAccessToken ?? "0")
                 : "0",
             "--userType", opts.Account.Type == AccountType.Microsoft ? "msa" : "legacy",
@@ -683,9 +694,14 @@ public class LauncherService
         // 变量替换一遍，然后去掉跟上面手写参数重复的键（按"参数名+紧跟其后的值"为一组识别，
         // 避免 loader json 里如果也重复声明了 --username 之类的键导致参数出现两次、后一个覆盖前一个
         // 这种依赖顺序的脆弱行为）。
+        // 显式声明当前 features 状态：is_demo_user 恒为 false——我们从来不是官方那种
+        // "未购买游戏、Mojang 服务器判定为试玩用户"的场景，离线模式的本意是跳过在线校验、
+        // 完整解锁游戏，不应该被 version json 里 features.is_demo_user 相关规则命中，
+        // 见 ParseArgumentEntries 内的详细说明。
+        var currentFeatures = new Dictionary<string, bool> { ["is_demo_user"] = false };
         var gameArgsFromJson = new List<string>();
-        if (parent?.Arguments?.Game != null) gameArgsFromJson.AddRange(ParseArgumentEntries(parent.Arguments.Game));
-        if (detail.Arguments?.Game != null) gameArgsFromJson.AddRange(ParseArgumentEntries(detail.Arguments.Game));
+        if (parent?.Arguments?.Game != null) gameArgsFromJson.AddRange(ParseArgumentEntries(parent.Arguments.Game, currentFeatures));
+        if (detail.Arguments?.Game != null) gameArgsFromJson.AddRange(ParseArgumentEntries(detail.Arguments.Game, currentFeatures));
 
         // 已经手写过的这些键（连同各自的值）不再从 json 里重复追加，避免同一个参数出现两次。
         var alreadyHandledKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
@@ -712,12 +728,32 @@ public class LauncherService
         static bool HasUnresolvedPlaceholder(string s) =>
             s.Contains("${") && s.Contains('}');
 
+        var quickPlayMultiplayerInjected = false;
         var resolvedGameArgsFromJson = new List<string>();
         {
             var rawTokens = gameArgsFromJson
                 .Select(a => SubstituteVariables(a, variables))
                 .Where(a => !string.IsNullOrWhiteSpace(a))
                 .ToList();
+
+            // 自动进入服务器：如果调用方提供了地址，把 --quickPlayMultiplayer 后面那个
+            // 仍是 "${quickPlayMultiplayer}" 占位符的 token 原地替换成真实地址，这样它就不再
+            // 满足下面 HasUnresolvedPlaceholder 的判定条件，不会被当成"给不出真实值"而丢弃。
+            // 只处理这一个键，其余三个 quickPlay 系列参数（Path/Singleplayer/Realms）保持
+            // 原有"没有值就整对丢弃"的行为不变——这个功能目前只做了"进入指定服务器"这一种用法。
+            if (!string.IsNullOrWhiteSpace(opts.AutoJoinServerAddress))
+            {
+                for (var i = 0; i < rawTokens.Count - 1; i++)
+                {
+                    if (string.Equals(rawTokens[i], "--quickPlayMultiplayer", StringComparison.OrdinalIgnoreCase)
+                        && HasUnresolvedPlaceholder(rawTokens[i + 1]))
+                    {
+                        rawTokens[i + 1] = opts.AutoJoinServerAddress.Trim();
+                        quickPlayMultiplayerInjected = true;
+                        break; // 这个键在 arguments.game 里只会出现一次，找到就不用继续扫了
+                    }
+                }
+            }
 
             for (var i = 0; i < rawTokens.Count; i++)
             {
@@ -755,6 +791,25 @@ public class LauncherService
             args.Add(token);
         }
 
+        // 修复"进入服务器功能出现问题"的一类常见根因：上面那段替换逻辑完全依赖 version json 的
+        // arguments.game 里已经声明好 "--quickPlayMultiplayer" "${quickPlayMultiplayer}" 这一对
+        // token，再原地把占位符替换成真实地址——如果这个 json 根本没有声明这个参数（常见于
+        // 1.20.6 之前的老版本、或者一些经过裁剪/魔改的第三方客户端 json，参数集跟官方不完全
+        // 一致），前面的替换逻辑就无从下手，用户在「版本选择」页明明勾选并保存了自动进服务器，
+        // 实际启动时这个参数却完全没有被传递，游戏永远只会停在主菜单——不是设置没保存上，
+        // 是这个参数从一开始就没有被加进最终的启动命令行。
+        // 这里做一次兜底：只要用户开了这个功能、且上面的替换没有命中（json 里没有这个键），
+        // 就直接在参数列表末尾主动补上 "--quickPlayMultiplayer <地址>"。对官方 1.20.6+ 的
+        // 版本这只是双保险（正常情况下上面已经处理过，这里不会重复添加）；对不认识这个参数的
+        // 客户端（老版本、部分魔改客户端），多出来的参数会被直接忽略，不会影响正常启动——
+        // 跟 --lang 在新版本里被忽略是同一种"传了也无害，不传就是完全没有这个能力"的关系，
+        // 至少给"客户端本身认识这个参数、只是 json 没declare"的情况留一条生路。
+        if (!quickPlayMultiplayerInjected && !string.IsNullOrWhiteSpace(opts.AutoJoinServerAddress))
+        {
+            args.Add("--quickPlayMultiplayer");
+            args.Add(opts.AutoJoinServerAddress!.Trim());
+        }
+
         // --lang 只在很老的版本(约 1.12 以前)里被读取，新版本已不认这个参数，
         // 但加上也无害，作为老版本的兼容兜底一起传。真正生效的是上面写的 options.txt。
         if (!string.IsNullOrWhiteSpace(opts.GameLanguage))
@@ -775,7 +830,12 @@ public class LauncherService
     /// 因为 JsonPropertyName("jvm") 反序列化成 List&lt;object&gt;（System.Text.Json 处理"数组元素类型
     /// 不固定"的惯用做法），运行时这里元素实际类型是 JsonElement，需要按 JsonValueKind 区分处理。
     /// </summary>
-    private static List<string> ParseArgumentEntries(List<object> entries)
+    /// <summary>
+    /// 传入正在使用的 feature 开关：目前只需要 is_demo_user（我们从不以试玩模式启动，
+    /// 永远是 false）。参数保留扩展性，未来如果要支持 has_custom_resolution 等其它
+    /// features 规则可以继续往这个字典里加。
+    /// </summary>
+    private static List<string> ParseArgumentEntries(List<object> entries, IReadOnlyDictionary<string, bool>? features = null)
     {
         var result = new List<string>();
         foreach (var entry in entries)
@@ -791,21 +851,51 @@ public class LauncherService
 
             if (el.ValueKind != JsonValueKind.Object) continue;
 
-            // 条件对象：先判断 rules 是否允许当前系统(Windows)，逻辑跟 LibraryEntry.IsApplicableToCurrentOs
-            // 保持一致（"没有 rules 视为适用；有 rules 按顺序应用，最后一条匹配规则的 action 生效"）。
+            // 条件对象：先判断 rules 是否允许当前系统(Windows)+当前 features 组合。
+            //
+            // 根因修复（"离线账户/微软正版账户启动出来的游戏窗口标题栏带星号、左下角写
+            // 'Demo（已修改）'，进游戏还只有『开始试玩世界』"）：
+            // Mojang 从 1.16 前后的 version json 起，在 arguments.game 里用这种写法声明
+            // --demo 参数：
+            //   {"rules":[{"action":"allow","features":{"is_demo_user":true}}],"value":"--demo"}
+            // 也就是说这条 --demo 只应该在 features.is_demo_user 为 true（也就是账户没有
+            // 购买游戏、Mojang 判定为试玩用户）时才生效。但下面这段规则判断之前只看了
+            // rule.os，完全没读 rule.features 这个键——一条只带 features、不带 os 的规则，
+            // matchesOs 会因为"没有 os 字段"直接维持默认值 true，于是无论真实的 features
+            // 状态是什么，这条规则永远被判定为"匹配"，allow 直接被 action=="allow" 决定，
+            // 等于完全无视了 is_demo_user 这个开关本身。结果是：不管账户是正版微软账户还是
+            // 离线账户，只要游戏版本的 arguments.game 里有这一条（绝大多数现代版本都有），
+            // --demo 都会被无条件加进最终启动参数，Minecraft 收到 --demo 会直接强制进入
+            // 试玩模式——这跟账户到底是否登录、token 是否有效完全无关，是启动参数拼接这一层
+            // 的规则解析漏洞，之前误以为是账户/token 问题，实际上启动参数在离开这一层之前
+            // 就已经被错误地塞进了 --demo。
+            // 修复：rules 里除了 os 还要看 features，只有 features 字典跟调用方传入的
+            // 当前 features 状态完全匹配（我们目前唯一关心的是 is_demo_user，值必须匹配传入
+            // 的 features["is_demo_user"]，且我们永远传 false，因为启动器里"没有正版校验"
+            // 不等于"这是一个试玩账户"——离线模式的本意是跳过在线校验、完整解锁游戏，
+            // 不是官方那种功能阉割的 Demo）才算匹配；规则没声明 features 键则视为不限制。
             var allow = true;
             if (el.TryGetProperty("rules", out var rulesEl) && rulesEl.ValueKind == JsonValueKind.Array)
             {
                 allow = false;
                 foreach (var rule in rulesEl.EnumerateArray())
                 {
-                    var matchesOs = true;
+                    var matches = true;
                     if (rule.TryGetProperty("os", out var osEl) && osEl.ValueKind == JsonValueKind.Object &&
                         osEl.TryGetProperty("name", out var osNameEl))
                     {
-                        matchesOs = osNameEl.GetString() == "windows";
+                        matches = osNameEl.GetString() == "windows";
                     }
-                    if (matchesOs)
+                    if (matches && rule.TryGetProperty("features", out var featuresEl) && featuresEl.ValueKind == JsonValueKind.Object)
+                    {
+                        foreach (var featureProp in featuresEl.EnumerateObject())
+                        {
+                            var expected = featureProp.Value.ValueKind == JsonValueKind.True;
+                            var actual = features != null && features.TryGetValue(featureProp.Name, out var v) && v;
+                            if (expected != actual) { matches = false; break; }
+                        }
+                    }
+                    if (matches)
                     {
                         var action = rule.TryGetProperty("action", out var actionEl) ? actionEl.GetString() : "allow";
                         allow = action == "allow";

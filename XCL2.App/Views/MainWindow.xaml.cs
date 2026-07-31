@@ -1,4 +1,6 @@
+using System;
 using System.IO;
+using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Media.Animation;
 using System.Windows.Threading;
@@ -22,8 +24,25 @@ public partial class MainWindow : Window
 
     private readonly DispatcherTimer _pruneTimer;
 
+    /// <summary>「自动循环」深浅色模式的定时检查器：每分钟醒一次，比较当前系统时间落在
+    /// 哪个区间（浅色/深色），需要切换时才动配置+重新应用配色，不需要切换时什么都不做——
+    /// 这样即使用户在两次检查之间手动点了「模式设置」按钮临时覆盖，也不会被这个每分钟的
+    /// 检查在同一个时间段内反复纠正回去（见 AppConfig.AutoThemeLastAppliedSlotStartHour
+    /// 的"手动优先"注释）。</summary>
+    private readonly DispatcherTimer _autoThemeCycleTimer;
+
     /// <summary>访客模式服务：生成本次会话的临时账户 + 应用退出前清理本次会话产生的日志/临时下载。</summary>
     private readonly GuestModeService _guestModeService = new();
+
+    /// <summary>
+    /// 系统内存监视：全程后台运行（不局限于"有游戏在跑"才监控），因为下载/安装模组、
+    /// 解压大文件等操作同样可能把系统内存吃满；一旦检测到可用内存过低就弹出警告窗口，
+    /// 提醒用户在系统卡死/蓝屏之前主动关闭游戏进程，而不是等真的撑爆了才发现。
+    /// </summary>
+    private readonly MemoryWatchdogService _memoryWatchdog = new();
+
+    /// <summary>避免同一时刻已经有一个内存警告窗口在显示时又弹出第二个。</summary>
+    private MemoryWarningWindow? _activeMemoryWarningWindow;
 
     /// <summary>
     /// "启动游戏"按钮的防手滑冷却：记录上一次点击被接受处理的时间。
@@ -67,10 +86,38 @@ public partial class MainWindow : Window
         RefreshSidebar();
         ShowHome();
 
+        // 启动时自动扫描本机的 .minecraft 文件夹（AppData + 每个磁盘 1/2/3 级目录），
+        // 找到新的就自动加入"版本选择"页的文件夹列表，不需要用户手动一个个"添加文件夹"。
+        // 放到 Loaded 之后用后台线程跑：扫描要枚举磁盘目录，慢盘/大量文件的机器上可能要
+        // 几秒甚至更久，不能放在构造函数里同步跑（会让主窗口卡在黑屏/白屏好几秒才显示出来）。
+        // 扫描结果通过 Dispatcher 切回 UI 线程再保存配置 + 弹提示，避免跨线程直接改
+        // ConfigService.Config 或者操作 UI 控件。
+        Loaded += (_, _) => _ = ScanMinecraftFoldersInBackgroundAsync();
+
         // 定时清理已退出的进程记录，保持"进程管理"列表/按钮的可用性状态是最新的
         _pruneTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
         _pruneTimer.Tick += (_, _) => ProcessManager.PruneExited();
         _pruneTimer.Start();
+
+        // 「自动循环」深浅色模式：每分钟检查一次是否需要按计划切换，够用了——用户不会
+        // 精确到秒去纠结切换时间点。启动时立即校验一次（见 ReevaluateAutoThemeCycle），
+        // 保证"上次关闭时是深色，但现在已经过了浅色模式开始时间"这种情况一打开就是对的，
+        // 不用等到第一次定时 Tick。
+        _autoThemeCycleTimer = new DispatcherTimer { Interval = TimeSpan.FromMinutes(1) };
+        _autoThemeCycleTimer.Tick += (_, _) => ReevaluateAutoThemeCycle();
+        _autoThemeCycleTimer.Start();
+        ReevaluateAutoThemeCycle();
+
+        // 内存溢出预警：每 5 秒检查一次系统可用物理内存，跌破阈值（默认低于 10% 或
+        // 低于 1GB，两者任一满足）就弹出警告窗口，让用户能在系统真正卡死/蓝屏之前
+        // 主动关闭游戏。事件回调可能不在 UI 线程上触发，用 Dispatcher 切回来再弹窗。
+        _memoryWatchdog.LowMemoryDetected += args =>
+        {
+            Dispatcher.Invoke(() => ShowMemoryWarning(args));
+        };
+        _memoryWatchdog.Start();
+
+        Closed += (_, _) => _memoryWatchdog.Dispose();
 
         // 应用关闭时，如果访客模式是开启状态，清理本次会话产生的日志/临时下载文件，
         // 不留下这次使用的痕迹。放在 Closed 而不是 Closing，避免清理耗时(理论上很快，
@@ -114,13 +161,31 @@ public partial class MainWindow : Window
             ConfigService.GuestAccount = null;
         }
 
-        // 访客模式开关一变化就立即重算配色：开启时不管用户平时选的是哪套"持久皮肤"
-        // (cfg.UiSkin)，都强制切黑色；关闭时恢复回 cfg.UiSkin。构造函数里第一次调用
-        // RefreshGuestModeState 时也会走到这里，保证"启动时访客模式就是开启状态"这种
-        // 情况下界面从一开始显示就是黑的，不会先白一下再跳黑。
-        ThemeService.ApplyForCurrentState(ConfigService.Config.GuestModeEnabled, ConfigService.Config.UiSkin);
+        // 访客模式开关变化本身不再影响配色：配色完全以用户当前的色系(cfg.UiSkin)+
+        // 明暗(cfg.IsDarkMode)选择为准，访客模式只负责临时账户的创建/清空，两者完全解耦。
+        // 这里仍然调一次 ApplyForCurrentState 是为了保证"设置项保存后一秒内必须刷新界面"
+        // 这个约定——访客模式开关本身也是一种设置项变化，调用方（SettingsPage/HomePage）
+        // 保存完 GuestModeEnabled 后立刻调这个方法，顺带把当前配色重新应用一次、
+        // 触发全窗口刷新，不需要用户切页/重启才能看到访客模式开关本身的即时反馈。
+        ThemeService.ApplyForCurrentState(ConfigService.Config.GuestModeEnabled, ConfigService.Config.UiSkin, ConfigService.Config.IsDarkMode);
 
         RefreshSidebar();
+    }
+
+    /// <summary>
+    /// 弹出内存不足警告窗口。同一时刻只保留一个警告窗口实例（避免多次触发时叠出一堆
+    /// 弹窗把屏幕糊住），如果当前没有正在运行的游戏进程，说明内存紧张的来源不是本启动器
+    /// 拉起的游戏（可能是下载/解压占用，或者纯粹是用户其它程序占用的），此时弹一个"没有
+    /// 可关闭游戏进程"的提示意义不大，直接跳过，避免无谓打扰。
+    /// </summary>
+    private void ShowMemoryWarning(MemoryWatchdogService.LowMemoryEventArgs args)
+    {
+        if (_activeMemoryWarningWindow != null) return;
+        if (ProcessManager.Running.Count == 0) return;
+
+        _activeMemoryWarningWindow = new MemoryWarningWindow(ProcessManager, _memoryWatchdog, args);
+        _activeMemoryWarningWindow.Closed += (_, _) => _activeMemoryWarningWindow = null;
+        _activeMemoryWarningWindow.Show();
     }
 
     public void RefreshSidebar()
@@ -142,6 +207,38 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
+    /// 启动时自动扫描 AppData + 各磁盘 1/2/3 级目录下的 .minecraft 文件夹，新发现的自动
+    /// 加进"版本选择"页的文件夹列表。扫描本身（MinecraftFolderScanService.ScanAndRegister）
+    /// 全是同步的文件系统 IO，用 Task.Run 丢到线程池执行，避免枚举磁盘目录时卡住 UI 线程；
+    /// 扫描完成后用 Dispatcher 切回 UI 线程再保存配置、刷新侧边栏、弹提示——
+    /// ConfigService.Config 不是线程安全类型，所有实际修改都必须在 UI 线程上做。
+    /// 扫描/保存过程中出的任何异常都只记日志、不打断启动流程，也不弹错误框打扰用户
+    /// （这本来就是一个"顺手帮你找找看"的辅助功能，找不到、扫失败都不应该造成困扰）。
+    /// </summary>
+    private async Task ScanMinecraftFoldersInBackgroundAsync()
+    {
+        try
+        {
+            var newlyAdded = await Task.Run(() => MinecraftFolderScanService.ScanAndRegister(ConfigService.Config));
+            if (newlyAdded.Count == 0) return;
+
+            ConfigService.Save();
+            RefreshSidebar();
+
+            var names = string.Join("\n", newlyAdded.Select(f => $"• {f.Name}  ({f.Path})"));
+            MessageBox.Show(
+                $"启动时自动发现了 {newlyAdded.Count} 个新的 .minecraft 文件夹，已加入「版本选择」页的文件夹列表：\n\n{names}",
+                "自动发现新文件夹", MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+        catch (Exception ex)
+        {
+            try { File.AppendAllText(Path.Combine(App.DataDir, "logs", "crash.log"),
+                $"[{DateTime.Now}] [自动扫描.minecraft文件夹失败] {ex}\n\n"); }
+            catch { /* 连日志都写不进去就彻底放弃，不影响启动器正常使用 */ }
+        }
+    }
+
+    /// <summary>
     /// 统一的右侧内容区切换入口：所有导航（左侧栏点击、其他页面/窗口调用的 NavigateToXxx）
     /// 都应该通过这里赋值，而不是直接写 MainContent.Content = ...，这样淡入过渡动画
     /// 才能对所有切页场景统一生效。cfg.EnablePageAnimations 关闭时直接退回原来的
@@ -149,6 +246,11 @@ public partial class MainWindow : Window
     /// </summary>
     private void SetMainContent(object page)
     {
+        // 修复"切换大界面时下载窗口还在"：旧页面（比如下载中心）弹出的 ProgressWindow
+        // 是独立顶层窗口，不会因为 MainContent.Content 被替换而自动关闭。这里在真正
+        // 切换内容之前统一关掉所有当前存活的进度弹窗，视为"打断操作"。
+        Views.ProgressWindow.CloseAll();
+
         if (!ConfigService.Config.EnablePageAnimations)
         {
             // 关闭动画时先清掉可能残留的动画/位移状态，避免"先开着动画切了一次页，
@@ -190,11 +292,90 @@ public partial class MainWindow : Window
         SetMainContent(page);
     }
 
+    /// <summary>
+    /// 「自动循环」核心逻辑：如果 cfg.AutoThemeCycleEnabled 关闭，什么都不做——完全交给
+    /// 用户手动控制。开启时，按当前系统时间判断现在应该是哪个模式(浅色区间 = 从
+    /// AutoThemeLightStartHour 到 AutoThemeDarkStartHour 之前；深色区间 = 从
+    /// AutoThemeDarkStartHour 到次日 AutoThemeLightStartHour 之前，正确处理"深色区间跨过
+    /// 午夜"的情况)，只有这个判断结果对应的"时间段标识"跟上次已经应用过的不一样时才真正
+    /// 切换配置+重新应用配色——这保证了"手动优先"：用户在同一个时间段内手动点了「模式设置」
+    /// 临时覆盖后，这里不会每分钟都把它纠正回去，只有真正跨入下一个新的时间段才会重新接管。
+    ///
+    /// 由三处触发：(1) MainWindow 构造函数里启动时立即校验一次；(2) _autoThemeCycleTimer
+    /// 每分钟 Tick 一次；(3) 用户在首页刚打开「自动循环」开关，或在设置页刚改了两个切换
+    /// 时间点之后，立即调用一次，保证"设置项保存后一秒内必须看到界面刷新"。
+    /// </summary>
+    public void ReevaluateAutoThemeCycle()
+    {
+        var cfg = ConfigService.Config;
+        if (!cfg.AutoThemeCycleEnabled) return;
+
+        var lightStart = Math.Clamp(cfg.AutoThemeLightStartHour, 0, 23);
+        var darkStart = Math.Clamp(cfg.AutoThemeDarkStartHour, 0, 23);
+        var nowHour = DateTime.Now.Hour;
+
+        // 判断当前小时落在"浅色区间"还是"深色区间"，同时记录这个区间的标识（用区间自己的
+        // 起始小时当标识即可，浅色区间标识 = lightStart，深色区间标识 = darkStart）。
+        // 区间可能跨越午夜（比如深色 19 点开始、浅色 8 点开始，19~23 和 0~7 都属于深色区间），
+        // 所以不能简单判断 nowHour >= darkStart，要分 lightStart < darkStart（同一天内浅->深）
+        // 和 lightStart >= darkStart（异常配置，两者相等或反过来）两种情况处理。
+        bool isLightNow;
+        if (lightStart == darkStart)
+        {
+            // 两个时间点设成一样：没有意义的配置，兜底为"始终浅色"，不让用户看到自动循环
+            // 在这种边界情况下抛异常或者死循环判断。
+            isLightNow = true;
+        }
+        else if (lightStart < darkStart)
+        {
+            // 正常情况：比如浅色 8 点、深色 19 点，[8,19) 是浅色，其余(含跨午夜)是深色。
+            isLightNow = nowHour >= lightStart && nowHour < darkStart;
+        }
+        else
+        {
+            // 反过来的配置：比如浅色 22 点、深色 6 点，[22,24)+[0,6) 是浅色，[6,22) 是深色。
+            isLightNow = nowHour >= lightStart || nowHour < darkStart;
+        }
+
+        var targetSlotId = isLightNow ? lightStart : -(darkStart + 1); // 用负数区分深色区间标识，避免跟浅色标识撞在同一个数值上（0 点开始的浅色 vs 0 点开始的深色）
+        if (cfg.AutoThemeLastAppliedSlotStartHour == targetSlotId) return; // 同一个时间段内已经应用过，遵守"手动优先"，不重复纠正
+
+        cfg.AutoThemeLastAppliedSlotStartHour = targetSlotId;
+        cfg.IsDarkMode = !isLightNow;
+        ConfigService.Save();
+
+        ThemeService.ApplyForCurrentState(cfg.GuestModeEnabled, cfg.UiSkin, cfg.IsDarkMode);
+
+        // 首页「模式设置」按钮显示的是缓存在 HomePage 里的旧勾选状态，配色已经变了但按钮
+        // 文案还没跟上，这里如果当前正显示首页就顺手刷新一下，避免出现"背景已经变深，
+        // 按钮却还写着浅色模式"的不一致。
+        if (MainContent?.Content is HomePage homePage)
+        {
+            homePage.RefreshThemeToggles();
+        }
+    }
+
     private void NavHome_Click(object sender, RoutedEventArgs e) => ShowHome();
 
     private void NavVersions_Click(object sender, RoutedEventArgs e)
     {
         SetMainContent(new VersionSelectPage(this));
+    }
+
+    /// <summary>
+    /// 修复"一锅乱炖"（多加载器合装）装完之后启动器找不到新版本的问题：
+    /// VersionSelectPage 只在自己构造函数里扫描一次 versions/ 目录，装完之后没人告诉它
+    /// "该重新扫一遍了"。这里如果当前主内容区正好显示的就是版本选择页，就直接重新 new
+    /// 一个换上去（VersionSelectPage 的构造函数本身就会做一次干净的目录扫描），
+    /// 新装好的版本文件夹自然就出现在列表里了；如果用户当前在别的页面，
+    /// 则什么都不用做——下次导航到版本选择页时反正会重新 new 一个实例、重新扫描。
+    /// </summary>
+    public void RefreshVersionsPageIfActive()
+    {
+        if (MainContent.Content is VersionSelectPage)
+        {
+            SetMainContent(new VersionSelectPage(this));
+        }
     }
 
     private void NavDownload_Click(object sender, RoutedEventArgs e)
@@ -260,6 +441,38 @@ public partial class MainWindow : Window
     private void NavLogs_Click(object sender, RoutedEventArgs e)
     {
         SetMainContent(new LogsPage(this));
+    }
+
+    private void NavExperimental_Click(object sender, RoutedEventArgs e)
+    {
+        OpenExperimentalFeatures();
+    }
+
+    /// <summary>
+    /// "实验性功能"统一入口：第一次打开（cfg.ExperimentalFeaturesUnlocked 还是 false）先弹
+    /// ExperimentalGateWindow 强制等待 10 秒确认，确认过一次之后这个标记会持久化保存，
+    /// 后续再打开直接展示面板，不需要重复罚站。
+    /// 侧边栏"实验性功能"按钮和「设置」页里原来的入口都调这一个方法，避免同一段
+    /// "先查/写 ExperimentalFeaturesUnlocked，再决定要不要弹网关窗口"的逻辑在两个地方各写一遍、
+    /// 以后改一处忘了改另一处。
+    /// </summary>
+    public void OpenExperimentalFeatures()
+    {
+        var cfg = ConfigService.Config;
+
+        if (!cfg.ExperimentalFeaturesUnlocked)
+        {
+            var gate = new ExperimentalGateWindow { Owner = this };
+            gate.ShowDialog();
+
+            if (!gate.Confirmed) return; // 用户取消/关闭窗口：不解锁，不打开实验性功能面板
+
+            cfg.ExperimentalFeaturesUnlocked = true;
+            ConfigService.Save();
+        }
+
+        var window = new ExperimentalFeaturesWindow(this) { Owner = this };
+        window.ShowDialog();
     }
 
     /// <summary>
@@ -365,21 +578,46 @@ public partial class MainWindow : Window
 
         try
         {
-            // 微软账户：若 access token 即将过期，先静默刷新
+            // 微软账户：若 access token 即将过期，先静默刷新。
+            // 根因修复（"账户管理显示已登录微软账户，进游戏却变成 Demo 试玩"）：
+            // 之前无论刷新成功与否，只要没抛异常就会往下走去启动游戏——刷新失败
+            // （RefreshAsync 返回 null，比如 refresh token 已过期/被吊销/网络问题）
+            // 或者压根没有 MsRefreshToken 时，会原样带着已经过期的旧 access token
+            // 拼进启动参数。Minecraft 收到无效/过期的 accessToken 不会报错，而是
+            // 静默降级成离线试玩(Demo)模式——这正是现象的根源。
+            // 现在改成：刷新失败/无 refresh token 可用时，只要 access token 确实已过期，
+            // 就直接终止启动流程并提示用户重新登录，不再拿失效凭证去启动游戏。
             if (account.Type == AccountType.Microsoft &&
                 (account.AccessTokenExpiresAtUtc == null || account.AccessTokenExpiresAtUtc < DateTime.UtcNow.AddMinutes(5)))
             {
+                Account? refreshed = null;
                 if (!string.IsNullOrEmpty(account.MsRefreshToken))
                 {
                     var msAuth = new MicrosoftAuthService();
-                    var refreshed = await msAuth.RefreshAsync(account.MsRefreshToken);
-                    if (refreshed != null)
-                    {
-                        refreshed.Id = account.Id;
-                        ConfigService.AddOrUpdateAccount(refreshed);
-                        account = refreshed;
-                    }
+                    refreshed = await msAuth.RefreshAsync(account.MsRefreshToken);
                 }
+
+                if (refreshed != null)
+                {
+                    refreshed.Id = account.Id;
+                    ConfigService.AddOrUpdateAccount(refreshed);
+                    account = refreshed;
+                }
+                else if (account.AccessTokenExpiresAtUtc == null || account.AccessTokenExpiresAtUtc < DateTime.UtcNow)
+                {
+                    // access token 已经确实过期、且刷新拿不到新的——不能再往下启动，
+                    // 否则就是本节注释描述的"静默变 Demo"现象。
+                    MessageBox.Show(
+                        $"账户「{account.Username}」的登录状态已过期，且自动刷新失败，请重新登录微软账户后再启动游戏。\n" +
+                        "（如果直接用过期状态启动，Minecraft 会静默进入离线试玩(Demo)模式而不会报错，" +
+                        "为避免这种情况这里主动拦截。）",
+                        "需要重新登录", MessageBoxButton.OK, MessageBoxImage.Warning);
+                    NavAccounts_Click(sender, e);
+                    return;
+                }
+                // else: token 还没到硬过期时间（只是进入 5 分钟提前刷新窗口)，刷新虽失败但
+                // 旧 token 短期内应该仍然有效，容许继续启动，避免因为一次偶发的网络抖动
+                // 就完全无法进游戏。
             }
 
             var javaService = new JavaService();
@@ -520,13 +758,27 @@ public partial class MainWindow : Window
                 ConfigService.Save();
             }
 
-            // 自定义皮肤需要"万能皮肤补丁"(authlib-injector)才能在离线模式下生效。
-            // 之前 SkinJvmArgs 完全没有被赋值过，账户选了自定义皮肤也不会真正生效，
-            // 且 jar 不存在时 BuildSkinJvmArgs 会静默返回空列表、不会有任何报错提示。
+            // 自定义皮肤/认证服务器(AuthServer)账户都需要"万能皮肤补丁"(authlib-injector)
+            // 才能在客户端里正确显示皮肤、通过对应服务器的会话校验。
+            //
+            // 修复：这里原来只判断"离线账户 + 自定义皮肤"，完全没覆盖 AuthServer 账户——
+            // AuthServer 账户的登录/取 token/启动传参这条主链路本身是完整可用的，
+            // 唯独这里"首次启动自动下载 jar"的条件写漏了 AuthServer 分支。
+            // 后果就是：如果用户电脑上从来没下载过 authlib-injector.jar，第一次用皮肤站
+            // 账户启动时，这个 if 直接不成立 -> EnsureAuthlibInjectorAsync 根本不会被调用
+            // -> jar 依然不存在 -> BuildSkinJvmArgs 内部的 File.Exists 检查失败，
+            // 静默返回空列表，玩家会发现皮肤没生效、也没有任何报错提示，一头雾水。
+            // 现在两种情况统一判断"这个账户是否需要皮肤补丁"，需要就统一走同一套
+            // "jar 不存在则先下载"的流程，跟离线自定义皮肤完全一致的体验。
+            //
             // 挂在启动前而不是"下载/安装某个版本"时：这样即使用户很早之前就下载好了
-            // 版本、后来才改选自定义皮肤，也能在真正启动的这一刻补齐 jar，不会漏掉。
+            // 版本、后来才改选自定义皮肤/切换成皮肤站账户，也能在真正启动的这一刻补齐 jar，不会漏掉。
             List<string>? skinJvmArgs = null;
-            if (account.Type == AccountType.Offline && account.SkinType == OfflineSkinType.Custom)
+            var needsAuthlibInjector =
+                (account.Type == AccountType.Offline && account.SkinType == OfflineSkinType.Custom) ||
+                (account.Type == AccountType.AuthServer && !string.IsNullOrWhiteSpace(account.AuthServerApiRoot));
+
+            if (needsAuthlibInjector)
             {
                 var skinService = new SkinService();
                 if (!File.Exists(skinService.AuthlibInjectorPath))
@@ -540,13 +792,26 @@ public partial class MainWindow : Window
                     }
                     catch (Exception skinEx)
                     {
+                        var hint = account.Type == AccountType.AuthServer
+                            ? "下载万能皮肤补丁失败，本次将无法通过认证服务器的皮肤/会话校验：\n"
+                            : "下载万能皮肤补丁失败，本次将不会显示自定义皮肤：\n";
                         MessageBox.Show(
-                            $"下载万能皮肤补丁失败，本次将不会显示自定义皮肤：\n{skinEx.Message}",
+                            hint + skinEx.Message,
                             "皮肤补丁下载失败", MessageBoxButton.OK, MessageBoxImage.Warning);
                     }
                     finally { skinProgressWin.Close(); }
                 }
                 skinJvmArgs = skinService.BuildSkinJvmArgs(account, cfg.SkinApiRoot);
+            }
+
+            // "开启后进入某某某服务器"：按当前选中版本 id 查一次是否配置了自动进服务器地址，
+            // 没配置/配置为空白都传 null，LauncherService 内部会原样跳过 quickPlayMultiplayer
+            // 这个参数，行为等同于这个功能上线前——纯增量开关，不影响没设置过的实例。
+            string? autoJoinServer = null;
+            if (cfg.VersionAutoJoinServer.TryGetValue(cfg.SelectedVersionId, out var configuredServer)
+                && !string.IsNullOrWhiteSpace(configuredServer))
+            {
+                autoJoinServer = configuredServer.Trim();
             }
 
             var launcher = new LauncherService();
@@ -567,7 +832,8 @@ public partial class MainWindow : Window
                 // 自定义 JVM 参数仅在高手模式下生效：普通模式下即使配置里残留了历史值，
                 // 也不应该被悄悄应用，避免用户切回普通模式后出现"不知道为什么还生效"的困惑。
                 CustomJvmArgs = cfg.AdvancedMode ? cfg.CustomJvmArgs : null,
-                PreLaunchCommand = cfg.PreLaunchCommand
+                PreLaunchCommand = cfg.PreLaunchCommand,
+                AutoJoinServerAddress = autoJoinServer
             };
 
             // 导出启动脚本只是附加功能，不应该在失败时阻止真正的游戏启动

@@ -6,9 +6,9 @@
              "边缘发光"科技感悬浮语言保持一致（原来 hover 时整块背景变成 AccentBrush 太生硬，
              跟输入框/按钮的 hover 效果不是一套视觉体系，这里改成跟它们一致的描边发光 + 轻微上浮）。 -->
         <Style x:Key="TileButton" TargetType="Button">
-            <Setter Property="Background" Value="{StaticResource PanelBrush}"/>
+            <Setter Property="Background" Value="{DynamicResource PanelBrush}"/>
             <Setter Property="BorderThickness" Value="1"/>
-            <Setter Property="BorderBrush" Value="{StaticResource BorderBrush2}"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource BorderBrush2}"/>
             <Setter Property="Padding" Value="20,18"/>
             <Setter Property="HorizontalContentAlignment" Value="Left"/>
             <Setter Property="Cursor" Value="Hand"/>
@@ -40,12 +40,12 @@
                                         </Storyboard>
                                     </BeginStoryboard>
                                 </Trigger.ExitActions>
-                                <Setter TargetName="TileBorder" Property="Background" Value="{StaticResource GlowSoftBrush}"/>
-                                <Setter TargetName="TileBorder" Property="BorderBrush" Value="{StaticResource GlowBrush}"/>
+                                <Setter TargetName="TileBorder" Property="Background" Value="{DynamicResource GlowSoftBrush}"/>
+                                <Setter TargetName="TileBorder" Property="BorderBrush" Value="{DynamicResource GlowBrush}"/>
                                 <Setter TargetName="TileBorder" Property="Effect" Value="{StaticResource GlowEffect}"/>
                             </Trigger>
                             <Trigger Property="IsPressed" Value="True">
-                                <Setter TargetName="TileBorder" Property="Background" Value="{StaticResource SideBrush}"/>
+                                <Setter TargetName="TileBorder" Property="Background" Value="{DynamicResource SideBrush}"/>
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -69,12 +69,12 @@
         <Style x:Key="TileTitleText" TargetType="TextBlock">
             <Setter Property="FontSize" Value="15"/>
             <Setter Property="FontWeight" Value="Bold"/>
-            <Setter Property="Foreground" Value="{StaticResource TextPrimaryBrush}"/>
+            <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}"/>
             <Setter Property="Margin" Value="0,0,0,4"/>
         </Style>
         <Style x:Key="TileDescText" TargetType="TextBlock">
             <Setter Property="FontSize" Value="11.5"/>
-            <Setter Property="Foreground" Value="{StaticResource TextSecondaryBrush}"/>
+            <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}"/>
             <Setter Property="TextWrapping" Value="Wrap"/>
             <Setter Property="LineHeight" Value="16"/>
         </Style>
@@ -82,9 +82,9 @@
         <!-- 访客模式开关：未开启时是普通描边小胶囊按钮；开启后整体变成强调色填充，
              一眼就能看出"当前是访客模式"，不需要额外文字提示。 -->
         <Style x:Key="GuestModeToggleStyle" TargetType="ToggleButton">
-            <Setter Property="Background" Value="{StaticResource SideBrush}"/>
-            <Setter Property="Foreground" Value="{StaticResource TextSecondaryBrush}"/>
-            <Setter Property="BorderBrush" Value="{StaticResource BorderBrush2}"/>
+            <Setter Property="Background" Value="{DynamicResource SideBrush}"/>
+            <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource BorderBrush2}"/>
             <Setter Property="BorderThickness" Value="1"/>
             <Setter Property="Padding" Value="12,7"/>
             <Setter Property="Cursor" Value="Hand"/>
@@ -98,8 +98,8 @@
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsChecked" Value="True">
-                                <Setter TargetName="ToggleBorder" Property="Background" Value="{StaticResource AccentBrush}"/>
-                                <Setter TargetName="ToggleBorder" Property="BorderBrush" Value="{StaticResource AccentBrush}"/>
+                                <Setter TargetName="ToggleBorder" Property="Background" Value="{DynamicResource AccentBrush}"/>
+                                <Setter TargetName="ToggleBorder" Property="BorderBrush" Value="{DynamicResource AccentBrush}"/>
                                 <Setter Property="Foreground" Value="White"/>
                             </Trigger>
                             <Trigger Property="IsMouseOver" Value="True">
@@ -112,7 +112,7 @@
         </Style>
     </UserControl.Resources>
 
-    <Border Background="{StaticResource PanelBrush}" CornerRadius="10" Padding="30">
+    <Border Background="{DynamicResource PanelBrush}" CornerRadius="10" Padding="30">
         <Grid>
             <Grid.RowDefinitions>
                 <RowDefinition Height="Auto"/>
@@ -121,20 +121,63 @@
 
             <!-- 右上角访客模式开关：原来在「设置」页里一个不起眼的勾选框，访客模式是"临时用一下、
                  用完就走"的场景，藏在设置页里太深，挪到首页最显眼的右上角，开关状态直接可见
-                 （ToggleButton 本身当"当前是否访客模式"的状态展示，不用额外加文字说明）。 -->
-            <ToggleButton x:Name="GuestModeToggle" Grid.Row="0" HorizontalAlignment="Right" VerticalAlignment="Top"
-                          Style="{StaticResource GuestModeToggleStyle}"
-                          Checked="GuestModeToggle_Changed" Unchecked="GuestModeToggle_Changed"
-                          ToolTip="开启后启动游戏使用一个只存在于本次运行的临时账户，不使用已保存的账户；关闭时清理本次会话产生的日志/临时下载文件">
-                <StackPanel Orientation="Horizontal">
-                    <TextBlock Text="&#128100;" FontSize="13" Margin="0,0,6,0"/>
-                    <TextBlock x:Name="GuestModeToggleText" Text="访客模式" FontSize="13"/>
-                </StackPanel>
-            </ToggleButton>
+                 （ToggleButton 本身当"当前是否访客模式"的状态展示，不用额外加文字说明）。
+                 从左到右依次是：模式设置(深/浅色)、自动循环、普通模式/专家模式切换、访客模式，
+                 全部做成同一个 GuestModeToggleStyle 胶囊按钮风格，保持视觉一致；点击立即写回
+                 对应配置项并保存，跟「设置」页里的对应控件保持双向同步。 -->
+            <StackPanel Grid.Row="0" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Top">
+                <!-- 「模式设置」按钮：切换深色/浅色模式，跟「配色皮肤」选的色系是独立维度——
+                     只切明暗，色相不变（比如色系选了蓝色，这里切换只是在"蓝色系-浅"和
+                     "蓝色系-深"之间切）。点击立即写回 cfg.IsDarkMode 并保存、立即应用。
+                     如果「自动循环」是开启状态，这里点击只是"临时覆盖"：到下一个自动切换
+                     时间点，还是会被自动循环按计划重新接管——不会因为点了这个按钮就把
+                     自动循环关掉。 -->
+                <ToggleButton x:Name="DarkModeToggle" Margin="0,0,10,0"
+                              Style="{StaticResource GuestModeToggleStyle}"
+                              Checked="DarkModeToggle_Changed" Unchecked="DarkModeToggle_Changed"
+                              ToolTip="切换深色/浅色模式，只影响明暗，不影响「配色皮肤」选的色系。开启「自动循环」时，这里的选择只是临时覆盖，到下一个自动切换时间点会被自动循环重新接管。">
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock x:Name="DarkModeToggleIcon" Text="&#9728;" FontSize="13" Margin="0,0,6,0"/>
+                        <TextBlock x:Name="DarkModeToggleText" Text="浅色模式" FontSize="13"/>
+                    </StackPanel>
+                </ToggleButton>
+
+                <!-- 「自动循环」按钮：开启后由系统当前时间自动决定深浅色模式，具体切换时间点
+                     在「设置」页可自行调整（默认早 8:00~晚 19:00 浅色，其余深色）。 -->
+                <ToggleButton x:Name="AutoThemeCycleToggle" Margin="0,0,10,0"
+                              Style="{StaticResource GuestModeToggleStyle}"
+                              Checked="AutoThemeCycleToggle_Changed" Unchecked="AutoThemeCycleToggle_Changed"
+                              ToolTip="开启后按系统时间自动切换深浅色模式（默认早 8:00 到晚 19:00 为浅色，其余为深色），切换时间点可在「设置」页自行调整。">
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Text="&#128260;" FontSize="13" Margin="0,0,6,0"/>
+                        <TextBlock x:Name="AutoThemeCycleToggleText" Text="自动循环" FontSize="13"/>
+                    </StackPanel>
+                </ToggleButton>
+
+                <ToggleButton x:Name="ModeToggle" Margin="0,0,10,0"
+                              Style="{StaticResource GuestModeToggleStyle}"
+                              Checked="ModeToggle_Changed" Unchecked="ModeToggle_Changed"
+                              ToolTip="普通模式：只展示必要选项，Java 自动探测/下载，无需手动配置；专家模式：可调试 Java 版本/架构/安装方式、自定义启动参数等高级选项">
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Text="&#9881;" FontSize="13" Margin="0,0,6,0"/>
+                        <TextBlock x:Name="ModeToggleText" Text="普通模式" FontSize="13"/>
+                    </StackPanel>
+                </ToggleButton>
+
+                <ToggleButton x:Name="GuestModeToggle"
+                              Style="{StaticResource GuestModeToggleStyle}"
+                              Checked="GuestModeToggle_Changed" Unchecked="GuestModeToggle_Changed"
+                              ToolTip="开启后启动游戏使用一个只存在于本次运行的临时账户，不使用已保存的账户；关闭时清理本次会话产生的日志/临时下载文件">
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Text="&#128100;" FontSize="13" Margin="0,0,6,0"/>
+                        <TextBlock x:Name="GuestModeToggleText" Text="访客模式" FontSize="13"/>
+                    </StackPanel>
+                </ToggleButton>
+            </StackPanel>
 
         <StackPanel Grid.Row="1" VerticalAlignment="Center">
-            <TextBlock Text="欢迎使用 XCL2" FontSize="28" FontWeight="Bold" Foreground="{StaticResource TextPrimaryBrush}"/>
-            <TextBlock Text="xztx127-craft-launcher 2" FontSize="14" Foreground="{StaticResource TextSecondaryBrush}" Margin="0,4,0,24"/>
+            <TextBlock Text="欢迎使用 XCL2" FontSize="28" FontWeight="Bold" Foreground="{DynamicResource TextPrimaryBrush}"/>
+            <TextBlock Text="xztx127-craft-launcher 2" FontSize="14" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,4,0,24"/>
 
             <!-- 磁贴总控台：首页不再放"普通模式/高手模式"这种设置项(已经搬到「设置」页，
                  见 SettingsPage.xaml 的 AdvancedModeCheck)，改成一排功能磁贴，点哪个就直接
@@ -142,8 +185,8 @@
             <UniformGrid Columns="3" Rows="2" Margin="0,0,0,4">
                 <Button Style="{StaticResource TileButton}" Margin="0,0,10,10" Click="TileLaunch_Click">
                     <StackPanel>
-                        <Border Style="{StaticResource TileIconBadge}" Background="#E3F7FC">
-                            <TextBlock Text="&#9654;" Style="{StaticResource TileIconText}" Foreground="{StaticResource AccentBrush}"/>
+                        <Border Style="{StaticResource TileIconBadge}" Background="{DynamicResource TileBadgeBlueBrush}">
+                            <TextBlock Text="&#9654;" Style="{StaticResource TileIconText}" Foreground="{DynamicResource AccentBrush}"/>
                         </Border>
                         <TextBlock Text="启动游戏" Style="{StaticResource TileTitleText}"/>
                         <TextBlock Text="用当前选中的版本和账户直接开玩" Style="{StaticResource TileDescText}"/>
@@ -152,7 +195,7 @@
 
                 <Button Style="{StaticResource TileButton}" Margin="0,0,10,10" Click="TileAccounts_Click">
                     <StackPanel>
-                        <Border Style="{StaticResource TileIconBadge}" Background="#EAF1FF">
+                        <Border Style="{StaticResource TileIconBadge}" Background="{DynamicResource TileBadgeIndigoBrush}">
                             <TextBlock Text="&#128100;" Style="{StaticResource TileIconText}"/>
                         </Border>
                         <TextBlock Text="账户登录" Style="{StaticResource TileTitleText}"/>
@@ -162,8 +205,8 @@
 
                 <Button Style="{StaticResource TileButton}" Margin="0,0,0,10" Click="TileDownload_Click">
                     <StackPanel>
-                        <Border Style="{StaticResource TileIconBadge}" Background="#E7F6EC">
-                            <TextBlock Text="&#8681;" Style="{StaticResource TileIconText}" Foreground="#1E9E4F"/>
+                        <Border Style="{StaticResource TileIconBadge}" Background="{DynamicResource TileBadgeGreenBrush}">
+                            <TextBlock Text="&#8681;" Style="{StaticResource TileIconText}" Foreground="{DynamicResource SuccessTextBrush}"/>
                         </Border>
                         <TextBlock Text="下载中心" Style="{StaticResource TileTitleText}"/>
                         <TextBlock Text="下载游戏核心、Mod、地图、资源包" Style="{StaticResource TileDescText}"/>
@@ -172,7 +215,7 @@
 
                 <Button Style="{StaticResource TileButton}" Margin="0,0,10,0" Click="TileQuickStart_Click">
                     <StackPanel>
-                        <Border Style="{StaticResource TileIconBadge}" Background="#FFF1E3">
+                        <Border Style="{StaticResource TileIconBadge}" Background="{DynamicResource TileBadgeOrangeBrush}">
                             <TextBlock Text="&#128640;" Style="{StaticResource TileIconText}"/>
                         </Border>
                         <TextBlock Text="一键开始游戏" Style="{StaticResource TileTitleText}"/>
@@ -182,7 +225,7 @@
 
                 <Button Style="{StaticResource TileButton}" Margin="0,0,10,0" Click="TileServerManager_Click">
                     <StackPanel>
-                        <Border Style="{StaticResource TileIconBadge}" Background="#F1E9FF">
+                        <Border Style="{StaticResource TileIconBadge}" Background="{DynamicResource TileBadgePurpleBrush}">
                             <TextBlock Text="&#128423;" Style="{StaticResource TileIconText}"/>
                         </Border>
                         <TextBlock Text="服务器管理" Style="{StaticResource TileTitleText}"/>
@@ -192,8 +235,8 @@
 
                 <Button Style="{StaticResource TileButton}" Click="TileSettings_Click">
                     <StackPanel>
-                        <Border Style="{StaticResource TileIconBadge}" Background="#F4F7FB">
-                            <TextBlock Text="&#9881;" Style="{StaticResource TileIconText}" Foreground="{StaticResource TextSecondaryBrush}"/>
+                        <Border Style="{StaticResource TileIconBadge}" Background="{DynamicResource SideBrush}">
+                            <TextBlock Text="&#9881;" Style="{StaticResource TileIconText}" Foreground="{DynamicResource TextSecondaryBrush}"/>
                         </Border>
                         <TextBlock Text="设置" Style="{StaticResource TileTitleText}"/>
                         <TextBlock Text="Java、模式切换、窗口大小等" Style="{StaticResource TileDescText}"/>
@@ -201,7 +244,7 @@
                 </Button>
             </UniformGrid>
 
-            <TextBlock TextWrapping="Wrap" Foreground="{StaticResource TextSecondaryBrush}" FontSize="12" Margin="0,16,0,0">
+            <TextBlock TextWrapping="Wrap" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="12" Margin="0,16,0,0">
                 左侧导航栏可以直接跳转到以上功能，也可以打开「日志」页查看游戏/启动器日志和崩溃报告分析——默认隐藏，勾选后才显示。
             </TextBlock>
         </StackPanel>

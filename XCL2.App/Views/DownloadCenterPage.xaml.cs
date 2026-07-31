@@ -23,6 +23,28 @@ namespace XCL2.App.Views;
 /// </summary>
 public partial class DownloadCenterPage : UserControl
 {
+    /// <summary>下载前询问保存目录：默认沿用当前实例对应目录，用户也可以点"选择其他目录"
+    /// 调起系统资源管理器（Windows 原生文件夹选择框，跟游戏版本/Mod站点的"另存为"体验一致，
+    /// 是社区启动器的标配功能）另存到任意位置。返回 null 表示用户取消了本次下载。</summary>
+    private static string? PromptSaveDirectory(string defaultDir, string itemName)
+    {
+        var choice = MessageBox.Show(
+            $"「{itemName}」将下载到：\n{defaultDir}\n\n点击「是」使用该目录，点击「否」选择其他目录，点击「取消」放弃本次下载。",
+            "选择保存位置", MessageBoxButton.YesNoCancel, MessageBoxImage.Question);
+
+        if (choice == MessageBoxResult.Cancel) return null;
+        if (choice == MessageBoxResult.Yes) return defaultDir;
+
+        // 用户选"否"：调起 Windows 原生资源管理器文件夹选择框。
+        var dialog = new Microsoft.Win32.OpenFolderDialog
+        {
+            Title = "选择下载保存目录",
+            InitialDirectory = Directory.Exists(defaultDir) ? defaultDir : null
+        };
+        return dialog.ShowDialog() == true ? dialog.FolderName : null;
+    }
+
+
     private readonly MainWindow _owner;
     private readonly ObservableCollection<VersionListItem> _online = new();
     private VersionManifestRoot? _manifestCache;
@@ -76,6 +98,20 @@ public partial class DownloadCenterPage : UserControl
     /// 手动点击各面板的"手动刷新/搜索"按钮，或改动筛选条件，会绕开这个标记强制重新请求。
     /// </summary>
     private readonly HashSet<string> _autoLoadedCategories = new();
+
+    /// <summary>
+    /// 修复"在版本框输入版本后，进入模组下载页面不会自动匹配到该版本"的 bug：
+    /// Mod/材质包(资源)/地图 三个分类各自有一个独立的游戏版本输入框，互相之间完全不同步。
+    /// 用共享字段记录"用户最后一次手动填的版本号"，切换分类时同步到目标分类的版本框
+    /// （仅当目标框为空时才填，不覆盖用户已有输入）。
+    /// </summary>
+    private string? _lastTypedGameVersion;
+
+    private void SyncGameVersionBox(TextBox box)
+    {
+        if (string.IsNullOrWhiteSpace(box.Text) && !string.IsNullOrWhiteSpace(_lastTypedGameVersion))
+            box.Text = _lastTypedGameVersion;
+    }
 
     /// <summary>
     /// 筛选条件(搜索框文字/游戏版本号/加载器下拉框)变化时的统一防抖计时器：
@@ -203,7 +239,12 @@ public partial class DownloadCenterPage : UserControl
                 break;
             case "mod":
                 ModPanel.Visibility = Visibility.Visible;
-                if (_autoLoadedCategories.Add("mod")) _ = RunModSearchAsync();
+                {
+                    var hadNoText = string.IsNullOrWhiteSpace(ModGameVersionBox.Text);
+                    SyncGameVersionBox(ModGameVersionBox);
+                    var justFilled = hadNoText && !string.IsNullOrWhiteSpace(ModGameVersionBox.Text);
+                    if (_autoLoadedCategories.Add("mod") || justFilled) _ = RunModSearchAsync();
+                }
                 break;
             case "resourcepack":
                 SwitchResourceCategory(ModrinthResourceType.ResourcePack, "材质包下载");
@@ -218,7 +259,10 @@ public partial class DownloadCenterPage : UserControl
                 if (_curseForgeKeyService.HasKey())
                 {
                     MapPanel.Visibility = Visibility.Visible;
-                    if (_autoLoadedCategories.Add("map")) _ = RunMapSearchAsync();
+                    var hadNoText = string.IsNullOrWhiteSpace(MapGameVersionBox.Text);
+                    SyncGameVersionBox(MapGameVersionBox);
+                    var justFilled = hadNoText && !string.IsNullOrWhiteSpace(MapGameVersionBox.Text);
+                    if (_autoLoadedCategories.Add("map") || justFilled) _ = RunMapSearchAsync();
                 }
                 else
                 {
@@ -246,6 +290,37 @@ public partial class DownloadCenterPage : UserControl
         ModSearchBox.Text = keyword;
         _modPageIndex = 0;
         _ = RunModSearchAsync(showHints: true);
+    }
+
+    public void SelectResourceCategoryAndSearch(ModrinthResourceType type, string keyword)
+    {
+        var radio = type switch
+        {
+            ModrinthResourceType.DataPack => CatDataPack,
+            ModrinthResourceType.Shader => CatShader,
+            _ => CatResourcePack
+        };
+        // 关键词要先填好，再触发 RadioButton 选中——IsChecked=true 会同步触发
+        // Category_Checked -> SwitchResourceCategory 并可能立即发起一次搜索，
+        // 顺序反了会先拿旧关键词/空关键词搜一次、白白多打一次请求。
+        ResourceSearchBox.Text = keyword;
+        _resourcePageIndex = 0;
+        radio.IsChecked = true;
+        // 保险起见再显式跑一次，覆盖"类型没变、SwitchResourceCategory 内部判断命中
+        // _lastLoadedResourceType 未变而跳过搜索"这种边界情况（比如收藏面板里连续两次
+        // 点同一类型的不同资源"去下载"）。
+        _ = RunResourceSearchAsync(showEmptyHint: true);
+    }
+
+    /// <summary>供"我的收藏"面板里"地图"卡片"去下载"按钮调用，逻辑跟
+    /// SelectResourceCategoryAndSearch/SelectModCategoryAndSearch 对称。</summary>
+    public void SelectMapCategoryAndSearch(string keyword)
+    {
+        MapSearchBox.Text = keyword;
+        _mapPageIndex = 0;
+        CatMap.IsChecked = true; // 触发 Category_Checked，没有 Key 时会自动展示"未配置 Key"提示面板
+        _autoLoadedCategories.Add("map");
+        _ = RunMapSearchAsync(showHints: true);
     }
 
     /// <summary>
@@ -286,7 +361,11 @@ public partial class DownloadCenterPage : UserControl
         }
         _syncingResourceType = false;
 
-        if (_lastLoadedResourceType != type)
+        var hadNoText = string.IsNullOrWhiteSpace(ResourceGameVersionBox.Text);
+        SyncGameVersionBox(ResourceGameVersionBox);
+        var justFilled = hadNoText && !string.IsNullOrWhiteSpace(ResourceGameVersionBox.Text);
+
+        if (_lastLoadedResourceType != type || justFilled)
         {
             _lastLoadedResourceType = type;
             _resourcePageIndex = 0;
@@ -710,6 +789,8 @@ public partial class DownloadCenterPage : UserControl
     /// </summary>
     private void ResourceFilter_Changed(object sender, RoutedEventArgs e)
     {
+        if (!string.IsNullOrWhiteSpace(ResourceGameVersionBox.Text))
+            _lastTypedGameVersion = ResourceGameVersionBox.Text.Trim();
         _resourcePageIndex = 0;
         Debounce(() => _ = RunResourceSearchAsync());
     }
@@ -889,12 +970,14 @@ public partial class DownloadCenterPage : UserControl
 
         if (item.VersionsLoaded)
         {
+            detail.SetFlatEntries(item.Versions);
             detail.ShowGroups(item.Groups);
             return;
         }
 
         detail.ShowLoading();
         await LoadResourceVersionsAsync(item, ResourceGameVersionBox.Text?.Trim());
+        detail.SetFlatEntries(item.Versions);
         detail.ShowGroups(item.Groups);
     }
 
@@ -1047,6 +1130,16 @@ public partial class DownloadCenterPage : UserControl
             ? folder.Path // 数据包必须挂在具体存档下，走 folder.Path + saveName 拼接，不受资源包作用域设置影响
             : GetEffectiveResourceDir(folder.Path);
 
+        // 需求："加入下载时选下载目标目录功能"。数据包必须放进具体存档目录才会生效，
+        // 改目录会导致游戏读不到，因此只对材质包/光影包开放"选择其他目录"，
+        // 数据包始终固定用 effectiveDir（存档路径），不弹询问。
+        if (!item.IsDataPack)
+        {
+            var chosen = PromptSaveDirectory(effectiveDir, entry.Name);
+            if (chosen == null) return; // 用户取消
+            effectiveDir = chosen;
+        }
+
         var progressWin = new ProgressWindow($"正在下载 {entry.Name} ...") { Owner = Window.GetWindow(this) };
         progressWin.Show();
         try
@@ -1128,6 +1221,8 @@ public partial class DownloadCenterPage : UserControl
     /// 之前翻到的页码对新结果集没有意义，回到第一页。</summary>
     private void ModFilter_Changed(object sender, RoutedEventArgs e)
     {
+        if (!string.IsNullOrWhiteSpace(ModGameVersionBox.Text))
+            _lastTypedGameVersion = ModGameVersionBox.Text.Trim();
         _modPageIndex = 0;
         Debounce(() => _ = RunModSearchAsync());
     }
@@ -1327,12 +1422,14 @@ public partial class DownloadCenterPage : UserControl
 
         if (item.VersionsLoaded)
         {
+            detail.SetFlatEntries(item.Versions);
             detail.ShowGroups(item.Groups);
             return;
         }
 
         detail.ShowLoading();
         await LoadModVersionsAsync(item, ModGameVersionBox.Text?.Trim());
+        detail.SetFlatEntries(item.Versions);
         detail.ShowGroups(item.Groups);
     }
 
@@ -1436,6 +1533,11 @@ public partial class DownloadCenterPage : UserControl
             ?? _owner.ConfigService.Config.Folders.FirstOrDefault();
         if (folder == null) return; // 展开阶段已经校验过
 
+        // 需求："加入下载时选下载目标目录功能（调用windows资源管理器选择）所有社区资源标配"。
+        // 默认仍然是当前实例的 mods 目录（保证游戏能识别到），用户也可以选择另存到别处。
+        var targetDir = PromptSaveDirectory(folder.Path, entry.Name);
+        if (targetDir == null) return; // 用户取消
+
         var progressWin = new ProgressWindow($"正在下载 {entry.Name} ...") { Owner = Window.GetWindow(this) };
         progressWin.Show();
         try
@@ -1443,9 +1545,9 @@ public partial class DownloadCenterPage : UserControl
             var progress = new Progress<string>(msg => progressWin.Progress.Report(new ProgressInfo("下载中", 0, 1, msg)));
             string path;
             if (entry.Source == ModSource.Modrinth)
-                path = await _modrinth.DownloadResourceAsync(folder.Path, ModrinthResourceType.Mod, (ModrinthVersion)entry.RawVersion, progress);
+                path = await _modrinth.DownloadResourceAsync(targetDir, ModrinthResourceType.Mod, (ModrinthVersion)entry.RawVersion, progress);
             else
-                path = await GetCurseForge().DownloadModAsync(folder.Path, (CurseForgeFile)entry.RawVersion, progress);
+                path = await GetCurseForge().DownloadModAsync(targetDir, (CurseForgeFile)entry.RawVersion, progress);
             MessageBox.Show($"Mod 已安装到：\n{path}", "成功", MessageBoxButton.OK, MessageBoxImage.Information);
         }
         catch (Exception ex)
@@ -1467,6 +1569,8 @@ public partial class DownloadCenterPage : UserControl
     /// <summary>搜索框/游戏版本号变化：走防抖，停顿后自动重新搜索。</summary>
     private void MapFilter_Changed(object sender, RoutedEventArgs e)
     {
+        if (!string.IsNullOrWhiteSpace(MapGameVersionBox.Text))
+            _lastTypedGameVersion = MapGameVersionBox.Text.Trim();
         _mapPageIndex = 0;
         Debounce(() => _ = RunMapSearchAsync());
     }
@@ -1580,6 +1684,7 @@ public partial class DownloadCenterPage : UserControl
             var entries = files.Select(f => new InlineVersionEntry(f)).ToList();
             var groups = ModVersionGrouping.Group(entries).ToList();
             if (groups.Count > 0) groups[0].IsExpanded = true;
+            detail.SetFlatEntries(entries);
             detail.ShowGroups(groups);
         }
         catch (CurseForgeKeyMissingException ex)
@@ -1599,6 +1704,13 @@ public partial class DownloadCenterPage : UserControl
     /// 调用的是同一个方法，只是调用点从弹窗换成了详情页回调。</summary>
     private async Task DownloadMapInlineAsync(string folderPath, CurseForgeMod mod, InlineVersionEntry entry)
     {
+        // 需求："加入下载时选下载目标目录功能"。地图默认解压到当前 .minecraft 的 saves 目录下
+        // （这样下载完能直接在游戏里打开），用户也可以选择另存到别的目录（比如只是想要地图
+        // 文件本身，不打算马上放进这个实例里玩）。
+        var chosenDir = PromptSaveDirectory(folderPath, entry.Name);
+        if (chosenDir == null) return; // 用户取消
+        folderPath = chosenDir;
+
         var progressWin = new ProgressWindow($"正在下载 {entry.Name} ...") { Owner = Window.GetWindow(this) };
         progressWin.Show();
         try

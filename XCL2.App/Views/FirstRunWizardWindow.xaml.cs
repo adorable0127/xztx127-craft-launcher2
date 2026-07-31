@@ -29,6 +29,10 @@ public partial class FirstRunWizardWindow : Window
     private bool _javaStepDone;
     private bool _accountStepDone;
     private bool _suppressModeEvent;
+    /// <summary>是否已经执行过一次 Complete()。配合 Closing 事件兜底逻辑使用，
+    /// 避免"用户点了 Skip/完成按钮触发 Complete() -> Close() -> 又触发 Closing"
+    /// 时重复保存一次配置。</summary>
+    private bool _completed;
 
     public FirstRunWizardWindow(MainWindow owner)
     {
@@ -46,6 +50,22 @@ public partial class FirstRunWizardWindow : Window
         // return 掉，等真正走到下面的回填逻辑时再按需要手动设置一次。
         _suppressModeEvent = true;
         InitializeComponent();
+
+        // 修复：之前只有点「跳过」或「完成/一键完成」按钮才会把 FirstRunWizardCompleted
+        // 写成 true。但窗口默认带系统标题栏，用户完全可以直接点右上角的「×」把向导关掉，
+        // 这种关闭方式不会走 Skip_Click / Complete()，导致该字段永远是 false——
+        // 于是下次启动 MainWindow 又判断"没完成过"，向导又弹出来，成了怎么关都关不掉的
+        // 遗留 bug。这里用 Closing 事件兜底：不管用户是点 Skip、点完成，还是直接点 ×
+        // 关闭，只要窗口关闭这一步就必然会执行到这里，统一保证标记为已完成
+        // （_completed 幂等标志避免重复保存；已经手动走完 Complete() 的路径会在此处跳过）。
+        Closing += (_, _) =>
+        {
+            if (!_completed)
+            {
+                ApplyFolderAndLanguage();
+                Complete(markCompleted: true);
+            }
+        };
 
         // 默认游戏文件夹：沿用已有配置里的默认文件夹（如果用户是"重新打开向导"），
         // 否则给一个新装机场景下最自然的默认位置——启动器所在目录下的 .minecraft。
@@ -373,6 +393,14 @@ public partial class FirstRunWizardWindow : Window
 
     private void Complete(bool markCompleted)
     {
+        // 幂等：Skip/一键完成里调用一次 Complete() -> Close() -> 触发上面订阅的 Closing
+        // 事件 -> 检查 _completed 为 true 就直接跳过，不会重复保存/重复 Close()。
+        if (_completed)
+        {
+            return;
+        }
+        _completed = true;
+
         if (markCompleted)
         {
             _owner.ConfigService.Config.FirstRunWizardCompleted = true;

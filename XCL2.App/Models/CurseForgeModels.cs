@@ -113,6 +113,9 @@ public class CurseForgeFile
     [JsonPropertyName("fileLength")] public long FileLength { get; set; }
     [JsonPropertyName("downloadUrl")] public string? DownloadUrl { get; set; }
     [JsonPropertyName("gameVersions")] public List<string> GameVersions { get; set; } = new();
+    /// <summary>CurseForge 官方 v1 文档定义：1=Release 2=Beta 3=Alpha。用于版本列表默认过滤掉
+    /// 非正式版（见 InlineVersionEntry.IsPreview），用户可以点"显示预览版"按钮重新看到。</summary>
+    [JsonPropertyName("releaseType")] public int ReleaseType { get; set; } = 1;
 }
 
 public class CurseForgeFileListResult

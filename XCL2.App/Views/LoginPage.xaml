@@ -6,7 +6,7 @@
         <!-- 只有离线账户(Type=Offline)才需要显示"皮肤"按钮；微软账户的皮肤由 Mojang 托管。 -->
         <models:AccountTypeToOfflineVisibilityConverter x:Key="AccountTypeToOfflineVisibilityConverter"/>
     </UserControl.Resources>
-    <Border Background="{StaticResource PanelBrush}" CornerRadius="10" Padding="24">
+    <Border Background="{DynamicResource PanelBrush}" CornerRadius="10" Padding="24">
         <DockPanel>
             <TextBlock DockPanel.Dock="Top" Text="账户管理" FontSize="20" FontWeight="Bold" Margin="0,0,0,16"/>
 
@@ -17,7 +17,31 @@
                 <Button Content="添加微软账户 (内嵌登录，免复制验证码)" Style="{StaticResource PrimaryButton}" Margin="10,0,0,0" Click="AddMicrosoftEmbedded_Click"/>
             </StackPanel>
 
-            <TextBlock DockPanel.Dock="Top" x:Name="StatusText" Foreground="{StaticResource AccentBrush}"
+            <!-- 认证服务器（皮肤站）登录：跟上面离线/微软账户完全独立的一套输入框，
+                 不影响上面两种账户类型任何已有的按钮/事件。 -->
+            <Border DockPanel.Dock="Top" Background="{DynamicResource SideBrush}" CornerRadius="6" Padding="12" Margin="0,0,0,16">
+                <StackPanel>
+                    <TextBlock Text="认证服务器（皮肤站）登录" FontWeight="Bold" Margin="0,0,0,8"/>
+                    <TextBlock Text="用第三方认证服务器（统一通行证/blessing-skin 等，需支持 Yggdrasil 协议）账号登录，登录后会自动使用该服务器上的皮肤。"
+                               FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,10" TextWrapping="Wrap"/>
+                    <Grid Margin="0,0,0,6">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBox x:Name="AuthServerRootBox" Padding="8" VerticalContentAlignment="Center"
+                                 ToolTip="认证服务器 API 根地址，例如 https://example.com/api/yggdrasil"/>
+                    </Grid>
+                    <TextBlock Text="认证服务器地址（API 根地址）" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,8"/>
+                    <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                        <TextBox x:Name="AuthServerUsernameBox" Width="200" Padding="8" VerticalContentAlignment="Center"
+                                 ToolTip="皮肤站账号的邮箱/用户名"/>
+                        <PasswordBox x:Name="AuthServerPasswordBox" Width="200" Padding="8" VerticalContentAlignment="Center" Margin="10,0,0,0"/>
+                        <Button Content="登录" Style="{StaticResource PrimaryButton}" Margin="10,0,0,0" Click="AddAuthServer_Click"/>
+                    </StackPanel>
+                </StackPanel>
+            </Border>
+
+            <TextBlock DockPanel.Dock="Top" x:Name="StatusText" Foreground="{DynamicResource AccentBrush}"
                        Margin="0,0,0,10" TextWrapping="Wrap"/>
 
             <TextBlock DockPanel.Dock="Top" Text="已保存的账户（离线与微软账户可共存，随时切换）" FontWeight="Bold" Margin="0,0,0,8"/>
@@ -33,7 +57,7 @@
                             </Grid.ColumnDefinitions>
                             <StackPanel>
                                 <TextBlock Text="{Binding DisplayLabel}" FontSize="15"/>
-                                <TextBlock Text="{Binding Uuid}" FontSize="11" Foreground="{StaticResource TextSecondaryBrush}"/>
+                                <TextBlock Text="{Binding Uuid}" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}"/>
                             </StackPanel>
                             <!-- 皮肤按钮只对离线账户显示：微软账户的皮肤由 Mojang 托管，启动器不应该干预。 -->
                             <Button Grid.Column="1" Content="皮肤" Tag="{Binding}" Click="Skin_Click"

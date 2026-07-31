@@ -118,13 +118,20 @@ public partial class CreateServerWindow : Window
         if (!Enum.TryParse<ServerCoreType>(tag, out var coreType)) return;
         _selectedCoreType = coreType;
 
-        BuildVersionPanel.Visibility = coreType == ServerCoreType.Vanilla ? Visibility.Collapsed : Visibility.Visible;
+        // Vanilla 没有 build 号可选；Spigot 走 BuildTools 本地编译，同样没有 build 号概念
+        // （只需要选 MC 版本，编译结果就是那个版本对应的 Spigot），两者都不展示 build 面板。
+        BuildVersionPanel.Visibility = coreType is ServerCoreType.Vanilla or ServerCoreType.Spigot
+            ? Visibility.Collapsed : Visibility.Visible;
         BuildVersionLabel.Text = coreType switch
         {
             ServerCoreType.Paper => "Build 号",
             ServerCoreType.Fabric => "Loader 版本",
             ServerCoreType.Forge => "安装器版本",
             ServerCoreType.NeoForge => "版本号",
+            ServerCoreType.Purpur => "Build 号",
+            ServerCoreType.Folia => "Build 号",
+            ServerCoreType.Velocity => "Build 号",
+            ServerCoreType.Waterfall => "Build 号",
             _ => "构建版本"
         };
 
@@ -148,6 +155,14 @@ public partial class CreateServerWindow : Window
                 ServerCoreType.Fabric => await _coreService.GetFabricMcVersionsAsync(),
                 ServerCoreType.Forge => await _coreService.GetForgeVersionsAsync(),
                 ServerCoreType.NeoForge => await _coreService.GetNeoForgeVersionsAsync(),
+                ServerCoreType.Purpur => await _coreService.GetPurpurVersionsAsync(),
+                ServerCoreType.Folia => await _coreService.GetFoliaVersionsAsync(),
+                ServerCoreType.Velocity => await _coreService.GetVelocityVersionsAsync(),
+                ServerCoreType.Waterfall => await _coreService.GetWaterfallVersionsAsync(),
+                // Spigot 没有官方版本列表 API（BuildTools 支持"几乎任何官方发布过的 MC 版本"），
+                // 复用 Vanilla 的版本清单最省事、也最准确——凡是 Mojang 发布过 release 的版本，
+                // BuildTools 原则上都能编译。
+                ServerCoreType.Spigot => await _coreService.GetVanillaVersionsAsync(includeSnapshots: false),
                 _ => new List<string>()
             };
             foreach (var v in versions) _mcVersions.Add(v);
@@ -169,7 +184,7 @@ public partial class CreateServerWindow : Window
         _buildVersions.Clear();
         UpdateJavaRequirementHint();
         if (McVersionCombo.SelectedItem is not string mcVersion) return;
-        if (_selectedCoreType is ServerCoreType.Vanilla or ServerCoreType.NeoForge) return;
+        if (_selectedCoreType is ServerCoreType.Vanilla or ServerCoreType.NeoForge or ServerCoreType.Spigot) return;
 
         try
         {
@@ -178,6 +193,10 @@ public partial class CreateServerWindow : Window
                 ServerCoreType.Paper => await _coreService.GetPaperBuildsAsync(mcVersion),
                 ServerCoreType.Fabric => await _coreService.GetFabricLoaderVersionsAsync(),
                 ServerCoreType.Forge => await _coreService.GetForgeInstallerVersionsAsync(mcVersion),
+                ServerCoreType.Purpur => await _coreService.GetPurpurBuildsAsync(mcVersion),
+                ServerCoreType.Folia => await _coreService.GetFoliaBuildsAsync(mcVersion),
+                ServerCoreType.Velocity => await _coreService.GetVelocityBuildsAsync(mcVersion),
+                ServerCoreType.Waterfall => await _coreService.GetWaterfallBuildsAsync(mcVersion),
                 _ => new List<ServerCoreBuild>()
             };
             foreach (var b in builds) _buildVersions.Add(b);
@@ -401,7 +420,35 @@ public partial class CreateServerWindow : Window
             string launchTarget;
             bool launchTargetIsScript;
 
-            if (result.RequiresInstall)
+            if (result.RequiresBuild)
+            {
+                // Spigot：result.DownloadedFilePath 此时是 BuildTools.jar 本体，还没编译。
+                // 编译耗时数分钟，展示和"跑 Forge 安装器"不同的提示文案，避免用户以为卡住了。
+                ProgressStageText.Text = "正在用 BuildTools 编译 Spigot";
+                ProgressDetailText.Text = "首次编译需要联网拉取源码并本地反编译/打补丁，可能需要几分钟，请耐心等待...";
+                ProgressBarCtl.IsIndeterminate = true;
+
+                var buildProgress = new Progress<string>(line => ProgressDetailText.Text = line);
+                try
+                {
+                    var jarPath = await _coreService.RunSpigotBuildToolsAsync(
+                        result.DownloadedFilePath, req.TargetDir, resolvedJavaPath, mcVersion, buildProgress);
+                    launchTarget = Path.GetFileName(jarPath);
+                    launchTargetIsScript = false;
+                }
+                catch (InvalidOperationException ex) when (ex.Message.Contains("Git"))
+                {
+                    // BuildTools 缺 Git 是最常见的失败原因，这里直接用友好提示框拦一次，
+                    // 而不是让用户在最后统一的 catch 块里只看到一堆英文编译日志。
+                    ErrorPresenter.ShowFriendlyError(
+                        "编译 Spigot 需要本机已安装 Git，请先安装 Git（https://git-scm.com/downloads）后重试。",
+                        $"[Spigot BuildTools] {ex}", "缺少 Git");
+                    return;
+                }
+
+                ProgressBarCtl.IsIndeterminate = false;
+            }
+            else if (result.RequiresInstall)
             {
                 ProgressStageText.Text = "正在运行安装器";
                 ProgressDetailText.Text = "首次安装可能需要下载额外库文件，请耐心等待...";

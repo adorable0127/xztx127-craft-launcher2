@@ -32,6 +32,18 @@ public partial class ServerManagerPage : UserControl
     // 下载完成后，若需要安装（Forge/NeoForge），暂存下来供"立即运行安装"按钮使用
     private ServerCoreDownloadResult? _pendingInstallResult;
     private string? _pendingInstallTargetDir;
+    /// <summary>Spigot 走 RunSpigotBuildToolsAsync 编译时需要传 MC 版本号（BuildTools 的 --rev 参数），
+    /// Forge/NeoForge 的 RunForgeInstallerAsync 不需要这个，仅在 RequiresBuild 场景下会用到。</summary>
+    private string? _pendingInstallMcVersion;
+    /// <summary>
+    /// 修复"核心下载面板下载完成后，服务器不会出现在服务器列表里"：这个面板只负责下载/安装
+    /// 服务端核心文件本身，跟"创建服务器"向导（CreateServerWindow）是两条独立路径——之前
+    /// 只有 CreateServerWindow 那条路径会在成功后调用 ServerInstanceService.Add() 登记一个
+    /// ServerInstance，这里下载完只弹了个"下载完成"的提示框，没有登记，导致"服务器列表"
+    /// 面板永远看不到这个刚下载好的核心。这里在发起下载前记下这次请求的核心类型/MC版本，
+    /// 供下载/安装全部完成后统一调用 RegisterDownloadedInstance 登记。</summary>
+    private ServerCoreType _pendingInstallCoreType;
+    private string? _pendingInstallMcVersionForRegister;
 
     // ===== 资源包下载面板：与 DownloadCenterPage 的材质包分类共用 ModrinthService/CurseForgeService/
     // ModSearchService（这几个服务类本身不跟 .minecraft 目录绑定，创建成本也很低，没必要要求
@@ -83,7 +95,7 @@ public partial class ServerManagerPage : UserControl
         };
 
         _initialized = true;
-        Category_Checked(CatCoreDownload, new RoutedEventArgs()); // 补上初始化阶段被跳过的那次面板显隐
+        Category_Checked(CatHome, new RoutedEventArgs()); // 补上初始化阶段被跳过的那次面板显隐
 
         _ = LoadMcVersionsAsync();
     }
@@ -94,6 +106,7 @@ public partial class ServerManagerPage : UserControl
         if (sender is not RadioButton rb) return;
         var tag = rb.Tag as string;
 
+        HomePanel.Visibility = tag == "home" ? Visibility.Visible : Visibility.Collapsed;
         CorePanel.Visibility = tag == "core" ? Visibility.Visible : Visibility.Collapsed;
         InstancesPanel.Visibility = tag == "instances" ? Visibility.Visible : Visibility.Collapsed;
         // "插件下载"和"资源包"现在共用同一个 ServerResourcePanel（内部靠 SrvRes* 单选按钮切换
@@ -123,14 +136,20 @@ public partial class ServerManagerPage : UserControl
         if (!Enum.TryParse<ServerCoreType>(tag, out var coreType)) return;
         _selectedCoreType = coreType;
 
-        // Vanilla 没有单独的"构建版本"概念，隐藏该栏；其余类型显示对应标签
-        BuildVersionPanel.Visibility = coreType == ServerCoreType.Vanilla ? Visibility.Collapsed : Visibility.Visible;
+        // Vanilla 没有单独的"构建版本"概念，隐藏该栏；Spigot 走 BuildTools 本地编译同样没有
+        // build 号概念（只需要选 MC 版本），也隐藏；其余类型显示对应标签
+        BuildVersionPanel.Visibility = coreType is ServerCoreType.Vanilla or ServerCoreType.Spigot
+            ? Visibility.Collapsed : Visibility.Visible;
         BuildVersionLabel.Text = coreType switch
         {
             ServerCoreType.Paper => "Build 号",
             ServerCoreType.Fabric => "Loader 版本",
             ServerCoreType.Forge => "安装器版本",
             ServerCoreType.NeoForge => "版本号",
+            ServerCoreType.Purpur => "Build 号",
+            ServerCoreType.Folia => "Build 号",
+            ServerCoreType.Velocity => "Build 号",
+            ServerCoreType.Waterfall => "Build 号",
             _ => "构建版本"
         };
 
@@ -156,6 +175,11 @@ public partial class ServerManagerPage : UserControl
                 ServerCoreType.Fabric => await _coreService.GetFabricMcVersionsAsync(),
                 ServerCoreType.Forge => await _coreService.GetForgeVersionsAsync(),
                 ServerCoreType.NeoForge => await LoadNeoForgeMcVersionPlaceholderAsync(),
+                ServerCoreType.Purpur => await _coreService.GetPurpurVersionsAsync(),
+                ServerCoreType.Folia => await _coreService.GetFoliaVersionsAsync(),
+                ServerCoreType.Velocity => await _coreService.GetVelocityVersionsAsync(),
+                ServerCoreType.Waterfall => await _coreService.GetWaterfallVersionsAsync(),
+                ServerCoreType.Spigot => await _coreService.GetVanillaVersionsAsync(includeSnapshots: false),
                 _ => new List<string>()
             };
 
@@ -191,6 +215,7 @@ public partial class ServerManagerPage : UserControl
         if (McVersionCombo.SelectedItem is not string mcVersion) return;
         if (_selectedCoreType == ServerCoreType.Vanilla) return;
         if (_selectedCoreType == ServerCoreType.NeoForge) return; // NeoForge 的"版本"栏就是完整版本号，无需二级选择
+        if (_selectedCoreType == ServerCoreType.Spigot) return; // Spigot 走本地编译，没有 build 号可选
 
         try
         {
@@ -199,6 +224,10 @@ public partial class ServerManagerPage : UserControl
                 ServerCoreType.Paper => await _coreService.GetPaperBuildsAsync(mcVersion),
                 ServerCoreType.Fabric => await _coreService.GetFabricLoaderVersionsAsync(),
                 ServerCoreType.Forge => await _coreService.GetForgeInstallerVersionsAsync(mcVersion),
+                ServerCoreType.Purpur => await _coreService.GetPurpurBuildsAsync(mcVersion),
+                ServerCoreType.Folia => await _coreService.GetFoliaBuildsAsync(mcVersion),
+                ServerCoreType.Velocity => await _coreService.GetVelocityBuildsAsync(mcVersion),
+                ServerCoreType.Waterfall => await _coreService.GetWaterfallBuildsAsync(mcVersion),
                 _ => new List<ServerCoreBuild>()
             };
 
@@ -272,22 +301,47 @@ public partial class ServerManagerPage : UserControl
             ProgressBarCtl.Value = p.Done;
         });
 
+        // 记下这次请求的核心类型/MC版本，供下载/安装全部完成后 RegisterDownloadedInstance 使用
+        // （req.TargetDir 本身已经记录在各分支的 _pendingInstallTargetDir 里，不需要重复存）。
+        _pendingInstallCoreType = _selectedCoreType;
+        _pendingInstallMcVersionForRegister = mcVersion;
+
         try
         {
             var result = await _coreService.DownloadAsync(req, progress);
 
-            if (result.RequiresInstall)
+            if (result.RequiresBuild)
+            {
+                // Spigot：复用同一个"待安装"面板和按钮，只是文案换成"编译"，
+                // RunInstaller_Click 内部会根据 _pendingInstallResult.RequiresBuild 分流到
+                // RunSpigotBuildToolsAsync 而不是 RunForgeInstallerAsync。
+                _pendingInstallResult = result;
+                _pendingInstallTargetDir = req.TargetDir;
+                _pendingInstallMcVersion = mcVersion;
+                InstallHintText.Text = "Spigot 官方不提供预编译文件，需要本地用 BuildTools 编译（需要联网 + 已安装 Git，" +
+                    "耗时可能有几分钟）。点击下方按钮开始编译。";
+                InstallRequiredPanel.Visibility = Visibility.Visible;
+            }
+            else if (result.RequiresInstall)
             {
                 _pendingInstallResult = result;
                 _pendingInstallTargetDir = req.TargetDir;
+                _pendingInstallMcVersion = null; // Forge/NeoForge 安装器不需要这个，清空避免残留上次 Spigot 流程的值
                 InstallHintText.Text = $"{_selectedCoreType} 官方只提供安装器，需要本地再运行一次才能生成实际可用的服务端文件。" +
                     "点击下方按钮，使用启动器已配置的 Java 自动完成安装。";
                 InstallRequiredPanel.Visibility = Visibility.Visible;
             }
             else
             {
-                MessageBox.Show($"服务端核心下载完成：\n{result.DownloadedFilePath}", "成功",
-                    MessageBoxButton.OK, MessageBoxImage.Information);
+                // 不需要额外安装步骤（Vanilla/Paper/Folia/Purpur/Fabric/Velocity/Waterfall）：
+                // 下载即可用，立即登记成一个服务器实例，用户不需要再手动去"创建服务器"重复一遍。
+                var registered = RegisterDownloadedInstance(req.TargetDir, _selectedCoreType, mcVersion,
+                    result.ServerJarFileName ?? "server.jar", isScript: false, result.RequiredJavaMajorVersion);
+
+                MessageBox.Show(registered
+                        ? $"服务端核心下载完成，已自动添加到「服务器列表」：\n{result.DownloadedFilePath}"
+                        : $"服务端核心下载完成：\n{result.DownloadedFilePath}\n\n（未能自动添加到服务器列表，可以在「创建服务器」里手动指向这个目录。）",
+                    "成功", MessageBoxButton.OK, MessageBoxImage.Information);
             }
         }
         catch (Exception ex)
@@ -317,24 +371,71 @@ public partial class ServerManagerPage : UserControl
 
         RunInstallerBtn.IsEnabled = false;
         ProgressPanel.Visibility = Visibility.Visible;
-        ProgressStageText.Text = "正在运行安装器";
+        ProgressStageText.Text = _pendingInstallResult.RequiresBuild ? "正在用 BuildTools 编译 Spigot" : "正在运行安装器";
+        ProgressDetailText.Text = _pendingInstallResult.RequiresBuild
+            ? "首次编译需要联网拉取源码并本地反编译/打补丁，可能需要几分钟，请耐心等待..."
+            : "";
         ProgressBarCtl.IsIndeterminate = true;
 
         var progress = new Progress<string>(line => ProgressDetailText.Text = line);
 
         try
         {
-            var resultPath = await _coreService.RunForgeInstallerAsync(
-                _pendingInstallResult.DownloadedFilePath, _pendingInstallTargetDir, javaPath, progress);
+            string resultPath;
+            if (_pendingInstallResult.RequiresBuild)
+            {
+                if (string.IsNullOrEmpty(_pendingInstallMcVersion))
+                    throw new InvalidOperationException("内部错误：缺少 Spigot 编译所需的 MC 版本号，请重新走一遍下载流程。");
+                resultPath = await _coreService.RunSpigotBuildToolsAsync(
+                    _pendingInstallResult.DownloadedFilePath, _pendingInstallTargetDir, javaPath,
+                    _pendingInstallMcVersion, progress);
+            }
+            else
+            {
+                resultPath = await _coreService.RunForgeInstallerAsync(
+                    _pendingInstallResult.DownloadedFilePath, _pendingInstallTargetDir, javaPath, progress);
+            }
 
             InstallRequiredPanel.Visibility = Visibility.Collapsed;
-            MessageBox.Show($"安装完成！\n服务端已生成到：\n{_pendingInstallTargetDir}\n\n启动脚本：{resultPath}",
+
+            // 同"直接下载即可用"分支一样，安装器/BuildTools 跑完之后核心才算真正就绪，
+            // 这里补上登记服务器实例这一步，之前这里只弹了个提示框，没有调用
+            // ServerInstanceService.Add，导致 Forge/NeoForge/Spigot 下载完同样不会出现在
+            // "服务器列表"里。
+            string launchTarget;
+            bool launchTargetIsScript;
+            if (File.Exists(resultPath) &&
+                (resultPath.EndsWith("run.bat", StringComparison.OrdinalIgnoreCase) ||
+                 resultPath.EndsWith("run.sh", StringComparison.OrdinalIgnoreCase)))
+            {
+                launchTarget = Path.GetFileName(resultPath);
+                launchTargetIsScript = true;
+            }
+            else
+            {
+                launchTarget = Path.GetFileName(resultPath);
+                launchTargetIsScript = false;
+            }
+
+            var registered = RegisterDownloadedInstance(_pendingInstallTargetDir, _pendingInstallCoreType,
+                _pendingInstallMcVersionForRegister ?? "", launchTarget, launchTargetIsScript,
+                _pendingInstallResult.RequiredJavaMajorVersion, javaPath);
+
+            MessageBox.Show(registered
+                    ? $"{(_pendingInstallResult.RequiresBuild ? "编译" : "安装")}完成！服务端已生成到：\n{_pendingInstallTargetDir}\n\n生成文件：{resultPath}\n\n已自动添加到「服务器列表」。"
+                    : $"{(_pendingInstallResult.RequiresBuild ? "编译" : "安装")}完成！服务端已生成到：\n{_pendingInstallTargetDir}\n\n生成文件：{resultPath}",
                 "成功", MessageBoxButton.OK, MessageBoxImage.Information);
             _pendingInstallResult = null;
+            _pendingInstallMcVersion = null;
         }
         catch (Exception ex)
         {
-            ErrorPresenter.ShowFriendlyError("安装失败，可能是网络连接问题、下载源暂时不可用，或安装文件已损坏，请检查网络后重试。", $"[安装失败] {ex}", "安装失败");
+            var isBuild = _pendingInstallResult?.RequiresBuild == true;
+            ErrorPresenter.ShowFriendlyError(
+                isBuild
+                    ? "编译失败，可能是网络连接问题、缺少 Git，或该 MC 版本 BuildTools 不再支持，请检查后重试。"
+                    : "安装失败，可能是网络连接问题、下载源暂时不可用，或安装文件已损坏，请检查网络后重试。",
+                $"[{(isBuild ? "编译" : "安装")}失败] {ex}", isBuild ? "编译失败" : "安装失败");
         }
         finally
         {
@@ -347,6 +448,162 @@ public partial class ServerManagerPage : UserControl
     // ============================================================
     // 服务器列表：启动/停止/控制台/删除
     // ============================================================
+
+    /// <summary>
+    /// 把"核心下载"面板刚下载/安装完成的服务端核心登记成一份 ServerInstance，
+    /// 让它出现在"服务器列表"面板里——之前这个面板下载完只弹提示框，不调用
+    /// ServerInstanceService.Add，用户还得再走一遍"创建服务器"向导重新指向同一个目录
+    /// 才能让它出现在列表里。这里尽量复用 CreateServerWindow 里同样的登记方式，
+    /// 保持字段含义一致（DisplayName/Directory/CoreType/McVersion/LaunchTarget 等）。
+    ///
+    /// 目录名作为默认显示名：下载面板本身没有"服务器名称"这个输入框，用户是先选目录再下载，
+    /// 用目录的文件夹名当默认名字最直观（用户随时可以在服务器列表里重命名）。
+    ///
+    /// 如果同一个目录已经登记过一个实例（比如用户对着同一个目录重复点了几次"开始下载"，
+    /// 或者之前已经通过"创建服务器"向导指向过这个目录），不重复添加，只更新已有记录的
+    /// 核心类型/MC版本/启动目标，避免服务器列表里出现一堆指向同一个目录的重复条目。
+    /// </summary>
+    private bool RegisterDownloadedInstance(string targetDir, ServerCoreType coreType, string mcVersion,
+        string launchTarget, bool isScript, int requiredJavaMajorVersion, string? javaPath = null)
+    {
+        try
+        {
+            var fullDir = Path.GetFullPath(targetDir);
+
+            var existing = _owner.ServerInstanceService.Instances.FirstOrDefault(i =>
+                string.Equals(Path.GetFullPath(i.Directory), fullDir, StringComparison.OrdinalIgnoreCase));
+
+            if (existing != null)
+            {
+                existing.CoreType = coreType;
+                existing.McVersion = mcVersion;
+                existing.LaunchTarget = launchTarget;
+                existing.LaunchTargetIsScript = isScript;
+                existing.RequiredJavaMajorVersion = requiredJavaMajorVersion;
+                if (!string.IsNullOrEmpty(javaPath)) existing.JavaPath = javaPath;
+                _owner.ServerInstanceService.Update(existing);
+                RefreshInstanceList();
+                return true;
+            }
+
+            var resolvedJavaPath = javaPath
+                ?? _javaService.FindJava(_owner.ConfigService.Config.JavaPath, requiredJavaMajorVersion);
+
+            var displayName = Path.GetFileName(fullDir.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+            if (string.IsNullOrWhiteSpace(displayName)) displayName = $"{coreType} {mcVersion}";
+
+            // 名称冲突时加序号，跟服务器列表其它地方对重名的处理方式保持一致
+            var baseName = displayName;
+            var suffix = 1;
+            while (_owner.ServerInstanceService.Instances.Any(i => i.DisplayName == displayName))
+            {
+                suffix++;
+                displayName = $"{baseName} ({suffix})";
+            }
+
+            var instance = new ServerInstance
+            {
+                DisplayName = displayName,
+                Directory = fullDir,
+                CoreType = coreType,
+                McVersion = mcVersion,
+                LaunchTarget = launchTarget,
+                LaunchTargetIsScript = isScript,
+                JavaPath = resolvedJavaPath,
+                RequiredJavaMajorVersion = requiredJavaMajorVersion
+            };
+
+            _owner.ServerInstanceService.Add(instance);
+            RefreshInstanceList();
+            return true;
+        }
+        catch
+        {
+            // 登记失败不应该掩盖"下载/安装已经成功"这个事实——调用方会在提示文案里说明
+            // "未能自动添加到服务器列表，可以手动创建"，用户手头的服务端文件本身没有任何损失。
+            return false;
+        }
+    }
+
+    // ============================================================
+    // 首页磁贴：四个入口分别对应"傻瓜式开服/启动所选/插件资源包/服务器参数"
+    // ============================================================
+
+    /// <summary>
+    /// "启动所选的服务器"和"设置选中的服务器参数"这两个磁贴需要先确定"选中的服务器"是哪一个，
+    /// 但首页本身没有单独的服务器选择控件（不想在磁贴上再叠一层下拉框，违背"磁贴=一步到位"
+    /// 的设计初衷）。这里用同一套"默认服务器优先，没设默认就用列表第一个"规则：
+    /// - 用户在服务器列表页右键某个实例"设为默认服务器"过，这里就精确对应那一个；
+    /// - 完全没设置过默认时，回退成"服务器列表"面板里最上面那个（Instances 列表第一项），
+    /// 这样只有一台服务器的最常见场景不需要额外操作，直接就是它。
+    /// 列表为空（还没创建过任何服务器）时返回 null，调用方据此提示用户先去"傻瓜式开服"。
+    /// </summary>
+    private ServerInstance? GetPreferredInstance()
+    {
+        var instances = _owner.ServerInstanceService.Instances;
+        if (instances.Count == 0) return null;
+        return instances.FirstOrDefault(i => i.IsDefault) ?? instances[0];
+    }
+
+    /// <summary>
+    /// "傻瓜式开服"：直接复用"创建服务器"向导——它本身就是"选核心类型/MC版本 -> 自动下载
+    /// -> 需要时自动装安装器/编译 -> 自动匹配 Java -> 登记成服务器实例"一整条不需要用户
+    /// 理解任何底层细节的流程，不需要为首页再单独做一套简化版。
+    /// </summary>
+    private void TileEasySetup_Click(object sender, RoutedEventArgs e)
+    {
+        CreateServer_Click(sender, e);
+    }
+
+    /// <summary>
+    /// "启动所选的服务器"：目标实例正在运行时不重复启动（避免用户连点两次导致端口冲突之类的
+    /// 报错），改为直接打开它的控制台窗口，跟点服务器列表卡片上"打开控制台"的效果一致。
+    /// </summary>
+    private void TileStartSelected_Click(object sender, RoutedEventArgs e)
+    {
+        var instance = GetPreferredInstance();
+        if (instance == null)
+        {
+            MessageBox.Show("还没有任何服务器，请先用「傻瓜式开服」创建一个。",
+                "提示", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        if (_owner.ServerProcessManager.IsRunning(instance.Id))
+        {
+            OpenConsole(instance);
+            return;
+        }
+
+        StartInstance(instance);
+    }
+
+    /// <summary>
+    /// "插件、资源包管理"：跳到左侧"插件下载"分类。插件和资源包本来就共用同一个
+    /// ServerResourcePanel（内部用 SrvRes* 单选按钮切类型），选中"插件下载"这个分类
+    /// 就已经能在同一个面板里切到资源包，不需要在首页额外做"插件"和"资源包"两个磁贴。
+    /// </summary>
+    private void TilePluginResource_Click(object sender, RoutedEventArgs e)
+    {
+        CatPlugins.IsChecked = true;
+    }
+
+    /// <summary>
+    /// "设置选中的服务器参数"：对 GetPreferredInstance() 选出的目标实例打开
+    /// ServerPropertiesWindow，跟服务器列表卡片上"服务器设置"菜单项调用的是同一个方法。
+    /// </summary>
+    private void TileServerSettings_Click(object sender, RoutedEventArgs e)
+    {
+        var instance = GetPreferredInstance();
+        if (instance == null)
+        {
+            MessageBox.Show("还没有任何服务器，请先用「傻瓜式开服」创建一个。",
+                "提示", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        OpenServerProperties(instance);
+    }
 
     private void RefreshInstanceList()
     {
@@ -596,6 +853,19 @@ public partial class ServerManagerPage : UserControl
         reinstallItem.Click += (_, _) => ReinstallInstanceCore(instance);
         menu.Items.Add(reinstallItem);
 
+        menu.Items.Add(new Separator());
+
+        // "清除服务器数据"：跟卡片上的"删除"按钮不同，这个会连同磁盘上的服务端文件夹
+        // 一起永久删除（世界存档/插件/配置/日志全部清掉），是这批操作里最具破坏性的一个，
+        // 单独放在最后一组、并且加上警示色文字，跟前面的常规操作明显区分开。
+        var clearDataItem = new MenuItem
+        {
+            Header = "清除服务器数据（永久删除文件）...",
+            Foreground = (System.Windows.Media.Brush)FindResource("DangerBrush")
+        };
+        clearDataItem.Click += (_, _) => ClearServerData(instance);
+        menu.Items.Add(clearDataItem);
+
         menu.IsOpen = true;
     }
 
@@ -725,7 +995,7 @@ public partial class ServerManagerPage : UserControl
         var confirm = MessageBox.Show(
             $"确定要删除服务器「{instance.DisplayName}」吗？\n\n" +
             "这里只会移除启动器里的记录，不会删除磁盘上的服务端文件夹。\n" +
-            "如果需要连同存档/配置一起删除，请使用「清除服务器数据」功能（尚未实现）。",
+            "如果需要连同存档/配置一起删除，请使用「更多」菜单里的「清除服务器数据」。",
             "确认删除", MessageBoxButton.YesNo, MessageBoxImage.Warning);
         if (confirm != MessageBoxResult.Yes) return;
 
@@ -737,6 +1007,47 @@ public partial class ServerManagerPage : UserControl
         catch (Exception ex)
         {
             MessageBox.Show($"删除失败：\n{ex.Message}", "错误", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+    }
+
+    /// <summary>
+    /// "清除服务器数据"：跟上面 DeleteInstance（只移除启动器记录，保留磁盘文件）不同，
+    /// 这里连同服务端目录本身一起永久删除——对应 ServerInstanceService.Remove 早就支持的
+    /// deleteFiles=true 分支，之前只是没有任何 UI 入口调用它。
+    /// 需要正在运行时先拒绝（避免删除一个还在写文件的目录导致中间状态错乱），
+    /// 并要求用户在 ClearServerDataWindow 里原样输入服务器名称才会真正执行。
+    /// </summary>
+    private void ClearServerData(ServerInstance instance)
+    {
+        if (_owner.ServerProcessManager.IsRunning(instance.Id))
+        {
+            MessageBox.Show("服务器正在运行，请先停止后再清除数据。", "提示", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        var dlg = new ClearServerDataWindow(instance.DisplayName, instance.Directory)
+        {
+            Owner = Window.GetWindow(this)
+        };
+        if (dlg.ShowDialog() != true || !dlg.Confirmed) return;
+
+        try
+        {
+            _owner.ServerInstanceService.Remove(instance.Id, deleteFiles: true);
+            RefreshInstanceList();
+            MessageBox.Show($"「{instance.DisplayName}」的数据已永久清除。", "已清除",
+                MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+        catch (Exception ex)
+        {
+            // Remove() 内部：实例记录已经先被移除并 Save() 了，只是删文件夹这一步失败
+            // （常见于文件被其它程序占用），这里如实告知"记录已删、文件没删掉"，
+            // 不让用户误以为"点了没反应"又对着同一个目录重复操作。
+            ErrorPresenter.ShowFriendlyError(
+                $"启动器记录已移除，但删除磁盘文件失败（可能是文件正被占用）：\n{ex.Message}\n\n" +
+                $"可以手动删除目录：\n{instance.Directory}",
+                $"[清除服务器数据] {ex}", "清除失败");
+            RefreshInstanceList();
         }
     }
 

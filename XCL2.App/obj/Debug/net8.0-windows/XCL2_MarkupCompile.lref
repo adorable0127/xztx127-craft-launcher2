@@ -1,7 +1,16 @@
 ﻿D:\xcl\XCL2.App\obj\Debug\net8.0-windows\GeneratedInternalTypeHelper.g.cs
 
+FD:\xcl\XCL2.App\Views\CreateServerWindow.xaml;;
 FD:\xcl\XCL2.App\Views\DownloadCenterPage.xaml;;
+FD:\xcl\XCL2.App\Views\ExperimentalGateWindow.xaml;;
+FD:\xcl\XCL2.App\Views\FirstRunWizardWindow.xaml;;
+FD:\xcl\XCL2.App\Views\InstallClientLoaderWindow.xaml;;
 FD:\xcl\XCL2.App\Views\LoginPage.xaml;;
+FD:\xcl\XCL2.App\Views\ModDependencyWarningWindow.xaml;;
 FD:\xcl\XCL2.App\Views\ModDetailPage.xaml;;
+FD:\xcl\XCL2.App\Views\MultiplayerPage.xaml;;
+FD:\xcl\XCL2.App\Views\QuickStartWizardWindow.xaml;;
+FD:\xcl\XCL2.App\Views\SettingsPage.xaml;;
+FD:\xcl\XCL2.App\Views\VersionSelectPage.xaml;;
 FD:\xcl\XCL2.App\App.xaml;;
 

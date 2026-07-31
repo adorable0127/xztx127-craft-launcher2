@@ -199,6 +199,43 @@ public partial class LoginPage : UserControl
         }
     }
 
+    private async void AddAuthServer_Click(object sender, RoutedEventArgs e)
+    {
+        var apiRoot = AuthServerRootBox.Text?.Trim() ?? "";
+        var username = AuthServerUsernameBox.Text?.Trim() ?? "";
+        var password = AuthServerPasswordBox.Password ?? "";
+
+        StatusText.Text = "正在登录认证服务器，请稍候...";
+
+        try
+        {
+            var auth = new AuthServerAuthService();
+            var account = await auth.LoginAsync(apiRoot, username, password);
+
+            _owner.ConfigService.AddOrUpdateAccount(account);
+            _owner.ConfigService.SelectAccount(account.Id);
+            Reload();
+            _owner.RefreshSidebar();
+
+            // 登录成功后清空密码框：密码框本身就不该长期停留敏感内容，且账户已经保存好了，
+            // 不需要用户手动清空再进行下一步操作。用户名/服务器地址保留，方便下次直接改密码重登，
+            // 或者用同一个服务器再登另一个账号。
+            AuthServerPasswordBox.Password = "";
+
+            StatusText.Text = $"认证服务器账户 {account.Username} 登录成功并已选用！";
+        }
+        catch (AuthStepException ex)
+        {
+            StatusText.Text = $"登录在「{ex.Step}」这一步失败，详情见弹窗。";
+            ErrorPresenter.ShowFriendlyError(ex.Message, $"[认证服务器登录失败 - {ex.Step}] {ex.Message}", "认证服务器登录失败");
+        }
+        catch (Exception ex)
+        {
+            ErrorPresenter.LogTechnicalDetail($"认证服务器登录出错: {ex}");
+            StatusText.Text = "登录出错，请检查网络连接后重试。详细日志已记录，如果反复出现，请把日志发给可信的专业人士。";
+        }
+    }
+
     private void SelectAccount_Click(object sender, RoutedEventArgs e)
     {
         if (sender is Button { Tag: Account acc })

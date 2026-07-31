@@ -3,7 +3,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="进程管理" Height="420" Width="560"
         WindowStartupLocation="CenterOwner"
-        Background="{StaticResource PanelBrush}">
+        Background="{DynamicResource PanelBrush}">
     <Grid Margin="16">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
@@ -12,11 +12,11 @@
         </Grid.RowDefinitions>
 
         <TextBlock x:Name="TitleText" Grid.Row="0" FontSize="16" FontWeight="Bold"
-                   Foreground="{StaticResource TextPrimaryBrush}" Margin="0,0,0,4"/>
+                   Foreground="{DynamicResource TextPrimaryBrush}" Margin="0,0,0,4"/>
         <TextBlock x:Name="HintText" Grid.Row="0" FontSize="12" Margin="0,26,0,0"
-                   Foreground="{StaticResource TextSecondaryBrush}" TextWrapping="Wrap"/>
+                   Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap"/>
 
-        <ListBox x:Name="ProcessListBox" Grid.Row="1" Margin="0,12,0,12" BorderThickness="1" BorderBrush="#E0E0E0">
+        <ListBox x:Name="ProcessListBox" Grid.Row="1" Margin="0,12,0,12" BorderThickness="1" BorderBrush="{DynamicResource DividerBrush}">
             <ListBox.ItemTemplate>
                 <DataTemplate>
                     <StackPanel Orientation="Horizontal" Margin="4">
@@ -25,7 +25,7 @@
                                   IsChecked="{Binding Info.ManuallyMarkedUnresponsive, Mode=TwoWay}"/>
                         <StackPanel>
                             <TextBlock Text="{Binding TitleLine}" FontWeight="Bold" FontSize="13"/>
-                            <TextBlock Text="{Binding SubLine}" FontSize="11" Foreground="{StaticResource TextSecondaryBrush}"/>
+                            <TextBlock Text="{Binding SubLine}" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}"/>
                         </StackPanel>
                     </StackPanel>
                 </DataTemplate>

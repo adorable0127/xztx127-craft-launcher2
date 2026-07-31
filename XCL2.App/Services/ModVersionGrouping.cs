@@ -47,7 +47,12 @@ public static class ModVersionGrouping
     /// 再按游戏版本号做粗略倒序，让最新版本的分组排在前面，与截图里的顺序一致。
     /// 返回后调用方需要自行决定要不要把第一个分组设为默认展开(截图2里"Fabric 26.2"默认展开)。
     /// </summary>
-    public static List<VersionGroup> Group(IEnumerable<InlineVersionEntry> flatEntries)
+    /// <summary>
+    /// includePreview=false（默认）时过滤掉预览版(beta/alpha)条目，只保留正式版——大多数用户
+    /// 只想装稳定版，混进预览版容易被误装。调用方在版本列表面板放一个默认收起的
+    /// "显示预览版"隐藏按钮，点开后带 includePreview=true 重新分组即可看到全部版本。
+    /// </summary>
+    public static List<VersionGroup> Group(IEnumerable<InlineVersionEntry> flatEntries, bool includePreview = false)
     {
         // key: (加载器原始小写名, 游戏版本号字符串) -> 这一组包含的条目
         var buckets = new Dictionary<(string loader, string gameVersion), List<InlineVersionEntry>>();
@@ -55,6 +60,7 @@ public static class ModVersionGrouping
 
         foreach (var entry in flatEntries)
         {
+            if (!includePreview && entry.IsPreview) continue;
             var firstGameVersion = entry.GameVersionsText.Split(',', StringSplitOptions.TrimEntries)
                 .FirstOrDefault();
             if (string.IsNullOrEmpty(firstGameVersion)) firstGameVersion = "未知版本";

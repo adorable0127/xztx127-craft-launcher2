@@ -157,7 +157,19 @@ public class MicrosoftAuthService
         if (!resp.IsSuccessStatusCode) return null; // 刷新失败静默返回 null，调用方会提示重新登录
         var token = await resp.Content.ReadFromJsonAsync<MsaTokenResponse>(cancellationToken: ct);
         if (token == null) return null;
-        return await CompleteLoginChainAsync(token.AccessToken, token.RefreshToken, ct);
+
+        // 根因修复（"明明是微软账户，进游戏却变成 Demo 试玩"）：微软的 refresh_token 授权端点
+        // 并不保证每次都返回新的 refresh_token —— 很多时候它会省略这个字段，让客户端继续复用
+        // 旧的那个。之前这里直接把 token.RefreshToken（可能是 null）传给 CompleteLoginChainAsync
+        // 再原样写回 Account.MsRefreshToken，一旦某次刷新恰好没带新 refresh_token，就会用 null
+        // 覆盖掉账户里本来还有效的旧 refresh_token 并持久化保存。下一次 access token 过期后，
+        // MainWindow 启动前的检查（"!string.IsNullOrEmpty(account.MsRefreshToken)"）会因为它已经
+        // 变成 null 而直接跳过刷新，转而拿着一个已过期的 access token 去启动游戏——Minecraft
+        // 收到无效凭证时不会报错，而是静默降级成离线试玩(Demo)模式，现象上就是"账户管理里明明
+        // 显示已登录微软账户，一进游戏却是 Demo"。
+        // 修复：微软没给新的就沿用调用方传进来的旧 refreshToken，永远不用 null 覆盖已存在的值。
+        var effectiveRefreshToken = string.IsNullOrEmpty(token.RefreshToken) ? refreshToken : token.RefreshToken;
+        return await CompleteLoginChainAsync(token.AccessToken, effectiveRefreshToken, ct);
     }
 
     /// <summary>

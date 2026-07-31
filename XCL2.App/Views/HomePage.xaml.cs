@@ -1,19 +1,25 @@
 using System.Windows.Controls;
 using System.Windows;
+using XCL2.App.Services;
 
 namespace XCL2.App.Views;
 
 /// <summary>
-/// 首页：磁贴总控台。不再持有"普通/高手模式"这个状态——那是全局配置项
-/// （cfg.AdvancedMode），唯一的读写入口已经搬到 SettingsPage（见 SettingsPage.xaml.cs 的
-/// AdvancedModeCheck_Changed），首页只是把常用功能做成磁贴入口，点哪个就跳到哪个页面/
-/// 触发哪个动作，本身不存储/不修改任何配置。
+/// 首页：磁贴总控台。原本"普通/高手模式"这个状态的唯一读写入口在 SettingsPage
+/// （cfg.AdvancedMode，见 AdvancedModeCheck_Changed），现在首页右上角也加了一个同款开关
+/// 方便快速切换，两处操作的是同一个配置项、同一份保存逻辑，不是各自独立的状态。
+///
+/// 「模式设置」（深/浅色）和「自动循环」两个按钮同理：都是直接读写 AppConfig 里对应的
+/// 字段，点击立即保存并生效，不需要用户去「设置」页点"保存设置"。
 /// </summary>
 public partial class HomePage : UserControl
 {
     private readonly MainWindow _owner;
 
     private bool _guestToggleInitializing;
+    private bool _modeToggleInitializing;
+    private bool _darkModeToggleInitializing;
+    private bool _autoThemeToggleInitializing;
 
     public HomePage(MainWindow owner)
     {
@@ -26,6 +32,117 @@ public partial class HomePage : UserControl
         GuestModeToggle.IsChecked = _owner.ConfigService.Config.GuestModeEnabled;
         UpdateGuestModeToggleText();
         _guestToggleInitializing = false;
+
+        RefreshModeToggle();
+        RefreshThemeToggles();
+    }
+
+    /// <summary>
+    /// 从配置里重新读取 cfg.AdvancedMode 并同步到 ModeToggle 的勾选状态/文案，不触发保存。
+    /// 除了构造函数第一次调用，还需要在"从设置页切回首页"时调用一次——用户可能刚在设置页
+    /// 切换过模式，首页这份按钮的显示不应该是切页面之前的旧状态。见 MainWindow.ShowHome。
+    /// </summary>
+    public void RefreshModeToggle()
+    {
+        _modeToggleInitializing = true;
+        ModeToggle.IsChecked = _owner.ConfigService.Config.AdvancedMode;
+        UpdateModeToggleText();
+        _modeToggleInitializing = false;
+    }
+
+    /// <summary>
+    /// 从配置里重新读取 IsDarkMode / AutoThemeCycleEnabled 并同步到「模式设置」/「自动循环」
+    /// 两个按钮的勾选状态/文案，不触发保存、不重新应用配色（配色本身由调用方在改配置的同一
+    /// 时刻已经调用过 ThemeService.ApplyForCurrentState，这里只是让按钮显示跟上最新状态）。
+    /// 除了构造函数，MainWindow 的自动循环定时检查在真正切换了 IsDarkMode 之后也会调用一次，
+    /// 保证首页按钮文案跟自动切换的结果保持同步，不会出现"实际已经变成深色模式，按钮却还
+    /// 显示浅色"的不一致。
+    /// </summary>
+    public void RefreshThemeToggles()
+    {
+        var cfg = _owner.ConfigService.Config;
+
+        _darkModeToggleInitializing = true;
+        DarkModeToggle.IsChecked = cfg.IsDarkMode;
+        UpdateDarkModeToggleText();
+        _darkModeToggleInitializing = false;
+
+        _autoThemeToggleInitializing = true;
+        AutoThemeCycleToggle.IsChecked = cfg.AutoThemeCycleEnabled;
+        UpdateAutoThemeCycleToggleText();
+        _autoThemeToggleInitializing = false;
+    }
+
+    private void UpdateModeToggleText()
+    {
+        ModeToggleText.Text = ModeToggle.IsChecked == true ? "专家模式" : "普通模式";
+    }
+
+    /// <summary>
+    /// 首页右上角"普通模式/专家模式"开关：点击立即写回 cfg.AdvancedMode 并保存，
+    /// 跟「设置」页 AdvancedModeCheck_Changed 是同一个配置项、同一份保存动作——不管从
+    /// 哪一边切换，两边下次显示都会是最新状态（这一边不需要额外触发设置页控件显隐刷新，
+    /// 那部分逻辑只在设置页自己打开时才需要跑）。
+    /// </summary>
+    private void ModeToggle_Changed(object sender, RoutedEventArgs e)
+    {
+        if (_modeToggleInitializing) return;
+        _owner.ConfigService.Config.AdvancedMode = ModeToggle.IsChecked == true;
+        _owner.ConfigService.Save();
+        UpdateModeToggleText();
+    }
+
+    private void UpdateDarkModeToggleText()
+    {
+        var isDark = DarkModeToggle.IsChecked == true;
+        DarkModeToggleText.Text = isDark ? "深色模式" : "浅色模式";
+        DarkModeToggleIcon.Text = isDark ? "\uD83C\uDF19" : "\u2600"; // 🌙 / ☀
+    }
+
+    /// <summary>
+    /// 「模式设置」按钮：切换深色/浅色，只影响 cfg.IsDarkMode，不影响 cfg.UiSkin 选的色系
+    /// （比如色系选了蓝色，这里点击只是在"蓝色系-浅"和"蓝色系-深"之间切）。点击立即写回
+    /// 配置、保存，并调用 ThemeService 重新应用——保存后一秒内必须看到界面刷新，这里直接
+    /// 同步调用 Apply，不存在异步延迟。
+    ///
+    /// 这是用户"手动"点的操作，即使当前「自动循环」是开启状态，也允许临时覆盖显示——
+    /// 只是不会关闭自动循环本身，到下一个自动切换时间点，MainWindow 的定时检查还是会
+    /// 按计划把 IsDarkMode 重新覆盖回去（见 MainWindow.ReevaluateAutoThemeCycle）。
+    /// </summary>
+    private void DarkModeToggle_Changed(object sender, RoutedEventArgs e)
+    {
+        if (_darkModeToggleInitializing) return;
+        var cfg = _owner.ConfigService.Config;
+        cfg.IsDarkMode = DarkModeToggle.IsChecked == true;
+        _owner.ConfigService.Save();
+        UpdateDarkModeToggleText();
+
+        ThemeService.ApplyForCurrentState(cfg.GuestModeEnabled, cfg.UiSkin, cfg.IsDarkMode);
+    }
+
+    private void UpdateAutoThemeCycleToggleText()
+    {
+        AutoThemeCycleToggleText.Text = AutoThemeCycleToggle.IsChecked == true ? "自动循环：已开启" : "自动循环";
+    }
+
+    /// <summary>
+    /// 「自动循环」开关：开启后由 MainWindow 的每分钟定时检查根据当前系统时间自动决定
+    /// cfg.IsDarkMode；关闭后完全交还给用户手动控制，不再有任何自动覆盖。
+    /// 点击立即写回配置、保存；刚打开的瞬间立即校验一次当前时间点应该是哪个模式并应用，
+    /// 不需要等到下一次定时检查才生效（保存后一秒内必须看到界面刷新）。
+    /// </summary>
+    private void AutoThemeCycleToggle_Changed(object sender, RoutedEventArgs e)
+    {
+        if (_autoThemeToggleInitializing) return;
+        var cfg = _owner.ConfigService.Config;
+        cfg.AutoThemeCycleEnabled = AutoThemeCycleToggle.IsChecked == true;
+        // 开关状态一变化，"上次自动切换的时间段"记录就作废了：不管是刚打开（需要立即按当前
+        // 时间校正一次）还是刚关闭（下次重新打开时不该沿用很久以前的旧记录），都清空。
+        cfg.AutoThemeLastAppliedSlotStartHour = null;
+        _owner.ConfigService.Save();
+        UpdateAutoThemeCycleToggleText();
+
+        _owner.ReevaluateAutoThemeCycle();
     }
 
     private void UpdateGuestModeToggleText()
@@ -37,6 +154,8 @@ public partial class HomePage : UserControl
     /// 首页右上角访客模式开关：原来只能在「设置」页勾选/保存才生效，现在挪到首页后
     /// 点击立即生效——直接复用 MainWindow.RefreshGuestModeState 里"创建/清空临时账户 +
     /// 刷新侧边栏"的同一套逻辑，跟设置页保存时触发的是同一个方法，行为完全一致。
+    /// 访客模式不影响界面配色（见 ThemeService 类注释：一切以用户当前的色系/明暗选择为准），
+    /// 这里不需要额外调用 ThemeService。
     /// </summary>
     private void GuestModeToggle_Changed(object sender, RoutedEventArgs e)
     {

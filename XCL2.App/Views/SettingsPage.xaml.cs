@@ -78,13 +78,31 @@ public partial class SettingsPage : UserControl
 
         // 配色皮肤下拉框：内容项在这里现填而不是写死在 XAML 里，这样 ThemeService.AllSkins
         // 以后新增皮肤时只需要改 ThemeService 一个地方，不用再回来同步 XAML。
+        //
+        // 白色/蓝色/黄色/紫色/粉色五套色系均已在 ThemeService 中完整定义并可用，每个色系
+        // 都各自有浅色版/深色版，具体显示哪个由下面的 IsDarkModeCheck 决定，这里只选色相。
         UiSkinCombo.Items.Clear();
         foreach (var skin in ThemeService.AllSkins)
         {
-            UiSkinCombo.Items.Add(new ComboBoxItem { Content = ThemeService.GetDisplayName(skin), Tag = skin });
+            var item = new ComboBoxItem
+            {
+                Content = ThemeService.GetDisplayName(skin),
+                Tag = skin
+            };
+            UiSkinCombo.Items.Add(item);
         }
+
         SelectComboByTag(UiSkinCombo, cfg.UiSkin);
         if (UiSkinCombo.SelectedItem == null) UiSkinCombo.SelectedIndex = 0; // 兜底：配置文件里存了非法值时退回第一项(白色)
+
+        // 自动循环的两个小时下拉框：0~23 全部可选，内容同样在这里现填。
+        for (var hour = 0; hour <= 23; hour++)
+        {
+            AutoThemeLightStartHourCombo.Items.Add(new ComboBoxItem { Content = $"{hour:00}:00", Tag = hour });
+            AutoThemeDarkStartHourCombo.Items.Add(new ComboBoxItem { Content = $"{hour:00}:00", Tag = hour });
+        }
+        SelectComboByTag(AutoThemeLightStartHourCombo, cfg.AutoThemeLightStartHour);
+        SelectComboByTag(AutoThemeDarkStartHourCombo, cfg.AutoThemeDarkStartHour);
 
         SkinApiRootBox.Text = cfg.SkinApiRoot;
 
@@ -533,6 +551,16 @@ public partial class SettingsPage : UserControl
         var skinApiRoot = SkinApiRootBox.Text?.Trim();
         cfg.SkinApiRoot = string.IsNullOrEmpty(skinApiRoot) ? SkinService.DefaultSkinApiRoot : skinApiRoot;
 
+        // 自动循环的两个切换时间点：只在这里设置；「自动循环」开关本身和「模式设置」
+        // （深/浅色）都在首页/主界面按钮上直接切换、立即生效，不需要点这里的保存按钮。
+        if ((AutoThemeLightStartHourCombo.SelectedItem as ComboBoxItem)?.Tag is int lightHour)
+            cfg.AutoThemeLightStartHour = lightHour;
+        if ((AutoThemeDarkStartHourCombo.SelectedItem as ComboBoxItem)?.Tag is int darkHour)
+            cfg.AutoThemeDarkStartHour = darkHour;
+        // 时间点改了之后，让自动循环下次检查时重新按新计划判定一次，而不是被"上次已经在这个
+        // 时间段应用过了"的旧记录挡住、误以为不需要更新。
+        cfg.AutoThemeLastAppliedSlotStartHour = null;
+
         cfg.AdvancedMode = AdvancedModeCheck.IsChecked == true;
         if (cfg.AdvancedMode)
         {
@@ -580,9 +608,26 @@ public partial class SettingsPage : UserControl
         // RefreshGuestModeState 内部已经会调用 ThemeService.ApplyForCurrentState，
         // 两个条件合并只调一次，避免访客模式没变但只改了皮肤时画面没反应。
         if (guestModeChanged || uiSkinChanged) _owner.RefreshGuestModeState();
+        // 自动循环的时间点可能刚被改过（上面已经清空了 AutoThemeLastAppliedSlotStartHour），
+        // 这里立即按新计划重新校验一次，保证"保存后一秒内看到效果"——如果当前时间刚好落在
+        // 新设置的时间段边界两侧、导致该切换的深浅色模式发生变化，会立刻应用，不需要等到
+        // 下一次每分钟定时检查。
+        _owner.ReevaluateAutoThemeCycle();
         _owner.RefreshSidebar();
 
         StatusText.Text = "设置已保存。";
+    }
+
+    /// <summary>
+    /// "进入实验性功能"入口：第一次点击（cfg.ExperimentalFeaturesUnlocked 还是 false）会先弹
+    /// ExperimentalGateWindow 强制等待 10 秒确认；确认过一次之后这个标记会持久化保存，
+    /// 后续再点直接打开 ExperimentalFeaturesWindow，不需要重复罚站。
+    /// 用户在网关窗口点"取消"或者直接关掉窗口（Confirmed 仍为 false）时，什么都不做、
+    /// 也不会污染 ExperimentalFeaturesUnlocked，下次点击还是会重新走一遍网关。
+    /// </summary>
+    private void ExperimentalFeatures_Click(object sender, RoutedEventArgs e)
+    {
+        _owner.OpenExperimentalFeatures();
     }
 }
 

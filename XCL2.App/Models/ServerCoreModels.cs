@@ -1,19 +1,29 @@
 namespace XCL2.App.Models;
 
 /// <summary>
-/// 服务端核心类型。这里只覆盖"下载方式已经调研确认、可以直接实现"的几种：
-/// Vanilla/Paper/Fabric 是直接下载即用的服务端 jar；Forge/NeoForge 下载到的是安装器 jar，
-/// 需要本地再跑一次 --installServer 才能生成真正的服务端本体（见 ServerCoreDownloadService 里的说明）。
-/// Spigot/Purpur 暂不在这批实现范围内：Spigot 官方没有直接分发预编译 jar，传统上要靠 BuildTools
-/// 本地编译（耗时且依赖用户机器上的 JDK/网络环境，技术路线和上面几种完全不同，风险点也不同，
-/// 不应该和已经验证过的下载型核心混在同一批一起做，留到下一批单独实现）。
-/// Purpur 有官方直发 jar（api.purpurmc.org），后续接入时可以复用 Vanilla/Paper 那套"直接下载 jar"的模式。
+/// 服务端核心类型。
+/// Vanilla/Paper/Fabric/Purpur/Folia/Velocity/Waterfall 是直接下载即用的服务端(或代理)本体 jar；
+/// Forge/NeoForge 下载到的是安装器 jar，需要本地再跑一次 --installServer 才能生成真正的服务端本体
+/// （见 ServerCoreDownloadService 里的说明）。
+/// Spigot 官方不直接分发预编译 jar，要靠 BuildTools 在本地拉源码编译（需要 Git + JDK + 网络，
+/// 耗时数分钟），技术路线和"直接下载 jar"完全不同，单独用 RunSpigotBuildToolsAsync 处理，
+/// DownloadAsync 对 Spigot 只负责下载 BuildTools.jar 本体，不负责触发编译（编译由开服向导那一步
+/// 显式调用，方便展示"正在编译，请稍候"这种和别的核心类型不一样的中间态）。
+/// Purpur：api.purpurmc.org/v2/purpur，是 Paper 的下游 fork，直接分发预编译 jar，用法和 Paper
+/// 那套"查询构建列表 + 下载"模式几乎一致，只是 API 域名和字段名不同。
+/// Folia/Velocity/Waterfall：都是 PaperMC 官方项目，复用 Paper 同一个 fill.papermc.io/v3 API，
+/// 只是 project key 分别是 folia/velocity/waterfall，下载字段的 key 依然是 "server:default"。
 ///
 /// Quilt：这个枚举原本主要给"服务端核心"用，Quilt 官方没有独立的服务端核心分发(Quilt 服务端
 /// 就是"原版服务端 jar + Quilt Loader 安装器"，跟 Fabric 服务端的搭建方式是同一套思路)，
 /// 所以 Quilt 这一项目前只在"客户端加载器安装"(ClientLoaderInstallService/
 /// InstallClientLoaderWindow/LoaderChoiceWindow)路径上使用，ServerCoreDownloadService
 /// 里的 switch 分支不需要处理 Quilt，未涉及的分支保持原样即可。
+///
+/// Bukkit/BungeeCord 未纳入：Bukkit 官方(dev.bukkit.org)早已停止分发可直接运行的服务端本体，
+/// 现在事实上的继承者就是这里已经支持的 Spigot(经 BuildTools 编译)/Paper 系；BungeeCord 官方
+/// 已被 PaperMC 标记为 legacy/接近停止维护，继任者是这里已支持的 Velocity，两者都建议引导用户
+/// 改用继任产品而不是再单独实现一遍逐渐被放弃的旧下载源。
 /// </summary>
 public enum ServerCoreType
 {
@@ -22,7 +32,12 @@ public enum ServerCoreType
     Fabric,
     Forge,
     NeoForge,
-    Quilt
+    Quilt,
+    Purpur,
+    Folia,
+    Velocity,
+    Waterfall,
+    Spigot
 }
 
 /// <summary>某个 Minecraft 版本下，某个核心类型可选的"构建/加载器版本"列表里的一项。</summary>
@@ -41,7 +56,8 @@ public class ServerCoreDownloadRequest
     public ServerCoreType CoreType { get; set; }
     public string McVersion { get; set; } = "";
 
-    /// <summary>Paper 的 build 号 / Fabric 的 loader 版本号；Vanilla/Forge/NeoForge 不需要，留空即可。</summary>
+    /// <summary>Paper/Purpur/Folia/Velocity/Waterfall 的 build 号 / Fabric 的 loader 版本号；
+    /// Vanilla/Forge/NeoForge/Spigot 不需要，留空即可。</summary>
     public string? BuildOrLoaderVersion { get; set; }
 
     /// <summary>Forge/NeoForge 专用：安装器版本号（对应 Vanilla 版本可能有多个 loader 版本可选）。</summary>
@@ -61,6 +77,13 @@ public class ServerCoreDownloadResult
 
     /// <summary>true = DownloadedFilePath 就是安装器，还需要调用 ServerCoreDownloadService.RunForgeInstallerAsync。</summary>
     public bool RequiresInstall { get; set; }
+
+    /// <summary>true = DownloadedFilePath 是 BuildTools.jar 本体，还需要调用
+    /// ServerCoreDownloadService.RunSpigotBuildToolsAsync 在本地编译才能得到真正的服务端 jar
+    /// （目前只有 Spigot 会是 true）。跟 RequiresInstall 分开一个字段，因为编译耗时数分钟、
+    /// 需要 Git，UI 层要展示的中间态和"跑 Forge 安装器"完全不一样，不应该合并成同一个布尔值
+    /// 让调用方猜"这里 RequiresInstall=true 到底是要跑安装器还是要编译"。</summary>
+    public bool RequiresBuild { get; set; }
 
     /// <summary>安装完成后实际用于启动服务端的 jar 文件名（Vanilla/Paper/Fabric 下载完就是这个；
     /// Forge/NeoForge 要等 RunForgeInstallerAsync 跑完后才能确定实际文件名，这里先留空）。</summary>

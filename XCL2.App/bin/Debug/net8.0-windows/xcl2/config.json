@@ -4,6 +4,16 @@
       "Name": "\u5F53\u524D\u6587\u4EF6\u5939",
       "Path": "D:\\xcl\\XCL2.App\\bin\\Debug\\net8.0-windows\\.minecraft",
       "IsDefault": true
+    },
+    {
+      "Name": "Roaming\\.minecraft",
+      "Path": "C:\\Users\\woaiwojia\\AppData\\Roaming\\.minecraft",
+      "IsDefault": false
+    },
+    {
+      "Name": "000\\.minecraft",
+      "Path": "D:\\000\\.minecraft",
+      "IsDefault": false
     }
   ],
   "SelectedFolderPath": "D:\\xcl\\XCL2.App\\bin\\Debug\\net8.0-windows\\.minecraft",
@@ -18,7 +28,7 @@
   "GameLanguage": "zh_cn",
   "FirstRunWizardCompleted": false,
   "LastSelectedAccountId": "",
-  "AdvancedMode": true,
+  "AdvancedMode": false,
   "PreferredJavaMajorVersion": 21,
   "PreferredJavaArch": "x64",
   "PreferredJavaInstallMode": "Portable",
@@ -35,50 +45,8 @@
   "IsolateResourcePacksByDefault": true,
   "VersionResourcePackIsolationOverrides": {},
   "VersionJavaOverrides": {},
-  "InstalledJavas": [
-    {
-      "Id": "eaeecd521e654b878b8b87a70b4f08fa",
-      "Name": "Java 8",
-      "JavawPath": "C:\\Program Files\\Eclipse Adoptium\\jre-8.0.492.9-hotspot\\bin\\javaw.exe",
-      "MajorVersion": 8,
-      "Source": "Detected"
-    },
-    {
-      "Id": "a5833d739f9a4b69aeabf76f8f7b2fcb",
-      "Name": "Java 25",
-      "JavawPath": "C:\\Program Files\\Eclipse Adoptium\\jdk-25.0.3.9-hotspot\\bin\\javaw.exe",
-      "MajorVersion": 25,
-      "Source": "Detected"
-    },
-    {
-      "Id": "0b266882b7764fe6b8f648241faa81d0",
-      "Name": "Java 21",
-      "JavawPath": "C:\\Program Files\\Eclipse Adoptium\\jdk-21.0.7.6-hotspot\\bin\\javaw.exe",
-      "MajorVersion": 21,
-      "Source": "Detected"
-    },
-    {
-      "Id": "93869c0271344f939f3bdb65c4fcc116",
-      "Name": "Java 17",
-      "JavawPath": "C:\\Program Files\\Eclipse Adoptium\\jdk-17.0.14.7-hotspot\\bin\\javaw.exe",
-      "MajorVersion": 17,
-      "Source": "Detected"
-    },
-    {
-      "Id": "bca8279d7ca64bab8f66e57fd2080435",
-      "Name": "Java 25 (2)",
-      "JavawPath": "C:\\Program Files\\Eclipse Adoptium\\jre-25.0.4.7-hotspot\\bin\\javaw.exe",
-      "MajorVersion": 25,
-      "Source": "Detected"
-    },
-    {
-      "Id": "ab49ef57c1024ef4abb8b918e1448a6a",
-      "Name": "Java 8 (2)",
-      "JavawPath": "C:\\Users\\woaiwojia\\AppData\\Roaming\\.minecraft\\runtime\\jre-legacy\\bin\\javaw.exe",
-      "MajorVersion": 8,
-      "Source": "Detected"
-    }
-  ],
+  "VersionAutoJoinServer": {},
+  "InstalledJavas": [],
   "SelectedJavaId": null,
   "VersionJavaIdOverrides": {},
   "FavoriteVersionIds": [],
@@ -89,6 +57,12 @@
   "SmartBandwidthThrottle": false,
   "GuestModeEnabled": false,
   "UiSkin": "White",
+  "IsDarkMode": false,
+  "AutoThemeCycleEnabled": false,
+  "AutoThemeLightStartHour": 8,
+  "AutoThemeDarkStartHour": 19,
+  "AutoThemeLastAppliedSlotStartHour": null,
+  "ExperimentalFeaturesUnlocked": false,
   "SkinApiRoot": "https://authlib-injector.yushi.moe/authlib-injector/api",
   "EnablePageAnimations": true,
   "TerracottaExecutablePath": null

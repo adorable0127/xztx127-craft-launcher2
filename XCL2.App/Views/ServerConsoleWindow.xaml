@@ -3,7 +3,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="服务器控制台" Height="560" Width="720"
         WindowStartupLocation="CenterOwner"
-        Background="{StaticResource PanelBrush}">
+        Background="{DynamicResource PanelBrush}">
     <Grid Margin="16">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
@@ -18,7 +18,7 @@
             </Grid.ColumnDefinitions>
             <TextBlock x:Name="TitleText" Grid.Column="0" Text="服务器控制台" FontSize="18" FontWeight="Bold" VerticalAlignment="Center"/>
             <Button x:Name="StopBtn" Grid.Column="1" Content="■ 停止服务器" Style="{StaticResource PrimaryButton}"
-                    Background="#D64545" Click="Stop_Click"/>
+                    Background="{DynamicResource DangerBrush}" Click="Stop_Click"/>
         </Grid>
 
         <Border Grid.Row="1" Background="#1E1E1E" CornerRadius="8" Padding="10">

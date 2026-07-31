@@ -308,6 +308,13 @@ public class InlineVersionEntry
     /// 具体类型再强转，跟 UnifiedResourceItem.RawItem 是同一个思路。</summary>
     public object RawVersion { get; }
 
+    /// <summary>
+    /// 这个版本是不是"预览版"（Modrinth version_type == beta/alpha，或 CurseForge
+    /// releaseType == 2/3）。版本列表默认只展示正式版(release)，预览版默认隐藏，需要用户
+    /// 主动点开"显示预览版"这个隐藏按钮才会出现在分组列表里。
+    /// </summary>
+    public bool IsPreview { get; }
+
     public InlineVersionEntry(ModrinthVersion version)
     {
         Source = ModSource.Modrinth;
@@ -317,6 +324,7 @@ public class InlineVersionEntry
         Loaders = version.Loaders.Count > 0 ? version.Loaders : new List<string> { "minecraft" }; // 材质包/光影包等没有 loader 概念的项目类型，Modrinth 返回空数组，这里退回一个占位分组名而不是让分组逻辑收到空列表出错
         RequiredDependencies = version.Dependencies.Where(d => d.DependencyType == "required").ToList();
         RawVersion = version;
+        IsPreview = version.VersionType is "beta" or "alpha";
     }
 
     public InlineVersionEntry(CurseForgeFile file)
@@ -328,6 +336,7 @@ public class InlineVersionEntry
         Loaders = new List<string> { "curseforge" }; // CurseForgeFile 结构里没有解析出具体 loader 名，用固定占位分组，跟 Modrinth 结果分开展示，不假装知道具体是 Fabric 还是 Forge
         RequiredDependencies = new List<ModrinthDependency>();
         RawVersion = file;
+        IsPreview = file.ReleaseType is 2 or 3; // CurseForge: 1=release 2=beta 3=alpha
     }
 }
 

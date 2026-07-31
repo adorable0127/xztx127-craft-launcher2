@@ -10,11 +10,11 @@ none
 false
 TRACE;DEBUG;NET;NET8_0;NETCOREAPP;WINDOWS;WINDOWS7_0;NET5_0_OR_GREATER;NET6_0_OR_GREATER;NET7_0_OR_GREATER;NET8_0_OR_GREATER;NETCOREAPP3_0_OR_GREATER;NETCOREAPP3_1_OR_GREATER;WINDOWS7_0_OR_GREATER
 
-30-1217298076
+35533394989
 3-486305067
-85-485146175
+95137672543
 2011813883674
-Views\AccountPickerWindow.xaml;Views\CreateServerWindow.xaml;Views\CurseForgeMapPickerWindow.xaml;Views\DeviceCodeWindow.xaml;Views\DownloadCenterPage.xaml;Views\FirstRunWizardWindow.xaml;Views\HomePage.xaml;Views\InstallClientLoaderWindow.xaml;Views\LoaderChoiceWindow.xaml;Views\LoginPage.xaml;Views\LogsPage.xaml;Views\MainWindow.xaml;Views\MicrosoftLoginWindow.xaml;Views\ModDependencyWarningWindow.xaml;Views\ModDetailPage.xaml;Views\ModManagerPage.xaml;Views\MultiplayerPage.xaml;Views\ProcessManagerWindow.xaml;Views\ProgressWindow.xaml;Views\QuickStartWizardWindow.xaml;Views\RenameInstanceWindow.xaml;Views\SelectJavaWindow.xaml;Views\ServerConsoleWindow.xaml;Views\ServerManagerPage.xaml;Views\ServerNetworkGuideWindow.xaml;Views\ServerPropertiesWindow.xaml;Views\SettingsPage.xaml;Views\SkinSelectWindow.xaml;Views\VersionSelectPage.xaml;App.xaml;
+Views\AccountPickerWindow.xaml;Views\ClearServerDataWindow.xaml;Views\CreateServerWindow.xaml;Views\CurseForgeMapPickerWindow.xaml;Views\DeviceCodeWindow.xaml;Views\DownloadCenterPage.xaml;Views\ExperimentalFeaturesWindow.xaml;Views\ExperimentalGateWindow.xaml;Views\FirstRunWizardWindow.xaml;Views\HomePage.xaml;Views\InstallClientLoaderWindow.xaml;Views\LoaderChoiceWindow.xaml;Views\LoginPage.xaml;Views\LogsPage.xaml;Views\MainWindow.xaml;Views\MemoryWarningWindow.xaml;Views\MicrosoftLoginWindow.xaml;Views\ModDependencyWarningWindow.xaml;Views\ModDetailPage.xaml;Views\ModManagerPage.xaml;Views\MultiLoaderInstallWindow.xaml;Views\MultiplayerPage.xaml;Views\ProcessManagerWindow.xaml;Views\ProgressWindow.xaml;Views\QuickStartWizardWindow.xaml;Views\RenameInstanceWindow.xaml;Views\SelectJavaWindow.xaml;Views\ServerConsoleWindow.xaml;Views\ServerManagerPage.xaml;Views\ServerNetworkGuideWindow.xaml;Views\ServerPropertiesWindow.xaml;Views\SettingsPage.xaml;Views\SkinSelectWindow.xaml;Views\VersionSelectPage.xaml;App.xaml;
 
 False
 

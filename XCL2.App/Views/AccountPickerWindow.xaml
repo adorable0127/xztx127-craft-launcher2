@@ -3,12 +3,12 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="选择启动账户" Height="360" Width="420"
         WindowStartupLocation="CenterOwner" ResizeMode="NoResize"
-        Background="{StaticResource SideBrush}">
-    <Border Background="{StaticResource PanelBrush}" CornerRadius="10" Padding="20" Margin="10">
+        Background="{DynamicResource SideBrush}">
+    <Border Background="{DynamicResource PanelBrush}" CornerRadius="10" Padding="20" Margin="10">
         <DockPanel>
             <TextBlock DockPanel.Dock="Top" Text="选择要用来启动游戏的账户" FontSize="16" FontWeight="Bold" Margin="0,0,0,4"/>
             <TextBlock DockPanel.Dock="Top" Text="点两下账户可以直接启动；也可以选中后点下方「使用这个账户启动」。"
-                       FontSize="11" Foreground="{StaticResource TextSecondaryBrush}" Margin="0,0,0,12" TextWrapping="Wrap"/>
+                       FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,12" TextWrapping="Wrap"/>
 
             <CheckBox DockPanel.Dock="Bottom" x:Name="RememberChoiceCheck"
                       Margin="0,12,0,8" VerticalContentAlignment="Top">

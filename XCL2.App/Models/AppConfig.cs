@@ -146,6 +146,15 @@ public class AppConfig
     public Dictionary<string, int> VersionJavaOverrides { get; set; } = new();
 
     /// <summary>
+    /// "开启后进入某某某服务器"：按游戏实例(版本 id)记录的自动进服务器地址。
+    /// key 是 GameVersion.Id，value 是服务器地址（形如 "play.example.com" 或 "1.2.3.4:25565"）。
+    /// 某个版本不在字典里，或者值为空/空白，都表示"这个实例不自动进服务器"，游戏正常进主菜单，
+    /// 跟这个功能上线前的行为完全一致——这是一个纯增量的可选开关，不影响任何已有实例的启动行为。
+    /// 见 LauncherService.LaunchOptions.AutoJoinServerAddress 的具体拼参数逻辑。
+    /// </summary>
+    public Dictionary<string, string> VersionAutoJoinServer { get; set; } = new();
+
+    /// <summary>
     /// "Java 列表"：用户登记(手动浏览 / 下载安装 / 全盘扫描添加)的所有 Java 运行时集合，
     /// 每条记录见 <see cref="InstalledJava"/>。这是"多 Java 共存"功能的核心数据——
     /// 客户端的每个版本(<see cref="VersionJavaIdOverrides"/>)和每个服务器实例
@@ -235,11 +244,66 @@ public class AppConfig
     public bool GuestModeEnabled { get; set; } = false;
 
     /// <summary>
-    /// 界面配色皮肤：White(默认白色)/Blue/Yellow/Dark(黑色，与访客模式自动切换的配色相同)。
-    /// 用户在设置里手动选择，独立于访客模式；访客模式开启期间会临时覆盖显示为 Dark，
-    /// 关闭访客模式后恢复回这里保存的值。见 <see cref="Services.ThemeService"/>。
+    /// 界面配色"色系"：White/Blue/Yellow/Purple/Pink（Dark 作为独立色系保留兼容旧配置，
+    /// 见下面 IsDarkMode 的注释）。用户在设置里手动选择，独立于访客模式；访客模式开启期间
+    /// 会临时覆盖显示为纯黑深色，关闭访客模式后恢复回这里保存的值。见 <see cref="Services.ThemeService"/>。
+    ///
+    /// 从只有"白/蓝/黄/黑"四个互斥选项，改成"色系 + 明暗"两个独立维度的原因：用户要的是
+    /// "蓝色系也能有深色版"，而不是把黑色单独当成第五个跟颜色无关的选项。现在色系只决定
+    /// 色相（蓝/黄/紫/粉这几个色相），具体显示成浅色版还是深色版由 <see cref="IsDarkMode"/>
+    /// 独立控制，两者组合、不互相覆盖。
     /// </summary>
     public string UiSkin { get; set; } = "White";
+
+    /// <summary>
+    /// 界面明暗模式：false=浅色（默认），true=深色。跟 <see cref="UiSkin"/> 选的色系是完全独立的
+    /// 两个维度——比如 UiSkin=Blue 时，IsDarkMode=false 显示"蓝色系-浅"，true 则显示
+    /// "蓝色系-深"，色相不变，只是背景/文字对比度切换成夜间友好的深色版本。
+    /// 由首页/主界面的"模式设置"按钮直接控制，也会被 <see cref="AutoThemeCycleEnabled"/>
+    /// 自动循环按计划覆盖。见 <see cref="Services.ThemeService"/>。
+    /// </summary>
+    public bool IsDarkMode { get; set; } = false;
+
+    /// <summary>
+    /// 是否开启"自动循环"：开启后由系统当前时间自动决定 <see cref="IsDarkMode"/>，
+    /// 不需要用户手动点"模式设置"按钮。具体的切换时间点见
+    /// <see cref="AutoThemeLightStartHour"/>/<see cref="AutoThemeDarkStartHour"/>。
+    /// 默认关闭：不影响老用户已经习惯的手动模式，只有主动开启才会接管明暗切换。
+    ///
+    /// 与用户手动点击"模式设置"按钮的关系：手动优先——用户随时可以点按钮临时切换/覆盖当前
+    /// 显示的明暗，但到下一个自动切换时间点，还是会被自动循环按计划重新覆盖回去（除非用户
+    /// 关闭这个开关）。也就是说自动循环不会"锁死"按钮不让点，只是会在下一次时间点到达时
+    /// 重新接管一次。见 MainWindow 里的每分钟定时检查逻辑。
+    /// </summary>
+    public bool AutoThemeCycleEnabled { get; set; } = false;
+
+    /// <summary>自动循环下，浅色模式的开始时间（小时，0~23）。默认 8，即早上 8:00 开始浅色模式。
+    /// 用户可在设置页自行调整。</summary>
+    public int AutoThemeLightStartHour { get; set; } = 8;
+
+    /// <summary>自动循环下，深色模式的开始时间（小时，0~23）。默认 19，即下午 19:00 开始深色模式，
+    /// 直到次日 <see cref="AutoThemeLightStartHour"/> 之前都保持深色。用户可在设置页自行调整。</summary>
+    public int AutoThemeDarkStartHour { get; set; } = 19;
+
+    /// <summary>
+    /// 记录自动循环上一次自动写入 IsDarkMode 的"目标时间段"（用浅/深色区间的起始小时当唯一标识，
+    /// 比如浅色区间的标识就是 AutoThemeLightStartHour 本身），用来判断"现在是不是需要重新自动
+    /// 切换一次"，避免用户手动覆盖后，同一个时间段内每次定时检查都被自动循环立即纠正回去
+    /// （那样手动覆盖就完全没意义了——见 IsDarkMode 注释里"手动优先"的约定：只有真正跨入
+    /// 下一个新的时间段时，自动循环才重新接管一次）。null 表示还没有任何一次自动切换记录过
+    /// （刚开启自动循环、或者旧配置文件升级上来），此时会立即按当前时间校正一次。
+    /// </summary>
+    public int? AutoThemeLastAppliedSlotStartHour { get; set; }
+
+    /// <summary>
+    /// "实验性功能"总开关：用户是否已经完整走过一次强制等待（10 秒倒计时不可跳过）的
+    /// 确认流程。这个流程本身是一次性的"仪式"——第一次点开实验性功能入口时强制等待，
+    /// 让用户有机会读完警告文案、真正意识到"这里的东西不稳定"，而不是手滑点进去。
+    /// 一旦确认过一次，后续再打开实验性功能面板不需要重复等待 10 秒（不然用户每次只是
+    /// 想改个换肤设置都要罚站 10 秒，体验会变得很烦人，也偏离了"警示新用户"这个本意）。
+    /// 默认 false：全新安装/全新配置文件的用户第一次进入实验性功能都要走一遍强制等待。
+    /// </summary>
+    public bool ExperimentalFeaturesUnlocked { get; set; } = false;
 
     /// <summary>
     /// 万能皮肤补丁(authlib-injector) 使用的皮肤服务 API Root。默认使用内置的公共服务

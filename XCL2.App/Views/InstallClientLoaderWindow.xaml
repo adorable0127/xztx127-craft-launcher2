@@ -1,16 +1,17 @@
 <Window x:Class="XCL2.App.Views.InstallClientLoaderWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:services="clr-namespace:XCL2.App.Services"
         Title="安装新版本" Height="560" Width="520"
         WindowStartupLocation="CenterOwner" ResizeMode="NoResize"
-        Background="{StaticResource PanelBrush}">
-    <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="28,24">
+        Background="{DynamicResource PanelBrush}">
+    <ScrollViewer VerticalScrollBarVisibility="Auto" services:ScrollWheelBehavior.EnableFastWheel="True" Padding="28,24">
         <StackPanel>
             <TextBlock Text="安装新版本" FontSize="20" FontWeight="Bold" Margin="0,0,0,4"/>
             <TextBlock Text="安装原版或 Fabric / Forge / NeoForge 客户端加载器，装好后会自动出现在「已安装版本」列表里。"
-                       Foreground="{StaticResource TextSecondaryBrush}" FontSize="12" Margin="0,0,0,18" TextWrapping="Wrap"/>
+                       Foreground="{DynamicResource TextSecondaryBrush}" FontSize="12" Margin="0,0,0,18" TextWrapping="Wrap"/>
 
-            <TextBlock Text="加载器" FontSize="12" Foreground="{StaticResource TextSecondaryBrush}" Margin="0,0,0,4"/>
+            <TextBlock Text="加载器" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4"/>
             <StackPanel Orientation="Horizontal" Margin="0,0,0,14">
                 <RadioButton x:Name="LoaderVanilla" Style="{StaticResource DownloadCategoryButton}" IsChecked="True"
                              Content="原版" Checked="LoaderType_Checked" Tag="Vanilla" Margin="0,0,6,0"/>
@@ -31,13 +32,13 @@
                     <ColumnDefinition Width="*"/>
                 </Grid.ColumnDefinitions>
                 <StackPanel Grid.Column="0">
-                    <TextBlock Text="Minecraft 版本" FontSize="12" Foreground="{StaticResource TextSecondaryBrush}" Margin="0,0,0,4"/>
+                    <TextBlock Text="Minecraft 版本" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4"/>
                     <ComboBox x:Name="McVersionCombo" Style="{StaticResource FilterComboBox}" Height="34"
                               SelectionChanged="McVersionCombo_SelectionChanged"/>
                 </StackPanel>
                 <StackPanel Grid.Column="2" x:Name="BuildVersionPanel">
                     <TextBlock x:Name="BuildVersionLabel" Text="加载器版本" FontSize="12"
-                               Foreground="{StaticResource TextSecondaryBrush}" Margin="0,0,0,4"/>
+                               Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4"/>
                     <ComboBox x:Name="BuildVersionCombo" Style="{StaticResource FilterComboBox}" Height="34"/>
                 </StackPanel>
             </Grid>
@@ -45,7 +46,7 @@
             <!-- NeoForge 没有独立的 MC 版本列表，选中项本身就是完整版本号，不需要第二级下拉框 -->
 
             <StackPanel x:Name="JavaPathPanel">
-                <TextBlock Text="Java 路径" FontSize="12" Foreground="{StaticResource TextSecondaryBrush}" Margin="0,0,0,4"/>
+                <TextBlock Text="Java 路径" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4"/>
                 <Grid Margin="0,0,0,14">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="*"/>
@@ -56,9 +57,9 @@
                 </Grid>
             </StackPanel>
             <TextBlock x:Name="JavaRequirementHintText" FontSize="12" Margin="0,-10,0,14" TextWrapping="Wrap"
-                       Foreground="{StaticResource AccentBrush}" Visibility="Collapsed"/>
+                       Foreground="{DynamicResource AccentBrush}" Visibility="Collapsed"/>
             <TextBlock x:Name="FabricNoJavaHintText" FontSize="11" Margin="0,-10,0,14" TextWrapping="Wrap"
-                       Foreground="{StaticResource TextSecondaryBrush}" Visibility="Collapsed"
+                       Foreground="{DynamicResource TextSecondaryBrush}" Visibility="Collapsed"
                        Text="Fabric 客户端安装本身不需要本地运行安装器，不填 Java 也可以安装；启动这个版本时仍会照常自动匹配/下载所需 Java。"/>
 
             <CheckBox x:Name="InstallFabricApiCheck" Content="同时安装 Fabric API（很多 Fabric 模组依赖它，建议勾选）"
@@ -70,7 +71,7 @@
             <!-- 进度展示 -->
             <StackPanel x:Name="ProgressPanel" Margin="0,0,0,14" Visibility="Collapsed">
                 <TextBlock x:Name="ProgressStageText" FontSize="13" FontWeight="Bold" Margin="0,0,0,4"/>
-                <TextBlock x:Name="ProgressDetailText" FontSize="12" Foreground="{StaticResource TextSecondaryBrush}" Margin="0,0,0,8"/>
+                <TextBlock x:Name="ProgressDetailText" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,8"/>
                 <ProgressBar x:Name="ProgressBarCtl" Height="8" Minimum="0" Maximum="1"/>
             </StackPanel>
 

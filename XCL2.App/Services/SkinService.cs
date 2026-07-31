@@ -102,11 +102,28 @@ public class SkinService
     /// 是原版内置骨架，不需要任何额外参数。调用方应该在启动前调用
     /// <see cref="EnsureAuthlibInjectorAsync"/> 确保 jar 已存在，再调用这个方法拼参数。
     /// </summary>
+    /// <summary>
+    /// 为需要挂载 authlib-injector 的账户构造额外的 JVM 参数：
+    /// - 离线账户且选了自定义皮肤(SkinType=Custom)：用全局默认/用户配置的皮肤源 apiRoot（原有行为，未改动）；
+    /// - 认证服务器(AuthServer)账户：用这个账户登录时使用的 AuthServerApiRoot（忽略传入的 apiRoot 参数，
+    ///   因为认证服务器账户的皮肤/会话校验必须对应它登录的那个服务器，不能用全局默认源）。
+    /// 调用方应该在启动前调用 <see cref="EnsureAuthlibInjectorAsync"/> 确保 jar 已存在，再调用这个方法拼参数。
+    /// </summary>
     public List<string> BuildSkinJvmArgs(Account account, string apiRoot)
     {
-        if (account.Type != AccountType.Offline || account.SkinType != OfflineSkinType.Custom)
-            return new List<string>();
         if (!File.Exists(AuthlibInjectorPath))
+            return new List<string>();
+
+        if (account.Type == AccountType.AuthServer && !string.IsNullOrWhiteSpace(account.AuthServerApiRoot))
+        {
+            return new List<string>
+            {
+                $"-javaagent:{AuthlibInjectorPath}={account.AuthServerApiRoot}",
+                "-Dauthlibinjector.side=client"
+            };
+        }
+
+        if (account.Type != AccountType.Offline || account.SkinType != OfflineSkinType.Custom)
             return new List<string>();
 
         return new List<string>

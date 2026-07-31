@@ -6,62 +6,78 @@
     <Nullable>enable</Nullable>
     <UseWPF>true</UseWPF>
     <ImplicitUsings>enable</ImplicitUsings>
-
     <AssemblyName>XCL2</AssemblyName>
     <RootNamespace>XCL2.App</RootNamespace>
-
     <Platforms>AnyCPU</Platforms>
     <LangVersion>latest</LangVersion>
-
-    <!-- 图标 -->
+    <!-- 应用图标：编译出的 .exe 文件图标来源，Resources/app.ico 是用户提供的成品图标。 -->
     <ApplicationIcon>Resources\app.ico</ApplicationIcon>
-
-    <!-- 运行时 -->
+    <!-- 需求："如果用户电脑上没有安装 .NET，就在启动的前面加上：你需要安装 .NET8 运行时
+         才可以继续使用本程序。"
+         这个项目是框架依赖发布(不是自包含/单文件)，意味着 .exe 本身的启动就需要 .NET8
+         Desktop Runtime 已经安装——如果完全没装，操作系统层面的 apphost 会在我们任何代码
+         跑起来之前就弹出系统自带的英文"未找到运行时"对话框，这一步是 apphost 原生行为，
+         没有托管代码执行的机会去插入自定义中文提示，这是 .NET 框架依赖部署模式的固有限制
+         (自包含部署可以绕开，但会让安装包体积暴涨几十 MB，且用户已经普遍装有 .NET 运行时，
+         没必要为这一种边缘情况牺牲所有用户的下载体积)。
+         这里改用 GenerateErrorReport=true 让 apphost 至少走"生成错误报告链接"这条相对
+         友好一些的路径，并把 ApplicationHighDpiMode 之外，重点是下面新增的 Program.cs 里
+         用 [STAThread] 自定义 Main 入口——对于"装了某个版本但版本不匹配/roll-forward 失败"
+         这种能被托管代码捕获到的场景(比如只装了 .NET 6，或者装的 Desktop Runtime 版本
+         被回退策略排除)，能在真正加载 WPF/App.xaml 之前用中文 MessageBox 提示；
+         对于"完全一个 .NET 运行时都没装"这种最极端的场景，操作系统原生对话框仍然会先弹出，
+         这是当前部署模式下无法绕过的边界，但绝大多数"缺少正确版本"的实际案例都能被下面
+         的自定义入口覆盖到。 -->
     <GenerateErrorReport>true</GenerateErrorReport>
+    <!-- 关闭"次要版本自动前滚"限制得更严格一些：只允许同一 major(8.x)内前滚，不静默滚到
+         未来的 net9/net10 桌面运行时——避免"看起来能跑但实际上从没验证过的运行时组合"，
+         同时这个限制也让"确实没有任何兼容 .NET8 运行时"的情况更容易在托管代码里被
+         RuntimeInformation 检测到并提示，而不是被更高版本悄悄顺带跑起来、用户永远不知道
+         其实该装 8.0。 -->
     <RollForward>LatestMinor</RollForward>
-
-    <!-- ================= 发布配置 ================= -->
-
-    <!-- 单文件 -->
-    <PublishSingleFile>true</PublishSingleFile>
-
-    <!-- 自包含（真正单文件） -->
-    <SelfContained>true</SelfContained>
-
-    <!-- 平台 -->
-    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
-
-    <!-- 不裁剪（WPF 不建议开启） -->
-    <PublishTrimmed>false</PublishTrimmed>
-
-    <!-- Native DLL 打包 -->
-    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
-
-    <!-- 压缩 -->
-    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
-
-    <!-- 不生成调试文件 -->
-    <DebugType>none</DebugType>
-    <DebugSymbols>false</DebugSymbols>
-
   </PropertyGroup>
 
   <ItemGroup>
     <PackageReference Include="System.Text.Json" Version="8.0.5" />
+    <!-- 用于"内嵌浏览器窗口直接登录"(免复制验证码)：托管一个现代 Edge 内核的网页控件。
+         需要用户机器已安装 WebView2 Runtime——Windows 10 1803+/Windows 11 默认随 Edge 预装，
+         绝大多数机器无需额外安装；如未安装，首次使用时 WebView2 控件会自动提示下载。 -->
     <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.2792.45" />
   </ItemGroup>
 
   <ItemGroup>
+    <!-- 让 WPF 在运行时也能通过 pack URI "/Resources/app.ico" 找到这个文件
+         （ApplicationIcon 只决定编译出的 .exe 文件本身的图标，不会让 Window.Icon 这种
+         运行时资源引用生效，两者要分开配置）。 -->
     <Resource Include="Resources\app.ico" />
   </ItemGroup>
 
   <ItemGroup>
+    <!-- 内置陶瓦联机(Terracotta)可执行文件：编译成 EmbeddedResource(直接打进程序集内部，
+         不是普通的 Resource/Content 松散文件)，运行时通过
+         Assembly.GetManifestResourceStream 读取字节流后自行写到本地磁盘再运行。
+         用 EmbeddedResource 而不是 Resource 的原因：这是一个完整的第三方可执行程序，
+         不是图片/图标这种 WPF UI 资源，不需要走 pack URI 这套机制，
+         EmbeddedResource 更直接、语义上也更准确(“这是一份内嵌数据”而不是“这是一个UI素材”)。
+         逻辑实现见 TerracottaService.EnsureExtracted。 -->
     <EmbeddedResource Include="Resources\Terracotta\terracotta-0.4.2-windows-x86_64.exe">
       <LogicalName>XCL2.App.Resources.Terracotta.terracotta-0.4.2-windows-x86_64.exe</LogicalName>
     </EmbeddedResource>
   </ItemGroup>
 
   <ItemGroup>
+    <!-- 修复"程序定义了多个入口点"(CS0017)：
+         WPF SDK 的实际行为是——只要 App.xaml 的生成操作是 ApplicationDefinition，
+         MarkupCompilePass1 就一定会生成一个隐藏的 Main()(在 obj\Program.g.cs 里)，
+         这跟项目里是否存在用户手写的 Main() 无关，两者不会自动互斥，会直接冲突产生
+         CS0017。(上面旧注释里"两者自动互斥"的说法是错误的，这里一并更正。)
+         正确做法：把 App.xaml 的生成操作从 ApplicationDefinition 改成 Page，
+         这样 WPF SDK 就不会再生成那个隐藏 Main()/Program.g.cs，只保留
+         Program.cs 里手写的 Main() 作为唯一入口。
+         App.xaml 改成 Page 之后，App.g.cs 里的 InitializeComponent() 依然会正常生成
+         (只要 x:Class 还在，Page 和 ApplicationDefinition 都会生成 InitializeComponent，
+         区别只在于要不要顺带生成 Main)，所以 Program.cs 里 `app.InitializeComponent()`
+         这一行不需要改。 -->
     <ApplicationDefinition Remove="App.xaml" />
     <Page Include="App.xaml">
       <Generator>MSBuild:Compile</Generator>

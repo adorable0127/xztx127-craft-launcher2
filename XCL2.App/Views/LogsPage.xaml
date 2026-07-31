@@ -1,7 +1,7 @@
 <UserControl x:Class="XCL2.App.Views.LogsPage"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
-    <Border Background="{StaticResource PanelBrush}" CornerRadius="10" Padding="20">
+    <Border Background="{DynamicResource PanelBrush}" CornerRadius="10" Padding="20">
         <Grid>
             <Grid.RowDefinitions>
                 <RowDefinition Height="Auto"/>
@@ -9,7 +9,7 @@
             </Grid.RowDefinitions>
 
             <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="0,0,0,12">
-                <TextBlock Text="日志" FontSize="20" FontWeight="Bold" Foreground="{StaticResource TextPrimaryBrush}" VerticalAlignment="Center"/>
+                <TextBlock Text="日志" FontSize="20" FontWeight="Bold" Foreground="{DynamicResource TextPrimaryBrush}" VerticalAlignment="Center"/>
                 <CheckBox x:Name="ShowLogCheck" Content="显示日志面板（默认不显示，勾选后小白模式也能查看）"
                           Margin="20,0,0,0" VerticalAlignment="Center" Checked="ShowLogCheck_Changed" Unchecked="ShowLogCheck_Changed"/>
             </StackPanel>
@@ -60,9 +60,9 @@
                                       SelectionChanged="CrashFileCombo_SelectionChanged"/>
                             <Button Content="重新扫描" Style="{StaticResource SideNavButton}" Padding="10,4" Click="RescanCrash_Click"/>
                         </StackPanel>
-                        <Border Grid.Row="1" Background="#FFF7E6" CornerRadius="6" Padding="10" Margin="0,0,0,8">
+                        <Border Grid.Row="1" Background="{DynamicResource WarningBannerBrush}" CornerRadius="6" Padding="10" Margin="0,0,0,8">
                             <TextBlock x:Name="CrashFindingsText" TextWrapping="Wrap" FontSize="13"
-                                       Foreground="{StaticResource TextPrimaryBrush}"
+                                       Foreground="{DynamicResource TextPrimaryBrush}"
                                        Text="选择上方的崩溃文件后，这里会显示自动分析出的中文提示。"/>
                         </Border>
                         <TextBox x:Name="CrashRawBox" Grid.Row="2" IsReadOnly="True" TextWrapping="NoWrap"
@@ -98,7 +98,7 @@
             </TabControl>
 
             <TextBlock x:Name="HiddenHint" Grid.Row="1" Text="日志面板当前已隐藏。勾选上方复选框可查看游戏日志、启动器日志、崩溃分析和注入检测。"
-                       Foreground="{StaticResource TextSecondaryBrush}" TextWrapping="Wrap" Margin="0,20,0,0"/>
+                       Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap" Margin="0,20,0,0"/>
         </Grid>
     </Border>
 </UserControl>

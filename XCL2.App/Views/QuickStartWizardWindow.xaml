@@ -1,10 +1,11 @@
 <Window x:Class="XCL2.App.Views.QuickStartWizardWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:services="clr-namespace:XCL2.App.Services"
         Title="一键开始游戏" Height="640" Width="760"
         WindowStartupLocation="CenterScreen"
         ResizeMode="NoResize"
-        Background="{StaticResource SideBrush}">
+        Background="{DynamicResource SideBrush}">
     <Grid Margin="24">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
@@ -15,23 +16,23 @@
 
         <!-- 标题 -->
         <StackPanel Grid.Row="0" Margin="0,0,0,16">
-            <TextBlock Text="一键开始游戏" FontSize="24" FontWeight="Bold" Foreground="{StaticResource TextPrimaryBrush}"/>
+            <TextBlock Text="一键开始游戏" FontSize="24" FontWeight="Bold" Foreground="{DynamicResource TextPrimaryBrush}"/>
             <TextBlock Text="从账户到启动，一路走完就能开玩；每一步（Mod/资源包/光影包）都可以跳过。也可以直接导入整合包，跳过后面所有选择步骤。"
-                       FontSize="13" Foreground="{StaticResource TextSecondaryBrush}" Margin="0,4,0,0" TextWrapping="Wrap"/>
+                       FontSize="13" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,4,0,0" TextWrapping="Wrap"/>
         </StackPanel>
 
         <!-- 步骤指示条：第 0 步（选择来源）不点亮任何格子，进入下载流程后从第 1 步开始点亮 -->
         <UniformGrid Grid.Row="1" Columns="5" Margin="0,0,0,16">
-            <Border x:Name="StepDot1" CornerRadius="6" Height="6" Margin="0,0,4,0" Background="#DDDDDD"/>
-            <Border x:Name="StepDot2" CornerRadius="6" Height="6" Margin="4,0,4,0" Background="#DDDDDD"/>
-            <Border x:Name="StepDot3" CornerRadius="6" Height="6" Margin="4,0,4,0" Background="#DDDDDD"/>
-            <Border x:Name="StepDot4" CornerRadius="6" Height="6" Margin="4,0,4,0" Background="#DDDDDD"/>
-            <Border x:Name="StepDot5" CornerRadius="6" Height="6" Margin="4,0,0,0" Background="#DDDDDD"/>
+            <Border x:Name="StepDot1" CornerRadius="6" Height="6" Margin="0,0,4,0" Background="{DynamicResource DividerBrush}"/>
+            <Border x:Name="StepDot2" CornerRadius="6" Height="6" Margin="4,0,4,0" Background="{DynamicResource DividerBrush}"/>
+            <Border x:Name="StepDot3" CornerRadius="6" Height="6" Margin="4,0,4,0" Background="{DynamicResource DividerBrush}"/>
+            <Border x:Name="StepDot4" CornerRadius="6" Height="6" Margin="4,0,4,0" Background="{DynamicResource DividerBrush}"/>
+            <Border x:Name="StepDot5" CornerRadius="6" Height="6" Margin="4,0,0,0" Background="{DynamicResource DividerBrush}"/>
         </UniformGrid>
 
         <!-- 步骤内容区 -->
-        <Border Grid.Row="2" Background="{StaticResource PanelBrush}" CornerRadius="10" Padding="24">
-            <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+        <Border Grid.Row="2" Background="{DynamicResource PanelBrush}" CornerRadius="10" Padding="24">
+            <ScrollViewer VerticalScrollBarVisibility="Auto" services:ScrollWheelBehavior.EnableFastWheel="True" HorizontalScrollBarVisibility="Disabled">
             <Grid>
                 <!-- 整页详情容器：点击步骤3的 Mod 条目时盖住整个步骤内容区，展示 ModDetailPage
                      （AddToWizardList 模式，选具体版本后加入下面的"已选清单"，不在这里直接下载）。
@@ -41,7 +42,7 @@
                 <!-- 步骤 0：选择来源（新下载 / 使用现有实例 / 傻瓜式启动 / 导入整合包） -->
                 <StackPanel x:Name="Step0Panel" Visibility="Visible">
                     <TextBlock Text="开始之前：怎么玩？" FontSize="18" FontWeight="Bold" Margin="0,0,0,8"/>
-                    <TextBlock TextWrapping="Wrap" Foreground="{StaticResource TextSecondaryBrush}" Margin="0,0,0,16">
+                    <TextBlock TextWrapping="Wrap" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,16">
                         选一种最适合你的方式，选完就会跳到对应的准备步骤。
                     </TextBlock>
 
@@ -50,7 +51,7 @@
                         <StackPanel Margin="4,2">
                             <TextBlock Text="🚀 一键下载游戏" FontWeight="Bold" FontSize="14"/>
                             <TextBlock Text="第一次玩，或者想装一个全新版本 / Mod 整合，跟着向导一步步选账户、版本、Mod。"
-                                       FontSize="12" Foreground="{StaticResource TextSecondaryBrush}" TextWrapping="Wrap" Margin="0,2,0,0"/>
+                                       FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap" Margin="0,2,0,0"/>
                         </StackPanel>
                     </RadioButton>
 
@@ -58,22 +59,22 @@
                                  Checked="SourceMode_Changed" Margin="0,0,0,10">
                         <StackPanel Margin="4,2">
                             <TextBlock Text="⚡ 傻瓜式启动游戏" FontWeight="Bold" FontSize="14"/>
-                            <TextBlock x:Name="SimpleModeHintText" FontSize="12" Foreground="{StaticResource TextSecondaryBrush}" TextWrapping="Wrap" Margin="0,2,0,0"/>
+                            <TextBlock x:Name="SimpleModeHintText" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap" Margin="0,2,0,0"/>
                         </StackPanel>
                     </RadioButton>
 
                     <!-- “傻瓜式启动”子面板：只能从已经导入过的文件夹(cfg.Folders)里选，跟下面
                          “使用现有实例”(任意 .minecraft 目录，包括其它启动器的)是两回事——
                          这里体现的是"用户必须已经导入安装文件夹才可以选择"这条要求。 -->
-                    <Border x:Name="SimpleModePanel" Visibility="Collapsed" Background="{StaticResource SideBrush}"
+                    <Border x:Name="SimpleModePanel" Visibility="Collapsed" Background="{DynamicResource SideBrush}"
                             CornerRadius="8" Padding="14" Margin="0,4,0,10">
                         <StackPanel>
-                            <TextBlock Text="选择一个已导入的文件夹" FontSize="12" Foreground="{StaticResource TextSecondaryBrush}" Margin="0,0,0,4"/>
+                            <TextBlock Text="选择一个已导入的文件夹" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4"/>
                             <ComboBox x:Name="SimpleFolderCombo" Style="{StaticResource FilterComboBox}" Height="34" Margin="0,0,0,10"
                                       SelectionChanged="SimpleFolderCombo_SelectionChanged"/>
-                            <TextBlock Text="选择要启动的版本" FontSize="12" Foreground="{StaticResource TextSecondaryBrush}" Margin="0,0,0,4"/>
+                            <TextBlock Text="选择要启动的版本" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4"/>
                             <ComboBox x:Name="SimpleVersionCombo" Style="{StaticResource FilterComboBox}" Height="34" Margin="0,0,0,8"/>
-                            <TextBlock x:Name="SimpleModeStatusText" FontSize="12" Foreground="{StaticResource TextSecondaryBrush}" TextWrapping="Wrap"/>
+                            <TextBlock x:Name="SimpleModeStatusText" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap"/>
                         </StackPanel>
                     </Border>
 
@@ -82,7 +83,7 @@
                         <StackPanel Margin="4,2">
                             <TextBlock Text="📁 使用现有实例" FontWeight="Bold" FontSize="14"/>
                             <TextBlock Text="已经有一个 .minecraft 文件夹（比如以前用过官方启动器/其它启动器），直接指过去，跳过下载，自动匹配 Java 就能启动。"
-                                       FontSize="12" Foreground="{StaticResource TextSecondaryBrush}" TextWrapping="Wrap" Margin="0,2,0,0"/>
+                                       FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap" Margin="0,2,0,0"/>
                         </StackPanel>
                     </RadioButton>
 
@@ -91,15 +92,15 @@
                         <StackPanel Margin="4,2">
                             <TextBlock Text="📦 导入整合包（Modrinth / .zip / .xclpack）" FontWeight="Bold" FontSize="14"/>
                             <TextBlock Text="已经下载好了一个整合包文件，直接导入，跳过选版本/选 Mod 这些步骤。"
-                                       FontSize="12" Foreground="{StaticResource TextSecondaryBrush}" TextWrapping="Wrap" Margin="0,2,0,0"/>
+                                       FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap" Margin="0,2,0,0"/>
                         </StackPanel>
                     </RadioButton>
 
                     <!-- “使用现有实例”子面板：选文件夹 + 扫描出的版本列表 -->
-                    <Border x:Name="ExistingInstancePanel" Visibility="Collapsed" Background="{StaticResource SideBrush}"
+                    <Border x:Name="ExistingInstancePanel" Visibility="Collapsed" Background="{DynamicResource SideBrush}"
                             CornerRadius="8" Padding="14" Margin="0,4,0,0">
                         <StackPanel>
-                            <TextBlock Text=".minecraft 文件夹位置" FontSize="12" Foreground="{StaticResource TextSecondaryBrush}" Margin="0,0,0,4"/>
+                            <TextBlock Text=".minecraft 文件夹位置" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4"/>
                             <Grid Margin="0,0,0,10">
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="*"/>
@@ -109,23 +110,23 @@
                                           Height="34" SelectionChanged="ExistingFolderCombo_SelectionChanged"/>
                                 <Button Grid.Column="1" Content="浏览其它位置..." Margin="8,0,0,0" Padding="12,8" Click="BrowseExistingFolder_Click"/>
                             </Grid>
-                            <TextBlock Text="选择这个文件夹里已装好的版本" FontSize="12" Foreground="{StaticResource TextSecondaryBrush}" Margin="0,0,0,4"/>
+                            <TextBlock Text="选择这个文件夹里已装好的版本" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4"/>
                             <ComboBox x:Name="ExistingVersionCombo" Style="{StaticResource FilterComboBox}" Height="34" Margin="0,0,0,8"/>
-                            <TextBlock x:Name="ExistingInstanceStatusText" FontSize="12" Foreground="{StaticResource TextSecondaryBrush}" TextWrapping="Wrap"/>
+                            <TextBlock x:Name="ExistingInstanceStatusText" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap"/>
                         </StackPanel>
                     </Border>
 
                     <!-- “导入整合包”子面板 -->
-                    <Border x:Name="ModpackImportPanel" Visibility="Collapsed" Background="{StaticResource SideBrush}"
+                    <Border x:Name="ModpackImportPanel" Visibility="Collapsed" Background="{DynamicResource SideBrush}"
                             CornerRadius="8" Padding="14" Margin="0,4,0,0">
                         <StackPanel>
-                            <TextBlock TextWrapping="Wrap" Foreground="{StaticResource TextSecondaryBrush}" Margin="0,0,0,10">
+                            <TextBlock TextWrapping="Wrap" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,10">
                                 支持 .xclpack（本启动器的整合包格式）、Modrinth 的 .mrpack，以及普通 .zip 整合包。
                                 导入完成后会直接跳到「账户」步骤，账户选好即可启动。
                             </TextBlock>
                             <Button x:Name="ImportModpackBtn" Content="选择整合包文件..." HorizontalAlignment="Left"
                                     Padding="12,8" Click="ImportModpackShortcut_Click"/>
-                            <TextBlock x:Name="ModpackImportStatusText" FontSize="12" Foreground="{StaticResource TextSecondaryBrush}"
+                            <TextBlock x:Name="ModpackImportStatusText" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}"
                                        TextWrapping="Wrap" Margin="0,8,0,0"/>
                         </StackPanel>
                     </Border>
@@ -134,14 +135,14 @@
                 <!-- 步骤 1：账户 -->
                 <StackPanel x:Name="Step1Panel" Visibility="Collapsed">
                     <TextBlock Text="第一步：账户" FontSize="18" FontWeight="Bold" Margin="0,0,0,8"/>
-                    <TextBlock TextWrapping="Wrap" Foreground="{StaticResource TextSecondaryBrush}" Margin="0,0,0,16">
+                    <TextBlock TextWrapping="Wrap" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,16">
                         没有正版账户也没关系，可以先用离线账户体验（仅能进单机/离线服务器）；也可以直接在这里登录微软正版账户。
                     </TextBlock>
-                    <TextBlock x:Name="AccountStatusText" Text="" Margin="0,0,0,12" Foreground="{StaticResource TextPrimaryBrush}" TextWrapping="Wrap"/>
+                    <TextBlock x:Name="AccountStatusText" Text="" Margin="0,0,0,12" Foreground="{DynamicResource TextPrimaryBrush}" TextWrapping="Wrap"/>
 
                     <!-- 内联账户选择框：已有账户时可以直接从下拉框里选一个，不需要重新创建/登录 -->
                     <StackPanel x:Name="ExistingAccountPanel" Visibility="Collapsed" Margin="0,0,0,14">
-                        <TextBlock Text="选择一个已有账户" FontSize="12" Foreground="{StaticResource TextSecondaryBrush}" Margin="0,0,0,4"/>
+                        <TextBlock Text="选择一个已有账户" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4"/>
                         <Grid>
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="*"/>
@@ -176,7 +177,7 @@
                     <StackPanel x:Name="MicrosoftAccountPanel" Visibility="Collapsed">
                         <Button x:Name="MicrosoftLoginBtn" Content="登录微软账户" HorizontalAlignment="Left"
                                 Style="{StaticResource PrimaryButton}" Padding="14,8" Margin="0,0,0,8" Click="MicrosoftLogin_Click"/>
-                        <TextBlock TextWrapping="Wrap" FontSize="12" Foreground="{StaticResource TextSecondaryBrush}">
+                        <TextBlock TextWrapping="Wrap" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}">
                             会弹出一个设备代码窗口，按提示在浏览器里完成登录即可，登录成功后账户会自动保存，
                             以后在「账户管理」页也能看到它。
                         </TextBlock>
@@ -187,11 +188,11 @@
                 <!-- 步骤 2：版本 + 加载器 -->
                 <StackPanel x:Name="Step2Panel" Visibility="Collapsed">
                     <TextBlock Text="第二步：选择版本 &amp; 加载器" FontSize="18" FontWeight="Bold" Margin="0,0,0,8"/>
-                    <TextBlock TextWrapping="Wrap" Foreground="{StaticResource TextSecondaryBrush}" Margin="0,0,0,16">
+                    <TextBlock TextWrapping="Wrap" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,16">
                         不确定选什么就用默认的原版最新正式版；想装 Mod 就选一个加载器（Fabric 最简单，新手推荐）。
                     </TextBlock>
 
-                    <TextBlock Text="游戏文件夹" FontSize="12" Foreground="{StaticResource TextSecondaryBrush}" Margin="0,0,0,4"/>
+                    <TextBlock Text="游戏文件夹" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4"/>
                     <Grid Margin="0,0,0,14">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*"/>
@@ -201,7 +202,7 @@
                         <Button Grid.Column="1" Content="浏览..." Margin="8,0,0,0" Padding="12,8" Click="BrowseFolder_Click"/>
                     </Grid>
 
-                    <TextBlock Text="加载器" FontSize="12" Foreground="{StaticResource TextSecondaryBrush}" Margin="0,0,0,4"/>
+                    <TextBlock Text="加载器" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4"/>
                     <StackPanel Orientation="Horizontal" Margin="0,0,0,14">
                         <RadioButton x:Name="LoaderVanilla" Style="{StaticResource DownloadCategoryButton}" IsChecked="True"
                                      Content="原版（不装加载器）" Checked="LoaderType_Checked" Tag="Vanilla" Margin="0,0,6,0"/>
@@ -220,13 +221,13 @@
                             <ColumnDefinition Width="*"/>
                         </Grid.ColumnDefinitions>
                         <StackPanel Grid.Column="0">
-                            <TextBlock Text="Minecraft 版本" FontSize="12" Foreground="{StaticResource TextSecondaryBrush}" Margin="0,0,0,4"/>
+                            <TextBlock Text="Minecraft 版本" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4"/>
                             <ComboBox x:Name="McVersionCombo" Style="{StaticResource FilterComboBox}" Height="34"
                                       SelectionChanged="McVersionCombo_SelectionChanged"/>
                         </StackPanel>
                         <StackPanel Grid.Column="2" x:Name="BuildVersionPanel" Visibility="Collapsed">
                             <TextBlock x:Name="BuildVersionLabel" Text="加载器版本" FontSize="12"
-                                       Foreground="{StaticResource TextSecondaryBrush}" Margin="0,0,0,4"/>
+                                       Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4"/>
                             <ComboBox x:Name="BuildVersionCombo" Style="{StaticResource FilterComboBox}" Height="34"/>
                         </StackPanel>
                     </Grid>
@@ -239,21 +240,21 @@
                     <CheckBox x:Name="ShowAdvancedOptionsCheck" Content="高级选项（自定义启动参数 / 窗口大小 / 版本隔离等）"
                               Checked="ShowAdvancedOptions_Changed" Unchecked="ShowAdvancedOptions_Changed" Margin="0,4,0,0"/>
 
-                    <Border x:Name="AdvancedOptionsPanel" Visibility="Collapsed" Background="{StaticResource SideBrush}"
+                    <Border x:Name="AdvancedOptionsPanel" Visibility="Collapsed" Background="{DynamicResource SideBrush}"
                             CornerRadius="8" Padding="14" Margin="0,10,0,0">
                         <StackPanel>
-                            <TextBlock Text="自定义游戏/JVM 参数" FontSize="12" Foreground="{StaticResource TextSecondaryBrush}" Margin="0,0,0,4"/>
+                            <TextBlock Text="自定义游戏/JVM 参数" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4"/>
                             <TextBox x:Name="CustomJvmArgsBox" Style="{StaticResource SearchTextBox}" Height="34" Margin="0,0,0,10"
                                      ToolTip="例如：-Dfile.encoding=UTF-8，多个参数用空格分隔"/>
 
-                            <TextBlock Text="启动前执行命令（可选）" FontSize="12" Foreground="{StaticResource TextSecondaryBrush}" Margin="0,0,0,4"/>
+                            <TextBlock Text="启动前执行命令（可选）" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4"/>
                             <TextBox x:Name="PreLaunchCommandBox" Style="{StaticResource SearchTextBox}" Height="34" Margin="0,0,0,10"
                                      ToolTip="启动游戏前自动执行的命令行，例如同步配置的脚本；执行失败不影响游戏正常启动"/>
 
                             <CheckBox x:Name="IsolateVersionCheck" Content="为这个版本单独启用「版本隔离」(mods/资源包/存档等独立存放，与官方启动器行为一致)"
                                       IsChecked="True" Margin="0,0,0,10"/>
 
-                            <TextBlock Text="窗口大小" FontSize="12" Foreground="{StaticResource TextSecondaryBrush}" Margin="0,0,0,4"/>
+                            <TextBlock Text="窗口大小" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4"/>
                             <Grid>
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="*"/>
@@ -266,7 +267,7 @@
                         </StackPanel>
                     </Border>
 
-                    <TextBlock x:Name="Step2StatusText" FontSize="12" Foreground="{StaticResource TextSecondaryBrush}"
+                    <TextBlock x:Name="Step2StatusText" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}"
                                Margin="0,4,0,0" TextWrapping="Wrap"/>
                 </StackPanel>
 
@@ -274,7 +275,7 @@
                      "已选清单"；不再是"勾选 + 自动匹配最新版"，清单里锁定的是具体版本文件。 -->
                 <StackPanel x:Name="Step3Panel" Visibility="Collapsed">
                     <TextBlock Text="第三步：选 Mod（可跳过）" FontSize="18" FontWeight="Bold" Margin="0,0,0,8"/>
-                    <TextBlock x:Name="Step3HintText" TextWrapping="Wrap" Foreground="{StaticResource TextSecondaryBrush}" Margin="0,0,0,12">
+                    <TextBlock x:Name="Step3HintText" TextWrapping="Wrap" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,12">
                         搜索想要的 Mod，点进条目选择具体版本后会加入下面的"已选清单"，最后按清单里锁定的版本下载。
                         原版（没选加载器）无法装 Mod，这一步会自动跳过。
                     </TextBlock>
@@ -288,14 +289,14 @@
                         <Button Grid.Column="1" Content="搜索" Style="{StaticResource PrimaryButton}" Click="ModSearch_Click"/>
                     </Grid>
                     <ListBox x:Name="ModResultsList" Height="180" BorderThickness="1"
-                             BorderBrush="{StaticResource BorderBrush2}">
+                             BorderBrush="{DynamicResource BorderBrush2}">
                         <ListBox.ItemTemplate>
                             <DataTemplate>
                                 <Grid Margin="4" Tag="{Binding}" MouseLeftButtonUp="ModResultItem_Click" Cursor="Hand">
                                     <StackPanel>
                                         <TextBlock Text="{Binding Title}" FontWeight="Bold" FontSize="13"/>
                                         <TextBlock Text="{Binding Description}" FontSize="11"
-                                                   Foreground="{StaticResource TextSecondaryBrush}" TextWrapping="Wrap" MaxWidth="600"/>
+                                                   Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap" MaxWidth="600"/>
                                     </StackPanel>
                                 </Grid>
                             </DataTemplate>
@@ -304,7 +305,7 @@
 
                     <TextBlock Text="已选清单" FontWeight="Bold" FontSize="13" Margin="0,14,0,6"/>
                     <ListBox x:Name="ModSelectedList" Height="140" BorderThickness="1"
-                             BorderBrush="{StaticResource BorderBrush2}">
+                             BorderBrush="{DynamicResource BorderBrush2}">
                         <ListBox.ItemTemplate>
                             <DataTemplate>
                                 <Grid Margin="4">
@@ -315,20 +316,20 @@
                                     <StackPanel Grid.Column="0">
                                         <TextBlock Text="{Binding Title}" FontWeight="Bold" FontSize="13"/>
                                         <TextBlock Text="{Binding VersionLabel}" FontSize="11"
-                                                   Foreground="{StaticResource TextSecondaryBrush}"/>
+                                                   Foreground="{DynamicResource TextSecondaryBrush}"/>
                                     </StackPanel>
                                     <Button Grid.Column="1" Content="移除" Tag="{Binding}" Click="RemoveModSelection_Click"/>
                                 </Grid>
                             </DataTemplate>
                         </ListBox.ItemTemplate>
                     </ListBox>
-                    <TextBlock x:Name="ModSelectedCountText" FontSize="12" Foreground="{StaticResource TextSecondaryBrush}" Margin="0,8,0,0"/>
+                    <TextBlock x:Name="ModSelectedCountText" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,8,0,0"/>
                 </StackPanel>
 
                 <!-- 步骤 4：资源包/光影包（可跳过） -->
                 <StackPanel x:Name="Step4Panel" Visibility="Collapsed">
                     <TextBlock Text="第四步：选资源包 / 光影包（可跳过）" FontSize="18" FontWeight="Bold" Margin="0,0,0,8"/>
-                    <TextBlock TextWrapping="Wrap" Foreground="{StaticResource TextSecondaryBrush}" Margin="0,0,0,12">
+                    <TextBlock TextWrapping="Wrap" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,12">
                         搜索想要的材质包或光影包，勾选后会在最后统一下载。
                     </TextBlock>
                     <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
@@ -346,7 +347,7 @@
                         <Button Grid.Column="1" Content="搜索" Style="{StaticResource PrimaryButton}" Click="ResourceSearch_Click"/>
                     </Grid>
                     <ListBox x:Name="ResourceResultsList" Height="240" SelectionMode="Multiple" BorderThickness="1"
-                             BorderBrush="{StaticResource BorderBrush2}">
+                             BorderBrush="{DynamicResource BorderBrush2}">
                         <ListBox.ItemTemplate>
                             <DataTemplate>
                                 <StackPanel Orientation="Horizontal" Margin="4">
@@ -354,24 +355,24 @@
                                     <StackPanel>
                                         <TextBlock Text="{Binding Title}" FontWeight="Bold" FontSize="13"/>
                                         <TextBlock Text="{Binding Description}" FontSize="11"
-                                                   Foreground="{StaticResource TextSecondaryBrush}" TextWrapping="Wrap" MaxWidth="600"/>
+                                                   Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap" MaxWidth="600"/>
                                     </StackPanel>
                                 </StackPanel>
                             </DataTemplate>
                         </ListBox.ItemTemplate>
                     </ListBox>
-                    <TextBlock x:Name="ResourceSelectedCountText" FontSize="12" Foreground="{StaticResource TextSecondaryBrush}" Margin="0,8,0,0"/>
+                    <TextBlock x:Name="ResourceSelectedCountText" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,8,0,0"/>
                 </StackPanel>
 
                 <!-- 步骤 5：下载 + 启动 -->
                 <StackPanel x:Name="Step5Panel" Visibility="Collapsed">
                     <TextBlock Text="第五步：确认 &amp; 一键启动" FontSize="18" FontWeight="Bold" Margin="0,0,0,12"/>
-                    <TextBlock x:Name="SummaryText" FontSize="13" Foreground="{StaticResource TextPrimaryBrush}"
+                    <TextBlock x:Name="SummaryText" FontSize="13" Foreground="{DynamicResource TextPrimaryBrush}"
                                TextWrapping="Wrap" LineHeight="22" Margin="0,0,0,16"/>
 
                     <StackPanel x:Name="RunPanel" Visibility="Collapsed">
                         <TextBlock x:Name="RunStageText" FontSize="14" FontWeight="Bold" Margin="0,0,0,6"/>
-                        <TextBlock x:Name="RunDetailText" FontSize="12" Foreground="{StaticResource TextSecondaryBrush}" Margin="0,0,0,10" TextWrapping="Wrap"/>
+                        <TextBlock x:Name="RunDetailText" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,10" TextWrapping="Wrap"/>
                         <ProgressBar x:Name="RunBar" Height="10" Minimum="0" Maximum="100"/>
                     </StackPanel>
 

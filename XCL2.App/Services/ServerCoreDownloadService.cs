@@ -22,6 +22,19 @@ namespace XCL2.App.Services;
 ///             要用 `java -jar xxx-installer.jar --installServer <目标目录>` 本地跑一遍才会在目标目录
 ///             生成真正的服务端文件（run.bat/run.sh + libraries/ + 真正的服务端 jar）。
 ///             这里的 RunForgeInstallerAsync 就是负责跑这一步，需要调用方提供一个可用的 Java 路径。
+/// - Purpur:   api.purpurmc.org/v2/purpur，是 Paper 下游 fork，直接分发预编译 jar，
+///             接口形态是"列出某 MC 版本的 build 号数组 + /<version>/<build>/download 下载"，
+///             跟 Paper 的"查构建列表再下载"思路一样，只是没有 Paper 那种 channel/推荐标记，
+///             Purpur 的 /latest 端点直接给最新 build，本身就相当于"推荐版"。
+/// - Folia/Velocity/Waterfall: 都是 PaperMC 官方项目，复用跟 Paper 完全相同的
+///             fill.papermc.io/v3 API，只是 project key 换成 folia/velocity/waterfall，
+///             下载字段的 key 依然是 "server:default"（PaperMC 文档原话：这个 API 对所有
+///             project 都是同一套结构，project 名是唯一变量），所以这三个可以直接复用
+///             DownloadPaperAsync 的逻辑，只是把 project 参数化。
+/// - Spigot:   官方不提供预编译 jar，必须在本地用 BuildTools.jar 拉源码编译。这里下载的是
+///             BuildTools.jar 本体（hub.spigotmc.org 的 Jenkins 最新构建），真正编译由
+///             RunSpigotBuildToolsAsync 负责，需要调用方保证本机已装 Git，且给一个可用的
+///             Java 路径（编译过程本身也是 `java -jar BuildTools.jar` 起的）。
 /// </summary>
 public class ServerCoreDownloadService
 {
@@ -33,6 +46,9 @@ public class ServerCoreDownloadService
     private const string ForgeMavenBase = "https://maven.minecraftforge.net/net/minecraftforge/forge";
     // ForgePromotionsUrl 已挪到 ForgeVersionQueryService.ForgePromotionsUrl（消重复代码），这里不再重复定义。
     private const string NeoForgeMavenBase = "https://maven.neoforged.net/releases/net/neoforged/neoforge";
+    private const string PurpurApiBase = "https://api.purpurmc.org/v2/purpur";
+    private const string SpigotBuildToolsUrl =
+        "https://hub.spigotmc.org/jenkins/job/BuildTools/lastSuccessfulBuild/artifact/target/BuildTools.jar";
 
     public ServerCoreDownloadService()
     {
@@ -142,6 +158,103 @@ public class ServerCoreDownloadService
         return result;
     }
 
+    /// <summary>Purpur：api.purpurmc.org/v2/purpur 返回 { "versions": ["1.20.1", ...] }，
+    /// 按官方给出的顺序展示即可（一般是旧到新）。</summary>
+    public async Task<List<string>> GetPurpurVersionsAsync(CancellationToken ct = default)
+    {
+        var json = await _http.GetStringAsync(PurpurApiBase, ct);
+        using var doc = JsonDocument.Parse(json);
+        var result = new List<string>();
+        if (doc.RootElement.TryGetProperty("versions", out var versionsEl))
+        {
+            foreach (var v in versionsEl.EnumerateArray())
+                if (v.ValueKind == JsonValueKind.String)
+                    result.Add(v.GetString()!);
+        }
+        return result;
+    }
+
+    /// <summary>Purpur：某个 MC 版本下所有可用的 build 号，新到旧排列。Purpur 没有 Paper 那种
+    /// channel/推荐标记，这里把 API 报告的 "latest" build 号标记为推荐，其余不标记。</summary>
+    public async Task<List<ServerCoreBuild>> GetPurpurBuildsAsync(string mcVersion, CancellationToken ct = default)
+    {
+        var json = await _http.GetStringAsync($"{PurpurApiBase}/{mcVersion}", ct);
+        using var doc = JsonDocument.Parse(json);
+        var result = new List<ServerCoreBuild>();
+        if (!doc.RootElement.TryGetProperty("builds", out var buildsEl)) return result;
+
+        string? latest = buildsEl.TryGetProperty("latest", out var latestEl) ? latestEl.GetString() : null;
+        if (buildsEl.TryGetProperty("all", out var allEl))
+        {
+            foreach (var b in allEl.EnumerateArray())
+            {
+                var num = b.GetString()!;
+                result.Add(new ServerCoreBuild { DisplayVersion = num, IsRecommended = num == latest });
+            }
+            result.Reverse(); // "all" 通常按旧到新给出，反转成新到旧方便 UI 默认选中最新
+        }
+        return result;
+    }
+
+    /// <summary>Folia/Velocity/Waterfall 共用：都是 fill.papermc.io/v3 上的 PaperMC 官方项目，
+    /// project key 分别对应 folia/velocity/waterfall。逻辑和 GetPaperVersionsAsync 完全一致，
+    /// 抽成通用方法用 projectKey 参数化，避免三份重复代码。</summary>
+    private async Task<List<string>> GetPaperFamilyVersionsAsync(string projectKey, CancellationToken ct)
+    {
+        var json = await _http.GetStringAsync($"{PaperApiBase}/projects/{projectKey}", ct);
+        using var doc = JsonDocument.Parse(json);
+        var result = new List<string>();
+        if (doc.RootElement.TryGetProperty("versions", out var versionsEl))
+        {
+            foreach (var group in versionsEl.EnumerateObject())
+            {
+                if (group.Value.ValueKind == JsonValueKind.Array)
+                {
+                    foreach (var item in group.Value.EnumerateArray())
+                        if (item.ValueKind == JsonValueKind.String)
+                            result.Add(item.GetString()!);
+                }
+                else
+                {
+                    result.Add(group.Name);
+                }
+            }
+        }
+        return result.Distinct().ToList();
+    }
+
+    /// <summary>Folia/Velocity/Waterfall 共用的 build 列表查询，逻辑和 GetPaperBuildsAsync 一致，
+    /// project key 参数化。</summary>
+    private async Task<List<ServerCoreBuild>> GetPaperFamilyBuildsAsync(string projectKey, string mcVersion, CancellationToken ct)
+    {
+        var json = await _http.GetStringAsync($"{PaperApiBase}/projects/{projectKey}/versions/{mcVersion}/builds", ct);
+        using var doc = JsonDocument.Parse(json);
+        var result = new List<ServerCoreBuild>();
+        foreach (var b in doc.RootElement.EnumerateArray())
+        {
+            var buildNum = b.GetProperty("id").GetInt32();
+            var channel = b.TryGetProperty("channel", out var ch) ? ch.GetString() : null;
+            result.Add(new ServerCoreBuild
+            {
+                DisplayVersion = buildNum.ToString(),
+                // RECOMMENDED 是 Fill v3 新增的channel，文档里提到目前只有 Velocity 在用；
+                // 其余项目(Folia/Waterfall)沿用 Paper 那套 STABLE 标记，两种都判断一下更保险。
+                IsRecommended = channel == "STABLE" || channel == "RECOMMENDED" || channel == "default"
+            });
+        }
+        result.Reverse();
+        return result;
+    }
+
+    public Task<List<string>> GetFoliaVersionsAsync(CancellationToken ct = default) => GetPaperFamilyVersionsAsync("folia", ct);
+    public Task<List<ServerCoreBuild>> GetFoliaBuildsAsync(string mcVersion, CancellationToken ct = default) => GetPaperFamilyBuildsAsync("folia", mcVersion, ct);
+
+    public Task<List<string>> GetVelocityVersionsAsync(CancellationToken ct = default) => GetPaperFamilyVersionsAsync("velocity", ct);
+    public Task<List<ServerCoreBuild>> GetVelocityBuildsAsync(string mcVersion, CancellationToken ct = default) => GetPaperFamilyBuildsAsync("velocity", mcVersion, ct);
+
+    public Task<List<string>> GetWaterfallVersionsAsync(CancellationToken ct = default) => GetPaperFamilyVersionsAsync("waterfall", ct);
+    public Task<List<ServerCoreBuild>> GetWaterfallBuildsAsync(string mcVersion, CancellationToken ct = default) => GetPaperFamilyBuildsAsync("waterfall", mcVersion, ct);
+
     /// <summary>Forge：有官方安装器构建的 MC 版本列表。逻辑已抽到 ForgeVersionQueryService
     /// （见该类注释：跟 ClientLoaderInstallService 消除重复代码）。</summary>
     public Task<List<string>> GetForgeVersionsAsync(CancellationToken ct = default)
@@ -176,6 +289,11 @@ public class ServerCoreDownloadService
             ServerCoreType.Fabric => await DownloadFabricAsync(req, progress, ct),
             ServerCoreType.Forge => await DownloadForgeInstallerAsync(req, progress, ct),
             ServerCoreType.NeoForge => await DownloadNeoForgeInstallerAsync(req, progress, ct),
+            ServerCoreType.Purpur => await DownloadPurpurAsync(req, progress, ct),
+            ServerCoreType.Folia => await DownloadPaperFamilyAsync(req, "folia", progress, ct),
+            ServerCoreType.Velocity => await DownloadPaperFamilyAsync(req, "velocity", progress, ct),
+            ServerCoreType.Waterfall => await DownloadPaperFamilyAsync(req, "waterfall", progress, ct),
+            ServerCoreType.Spigot => await DownloadSpigotBuildToolsAsync(req, progress, ct),
             _ => throw new NotSupportedException($"暂不支持的核心类型：{req.CoreType}")
         };
     }
@@ -275,9 +393,14 @@ public class ServerCoreDownloadService
             var build = candidateBuilds[i];
             try
             {
-                // v3 下载端点：/v3/projects/paper/versions/{mcVersion}/builds/{build}/downloads/{fileName}
-                // 文件名规律固定为 paper-{mcVersion}-{build}.jar，但为稳妥起见先查一次 build 详情确认真实文件名，
-                // 避免第三方 API 未来调整命名规则导致直接拼错 URL。
+                // v3 下载端点：官方文档明确要求直接用 build 详情接口返回的 downloads."server:default".url
+                // 字段，不要自己拼 URL。之前这里是手动拼接 {PaperApiBase}/projects/paper/versions/{mc}/builds/{build}/downloads/{fileName}，
+                // 这个格式已经不对——Fill v3 上线后，真正的下载文件是从另一个专门的静态资源域名
+                // fill-data.papermc.io 提供的，文档原话是"下载链接已经直接嵌在 API 响应里了，
+                // 不需要也不建议自己再手动拼 URL"。手动拼出来的旧格式 URL 打到 fill.papermc.io
+                // 这个 API 域名本身、而不是真正存文件的 CDN，所以无论换哪个 build 号都会 404——
+                // 这正是"Paper 换了好几个 build 号还是全部下载失败"的根因，不是某个 build 本身
+                // 下架了，是 URL 拼接方式过时了。
                 progress?.Report(new ProgressInfo("查询构建详情", 1, 2, build));
                 var buildDetailJson = await _http.GetStringAsync(
                     $"{PaperApiBase}/projects/paper/versions/{req.McVersion}/builds/{build}", ct);
@@ -285,20 +408,23 @@ public class ServerCoreDownloadService
 
                 string fileName;
                 string? sha256 = null;
+                string? url = null;
                 var downloadsEl = buildDoc.RootElement.GetProperty("downloads");
                 if (downloadsEl.TryGetProperty("server:default", out var serverDl))
                 {
                     fileName = serverDl.GetProperty("name").GetString()!;
+                    url = serverDl.TryGetProperty("url", out var u) ? u.GetString() : null;
                     if (serverDl.TryGetProperty("checksums", out var checksums) && checksums.TryGetProperty("sha256", out var sh))
                         sha256 = sh.GetString();
                 }
                 else
                 {
-                    // 兜底：按官方文档记录的固定命名规则拼接
                     fileName = $"paper-{req.McVersion}-{build}.jar";
                 }
 
-                var url = $"{PaperApiBase}/projects/paper/versions/{req.McVersion}/builds/{build}/downloads/{fileName}";
+                // 兜底：万一某天响应里真的没有 url 字段（API 再次变动），退回手动拼接旧格式，
+                // 好过直接崩溃；但正常情况下应该总是走上面拿到的官方 url。
+                url ??= $"{PaperApiBase}/projects/paper/versions/{req.McVersion}/builds/{build}/downloads/{fileName}";
 
                 progress?.Report(new ProgressInfo(
                     i == 0 ? "下载服务端主程序" : $"该构建已不可用，改用 build {build} 重试",
@@ -339,6 +465,146 @@ public class ServerCoreDownloadService
             ServerJarFileName = "server.jar",
             // Paper 没有像 Vanilla version.json 那样公开的 javaVersion 字段，退化为按 MC 版本号区间估算，
             // 加载器本身不会降低/提高原版对应的 Java 版本要求。
+            RequiredJavaMajorVersion = ServerJavaRequirement.EstimateMajorVersionForMcVersion(req.McVersion)
+        };
+    }
+
+    private async Task<ServerCoreDownloadResult> DownloadPurpurAsync(ServerCoreDownloadRequest req,
+        IProgress<ProgressInfo>? progress, CancellationToken ct)
+    {
+        var build = req.BuildOrLoaderVersion;
+        if (string.IsNullOrEmpty(build))
+        {
+            // 不指定 build 时直接用官方 /latest 端点，比自己先查列表再挑"最新"更省一次请求，
+            // 也更准确（/latest 是官方权威地告诉你哪个是最新，不需要我们自己排序猜测）。
+            build = "latest";
+        }
+
+        var fileName = $"purpur-{req.McVersion}-{build}.jar";
+        var url = $"{PurpurApiBase}/{req.McVersion}/{build}/download";
+        var destPath = Path.Combine(req.TargetDir, "server.jar");
+
+        progress?.Report(new ProgressInfo("下载服务端主程序", 1, 1, fileName));
+        await DownloadFileNoHashCheckAsync(url, destPath, ct);
+
+        return new ServerCoreDownloadResult
+        {
+            DownloadedFilePath = destPath,
+            RequiresInstall = false,
+            ServerJarFileName = "server.jar",
+            // Purpur 基于 Paper，Java 版本要求跟随原版 MC 版本，没有独立的 javaVersion 字段可查，
+            // 用法跟 Paper 一样退化为按 MC 版本号区间估算。
+            RequiredJavaMajorVersion = ServerJavaRequirement.EstimateMajorVersionForMcVersion(req.McVersion)
+        };
+    }
+
+    /// <summary>Folia/Velocity/Waterfall 共用：三者都在 fill.papermc.io/v3 上，跟 Paper 是完全
+    /// 相同的 API 结构（下载字段同样是 "server:default"），只是 project key 不同，
+    /// 逻辑直接复用 DownloadPaperAsync 的"候选 build 逐个尝试，404 就换下一个"策略，
+    /// 参数化 projectKey 就不用三份几乎一样的代码。</summary>
+    private async Task<ServerCoreDownloadResult> DownloadPaperFamilyAsync(ServerCoreDownloadRequest req,
+        string projectKey, IProgress<ProgressInfo>? progress, CancellationToken ct)
+    {
+        List<string> candidateBuilds;
+        if (!string.IsNullOrEmpty(req.BuildOrLoaderVersion))
+        {
+            candidateBuilds = new List<string> { req.BuildOrLoaderVersion };
+        }
+        else
+        {
+            progress?.Report(new ProgressInfo("查询可用构建", 0, 2, req.McVersion));
+            var builds = await GetPaperFamilyBuildsAsync(projectKey, req.McVersion, ct);
+            if (builds.Count == 0)
+                throw new InvalidOperationException($"{projectKey} 没有找到 MC {req.McVersion} 对应的可用构建。");
+            var recommended = builds.Where(b => b.IsRecommended).Select(b => b.DisplayVersion);
+            var rest = builds.Select(b => b.DisplayVersion);
+            candidateBuilds = recommended.Concat(rest).Distinct().ToList();
+        }
+
+        Exception? lastFailure = null;
+        var succeeded = false;
+        var destPath = Path.Combine(req.TargetDir, "server.jar");
+        for (var i = 0; i < candidateBuilds.Count; i++)
+        {
+            var build = candidateBuilds[i];
+            try
+            {
+                progress?.Report(new ProgressInfo("查询构建详情", 1, 2, build));
+                var buildDetailJson = await _http.GetStringAsync(
+                    $"{PaperApiBase}/projects/{projectKey}/versions/{req.McVersion}/builds/{build}", ct);
+                using var buildDoc = JsonDocument.Parse(buildDetailJson);
+
+                string fileName;
+                string? sha256 = null;
+                string? url = null;
+                var downloadsEl = buildDoc.RootElement.GetProperty("downloads");
+                if (downloadsEl.TryGetProperty("server:default", out var serverDl))
+                {
+                    fileName = serverDl.GetProperty("name").GetString()!;
+                    url = serverDl.TryGetProperty("url", out var u) ? u.GetString() : null;
+                    if (serverDl.TryGetProperty("checksums", out var checksums) && checksums.TryGetProperty("sha256", out var sh))
+                        sha256 = sh.GetString();
+                }
+                else
+                {
+                    fileName = $"{projectKey}-{req.McVersion}-{build}.jar";
+                }
+
+                url ??= $"{PaperApiBase}/projects/{projectKey}/versions/{req.McVersion}/builds/{build}/downloads/{fileName}";
+
+                progress?.Report(new ProgressInfo(
+                    i == 0 ? "下载服务端主程序" : $"该构建已不可用，改用 build {build} 重试",
+                    2, 2, fileName));
+                await DownloadFileNoHashCheckAsync(url, destPath, ct);
+                if (sha256 != null)
+                {
+                    var actualSha256 = ComputeSha256(destPath);
+                    if (!string.Equals(actualSha256, sha256, StringComparison.OrdinalIgnoreCase))
+                        throw new IOException($"{projectKey} 服务端下载文件 SHA256 校验失败，文件可能损坏，请重试。");
+                }
+
+                succeeded = true;
+                break;
+            }
+            catch (Exception ex) when (IsNotFoundFailure(ex) && i < candidateBuilds.Count - 1)
+            {
+                lastFailure = ex;
+            }
+        }
+
+        if (!succeeded)
+        {
+            throw new IOException(
+                $"{projectKey} MC {req.McVersion} 尝试了 {candidateBuilds.Count} 个构建都下载失败" +
+                "（该版本近期的构建可能都已从官方仓库下架），建议换一个相近的 MC 版本重试。",
+                lastFailure);
+        }
+
+        return new ServerCoreDownloadResult
+        {
+            DownloadedFilePath = destPath,
+            RequiresInstall = false,
+            ServerJarFileName = "server.jar",
+            RequiredJavaMajorVersion = ServerJavaRequirement.EstimateMajorVersionForMcVersion(req.McVersion)
+        };
+    }
+
+    /// <summary>Spigot：只下载 BuildTools.jar 本体，不在这里触发编译（编译耗时数分钟，
+    /// 属于完全不同的中间态，调用方应显式调用 RunSpigotBuildToolsAsync 并展示对应进度）。</summary>
+    private async Task<ServerCoreDownloadResult> DownloadSpigotBuildToolsAsync(ServerCoreDownloadRequest req,
+        IProgress<ProgressInfo>? progress, CancellationToken ct)
+    {
+        var destPath = Path.Combine(req.TargetDir, "BuildTools.jar");
+        progress?.Report(new ProgressInfo("下载 BuildTools", 1, 1, "BuildTools.jar"));
+        await DownloadFileNoHashCheckAsync(SpigotBuildToolsUrl, destPath, ct);
+
+        return new ServerCoreDownloadResult
+        {
+            DownloadedFilePath = destPath,
+            RequiresInstall = false,
+            RequiresBuild = true,
+            // BuildTools 自己也是个普通 jar，跑它本身只需要一个能用的 Java；
+            // 真正编译出来的 Spigot 服务端所需 Java 版本跟随目标 MC 版本，一样按区间估算。
             RequiredJavaMajorVersion = ServerJavaRequirement.EstimateMajorVersionForMcVersion(req.McVersion)
         };
     }
@@ -518,6 +784,79 @@ public class ServerCoreDownloadService
         var runScript = Directory.GetFiles(targetDir, "run.bat").FirstOrDefault()
             ?? Directory.GetFiles(targetDir, "run.sh").FirstOrDefault();
         return runScript ?? targetDir;
+    }
+
+    // ============================================================
+    // Spigot BuildTools 本地编译
+    // ============================================================
+
+    /// <summary>
+    /// 运行 Spigot 的 BuildTools.jar 在本地拉源码并编译出真正可用的 Spigot 服务端 jar。
+    /// 前置要求：本机已安装 Git（BuildTools 内部用 JGit/命令行 git 拉取 Bukkit/CraftBukkit/Spigot
+    /// 源码，缺 Git 会直接报错退出，这里不重复实现"检测/安装 Git"，只把失败信息原样透传给调用方，
+    /// 调用方(开服向导)负责在事前提示用户"编译 Spigot 需要先装 Git"）。
+    /// 编译耗时通常几分钟（要下源码 + 反编译 + 打补丁 + 编译），比 Forge/NeoForge 装安装器慢得多，
+    /// 调用方应该展示专门的"正在编译 Spigot，请耐心等待"提示，而不是复用安装器那种"很快就好"的文案。
+    /// </summary>
+    public async Task<string> RunSpigotBuildToolsAsync(string buildToolsJarPath, string targetDir, string javaExePath,
+        string mcVersion, IProgress<string>? progress = null, CancellationToken ct = default)
+    {
+        if (!File.Exists(buildToolsJarPath))
+            throw new FileNotFoundException("找不到 BuildTools.jar。", buildToolsJarPath);
+        if (!File.Exists(javaExePath))
+            throw new FileNotFoundException("找不到可用的 Java 可执行文件，无法运行 BuildTools。", javaExePath);
+
+        progress?.Report("正在运行 BuildTools 编译 Spigot（需要联网拉取源码并本地编译，可能需要几分钟）...");
+
+        Directory.CreateDirectory(targetDir);
+        var psi = new ProcessStartInfo
+        {
+            FileName = javaExePath,
+            // --rev 指定要编译的 MC 版本；--output-dir 让编译产物直接落在目标目录，
+            // 不用编译完再手动搬运；BuildTools 1.x 起支持 --output-dir，老版本没有这个参数，
+            // 万一用户手上的 BuildTools.jar 版本太旧不支持，Process 会直接把参数当无效选项报错，
+            // 报错信息会原样透传给调用方，比静默失败更好排查。
+            ArgumentList = { "-jar", buildToolsJarPath, "--rev", mcVersion, "--output-dir", targetDir },
+            WorkingDirectory = targetDir,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true
+        };
+
+        using var process = new Process { StartInfo = psi };
+        var outputLines = new List<string>();
+        process.OutputDataReceived += (_, e) => { if (e.Data != null) { outputLines.Add(e.Data); progress?.Report(e.Data); } };
+        process.ErrorDataReceived += (_, e) => { if (e.Data != null) { outputLines.Add(e.Data); progress?.Report(e.Data); } };
+
+        process.Start();
+        process.BeginOutputReadLine();
+        process.BeginErrorReadLine();
+        await process.WaitForExitAsync(ct);
+
+        if (process.ExitCode != 0)
+        {
+            var tail = string.Join('\n', outputLines.TakeLast(30));
+            // Git 缺失是最常见的失败原因，专门识别一下给出更直接的提示，而不是让用户自己去翻几十行日志。
+            var looksLikeMissingGit = outputLines.Any(l =>
+                l.Contains("git", StringComparison.OrdinalIgnoreCase) &&
+                (l.Contains("not found", StringComparison.OrdinalIgnoreCase) ||
+                 l.Contains("cannot run program", StringComparison.OrdinalIgnoreCase) ||
+                 l.Contains("не найден", StringComparison.OrdinalIgnoreCase)));
+            var hint = looksLikeMissingGit
+                ? "\n这通常是因为本机没有安装 Git（BuildTools 编译 Spigot 依赖 Git 拉取源码），请先安装 Git 后重试。"
+                : "";
+            throw new InvalidOperationException($"BuildTools 编译失败（退出码 {process.ExitCode}）。{hint}最后输出：\n{tail}");
+        }
+
+        // BuildTools 产物文件名形如 "spigot-1.20.1.jar"（--output-dir 生效时直接落在 targetDir），
+        // 按 MC 版本号匹配优先；找不到就退化为目录下任意一个 spigot-*.jar，最后兜底返回目录本身。
+        var expectedName = $"spigot-{mcVersion}.jar";
+        var exact = Path.Combine(targetDir, expectedName);
+        if (File.Exists(exact)) return exact;
+
+        var anySpigotJar = Directory.GetFiles(targetDir, "spigot-*.jar").FirstOrDefault();
+        return anySpigotJar ?? targetDir;
     }
 
     // ============================================================

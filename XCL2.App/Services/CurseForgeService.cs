@@ -121,6 +121,52 @@ public class CurseForgeService
     }
 
     /// <summary>
+    /// 修复"下载失败"核心 bug：CurseForge API 的 /mods/{id}/files 接口里，downloadUrl 字段
+    /// 在很多情况下是 null——不是文件真的没法下载，而是作者在后台关闭了"允许第三方工具直接下载"
+    /// 这个开关（API 侧就直接不给这个字段了），但文件本身仍然实实在在地躺在 CurseForge 的 CDN 上，
+    /// 用户在网页上点"下载"照样能下。之前的代码一看 DownloadUrl 是 null 就直接抛异常给用户看"下载失败"，
+    /// 等于把"API 没给字段"错误地当成了"文件真的不存在"。
+    ///
+    /// CurseForge 的 CDN 地址遵循一个公开、稳定的规律，只要有 file.Id 就能拼出来（CurseForge 官方
+    /// 启动器和 CFCore 等第三方工具都采用同样的规律作为 fallback）：
+    ///   https://edge.forgecdn.net/files/{id/1000}/{id%1000}/{fileName}
+    /// 例如 id=4567890 -&gt; https://edge.forgecdn.net/files/4567/890/xxx.jar
+    /// media.forgecdn.net 是同一套文件的另一个域名镜像，两个都试一遍，任何一个 404/超时就换下一个，
+    /// 全部失败才真的报错——不再是"只要 API 字段是 null 就直接放弃"。
+    /// </summary>
+    private async Task<HttpResponseMessage> GetFileResponseAsync(CurseForgeFile file, CancellationToken ct)
+    {
+        var candidates = new List<string>();
+        if (!string.IsNullOrEmpty(file.DownloadUrl)) candidates.Add(file.DownloadUrl);
+
+        var part1 = file.Id / 1000;
+        var part2 = file.Id % 1000;
+        var encodedName = Uri.EscapeDataString(file.FileName);
+        candidates.Add($"https://edge.forgecdn.net/files/{part1}/{part2}/{encodedName}");
+        candidates.Add($"https://media.forgecdn.net/files/{part1}/{part2}/{encodedName}");
+
+        Exception? lastError = null;
+        foreach (var url in candidates)
+        {
+            try
+            {
+                var resp = await _http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, ct);
+                if (resp.IsSuccessStatusCode) return resp;
+                resp.Dispose();
+                lastError = new HttpRequestException($"HTTP {(int)resp.StatusCode}来自 {url}");
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                lastError = ex;
+            }
+        }
+
+        throw new InvalidOperationException(
+            "这个文件下载失败：已尝试官方链接和 CDN 镜像均无法访问，可能是作者彻底禁止了第三方下载，或文件已被下架，请尝试去 CurseForge 官网手动下载。",
+            lastError);
+    }
+
+    /// <summary>
     /// 下载一个地图/存档文件并解压到 &lt;minecraftDir&gt;/saves/ 下。
     /// 地图压缩包通常是"压缩包内一个文件夹=一个存档"的结构，直接解压到 saves/ 根目录即可，
     /// 不需要像数据包那样指定目标存档（地图本身就是新建一个独立存档）。
@@ -128,9 +174,6 @@ public class CurseForgeService
     public async Task<string> DownloadMapAsync(string minecraftDir, CurseForgeFile file,
         IProgress<string>? progress, CancellationToken ct = default)
     {
-        if (string.IsNullOrEmpty(file.DownloadUrl))
-            throw new InvalidOperationException("这个文件没有可用的下载链接（CurseForge 有部分作者禁止了第三方工具下载，只能去官网手动下载）。");
-
         var savesDir = Path.Combine(minecraftDir, "saves");
         Directory.CreateDirectory(savesDir);
 
@@ -138,9 +181,8 @@ public class CurseForgeService
         try
         {
             progress?.Report($"下载 {file.FileName} ...");
-            using (var resp = await _http.GetAsync(file.DownloadUrl, HttpCompletionOption.ResponseHeadersRead, ct))
+            using (var resp = await GetFileResponseAsync(file, ct))
             {
-                resp.EnsureSuccessStatusCode();
                 await using var fs = File.Create(tmpZip);
                 await resp.Content.CopyToAsync(fs, ct);
             }
@@ -163,9 +205,6 @@ public class CurseForgeService
     public async Task<string> DownloadModAsync(string minecraftDir, CurseForgeFile file,
         IProgress<string>? progress, CancellationToken ct = default)
     {
-        if (string.IsNullOrEmpty(file.DownloadUrl))
-            throw new InvalidOperationException("这个文件没有可用的下载链接（CurseForge 有部分作者禁止了第三方工具下载，只能去官网手动下载）。");
-
         var modsDir = Path.Combine(minecraftDir, "mods");
         Directory.CreateDirectory(modsDir);
         var destPath = Path.Combine(modsDir, file.FileName);
@@ -174,9 +213,8 @@ public class CurseForgeService
         try
         {
             progress?.Report($"下载 {file.FileName} ...");
-            using (var resp = await _http.GetAsync(file.DownloadUrl, HttpCompletionOption.ResponseHeadersRead, ct))
+            using (var resp = await GetFileResponseAsync(file, ct))
             {
-                resp.EnsureSuccessStatusCode();
                 await using var fs = File.Create(tmp);
                 await resp.Content.CopyToAsync(fs, ct);
             }
@@ -202,9 +240,6 @@ public class CurseForgeService
     public async Task<string> DownloadResourceAsync(string minecraftDir, CurseForgeResourceKind kind,
         CurseForgeFile file, IProgress<string>? progress, string? saveName = null, CancellationToken ct = default)
     {
-        if (string.IsNullOrEmpty(file.DownloadUrl))
-            throw new InvalidOperationException("这个文件没有可用的下载链接（CurseForge 有部分作者禁止了第三方工具下载，只能去官网手动下载）。");
-
         string destDir;
         if (kind == CurseForgeResourceKind.DataPack)
         {
@@ -233,9 +268,8 @@ public class CurseForgeService
         try
         {
             progress?.Report($"下载 {file.FileName} ...");
-            using (var resp = await _http.GetAsync(file.DownloadUrl, HttpCompletionOption.ResponseHeadersRead, ct))
+            using (var resp = await GetFileResponseAsync(file, ct))
             {
-                resp.EnsureSuccessStatusCode();
                 await using var fs = File.Create(tmp);
                 await resp.Content.CopyToAsync(fs, ct);
             }

@@ -178,7 +178,26 @@ public partial class VersionSelectPage : UserControl
         VersionResourcePackIsolationOverrideCheck.Checked += VersionResourcePackIsolationOverrideCheck_Changed;
         VersionResourcePackIsolationOverrideCheck.Unchecked += VersionResourcePackIsolationOverrideCheck_Changed;
 
+        // "开启后进入某某某服务器"：字典里有这个版本的 key 且值非空白，就是开启状态，
+        // 回显已保存的地址；否则视为关闭，地址框显示为空。
+        AutoJoinServerCheck.Checked -= AutoJoinServerCheck_Changed;
+        AutoJoinServerCheck.Unchecked -= AutoJoinServerCheck_Changed;
+        var hasAutoJoin = cfg.VersionAutoJoinServer.TryGetValue(versionId, out var autoJoinAddr)
+            && !string.IsNullOrWhiteSpace(autoJoinAddr);
+        AutoJoinServerCheck.IsChecked = hasAutoJoin;
+        AutoJoinServerAddressBox.Text = hasAutoJoin ? autoJoinAddr : "";
+        AutoJoinServerAddressBox.IsEnabled = hasAutoJoin;
+        AutoJoinServerCheck.Checked += AutoJoinServerCheck_Changed;
+        AutoJoinServerCheck.Unchecked += AutoJoinServerCheck_Changed;
+
         PerVersionSettingsPanel.Visibility = Visibility.Visible;
+    }
+
+    /// <summary>勾选/取消"开启后进入某某某服务器"时，只联动地址输入框是否可编辑，
+    /// 真正写入配置同样统一在"保存这个版本的设置"时处理，跟其它按版本设置的勾选框行为一致。</summary>
+    private void AutoJoinServerCheck_Changed(object sender, RoutedEventArgs e)
+    {
+        AutoJoinServerAddressBox.IsEnabled = AutoJoinServerCheck.IsChecked == true;
     }
 
     private void VersionIsolationOverrideCheck_Changed(object sender, RoutedEventArgs e)
@@ -222,6 +241,22 @@ public partial class VersionSelectPage : UserControl
 
         cfg.VersionIsolationOverrides[v.Id] = VersionIsolationOverrideCheck.IsChecked == true;
         cfg.VersionResourcePackIsolationOverrides[v.Id] = VersionResourcePackIsolationOverrideCheck.IsChecked == true;
+
+        if (AutoJoinServerCheck.IsChecked == true)
+        {
+            var addr = AutoJoinServerAddressBox.Text.Trim();
+            if (addr.Length == 0)
+            {
+                MessageBox.Show("已勾选「开启后进入某某某服务器」，请填写服务器地址（例如 play.example.com），或取消勾选。",
+                    "输入有误", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+            cfg.VersionAutoJoinServer[v.Id] = addr;
+        }
+        else
+        {
+            cfg.VersionAutoJoinServer.Remove(v.Id);
+        }
 
         cfg.SelectedVersionId = v.Id;
         _owner.ConfigService.Save();
