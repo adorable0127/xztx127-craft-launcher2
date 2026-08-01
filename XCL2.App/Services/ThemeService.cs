@@ -46,6 +46,26 @@ public static class ThemeService
     public const string SkinYellow = "Yellow";
     public const string SkinPurple = "Purple";
     public const string SkinPink = "Pink";
+    /// <summary>银色系：新增。强调色用冷灰蓝调的金属银，浅色版带一点金属光泽感的冷灰。</summary>
+    public const string SkinSilver = "Silver";
+    /// <summary>金色系：新增。强调色用暖金色，浅色版带一点香槟金的暖调背景。</summary>
+    public const string SkinGold = "Gold";
+    /// <summary>绿宝石绿：新增。对标 Minecraft 游戏内绿宝石的鲜亮翠绿，比普通"绿色"更游戏感、
+    /// 饱和度更高，跟已有色系里唯一沾绿的 TileGreen（仅用于卡片背景色块）区分开——
+    /// 这是第一个把绿色作为主强调色的色系。</summary>
+    public const string SkinEmerald = "Emerald";
+    /// <summary>下界红：新增。对标 Minecraft 下界(Nether)的暗红偏橙基调，比常规大红更暗、更耐看，
+    /// 补上现有色系里"暖色但不是黄/金"这一块空缺。</summary>
+    public const string SkinNether = "Nether";
+    /// <summary>末地石：新增。对标 Minecraft 末地(End)的浅黄绿偏灰基调，介于黄色系和绿宝石绿
+    /// 之间的冷调过渡色，比现有任何一个色系都更"苍白/疏离"，符合末地那种空旷诡异的氛围。</summary>
+    public const string SkinEndStone = "EndStone";
+    /// <summary>暖黄色：新增。跟已有 SkinYellow(琥珀黄，偏冷一点的金黄)区分开，走更浓郁、
+    /// 更偏橙调的"暖黄"路线，视觉上更接近向日葵/蜂蜜色而不是金属光泽的琥珀色。</summary>
+    public const string SkinWarmYellow = "WarmYellow";
+    /// <summary>亮橙色：新增。饱和度拉满的鲜橙色，比下界红更亮更跳、比暖黄更偏红，
+    /// 补上"高饱和暖色但独立于红/黄两端"这个位置，适合喜欢高对比度界面的用户。</summary>
+    public const string SkinOrange = "Orange";
     /// <summary>历史遗留色系常量：仅用于兼容"旧配置文件里 UiSkin 存的是 Dark"这种数据，
     /// 新增的色系选择 UI（设置页下拉框等）不再把它作为一个可选项列出——现在"要不要深色"
     /// 已经拆到 IsDarkMode 独立控制，不需要再单独占一个"色系"位置。</summary>
@@ -53,7 +73,7 @@ public static class ThemeService
 
     /// <summary>提供给设置页"色系"下拉框遍历用的可选值，不包含 SkinDark（见上面注释，
     /// 深色已经拆成 IsDarkMode 独立维度，不再是一个单独的色系选项）。</summary>
-    public static readonly string[] AllSkins = { SkinWhite, SkinBlue, SkinYellow, SkinPurple, SkinPink };
+    public static readonly string[] AllSkins = { SkinWhite, SkinBlue, SkinYellow, SkinPurple, SkinPink, SkinSilver, SkinGold, SkinEmerald, SkinNether, SkinEndStone, SkinWarmYellow, SkinOrange };
 
     private sealed record Palette(
         string Accent, string AccentHover, string Glow, string GlowSoft,
@@ -159,6 +179,149 @@ public static class ThemeService
             TileBlue: "#1C3547", TileIndigo: "#212D4A", TileGreen: "#1B4230", TileOrange: "#45311A", TilePurple: "#3A2438",
             SuccessText: "#5FE092", WarningText: "#F5B565", WarningBanner: "#3D3220", Danger: "#F0716F", Divider: "#5C3A4A",
             ButtonBackground: "#5C3A4E", ButtonHoverBackground: "#744A62", ButtonForeground: "#FCE3EE"),
+
+        // ------- 银色系：新增。强调色用冷灰蓝调的金属银，整体走"金属感"路线而不是某个
+        // 鲜艳色相——浅色版背景带一点冷灰而不是纯白，强调色是偏蓝的银灰，区别于白色系
+        // 那种纯科技蓝，视觉上更接近"拉丝金属"质感。 -------
+        [(SkinSilver, false)] = new Palette(
+            Accent: "#8A96A6", AccentHover: "#6E7A8C", Glow: "#C4CDD9", GlowSoft: "#EEF1F5",
+            Panel: "#F7F8FA", Side: "#ECEEF2", Border: "#D3D8E0", BorderHover: "#AEB6C2",
+            TextPrimary: "#20242B", TextSecondary: "#6B7280",
+            TileBlue: "#EAEDF2", TileIndigo: "#ECEEF5", TileGreen: "#E7F0EA", TileOrange: "#F5EFE7", TilePurple: "#EDEAF2",
+            SuccessText: "#1E9E4F", WarningText: "#D9822B", WarningBanner: "#F3F4F6", Danger: "#D64545", Divider: "#D3D8E0",
+            ButtonBackground: "#DCE0E6", ButtonHoverBackground: "#CBD0D8", ButtonForeground: "#2A2F38"),
+
+        // 银色系-深：深灰黑背景配亮银强调色，比白色系-深更冷、更"金属"，避免跟白色系-深
+        // 那种偏中性的深色混淆——银色系-深的强调色明确带一点冷蓝灰，突出"抛光金属"质感。
+        [(SkinSilver, true)] = new Palette(
+            Accent: "#B8C2D0", AccentHover: "#CBD3DE", Glow: "#DCE3EC", GlowSoft: "#2A2E36",
+            Panel: "#22252B", Side: "#17191E", Border: "#454B55", BorderHover: "#5C636F",
+            TextPrimary: "#F0F2F5", TextSecondary: "#B4BAC4",
+            TileBlue: "#2A3038", TileIndigo: "#2A2D38", TileGreen: "#213028", TileOrange: "#332C22", TilePurple: "#2C2A38",
+            SuccessText: "#5FE092", WarningText: "#F5B565", WarningBanner: "#332C22", Danger: "#F0716F", Divider: "#454B55",
+            ButtonBackground: "#3A4048", ButtonHoverBackground: "#484F59", ButtonForeground: "#E8ECF2"),
+
+        // ------- 金色系：新增。强调色用暖金色，浅色版带一点香槟金背景，整体走"奢华暖调"路线。 -------
+        [(SkinGold, false)] = new Palette(
+            Accent: "#C8962C", AccentHover: "#A87A1E", Glow: "#F0C468", GlowSoft: "#FBF0D8",
+            Panel: "#FFFCF4", Side: "#FBF1DA", Border: "#EAD9A8", BorderHover: "#DDBE70",
+            TextPrimary: "#2E2308", TextSecondary: "#8A7440",
+            TileBlue: "#EAF1FF", TileIndigo: "#EEF1FF", TileGreen: "#EAF6E2", TileOrange: "#FBEBD2", TilePurple: "#F2E9F8",
+            SuccessText: "#1E9E4F", WarningText: "#B5651D", WarningBanner: "#FBF0D8", Danger: "#D64545", Divider: "#EAD9A8",
+            ButtonBackground: "#F2E0AC", ButtonHoverBackground: "#EBD188", ButtonForeground: "#5C4310"),
+
+        // 金色系-深：深棕黑背景配亮金强调色，比黄色系-深更沉稳、更接近"暗金属光泽"而不是
+        // 明黄，强调色饱和度略降、亮度提高，保证在深背景上依然清晰可辨又不刺眼。
+        [(SkinGold, true)] = new Palette(
+            Accent: "#E0B454", AccentHover: "#EAC578", Glow: "#F0C468", GlowSoft: "#382C12",
+            Panel: "#26200F", Side: "#191408", Border: "#4E4426", BorderHover: "#665A34",
+            TextPrimary: "#F7F0DE", TextSecondary: "#C9BC93",
+            TileBlue: "#1C3547", TileIndigo: "#212D4A", TileGreen: "#213028", TileOrange: "#443616", TilePurple: "#2C2438",
+            SuccessText: "#B8D45A", WarningText: "#F5B565", WarningBanner: "#443616", Danger: "#F0716F", Divider: "#4E4426",
+            ButtonBackground: "#544620", ButtonHoverBackground: "#6C5B2A", ButtonForeground: "#F8ECC4"),
+
+        // ------- 绿宝石绿：新增。对标游戏内绿宝石的鲜亮翠绿，比 TileGreen 那种柔和薄荷绿更
+        // 饱和、更"宝石感"，浅色版背景带一点淡绿，强调色是接近游戏内绿宝石矿石的翠绿色。 -------
+        [(SkinEmerald, false)] = new Palette(
+            Accent: "#17A362", AccentHover: "#0F8650", Glow: "#4CD98A", GlowSoft: "#DFF6E9",
+            Panel: "#F5FCF8", Side: "#E3F5EA", Border: "#BEE5CE", BorderHover: "#8AD1AC",
+            TextPrimary: "#0F2A1C", TextSecondary: "#5C8A70",
+            TileBlue: "#E3F0FF", TileIndigo: "#E9EEFF", TileGreen: "#D9F2E3", TileOrange: "#FFF1E3", TilePurple: "#F1E9FF",
+            SuccessText: "#0F8650", WarningText: "#D9822B", WarningBanner: "#FFF7E6", Danger: "#D64545", Divider: "#BEE5CE",
+            ButtonBackground: "#C0EAD3", ButtonHoverBackground: "#9ADDB9", ButtonForeground: "#0C4A2C"),
+
+        // 绿宝石绿-深：深绿黑背景配亮翠绿强调色，保持"宝石在暗处发光"的视觉联想，
+        // 比一般深色系多一分饱和度，避免显得像普通深灰绿而失去"宝石感"。
+        [(SkinEmerald, true)] = new Palette(
+            Accent: "#3ED88A", AccentHover: "#5EE6A0", Glow: "#4CD98A", GlowSoft: "#12301F",
+            Panel: "#17241C", Side: "#0F1912", Border: "#2E4A38", BorderHover: "#3C614A",
+            TextPrimary: "#E8F7EE", TextSecondary: "#A8CBB6",
+            TileBlue: "#1C3547", TileIndigo: "#212D4A", TileGreen: "#1B4230", TileOrange: "#45311A", TilePurple: "#2E2448",
+            SuccessText: "#5FE092", WarningText: "#F5B565", WarningBanner: "#3D3220", Danger: "#F0716F", Divider: "#2E4A38",
+            ButtonBackground: "#28503A", ButtonHoverBackground: "#356848", ButtonForeground: "#DEF7E7"),
+
+        // ------- 下界红：新增。对标 Minecraft 下界(Nether)的暗红偏橙基调，比常规大红更暗、
+        // 更耐看，浅色版背景带一点淡橙红（类似下界岩的暖调），强调色是深砖红而不是刺眼的
+        // 正红，避免长时间使用显得过于警示/刺激。 -------
+        [(SkinNether, false)] = new Palette(
+            Accent: "#B8422E", AccentHover: "#96341F", Glow: "#E8703F", GlowSoft: "#FBE6DC",
+            Panel: "#FFF9F6", Side: "#FBEBE3", Border: "#F0CDBB", BorderHover: "#E2A488",
+            TextPrimary: "#331A10", TextSecondary: "#8C6250",
+            TileBlue: "#E7F0FF", TileIndigo: "#EAF1FF", TileGreen: "#E7F6EC", TileOrange: "#FBE3D2", TilePurple: "#F1E9FF",
+            SuccessText: "#1E9E4F", WarningText: "#B5651D", WarningBanner: "#FBEBE3", Danger: "#B8422E", Divider: "#F0CDBB",
+            ButtonBackground: "#F2C7B0", ButtonHoverBackground: "#EAAD8C", ButtonForeground: "#5C2414"),
+
+        // 下界红-深：深红棕黑背景（接近下界岩石缝里透出的暗光），强调色提亮成更明亮的
+        // 橙红，保证深色背景下依然醒目，同时不撞常规 Danger 红——两者色相接近时特意
+        // 让 Danger 保持独立的鲜红，跟 Accent 的暗橙红拉开区分度，避免"到底哪个是警告"混淆。
+        [(SkinNether, true)] = new Palette(
+            Accent: "#E8703F", AccentHover: "#F08858", Glow: "#F0955F", GlowSoft: "#3D2015",
+            Panel: "#281A14", Side: "#1B110C", Border: "#54382A", BorderHover: "#6E4A38",
+            TextPrimary: "#FAEEE6", TextSecondary: "#D6B3A0",
+            TileBlue: "#1C3547", TileIndigo: "#212D4A", TileGreen: "#1B4230", TileOrange: "#4A3018", TilePurple: "#2E2448",
+            SuccessText: "#5FE092", WarningText: "#F5B565", WarningBanner: "#4A3018", Danger: "#F0716F", Divider: "#54382A",
+            ButtonBackground: "#5C3A28", ButtonHoverBackground: "#744A32", ButtonForeground: "#FCE3D4"),
+
+        // ------- 末地石：新增。对标 Minecraft 末地(End)那种苍白偏黄绿的石头基调，冷调、
+        // 略带疏离感，跟黄色系(暖)、绿宝石绿(饱和)都拉开区分度——浅色版背景接近末地石本身
+        // 的浅米黄灰，强调色是低饱和度的黄绿，刻意不做得鲜艳，符合末地空旷诡异的氛围。 -------
+        [(SkinEndStone, false)] = new Palette(
+            Accent: "#A8A468", AccentHover: "#8C8850", Glow: "#D6D2A0", GlowSoft: "#F3F1E0",
+            Panel: "#FBFAF3", Side: "#F1EFDF", Border: "#DEDABE", BorderHover: "#C4BE94",
+            TextPrimary: "#26241A", TextSecondary: "#7A7660",
+            TileBlue: "#E7EEF0", TileIndigo: "#EAEEE8", TileGreen: "#EAF0DC", TileOrange: "#F5EEDA", TilePurple: "#EEEBE0",
+            SuccessText: "#1E9E4F", WarningText: "#D9822B", WarningBanner: "#F5F2DE", Danger: "#D64545", Divider: "#DEDABE",
+            ButtonBackground: "#E4DFB8", ButtonHoverBackground: "#D6D094", ButtonForeground: "#4A4626"),
+
+        // 末地石-深：深灰绿黑背景，接近末地维度那种昏暗虚空的观感，强调色保留低饱和度的
+        // 苍黄绿、不提亮太多，避免"末地石"这个疏离冷调的定位被做成普通鲜艳深色系。
+        [(SkinEndStone, true)] = new Palette(
+            Accent: "#C4BE7C", AccentHover: "#D2CC90", Glow: "#D6D2A0", GlowSoft: "#2C2A1E",
+            Panel: "#212019", Side: "#161510", Border: "#48452F", BorderHover: "#5E5A3F",
+            TextPrimary: "#F0EEE0", TextSecondary: "#B8B396",
+            TileBlue: "#1C3547", TileIndigo: "#212D4A", TileGreen: "#2A331E", TileOrange: "#3D3420", TilePurple: "#2E2448",
+            SuccessText: "#5FE092", WarningText: "#F5B565", WarningBanner: "#3D3420", Danger: "#F0716F", Divider: "#48452F",
+            ButtonBackground: "#4A4630", ButtonHoverBackground: "#5E5940", ButtonForeground: "#F2EFD8"),
+
+        // ------- 暖黄色：新增。跟已有黄色系(琥珀色、偏金属光泽)区分开，走更浓郁的向日葵/
+        // 蜂蜜暖调，浅色版背景更暖、更接近奶油黄而不是米黄，强调色饱和度更高、更偏橙一点。 -------
+        [(SkinWarmYellow, false)] = new Palette(
+            Accent: "#E8940F", AccentHover: "#C87A08", Glow: "#FFC94D", GlowSoft: "#FFEEC2",
+            Panel: "#FFFAEE", Side: "#FEF0C8", Border: "#F5D889", BorderHover: "#EEBE50",
+            TextPrimary: "#332400", TextSecondary: "#8C6A1E",
+            TileBlue: "#FFF3D6", TileIndigo: "#FFF6E0", TileGreen: "#EDF3C8", TileOrange: "#FFE0B0", TilePurple: "#F5E6C8",
+            SuccessText: "#6B8F1E", WarningText: "#B5651D", WarningBanner: "#FFE9B8", Danger: "#D64545", Divider: "#F5D889",
+            ButtonBackground: "#FADB94", ButtonHoverBackground: "#F5C868", ButtonForeground: "#5C3D00"),
+
+        // 暖黄色-深：深褐黑背景配明亮蜂蜜黄强调色，比黄色系-深更暖、更浓郁，强调色饱和度
+        // 拉得更高一点，避免在深背景下显得跟黄色系-深太像。
+        [(SkinWarmYellow, true)] = new Palette(
+            Accent: "#FFB93D", AccentHover: "#FFC966", Glow: "#FFC94D", GlowSoft: "#40300F",
+            Panel: "#2A2010", Side: "#1D1509", Border: "#5C4A22", BorderHover: "#78622E",
+            TextPrimary: "#FAF0D8", TextSecondary: "#D6BE8C",
+            TileBlue: "#1C3547", TileIndigo: "#212D4A", TileGreen: "#3A3A17", TileOrange: "#4A3410", TilePurple: "#2E2448",
+            SuccessText: "#B8D45A", WarningText: "#F5B565", WarningBanner: "#4A3410", Danger: "#F0716F", Divider: "#5C4A22",
+            ButtonBackground: "#5C4614", ButtonHoverBackground: "#785C1E", ButtonForeground: "#FCEAB8"),
+
+        // ------- 亮橙色：新增。饱和度拉满的鲜橙，浅色版背景带一点淡橙而不是暖黄那种奶油调，
+        // 强调色比下界红更亮更跳、比暖黄更偏红，定位是"高对比度、精神抖擞"的橙色。 -------
+        [(SkinOrange, false)] = new Palette(
+            Accent: "#F0641A", AccentHover: "#D2500E", Glow: "#FF8F4D", GlowSoft: "#FFE4D2",
+            Panel: "#FFFAF7", Side: "#FFEBDE", Border: "#F7C7A8", BorderHover: "#F0A470",
+            TextPrimary: "#331A08", TextSecondary: "#8C5A38",
+            TileBlue: "#E7F0FF", TileIndigo: "#EAF1FF", TileGreen: "#E7F6EC", TileOrange: "#FFE0C8", TilePurple: "#F1E9FF",
+            SuccessText: "#1E9E4F", WarningText: "#B5651D", WarningBanner: "#FFE8D6", Danger: "#D64545", Divider: "#F7C7A8",
+            ButtonBackground: "#FAC89E", ButtonHoverBackground: "#F5AC70", ButtonForeground: "#5C2E0C"),
+
+        // 亮橙色-深：深棕黑背景配明亮橙强调色，是所有暖色系里最跳、最高对比度的深色版，
+        // 跟下界红-深(暗红偏橙、更沉稳)明确区分开——亮橙色-深更纯粹地偏橙、亮度更高。
+        [(SkinOrange, true)] = new Palette(
+            Accent: "#FF8A4D", AccentHover: "#FFA370", Glow: "#FF8F4D", GlowSoft: "#3D2415",
+            Panel: "#28190F", Side: "#1B1009", Border: "#543724", BorderHover: "#6E4A32",
+            TextPrimary: "#FAECE2", TextSecondary: "#D6AF94",
+            TileBlue: "#1C3547", TileIndigo: "#212D4A", TileGreen: "#1B4230", TileOrange: "#4A3018", TilePurple: "#2E2448",
+            SuccessText: "#5FE092", WarningText: "#F5B565", WarningBanner: "#4A3018", Danger: "#F0716F", Divider: "#543724",
+            ButtonBackground: "#5C3A20", ButtonHoverBackground: "#744A2A", ButtonForeground: "#FCE3D0"),
     };
 
     /// <summary>
@@ -302,6 +465,13 @@ public static class ThemeService
         SkinYellow => "黄色",
         SkinPurple => "紫色",
         SkinPink => "粉色",
+        SkinSilver => "银色",
+        SkinGold => "金色",
+        SkinEmerald => "绿宝石绿",
+        SkinNether => "下界红",
+        SkinEndStone => "末地石",
+        SkinWarmYellow => "暖黄色",
+        SkinOrange => "亮橙色",
         SkinDark => "黑色",
         _ => skin
     };

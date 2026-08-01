@@ -493,17 +493,35 @@ public class LauncherService
             // 导致把"压根没打算下载"的 Linux/macOS 库也当成"缺失"，纯净原版都会报依赖库缺失。
             foreach (var lib in d.Libraries.Where(l => l.IsApplicableToCurrentOs()))
             {
+                // 远古版本(1.8 及更早)的 lwjgl-platform / jinput-platform / twitch-platform 等条目，
+                // 是"纯 natives 聚合库"：完全没有 downloads.artifact（不需要放进 classpath 的普通
+                // jar），只有 natives + downloads.classifiers（给 DownloadService 提取成 windows
+                // natives 目录下的 dll）。PCL/HMCL 对这类条目的处理方式是：只管 natives 是否解压到位，
+                // 不要求它们有独立的 classpath jar。
+                //
+                // 之前这里只要 Downloads?.Artifact 缺失，就无差别地走 GetMavenPath() 兜底，把它当成
+                // Fabric/Quilt 风格的 "name+url" 库条目处理——但 lwjgl-platform 这类条目根本没有
+                // "url" 字段，GetMavenPath() 硬凑出的 "lwjgl-platform-2.9.0.jar" 这种路径在
+                // Mojang/BMCLAPI 仓库里从来就不存在、也从未被 DownloadService 下载过，于是被误判成
+                // "缺失"，导致所有远古版本（哪怕库文件全部下载完整）启动前都会被拦下来报错。
+                if (lib.Downloads?.Artifact == null && lib.Natives != null && lib.Natives.Count > 0)
+                    continue;
+
                 string? relativePath = null;
                 if (lib.Downloads?.Artifact is { } art && !string.IsNullOrEmpty(art.Path))
                 {
                     relativePath = art.Path;
                 }
-                else
+                else if (!string.IsNullOrEmpty(lib.Url))
                 {
                     // Fabric/Quilt 等：没有 downloads 对象，只有 "name" (Maven坐标) + "url"。
                     // 之前这里直接跳过，导致 loader 自身的 jar 从未进入 classpath，
                     // mainClass（如 net.fabricmc.loader.impl.launch.knot.KnotClient）根本找不到，
                     // Java 进程会在启动瞬间就因 "Could not find or load main class" 退出。
+                    //
+                    // 加上 "lib.Url 非空" 这个前提，避免跟上面 natives-only 条目的判断重叠：
+                    // lwjgl-platform 这类条目既没有 downloads.artifact 也没有 url，不该落到这个分支
+                    // 用 GetMavenPath() 硬凑一个从未存在过的路径。
                     relativePath = lib.GetMavenPath();
                 }
 

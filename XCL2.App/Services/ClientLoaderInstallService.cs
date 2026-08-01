@@ -31,6 +31,21 @@ namespace XCL2.App.Services;
 /// </summary>
 public class ClientLoaderInstallService : IDisposable
 {
+    /// <summary>
+    /// 跟 LauncherService 里同名方法逻辑一致（该文件改名容错查找）：优先按"文件夹名/版本 id"找精确
+    /// 文件名，找不到就退化为"文件夹里唯一一个该后缀的文件"。做成独立实例时需要把原版 client.jar
+    /// 拷贝进加载器自己的文件夹，这里要用同样的容错方式去定位原版 jar，避免用户手动改过原版
+    /// 版本文件夹名字时找不到文件。
+    /// </summary>
+    private static string? ResolveVersionFile(string dir, string preferredBaseName, string extension)
+    {
+        var exact = Path.Combine(dir, $"{preferredBaseName}.{extension}");
+        if (File.Exists(exact)) return exact;
+        if (!Directory.Exists(dir)) return null;
+        var matches = Directory.GetFiles(dir, $"*.{extension}");
+        return matches.Length == 1 ? matches[0] : null;
+    }
+
     private const string FabricMetaBase = "https://meta.fabricmc.net/v2";
     /// <summary>Quilt 官方 Meta API，接口形状(端点路径/返回字段)跟 Fabric Meta 几乎一一对应——
     /// Quilt 本来就是从 Fabric Loader fork 出来的，两边团队一直保持 Meta API 兼容，
@@ -205,10 +220,45 @@ public class ClientLoaderInstallService : IDisposable
         var versionDir = Path.Combine(minecraftDir, "versions", versionId);
         Directory.CreateDirectory(versionDir);
 
-        var versionJsonPath = Path.Combine(versionDir, $"{versionId}.json");
-        await File.WriteAllTextAsync(versionJsonPath, profileJson, ct);
+        // 4. 把加载器实例做成"独立实例"：不再靠 inheritsFrom 指向单独共用的原版文件夹，而是把原版
+        // client.jar 直接拷贝一份进这个加载器自己的版本文件夹，并去掉 profile json 里的 inheritsFrom
+        // 字段。这样每个 Fabric 实例（哪怕对应同一个 MC 版本、不同的 mod 列表）都是完全独立的文件夹，
+        // 跟纯净原版、以及其它加载器实例互不影响——删除/改名/单独导出一个 Fabric 实例，都不会波及
+        // 原版文件夹或其它加载器实例，符合 PCL2/HMCL 里"每个版本都是独立实例"的直觉。
+        // 之前 versionId 文件夹只落一份 json，靠 LauncherService 的 inheritsFrom 继承链去父版本
+        // 文件夹里找 jar；现在把 jar 也落一份在本地文件夹，profile json 也顺手去掉 inheritsFrom，
+        // 保证即使原版父版本文件夹以后被删掉，这个 Fabric 实例依然能独立启动。
+        var parentJarPath = ResolveVersionFile(parentVersionDir, mcVersion, "jar");
+        if (parentJarPath != null)
+        {
+            File.Copy(parentJarPath, Path.Combine(versionDir, $"{versionId}.jar"), overwrite: true);
+        }
 
-        // 4. 补下 libraries：Fabric profile json 里的库全部是 "name+url" 风格（无 downloads 对象），
+        // Fabric profile json 本身不带 assetIndex/assets/downloads 字段(它靠 inheritsFrom 指向原版
+        // 去继承这些信息)。去掉 inheritsFrom 之后如果不补上，LauncherService 会因为找不到 assetsId
+        // 而回退成 "legacy"，导致资源文件目录用错(新版本会找不到材质音效)。这里从原版自己的 json 里
+        // 读一份出来，把这三个字段原样搬进 Fabric 自己的 json，保证独立后信息完整、不依赖父版本文件夹。
+        var parentJsonPath = ResolveVersionFile(parentVersionDir, mcVersion, "json");
+        if (parentJsonPath != null)
+        {
+            var parentDetail = JsonSerializer.Deserialize<VersionDetail>(File.ReadAllText(parentJsonPath));
+            if (parentDetail != null)
+            {
+                detail.AssetIndex ??= parentDetail.AssetIndex;
+                detail.Assets ??= parentDetail.Assets;
+                detail.Downloads ??= parentDetail.Downloads;
+                detail.JavaVersion ??= parentDetail.JavaVersion;
+            }
+        }
+        detail.InheritsFrom = null;
+        detail.Id = versionId;
+        var finalProfileJson = JsonSerializer.Serialize(detail,
+            new JsonSerializerOptions { WriteIndented = true, DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull });
+
+        var versionJsonPath = Path.Combine(versionDir, $"{versionId}.json");
+        await File.WriteAllTextAsync(versionJsonPath, finalProfileJson, ct);
+
+        // 5. 补下 libraries：Fabric profile json 里的库全部是 "name+url" 风格（无 downloads 对象），
         // 复用 DownloadService 已经支持这种风格的下载逻辑，不重复实现一遍 Maven 坐标换算。
         progress?.Report(new ProgressInfo("下载 Fabric 加载器库文件", 0, Math.Max(detail.Libraries.Count, 1), versionId));
         await _vanillaDownloader.DownloadLibrariesOnlyAsync(minecraftDir, detail, progress, ct);
@@ -303,8 +353,33 @@ public class ClientLoaderInstallService : IDisposable
         var versionDir = Path.Combine(minecraftDir, "versions", versionId);
         Directory.CreateDirectory(versionDir);
 
+        // 跟 Fabric 一样做成"独立实例"：把原版 client.jar 拷贝进 Quilt 自己的版本文件夹，去掉
+        // inheritsFrom，并从原版 json 补齐 assetIndex/assets/downloads/javaVersion 字段——
+        // 理由和具体做法见 InstallFabricClientAsync 里的详细注释，这里两边保持一致。
+        var parentJarPath = ResolveVersionFile(parentVersionDir, mcVersion, "jar");
+        if (parentJarPath != null)
+        {
+            File.Copy(parentJarPath, Path.Combine(versionDir, $"{versionId}.jar"), overwrite: true);
+        }
+        var parentJsonPath = ResolveVersionFile(parentVersionDir, mcVersion, "json");
+        if (parentJsonPath != null)
+        {
+            var parentDetail = JsonSerializer.Deserialize<VersionDetail>(File.ReadAllText(parentJsonPath));
+            if (parentDetail != null)
+            {
+                detail.AssetIndex ??= parentDetail.AssetIndex;
+                detail.Assets ??= parentDetail.Assets;
+                detail.Downloads ??= parentDetail.Downloads;
+                detail.JavaVersion ??= parentDetail.JavaVersion;
+            }
+        }
+        detail.InheritsFrom = null;
+        detail.Id = versionId;
+        var finalProfileJson = JsonSerializer.Serialize(detail,
+            new JsonSerializerOptions { WriteIndented = true, DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull });
+
         var versionJsonPath = Path.Combine(versionDir, $"{versionId}.json");
-        await File.WriteAllTextAsync(versionJsonPath, profileJson, ct);
+        await File.WriteAllTextAsync(versionJsonPath, finalProfileJson, ct);
 
         // 3. 补下 libraries：Quilt profile json 里的库同样是"name+url"风格(无 downloads 对象)，
         // 复用跟 Fabric 共用的同一套下载逻辑。
@@ -471,6 +546,57 @@ public class ClientLoaderInstallService : IDisposable
                 .OrderByDescending(Directory.GetLastWriteTimeUtc)
                 .FirstOrDefault()
             : null;
+
+        // Forge/NeoForge 官方安装器生成的 version json 默认也是靠 inheritsFrom 指向原版文件夹
+        // （跟 Fabric/Quilt 改造前的行为一样），同一份原版 jar 被多个加载器实例共用。这里同样把它
+        // 改造成"独立实例"：把原版 client.jar 拷贝进安装器生成的这个文件夹，去掉 json 里的
+        // inheritsFrom，并从原版 json 补齐 assetIndex/assets/downloads/javaVersion 字段——
+        // 具体理由跟 InstallFabricClientAsync 里的注释一致，这里三种加载器统一处理方式。
+        if (candidate != null)
+        {
+            try
+            {
+                var loaderVersionId = Path.GetFileName(candidate);
+                var loaderJsonPath = ResolveVersionFile(candidate, loaderVersionId, "json");
+                if (loaderJsonPath != null)
+                {
+                    var loaderDetail = JsonSerializer.Deserialize<VersionDetail>(File.ReadAllText(loaderJsonPath));
+                    if (loaderDetail != null && !string.IsNullOrEmpty(loaderDetail.InheritsFrom))
+                    {
+                        var vanillaId = loaderDetail.InheritsFrom;
+                        var vanillaDir = Path.Combine(minecraftDir, "versions", vanillaId);
+                        var vanillaJarPath = ResolveVersionFile(vanillaDir, vanillaId, "jar");
+                        if (vanillaJarPath != null)
+                        {
+                            File.Copy(vanillaJarPath, Path.Combine(candidate, $"{loaderVersionId}.jar"), overwrite: true);
+                        }
+                        var vanillaJsonPath = ResolveVersionFile(vanillaDir, vanillaId, "json");
+                        if (vanillaJsonPath != null)
+                        {
+                            var vanillaDetail = JsonSerializer.Deserialize<VersionDetail>(File.ReadAllText(vanillaJsonPath));
+                            if (vanillaDetail != null)
+                            {
+                                loaderDetail.AssetIndex ??= vanillaDetail.AssetIndex;
+                                loaderDetail.Assets ??= vanillaDetail.Assets;
+                                loaderDetail.Downloads ??= vanillaDetail.Downloads;
+                                loaderDetail.JavaVersion ??= vanillaDetail.JavaVersion;
+                            }
+                        }
+                        loaderDetail.InheritsFrom = null;
+                        loaderDetail.Id = loaderVersionId;
+                        var finalJson = JsonSerializer.Serialize(loaderDetail,
+                            new JsonSerializerOptions { WriteIndented = true, DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull });
+                        await File.WriteAllTextAsync(loaderJsonPath, finalJson, ct);
+                    }
+                }
+            }
+            catch
+            {
+                // 独立实例化失败(比如原版 jar 意外找不到)不应该让整个 Forge/NeoForge 安装被判定为失败——
+                // 安装器本身已经成功产出了一个能用 inheritsFrom 正常启动的版本，独立化只是锦上添花，
+                // 失败了大不了退回旧的"共用原版文件夹"行为，游戏依然能正常启动。
+            }
+        }
 
         progress?.Report(new ProgressInfo("安装完成", 2, 2, fileName));
         return candidate != null ? Path.GetFileName(candidate) : fullVersion;
