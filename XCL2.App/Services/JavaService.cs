@@ -36,19 +36,46 @@ public class JavaService
     public static readonly int[] KnownGoodMajorVersions = { 8, 11, 17, 21, 25, 26 };
 
     /// <summary>
-    /// 尝试寻找可用的 java.exe：先看配置里手动指定的路径，再看已下载的便携版，最后看
+    /// 尝试寻找可用的 java.exe：先按"Java 列表"(InstalledJavas，用户可在设置页用上移/下移
+    /// 调整顺序)里的优先级顺序找，找不到再看配置里手动指定的路径、已下载的便携版，最后看
     /// JAVA_HOME/注册表/PATH。
     ///
-    /// 重要修复：之前这里只要 configuredPath 存在就直接返回，完全不管 preferMajorVersion，
-    /// 也不检查这个 Java 到底是不是对应版本——一旦用户曾经配置/下载过一个 Java（哪怠版本不对），
+    /// 重要修复(一)：之前这里只要 configuredPath 存在就直接返回，完全不管 preferMajorVersion，
+    /// 也不检查这个 Java 到底是不是对应版本——一旦用户曾经配置/下载过一个 Java（哪怕版本不对），
     /// 之后所有版本都会硬用这一个，造成 "class file version 69.0...only recognizes up to 65.0"
     /// 这种"版本要求的 Java 和实际启动用的 Java 对不上"的崩溃，且自动匹配形同虚设。
     /// 现在改为：当调用方明确要求了某个主版本号时，会先用 java.exe -version 实际探测每个候选
     /// (而不是猜文件夹名字)，只有版本真正吻合才采用；不吻合就继续往下找/最终返回 null
     /// 交给上层去下载正确版本。没有指定 preferMajorVersion 时行为不变(不做版本校验，能用就行)。
+    ///
+    /// 重要修复(二)：之前"多 Java 共存"只能通过 configuredPath/VersionJavaIdOverrides 强制指定
+    /// 某一个具体 Java，覆盖不到所有场景——比如全局默认选了 Java 21，遇到只支持 Java 8 的老 mod
+    /// (如部分 1.10 的 OptiFine)版本就直接用不了，得手动切来切去。现在改为：只要"Java 列表"里
+    /// 登记了任意条目，就按用户排好的优先级顺序(installedJavaService.GetJavaListInPriorityOrder)
+    /// 逐条尝试，选第一个跟当前要求兼容的那个——有 preferMajorVersion 时要求版本号精确吻合，
+    /// 没有时列表里排最前的可用项直接命中，不需要再为每个版本单独去配置里翻一遍。
     /// </summary>
-    public string? FindJava(string? configuredPath, int? preferMajorVersion = null)
+    public string? FindJava(string? configuredPath, int? preferMajorVersion = null, ConfigService? configService = null)
     {
+        // 第一优先级：用户在"Java 列表"里维护的、按 Priority 排序的登记项。
+        // 只有传入了 configService 时才会走这条路径——保持这个方法在没有 ConfigService 上下文的
+        // 调用点(比如单测/独立工具)下行为不变，不强制要求调用方总是传配置。
+        if (configService != null)
+        {
+            foreach (var entry in configService.GetJavaListInPriorityOrder())
+            {
+                if (string.IsNullOrEmpty(entry.JavawPath) || !File.Exists(entry.JavawPath)) continue;
+
+                if (preferMajorVersion is not > 0)
+                    return entry.JavawPath; // 没有版本要求：列表里优先级最高的可用项直接命中
+
+                // 有版本要求：优先信任登记时探测到的 MajorVersion(避免每次启动都重新起进程探测)，
+                // 缺失时才现测一次(兼容手动编辑 config.json 漏填版本号的情况)。
+                var detected = entry.MajorVersion ?? TryGetJavaMajorVersionSync(entry.JavawPath);
+                if (detected == preferMajorVersion.Value) return entry.JavawPath;
+            }
+        }
+
         // 收集所有"候选"，而不是找到第一个就直接返回——这样在有版本要求时可以继续往下找
         // 真正匹配的那一个，而不是被一个凑巧存在但版本不对的路径卡住。
         var orderedCandidates = new List<string>();

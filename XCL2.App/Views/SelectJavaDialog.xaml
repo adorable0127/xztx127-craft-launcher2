@@ -1,11 +1,12 @@
-<Window x:Class="XCL2.App.Views.SelectJavaWindow"
+<local:OverlayDialogControl x:Class="XCL2.App.Views.SelectJavaDialog"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="选择 Java"
-        Width="480" Height="260"
-        WindowStartupLocation="CenterOwner"
-        ResizeMode="NoResize"
-        Background="{DynamicResource PanelBrush}">
+        xmlns:local="clr-namespace:XCL2.App.Views"
+        Width="440">
+    <!-- 迁移自原 SelectJavaWindow（独立 Window），改造成进程内 Overlay 弹窗，
+         见 IOverlayDialog.cs / OverlayDialogService.cs 顶部注释。原来的 Width/Height/
+         WindowStartupLocation/ResizeMode/Background 这些"窗口级"属性全部不需要了——
+         尺寸由内容自然撑开，居中/圆角卡片背景/阴影都是 OverlayCard 统一提供的。 -->
     <StackPanel Margin="20">
         <TextBlock Text="从 Java 列表里选择要使用的 Java：" Margin="0,0,0,8" TextWrapping="Wrap"/>
         <ListBox x:Name="JavaListBox" Height="140" DisplayMemberPath="DisplayText"/>
@@ -16,4 +17,4 @@
             <Button x:Name="OkBtn" Content="确定" Width="80" Style="{DynamicResource PrimaryButton}" Click="Ok_Click" IsDefault="True"/>
         </StackPanel>
     </StackPanel>
-</Window>
+</local:OverlayDialogControl>

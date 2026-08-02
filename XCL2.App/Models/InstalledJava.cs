@@ -27,4 +27,11 @@ public class InstalledJava
     /// <summary>添加这条记录的方式，仅用于展示来源，不影响功能：Manual=手动浏览选择，
     /// Downloaded=启动器下载安装，Scanned=全盘扫描找到后添加。</summary>
     public string Source { get; set; } = "Manual";
+
+    /// <summary>用户可调整的优先级，数值越小优先级越高。新增记录时按当前列表末尾追加
+    /// (取现有最大值+1)，用户可以用「Java 列表」里的上移/下移按钮调整顺序。
+    /// 自动匹配(FindJava 的"未指定精确版本要求"场景)按这个顺序从高到低依次尝试，
+    /// 选第一个跟当前 MC 版本兼容的——不再是"只能强制指定一个 Java，覆盖不到所有场景"，
+    /// 而是维护一份优先级列表，不同 MC 版本各自匹配到列表里排序最靠前、又满足版本要求的那个。</summary>
+    public int Priority { get; set; }
 }

@@ -79,6 +79,16 @@ public class LauncherService
         public List<string>? SkinJvmArgs { get; set; }
 
         /// <summary>
+        /// 游戏内左下角的"版本类型"水印文字（对应 --versionType 参数，Minecraft 客户端
+        /// 原生就会把这个参数值渲染在主菜单/游戏内左下角，官方启动器传的是 "release"/
+        /// "snapshot" 等，第三方启动器习惯借用这个位置显示"启动器品牌+版本"，比如
+        /// PCL2 传的是 "Plain Craft Launcher 2"、HMCL 传的是 "HMCL"。
+        /// 见 AppConfig.GameVersionTypeLabel 的注释——由用户在设置页决定显示什么文字，
+        /// 默认 "XCL2"，留空则退回官方原始的 "release"（完全不显示品牌水印）。
+        /// </summary>
+        public string? VersionTypeLabel { get; set; }
+
+        /// <summary>
         /// 启动前执行的命令（高手模式可选，例如启动前先跑一个脚本备份存档/同步配置）。
         /// 原始命令行字符串，会通过系统默认 shell(cmd /c) 执行，工作目录设为 EffectiveGameDir。
         /// 执行失败/返回非 0 不会阻止游戏启动——这只是一个辅助钩子，不是启动的前置条件，
@@ -692,7 +702,11 @@ public class LauncherService
                 ? (opts.Account.MinecraftAccessToken ?? "0")
                 : "0",
             "--userType", opts.Account.Type == AccountType.Microsoft ? "msa" : "legacy",
-            "--versionType", "release",
+            // 游戏内左下角水印文字：见 LaunchOptions.VersionTypeLabel 注释。为空/null 时
+            // 退回官方原始的 "release"，跟这个功能加入之前的行为完全一致，不影响没有
+            // 设置过这项的老用户/未传这个字段的调用方（比如服务端相关流程如果复用了
+            // 同一套参数构建逻辑，未来接入时不传这个字段也不会出现空水印或异常）。
+            "--versionType", string.IsNullOrWhiteSpace(opts.VersionTypeLabel) ? "release" : opts.VersionTypeLabel,
             "--width", opts.WindowWidth.ToString(),
             "--height", opts.WindowHeight.ToString()
         });

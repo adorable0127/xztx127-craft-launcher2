@@ -75,6 +75,13 @@ public static class ThemeService
     /// 深色已经拆成 IsDarkMode 独立维度，不再是一个单独的色系选项）。</summary>
     public static readonly string[] AllSkins = { SkinWhite, SkinBlue, SkinYellow, SkinPurple, SkinPink, SkinSilver, SkinGold, SkinEmerald, SkinNether, SkinEndStone, SkinWarmYellow, SkinOrange };
 
+    /// <summary>当前是否深色模式，Apply 每次调用时同步更新。供 WindowChromeService 在
+    /// 新窗口刚创建（SourceInitialized）时查询"现在该用深色标题栏还是浅色标题栏"——
+    /// 那个时间点可能跟 ThemeService.Apply 的调用时机不同步（比如窗口是在设置页已经
+    /// 切换过深色模式之后才新打开的），需要一个随时可查的当前状态，而不是只能被动
+    /// 等 RefreshOpenWindows 广播。</summary>
+    public static bool CurrentIsDarkMode { get; private set; }
+
     private sealed record Palette(
         string Accent, string AccentHover, string Glow, string GlowSoft,
         string Panel, string Side, string Border, string BorderHover,
@@ -352,6 +359,8 @@ public static class ThemeService
 
     private static void Apply(string hue, bool isDark)
     {
+        CurrentIsDarkMode = isDark;
+
         if (!Palettes.TryGetValue((hue, isDark), out var p))
         {
             p = Palettes[(SkinWhite, isDark)];
@@ -404,8 +413,20 @@ public static class ThemeService
         foreach (Window window in Application.Current.Windows)
         {
             RefreshVisualTree(window);
+            // 标题栏（原生系统绘制部分，见 WindowChromeService 类注释里"顶部白条"的成因）
+            // 不在 WPF 资源系统管辖范围内，普通的画刷刷新逻辑碰不到它，这里单独调一次
+            // DWM API 让已打开窗口的标题栏立即跟着当前深浅色切换，不需要关闭重开窗口。
+            WindowChromeService.ApplyTitleBarTheme(window, CurrentIsDarkMode);
         }
     }
+
+    /// <summary>
+    /// RefreshOpenWindows 的公开入口，专供 LocalizationService（语言切换）复用同一套
+    /// "强制所有已打开窗口重新从资源字典取值"的刷新逻辑——语言字符串资源跟配色画刷
+    /// 资源遇到的是同一个 WPF Style-Seal 问题（见上面 RefreshVisualTree 的注释），
+    /// 没必要在两个服务里各写一份几乎相同的遍历代码。
+    /// </summary>
+    public static void RefreshOpenWindowsPublic() => RefreshOpenWindows();
 
     private static void RefreshVisualTree(DependencyObject node)
     {

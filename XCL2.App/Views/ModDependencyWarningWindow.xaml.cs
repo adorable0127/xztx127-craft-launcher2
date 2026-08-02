@@ -80,7 +80,7 @@ public partial class ModDependencyWarningWindow : Window
     {
         if (sender is not Button { Tag: MissingDependencyDisplay item } || item.Info.ModrinthSlug == null) return;
 
-        var progressWin = new ProgressWindow($"正在下载 {item.DisplayName} ...") { Owner = this };
+        var progressWin = new ProgressDialog($"正在下载 {item.DisplayName} ...");
         progressWin.Show();
         try
         {

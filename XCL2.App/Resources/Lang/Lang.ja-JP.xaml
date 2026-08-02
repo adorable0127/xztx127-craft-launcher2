@@ -1,0 +1,52 @@
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                    xmlns:system="clr-namespace:System;assembly=mscorlib">
+
+    <!-- 日本語（日本）。キー集合は Lang.zh-Hans.xaml と完全に一致させること。README.md 参照。 -->
+
+    <system:String x:Key="Str_Lang_DialogTitle">言語を選択</system:String>
+    <system:String x:Key="Str_Lang_EntryButton">言語</system:String>
+    <system:String x:Key="Str_Lang_ExperimentalNotice">一部の実験的機能は簡体字中国語UIでのみ利用できます。他の言語に切り替えると、これらの機能は一時的に非表示になります（機能自体には影響なく、翻訳がまだ用意されていないだけです）。</system:String>
+    <system:String x:Key="Str_Lang_Ok">OK</system:String>
+    <system:String x:Key="Str_Lang_Cancel">キャンセル</system:String>
+
+    <system:String x:Key="Str_Home_Welcome">XCL2 へようこそ</system:String>
+    <system:String x:Key="Str_Home_Subtitle">xztx127-craft-launcher 2</system:String>
+    <system:String x:Key="Str_Home_Toggle_DarkMode">ダークモード</system:String>
+    <system:String x:Key="Str_Home_Toggle_LightMode">ライトモード</system:String>
+    <system:String x:Key="Str_Home_Toggle_AutoCycle">自動切り替え</system:String>
+    <system:String x:Key="Str_Home_Toggle_AutoCycleOn">自動切り替え：オン</system:String>
+    <system:String x:Key="Str_Home_Toggle_NormalMode">通常モード</system:String>
+    <system:String x:Key="Str_Home_Toggle_ExpertMode">エキスパートモード</system:String>
+    <system:String x:Key="Str_Home_Toggle_GuestMode">ゲストモード</system:String>
+    <system:String x:Key="Str_Home_Toggle_GuestModeOn">ゲストモード：オン</system:String>
+        <system:String x:Key="Str_Home_Tile_Account_Title">アカウントログイン</system:String>
+    <system:String x:Key="Str_Home_Tile_Account_Desc">オフラインアカウント／Microsoft アカウント、いつでも切り替え可能</system:String>
+    <system:String x:Key="Str_Home_Tile_Launch_Title">ゲームを起動</system:String>
+    <system:String x:Key="Str_Home_Tile_Launch_Desc">現在選択中のバージョンとアカウントでそのままプレイ</system:String>
+    <system:String x:Key="Str_Home_Tile_QuickStart_Title">クイックスタート</system:String>
+    <system:String x:Key="Str_Home_Tile_QuickStart_Desc">バージョン・ローダー・Mod をまとめて設定</system:String>
+    <system:String x:Key="Str_Home_Tile_Download_Title">ダウンロードセンター</system:String>
+    <system:String x:Key="Str_Home_Tile_Download_Desc">ゲーム本体、Mod、マップ、リソースパックをダウンロード</system:String>
+    <system:String x:Key="Str_Home_Tile_ServerManager_Title">サーバー管理</system:String>
+    <system:String x:Key="Str_Home_Tile_ServerManager_Desc">ローカルサーバーの作成/起動、LAN・トンネリングの手順つき</system:String>
+    <system:String x:Key="Str_Home_Tile_Settings_Title">設定</system:String>
+    <system:String x:Key="Str_Home_Tile_Settings_Desc">Java、モード切り替え、ウィンドウサイズなど</system:String>
+
+    <system:String x:Key="Str_Main_WindowTitlePrefix">XCL2 - xztx127-craft-launcher 2</system:String>
+    <system:String x:Key="Str_Nav_Home">ホーム</system:String>
+    <system:String x:Key="Str_Nav_Versions">バージョン選択</system:String>
+    <system:String x:Key="Str_Nav_Download">ダウンロード</system:String>
+    <system:String x:Key="Str_Nav_Multiplayer">マルチプレイ</system:String>
+    <system:String x:Key="Str_Nav_ModManager">Mod 管理</system:String>
+    <system:String x:Key="Str_Nav_ServerManager">サーバー管理</system:String>
+    <system:String x:Key="Str_Nav_Accounts">アカウント管理</system:String>
+    <system:String x:Key="Str_Nav_Settings">設定</system:String>
+    <system:String x:Key="Str_Nav_Logs">ログ</system:String>
+    <system:String x:Key="Str_Nav_Experimental">実験的機能</system:String>
+
+    <system:String x:Key="Str_Settings_LanguageSection_Title">ランチャーUI言語</system:String>
+    <system:String x:Key="Str_Settings_LanguageSection_Hint">すぐに反映されます。再起動は不要です。ここで選ぶのは「ランチャーUI」の言語で、下の「ゲーム内言語」とは別物です。</system:String>
+    <system:String x:Key="Str_Settings_LanguageSection_OpenPicker">🌐 言語を選択</system:String>
+
+</ResourceDictionary>

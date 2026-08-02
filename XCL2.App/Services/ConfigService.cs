@@ -1,4 +1,5 @@
 using System.IO;
+using System.Linq;
 using System.Text.Json;
 using XCL2.App.Models;
 
@@ -56,6 +57,20 @@ public class ConfigService
         Config.VersionJavaOverrides ??= new Dictionary<string, int>();
         Config.InstalledJavas ??= new List<InstalledJava>();
         Config.InstalledJavas.RemoveAll(j => j == null); // 清理数组中可能存在的 null 元素
+
+        // 老配置文件迁移：Priority 是新加的字段，旧版本写的 config.json 里没有这个属性，
+        // 反序列化后全部落到默认值 0，如果不处理，"Java 列表"里所有条目会一起并列最高优先级，
+        // 排序在 UI 上/FindJava 匹配时都会变得不确定（Distinct/OrderBy 对相同 Priority 的元素
+        // 相对顺序没有强保证）。这里检测到"存在 2 条以上、Priority 都是 0"这种典型的老配置
+        // 特征时，按它们在数组里的原始顺序(等于当初注册/添加的先后顺序)重新编号，
+        // 保持"老配置升级后，自动匹配顺序跟以前感觉一样(先添加的先用)"，不会因为这个新字段
+        // 突然打乱用户已经在用的 Java 优先级。
+        if (Config.InstalledJavas.Count > 1 && Config.InstalledJavas.All(j => j.Priority == 0))
+        {
+            for (var i = 0; i < Config.InstalledJavas.Count; i++)
+                Config.InstalledJavas[i].Priority = i;
+        }
+
         Config.VersionJavaIdOverrides ??= new Dictionary<string, string>();
 
         // 老配置文件迁移：只要有 FavoriteVersionIds 里的旧版本收藏、并且还没搬进
@@ -152,10 +167,36 @@ public class ConfigService
             Name = name,
             JavawPath = javawPath,
             MajorVersion = majorVersion,
-            Source = source
+            Source = source,
+            // 新记录追加到优先级列表末尾(取当前最大 Priority + 1)，不打乱已有条目的顺序；
+            // 列表为空时从 0 开始。
+            Priority = Config.InstalledJavas.Count == 0 ? 0 : Config.InstalledJavas.Max(j => j.Priority) + 1
         };
         Config.InstalledJavas.Add(entry);
         return entry;
+    }
+
+    /// <summary>把 Java 列表按 Priority 升序排列（数值越小越靠前=优先级越高），
+    /// UI 展示和 FindJava 自动匹配都用这个顺序，保证"列表看到的顺序"就是"实际匹配顺序"。</summary>
+    public List<InstalledJava> GetJavaListInPriorityOrder() =>
+        Config.InstalledJavas.OrderBy(j => j.Priority).ToList();
+
+    /// <summary>
+    /// 上移/下移一条 Java 记录：跟相邻的那一条交换 Priority 值，而不是重新给整个列表编号——
+    /// 这样每次移动只影响两条记录，逻辑简单且不会因为中途有记录被删除导致编号出现空洞后
+    /// 排序错乱。moveUp=true 表示往列表前面移(优先级提高)，false 表示往后移(优先级降低)。
+    /// 已经在最顶/最底时移动无效果(找不到可交换的相邻项)，调用方不需要额外判断边界。
+    /// </summary>
+    public void MoveJavaPriority(string javaId, bool moveUp)
+    {
+        var ordered = GetJavaListInPriorityOrder();
+        var index = ordered.FindIndex(j => j.Id == javaId);
+        if (index < 0) return;
+
+        var swapIndex = moveUp ? index - 1 : index + 1;
+        if (swapIndex < 0 || swapIndex >= ordered.Count) return;
+
+        (ordered[index].Priority, ordered[swapIndex].Priority) = (ordered[swapIndex].Priority, ordered[index].Priority);
     }
 
     /// <summary>按 Id 在 Java 列表里查找一条记录，找不到(比如用户后来手动删除了这条记录)返回 null。</summary>

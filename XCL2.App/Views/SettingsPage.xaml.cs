@@ -34,6 +34,7 @@ public partial class SettingsPage : UserControl
         HeightBox.Text = cfg.WindowHeight.ToString();
         SourceCombo.SelectedIndex = cfg.Source == DownloadSource.Official ? 1 : 0;
         SelectComboByTag(GameLanguageCombo, cfg.GameLanguage);
+        GameVersionTypeLabelBox.Text = cfg.GameVersionTypeLabel;
         PageAnimationsCheck.IsChecked = cfg.EnablePageAnimations;
         InjectionScanCheck.IsChecked = cfg.EnableInjectionScan;
         GameConsoleWindowCheck.IsChecked = cfg.EnableGameConsoleWindow;
@@ -155,15 +156,19 @@ public partial class SettingsPage : UserControl
         catch { /* 静默失败：这是打开设置页时的自动锦上添花操作，不应该弹窗打扰用户 */ }
     }
 
-    /// <summary>重新从 cfg.InstalledJavas 刷新列表框 + 全局默认下拉框的内容，并尽量保留原来选中的那一项。</summary>
+    /// <summary>重新从 cfg.InstalledJavas 刷新列表框 + 全局默认下拉框的内容，并尽量保留原来选中的那一项。
+    /// 按 Priority 升序展示（数值越小越靠前=优先级越高），跟 FindJava 自动匹配实际尝试的顺序一致——
+    /// 之前这里直接按 InstalledJavas 原始存储顺序(等于添加顺序)展示，跟"优先级"这个概念没有关联，
+    /// 用户上移/下移调整过后列表看起来却好像没变化(因为展示顺序压根不看 Priority)。</summary>
     private void RefreshJavaList()
     {
         var cfg = _owner.ConfigService.Config;
+        var ordered = _owner.ConfigService.GetJavaListInPriorityOrder();
 
         var previouslySelectedId = (JavaListBox.SelectedItem as JavaListItem)?.Entry?.Id;
 
         JavaListBox.Items.Clear();
-        foreach (var j in cfg.InstalledJavas)
+        foreach (var j in ordered)
             JavaListBox.Items.Add(new JavaListItem { Entry = j });
         if (previouslySelectedId != null)
         {
@@ -173,10 +178,30 @@ public partial class SettingsPage : UserControl
 
         DefaultJavaCombo.Items.Clear();
         DefaultJavaCombo.Items.Add(new JavaListItem { Entry = null }); // "不指定"
-        foreach (var j in cfg.InstalledJavas)
+        foreach (var j in ordered)
             DefaultJavaCombo.Items.Add(new JavaListItem { Entry = j });
         DefaultJavaCombo.SelectedItem = DefaultJavaCombo.Items.Cast<JavaListItem>()
             .FirstOrDefault(i => i.Entry?.Id == cfg.SelectedJavaId) ?? DefaultJavaCombo.Items[0];
+    }
+
+    /// <summary>"↑ 提高优先级"：跟上一条交换 Priority，已经是第一条时点击无效果（找不到可交换的上一项）。
+    /// 交换后立即保存配置(跟其它 Java 列表操作一致，不需要等用户点"保存设置")——排序是纯粹的
+    /// 组织性调整，不像内存大小/JVM参数那样需要"预览效果、确认后再生效"的缓冲。</summary>
+    private void MoveJavaUp_Click(object sender, RoutedEventArgs e)
+    {
+        if (JavaListBox.SelectedItem is not JavaListItem { Entry: { } entry }) return;
+        _owner.ConfigService.MoveJavaPriority(entry.Id, moveUp: true);
+        _owner.ConfigService.Save();
+        RefreshJavaList();
+    }
+
+    /// <summary>"↓ 降低优先级"：跟下一条交换 Priority，已经是最后一条时点击无效果。</summary>
+    private void MoveJavaDown_Click(object sender, RoutedEventArgs e)
+    {
+        if (JavaListBox.SelectedItem is not JavaListItem { Entry: { } entry }) return;
+        _owner.ConfigService.MoveJavaPriority(entry.Id, moveUp: false);
+        _owner.ConfigService.Save();
+        RefreshJavaList();
     }
 
     private static void SelectComboByTag(ComboBox combo, object tagValue)
@@ -232,6 +257,17 @@ public partial class SettingsPage : UserControl
         ThreadCountPanel.Visibility = MultiThreadDownloadCheck.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
     }
 
+    /// <summary>
+    /// 「设置」页里的语言入口：跟首页顶部"🌐 语言"按钮打开的是同一个 LanguageSelectDialog，
+    /// 共享同一份切换逻辑（见 HomePage.xaml.cs 的 LanguageEntryButton_Click），两处操作
+    /// 结果完全一致，不是两套实现。
+    /// </summary>
+    private void OpenLanguagePicker_Click(object sender, RoutedEventArgs e)
+    {
+        var dlg = new LanguageSelectDialog(_owner.ConfigService);
+        OverlayDialogService.ShowModal(dlg);
+    }
+
     private void ReopenWizard_Click(object sender, RoutedEventArgs e)
     {
         var wizard = new FirstRunWizardWindow(_owner) { Owner = Window.GetWindow(this) };
@@ -239,6 +275,7 @@ public partial class SettingsPage : UserControl
         // 向导跑完可能改了游戏文件夹/语言等设置，重新加载这个页面的显示值，
         // 避免用户看到的还是打开向导之前的旧值。
         SelectComboByTag(GameLanguageCombo, _owner.ConfigService.Config.GameLanguage);
+        GameVersionTypeLabelBox.Text = _owner.ConfigService.Config.GameVersionTypeLabel;
         StatusText.Text = "新手引导已完成，相关设置已自动刷新。";
     }
 
@@ -247,7 +284,7 @@ public partial class SettingsPage : UserControl
         var advanced = AdvancedModeCheck.IsChecked == true;
         var javaService = new JavaService();
 
-        var progressWin = new ProgressWindow("正在下载 Java 运行时...") { Owner = Window.GetWindow(this) };
+        var progressWin = new ProgressDialog("正在下载 Java 运行时...");
         progressWin.Show();
         try
         {
@@ -345,7 +382,7 @@ public partial class SettingsPage : UserControl
         }
         catch (Exception ex)
         {
-            MessageBox.Show("自动探测失败：\n" + ex.Message, "错误", MessageBoxButton.OK, MessageBoxImage.Error);
+            MessageBoxDialog.ShowError("自动探测失败：\n" + ex.Message);
         }
         finally
         {
@@ -361,16 +398,16 @@ public partial class SettingsPage : UserControl
     /// </summary>
     private async void ScanDiskForJava_Click(object sender, RoutedEventArgs e)
     {
-        var confirm = MessageBox.Show(
+        var confirm = MessageBoxDialog.ShowConfirm(
             "即将扫描本机所有固定磁盘（不含移动硬盘/U盘/网络盘），查找已安装的 Java (javaw.exe)。\n\n" +
             "这个过程可能需要几分钟，取决于磁盘上的文件数量。默认情况下 XCL2 只会在常见默认路径" +
             "(注册表、JAVA_HOME、PATH、便携版目录)查找 Java，不会做全盘扫描；\n\n" +
             "是否同意开始全盘扫描？",
-            "全盘扫描 Java - 需要确认", MessageBoxButton.YesNo, MessageBoxImage.Question);
-        if (confirm != MessageBoxResult.Yes) return;
+            "全盘扫描 Java - 需要确认");
+        if (!confirm) return;
 
         var javaService = new JavaService();
-        var progressWin = new ProgressWindow("正在全盘扫描 Java，请稍候...") { Owner = Window.GetWindow(this) };
+        var progressWin = new ProgressDialog("正在全盘扫描 Java，请稍候...");
         progressWin.Show();
 
         var cts = new System.Threading.CancellationTokenSource();
@@ -383,7 +420,7 @@ public partial class SettingsPage : UserControl
 
             if (candidates.Count == 0)
             {
-                MessageBox.Show("扫描完成，没有在本机磁盘上找到任何 javaw.exe。", "全盘扫描结果", MessageBoxButton.OK, MessageBoxImage.Information);
+                MessageBoxDialog.ShowInfo("扫描完成，没有在本机磁盘上找到任何 javaw.exe。", "全盘扫描结果");
                 return;
             }
 
@@ -408,7 +445,7 @@ public partial class SettingsPage : UserControl
         catch (Exception ex)
         {
             progressWin.Close();
-            MessageBox.Show("全盘扫描失败：\n" + ex.Message, "错误", MessageBoxButton.OK, MessageBoxImage.Error);
+            MessageBoxDialog.ShowError("全盘扫描失败：\n" + ex.Message);
         }
     }
 
@@ -462,16 +499,16 @@ public partial class SettingsPage : UserControl
     {
         if (JavaListBox.SelectedItem is not JavaListItem { Entry: { } entry })
         {
-            MessageBox.Show("请先在列表里选中要重命名的一项。", "提示", MessageBoxButton.OK, MessageBoxImage.Information);
+            MessageBoxDialog.ShowInfo("请先在列表里选中要重命名的一项。");
             return;
         }
 
-        var renameWindow = new RenameInstanceWindow(entry.Name,
-            name => _owner.ConfigService.Config.InstalledJavas.Any(j => j.Id != entry.Id && j.Name == name))
-        { Owner = Window.GetWindow(this), Title = "重命名 Java" };
-        if (renameWindow.ShowDialog() == true)
+        var renameDialog = new RenameInstanceDialog(entry.Name,
+            name => _owner.ConfigService.Config.InstalledJavas.Any(j => j.Id != entry.Id && j.Name == name),
+            title: "重命名 Java");
+        if (OverlayDialogService.ShowModal(renameDialog) == true)
         {
-            entry.Name = renameWindow.NewName;
+            entry.Name = renameDialog.NewName;
             _owner.ConfigService.Save();
             RefreshJavaList();
         }
@@ -481,16 +518,16 @@ public partial class SettingsPage : UserControl
     {
         if (JavaListBox.SelectedItem is not JavaListItem { Entry: { } entry })
         {
-            MessageBox.Show("请先在列表里选中要移除的一项。", "提示", MessageBoxButton.OK, MessageBoxImage.Information);
+            MessageBoxDialog.ShowInfo("请先在列表里选中要移除的一项。");
             return;
         }
 
-        var confirm = MessageBox.Show(
+        var confirm = MessageBoxDialog.ShowConfirm(
             $"确定要从 Java 列表移除「{entry.Name}」吗？\n\n" +
             "注意：这只是从列表里移除这条记录，不会删除实际的 Java 文件；\n" +
             "如果有版本/服务器实例正引用这一条，移除后它们会自动回退到自动探测逻辑。",
-            "确认移除", MessageBoxButton.YesNo, MessageBoxImage.Question);
-        if (confirm != MessageBoxResult.Yes) return;
+            "确认移除");
+        if (!confirm) return;
 
         var cfg = _owner.ConfigService.Config;
         cfg.InstalledJavas.RemoveAll(j => j.Id == entry.Id);
@@ -517,6 +554,7 @@ public partial class SettingsPage : UserControl
         cfg.WindowHeight = int.TryParse(HeightBox.Text, out var h) ? h : cfg.WindowHeight;
         cfg.Source = SourceCombo.SelectedIndex == 1 ? DownloadSource.Official : DownloadSource.BMCLAPI;
         if ((GameLanguageCombo.SelectedItem as ComboBoxItem)?.Tag is string lang) cfg.GameLanguage = lang;
+        cfg.GameVersionTypeLabel = GameVersionTypeLabelBox.Text?.Trim() ?? "";
         cfg.EnablePageAnimations = PageAnimationsCheck.IsChecked == true;
         cfg.EnableInjectionScan = InjectionScanCheck.IsChecked == true;
         cfg.EnableGameConsoleWindow = GameConsoleWindowCheck.IsChecked == true;
@@ -593,9 +631,9 @@ public partial class SettingsPage : UserControl
             }
             catch (Exception ex)
             {
-                MessageBox.Show(
+                MessageBoxDialog.ShowWarning(
                     $"自定义 Java 启动参数格式有误，未保存这一项（其余设置已正常保存）：\n{ex.Message}",
-                    "自定义启动参数格式错误", MessageBoxButton.OK, MessageBoxImage.Warning);
+                    "自定义启动参数格式错误");
             }
         }
 

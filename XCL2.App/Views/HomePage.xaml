@@ -79,6 +79,37 @@
             <Setter Property="LineHeight" Value="16"/>
         </Style>
 
+        <!-- 「语言」按钮外观跟访客模式那组胶囊按钮保持一致，但它是普通 Button（点击打开
+             语言选择弹窗，不是"开/关"状态），不能直接复用 GuestModeToggleStyle——那个样式
+             TargetType 是 ToggleButton，里面还有一个 IsChecked 触发器，Button 没有 IsChecked
+             这个属性，把 ToggleButton 专用样式套到 Button 上会在运行时抛
+             InvalidOperationException("TargetType 与元素类型不匹配")。这里单独复制一份同样的
+             胶囊外观，只去掉 IsChecked 触发器，其余（背景/圆角/hover 发光）完全一致。 -->
+        <Style x:Key="LanguageEntryButtonStyle" TargetType="Button">
+            <Setter Property="Background" Value="{DynamicResource SideBrush}"/>
+            <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource BorderBrush2}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Padding" Value="12,7"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="ToggleBorder" Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="16" Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="ToggleBorder" Property="Effect" Value="{StaticResource GlowEffect}"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
         <!-- 访客模式开关：未开启时是普通描边小胶囊按钮；开启后整体变成强调色填充，
              一眼就能看出"当前是访客模式"，不需要额外文字提示。 -->
         <Style x:Key="GuestModeToggleStyle" TargetType="ToggleButton">
@@ -126,6 +157,21 @@
                  全部做成同一个 GuestModeToggleStyle 胶囊按钮风格，保持视觉一致；点击立即写回
                  对应配置项并保存，跟「设置」页里的对应控件保持双向同步。 -->
             <StackPanel Grid.Row="0" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Top">
+                <!-- 「语言」按钮：放在整条按钮带最左边（其余按钮都是"深/浅色、自动循环、
+                     专家/访客模式"这类跟当前会话相关的临时性开关，语言是更底层、更少切换
+                     的设置，放在最左边跟其它开关拉开一点视觉区分）。点击打开独立的语言
+                     选择弹窗（LanguageSelectDialog），选择后立即切换+保存，弹窗自己关闭，
+                     这里不需要维护选中状态。 -->
+                <Button x:Name="LanguageEntryButton" Margin="0,0,10,0"
+                        Style="{StaticResource LanguageEntryButtonStyle}"
+                        Click="LanguageEntryButton_Click"
+                        ToolTip="切换启动器界面显示的语言（不影响游戏内语言，游戏内语言在「设置」页单独设置）">
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Text="&#127760;" FontSize="13" Margin="0,0,6,0"/>
+                        <TextBlock Text="{DynamicResource Str_Lang_EntryButton}" FontSize="13"/>
+                    </StackPanel>
+                </Button>
+
                 <!-- 「模式设置」按钮：切换深色/浅色模式，跟「配色皮肤」选的色系是独立维度——
                      只切明暗，色相不变（比如色系选了蓝色，这里切换只是在"蓝色系-浅"和
                      "蓝色系-深"之间切）。点击立即写回 cfg.IsDarkMode 并保存、立即应用。
@@ -176,8 +222,8 @@
             </StackPanel>
 
         <StackPanel Grid.Row="1" VerticalAlignment="Center">
-            <TextBlock Text="欢迎使用 XCL2" FontSize="28" FontWeight="Bold" Foreground="{DynamicResource TextPrimaryBrush}"/>
-            <TextBlock Text="xztx127-craft-launcher 2" FontSize="14" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,4,0,24"/>
+            <TextBlock Text="{DynamicResource Str_Home_Welcome}" FontSize="28" FontWeight="Bold" Foreground="{DynamicResource TextPrimaryBrush}"/>
+            <TextBlock Text="{DynamicResource Str_Home_Subtitle}" FontSize="14" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,4,0,24"/>
 
             <!-- 磁贴总控台：首页不再放"普通模式/高手模式"这种设置项(已经搬到「设置」页，
                  见 SettingsPage.xaml 的 AdvancedModeCheck)，改成一排功能磁贴，点哪个就直接
@@ -188,8 +234,8 @@
                         <Border Style="{StaticResource TileIconBadge}" Background="{DynamicResource TileBadgeBlueBrush}">
                             <TextBlock Text="&#9654;" Style="{StaticResource TileIconText}" Foreground="{DynamicResource AccentBrush}"/>
                         </Border>
-                        <TextBlock Text="启动游戏" Style="{StaticResource TileTitleText}"/>
-                        <TextBlock Text="用当前选中的版本和账户直接开玩" Style="{StaticResource TileDescText}"/>
+                        <TextBlock Text="{DynamicResource Str_Home_Tile_Launch_Title}" Style="{StaticResource TileTitleText}"/>
+                        <TextBlock Text="{DynamicResource Str_Home_Tile_Launch_Desc}" Style="{StaticResource TileDescText}"/>
                     </StackPanel>
                 </Button>
 
@@ -198,8 +244,8 @@
                         <Border Style="{StaticResource TileIconBadge}" Background="{DynamicResource TileBadgeIndigoBrush}">
                             <TextBlock Text="&#128100;" Style="{StaticResource TileIconText}"/>
                         </Border>
-                        <TextBlock Text="账户登录" Style="{StaticResource TileTitleText}"/>
-                        <TextBlock Text="离线账户 / 微软账户，随时切换" Style="{StaticResource TileDescText}"/>
+                        <TextBlock Text="{DynamicResource Str_Home_Tile_Account_Title}" Style="{StaticResource TileTitleText}"/>
+                        <TextBlock Text="{DynamicResource Str_Home_Tile_Account_Desc}" Style="{StaticResource TileDescText}"/>
                     </StackPanel>
                 </Button>
 

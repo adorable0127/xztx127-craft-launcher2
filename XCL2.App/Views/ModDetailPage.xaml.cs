@@ -167,7 +167,7 @@ public partial class ModDetailPage : UserControl
         }
         catch (Exception ex)
         {
-            MessageBox.Show("无法打开浏览器：\n" + ex.Message, "错误", MessageBoxButton.OK, MessageBoxImage.Error);
+            MessageBoxDialog.ShowError("无法打开浏览器：\n" + ex.Message, "错误");
         }
     }
 
@@ -201,8 +201,8 @@ public partial class ModDetailPage : UserControl
 
         if (_isDataPack && string.IsNullOrEmpty(SelectedSaveName))
         {
-            MessageBox.Show("请先选择要安装到哪个存档（数据包必须放进具体存档才会生效）。",
-                "提示", MessageBoxButton.OK, MessageBoxImage.Information);
+            MessageBoxDialog.ShowInfo("请先选择要安装到哪个存档（数据包必须放进具体存档才会生效）。",
+                "提示");
             return;
         }
 

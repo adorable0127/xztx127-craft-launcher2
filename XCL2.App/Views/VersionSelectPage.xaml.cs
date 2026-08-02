@@ -47,7 +47,7 @@ public partial class VersionSelectPage : UserControl
         }
         catch (Exception ex)
         {
-            MessageBox.Show("扫描已安装版本失败：\n" + ex.Message, "错误", MessageBoxButton.OK, MessageBoxImage.Warning);
+            MessageBoxDialog.ShowWarning("扫描已安装版本失败：\n" + ex.Message, "错误");
         }
     }
 
@@ -83,8 +83,8 @@ public partial class VersionSelectPage : UserControl
     {
         if (FolderListBox.SelectedItem is not GameFolder)
         {
-            MessageBox.Show("请先在左侧选择/添加一个 .minecraft 文件夹，再安装新版本。",
-                "提示", MessageBoxButton.OK, MessageBoxImage.Information);
+            MessageBoxDialog.ShowInfo("请先在左侧选择/添加一个 .minecraft 文件夹，再安装新版本。",
+                "提示");
             return;
         }
 
@@ -124,7 +124,7 @@ public partial class VersionSelectPage : UserControl
         }
         catch (Exception ex)
         {
-            MessageBox.Show("打开浏览器失败：\n" + ex.Message, "错误", MessageBoxButton.OK, MessageBoxImage.Warning);
+            MessageBoxDialog.ShowWarning("打开浏览器失败：\n" + ex.Message, "错误");
         }
     }
 
@@ -234,8 +234,8 @@ public partial class VersionSelectPage : UserControl
         }
         else
         {
-            MessageBox.Show("Java 版本请填一个数字(如 8、17、21、25)，或留空使用自动匹配。",
-                "输入有误", MessageBoxButton.OK, MessageBoxImage.Warning);
+            MessageBoxDialog.ShowWarning("Java 版本请填一个数字(如 8、17、21、25)，或留空使用自动匹配。",
+                "输入有误");
             return;
         }
 
@@ -247,8 +247,8 @@ public partial class VersionSelectPage : UserControl
             var addr = AutoJoinServerAddressBox.Text.Trim();
             if (addr.Length == 0)
             {
-                MessageBox.Show("已勾选「开启后进入某某某服务器」，请填写服务器地址（例如 play.example.com），或取消勾选。",
-                    "输入有误", MessageBoxButton.OK, MessageBoxImage.Warning);
+                MessageBoxDialog.ShowWarning("已勾选「开启后进入某某某服务器」，请填写服务器地址（例如 play.example.com），或取消勾选。",
+                    "输入有误");
                 return;
             }
             cfg.VersionAutoJoinServer[v.Id] = addr;
@@ -260,7 +260,7 @@ public partial class VersionSelectPage : UserControl
 
         cfg.SelectedVersionId = v.Id;
         _owner.ConfigService.Save();
-        MessageBox.Show($"已保存「{v.Id}」的单独设置。", "已保存", MessageBoxButton.OK, MessageBoxImage.Information);
+        MessageBoxDialog.ShowInfo($"已保存「{v.Id}」的单独设置。", "已保存");
     }
 
 }

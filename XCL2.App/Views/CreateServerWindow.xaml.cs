@@ -103,7 +103,7 @@ public partial class CreateServerWindow : Window
             // 这里先不做版本限定的预填（留空，交给用户点"自动检测"或手动填），
             // 真正会用到的 Java 版本要求在 McVersionCombo/BuildVersionCombo 选定后才能确定，
             // 见 UpdateJavaRequirementHint() 和 Create_Click 里的 ResolveJavaForDownloadAsync。
-            var detected = _javaService.FindJava(_owner.ConfigService.Config.JavaPath);
+            var detected = _javaService.FindJava(_owner.ConfigService.Config.JavaPath, configService: _owner.ConfigService);
             JavaPathBox.Text = detected ?? "";
         }
 
@@ -260,7 +260,7 @@ public partial class CreateServerWindow : Window
 
     private void AutoDetectJava_Click(object sender, RoutedEventArgs e)
     {
-        var found = _javaService.FindJava(null);
+        var found = _javaService.FindJava(null, configService: _owner.ConfigService);
         if (found == null)
         {
             MessageBox.Show("没有检测到可用的 Java。请在「设置」页先下载/配置 Java，或者手动填写路径。",
@@ -284,7 +284,7 @@ public partial class CreateServerWindow : Window
         var current = JavaPathBox.Text;
         if (!string.IsNullOrWhiteSpace(current) && File.Exists(current))
         {
-            var matched = _javaService.FindJava(current, requiredMajor);
+            var matched = _javaService.FindJava(current, requiredMajor, _owner.ConfigService);
             if (matched != null)
             {
                 JavaPathBox.Text = matched;
@@ -297,7 +297,7 @@ public partial class CreateServerWindow : Window
             }
         }
 
-        var found = _javaService.FindJava(null, requiredMajor);
+        var found = _javaService.FindJava(null, requiredMajor, _owner.ConfigService);
         if (found != null)
         {
             JavaPathBox.Text = found;

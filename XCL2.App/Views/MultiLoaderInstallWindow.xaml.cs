@@ -51,7 +51,7 @@ public partial class MultiLoaderInstallWindow : Window
 
         RiskText.Text = BuildRiskWarningText();
 
-        var detected = _javaService.FindJava(_owner.ConfigService.Config.JavaPath);
+        var detected = _javaService.FindJava(_owner.ConfigService.Config.JavaPath, configService: _owner.ConfigService);
         JavaPathBox.Text = detected ?? "";
     }
 
@@ -118,7 +118,7 @@ public partial class MultiLoaderInstallWindow : Window
 
     private void AutoDetectJava_Click(object sender, RoutedEventArgs e)
     {
-        var found = _javaService.FindJava(null);
+        var found = _javaService.FindJava(null, configService: _owner.ConfigService);
         if (found == null)
         {
             MessageBox.Show("没有检测到可用的 Java。请在「设置」页先下载/配置 Java，或者手动填写路径。",

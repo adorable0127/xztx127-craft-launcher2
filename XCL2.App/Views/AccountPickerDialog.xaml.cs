@@ -1,5 +1,4 @@
 using System.Windows;
-using System.Windows.Controls;
 using System.Windows.Input;
 using XCL2.App.Models;
 
@@ -14,15 +13,17 @@ namespace XCL2.App.Views;
 /// 这个弹窗只在"账户数量 &gt; 1"时才会由 MainWindow 弹出（只有一个账户/没有账户时，
 /// 直接沿用原来的行为——没有账户就跳转账户管理页提示创建，只有一个账户就直接用它，
 /// 不需要多此一举地为"唯一选项"也弹一次选择框）。
+///
+/// 迁移记录：原来是独立 Window（AccountPickerWindow），现在改成 Overlay 弹窗。
 /// </summary>
-public partial class AccountPickerWindow : Window
+public partial class AccountPickerDialog : OverlayDialogControl
 {
     public Account? SelectedAccount { get; private set; }
 
     /// <summary>用户是否勾选了"记住这次选择，以后不再询问"。</summary>
     public bool RememberChoice { get; private set; }
 
-    public AccountPickerWindow(IEnumerable<Account> accounts, string? currentlySelectedId)
+    public AccountPickerDialog(IEnumerable<Account> accounts, string? currentlySelectedId)
     {
         InitializeComponent();
         AccountListBox.ItemsSource = accounts.ToList();
@@ -43,13 +44,11 @@ public partial class AccountPickerWindow : Window
         }
         SelectedAccount = acc;
         RememberChoice = RememberChoiceCheck.IsChecked == true;
-        DialogResult = true;
-        Close();
+        CloseWith(true);
     }
 
     private void Cancel_Click(object sender, RoutedEventArgs e)
     {
-        DialogResult = false;
-        Close();
+        CloseWith(false);
     }
 }

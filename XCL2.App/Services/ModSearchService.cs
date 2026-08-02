@@ -43,19 +43,39 @@ public class ModSearchService
         var outcome = new ModSearchOutcome();
 
         // 中文搜索支持：Modrinth/CurseForge 的搜索接口本身基本不认中文关键词(如直接搜"钠"
-        // 大概率没有结果)，这里先查内置词典，命中就把实际发给 Modrinth/CurseForge 的关键词
+        // 大概率没有结果)，这里用移植自 PCL2 的 WikiEntry 全量中文名数据库 + 模糊搜索算法
+        // (见 ChineseModSearchTranslator)，命中就把实际发给 Modrinth/CurseForge 的关键词
         // 换成对应的英文名，这样用户搜"钠"能直接搜到 Sodium，而不需要先去 MC百科查到英文名
-        // 再回来手动重新输入一遍。查不到词典就照旧用原始关键词搜（不影响任何已有行为）。
-        var translated = ModNameDictionary.TryTranslate(query);
-        var effectiveQuery = translated ?? query;
-        if (translated != null) outcome.TranslatedFrom = query;
-
+        // 再回来手动重新输入一遍。查不到就照旧用原始关键词搜（不影响任何已有行为）。
+        //
+        // 两个平台分开翻译而不是共用一个关键词：Modrinth 和 CurseForge 上同一个 Mod 的 Slug
+        // 经常不一样（例如某些 Mod 在两边的项目名拼写不同），各自查各自数据库里的 Slug 才准确，
+        // 这也是 PCL2 原版的做法（CurseForgeAltSearchText 和 ModrinthAltSearchText 分开算）。
         var searchModrinth = source is ModSource.Combined or ModSource.Modrinth;
         var searchCurseForge = source is ModSource.Combined or ModSource.CurseForge;
         var offset = pageIndex * pageSize;
 
-        var modrinthTask = searchModrinth ? SearchModrinthSafe(effectiveQuery, gameVersion, modLoader, offset, pageSize, ct) : null;
-        var curseForgeTask = searchCurseForge ? SearchCurseForgeSafe(effectiveQuery, gameVersion, modLoader, offset, pageSize, ct) : null;
+        var isChinese = ChineseModSearchTranslator.IsChineseQuery(query);
+        string? modrinthQuery = query, curseForgeQuery = query;
+        string? translatedForDisplay = null;
+
+        if (isChinese)
+        {
+            if (searchModrinth)
+            {
+                var mrTranslated = ChineseModSearchTranslator.Translate(query, ModSource.Modrinth);
+                if (mrTranslated.Keyword != null) { modrinthQuery = mrTranslated.Keyword; translatedForDisplay ??= mrTranslated.Keyword; }
+            }
+            if (searchCurseForge)
+            {
+                var crTranslated = ChineseModSearchTranslator.Translate(query, ModSource.CurseForge);
+                if (crTranslated.Keyword != null) { curseForgeQuery = crTranslated.Keyword; translatedForDisplay ??= crTranslated.Keyword; }
+            }
+        }
+        if (translatedForDisplay != null) outcome.TranslatedFrom = query;
+
+        var modrinthTask = searchModrinth ? SearchModrinthSafe(modrinthQuery ?? query, gameVersion, modLoader, offset, pageSize, ct) : null;
+        var curseForgeTask = searchCurseForge ? SearchCurseForgeSafe(curseForgeQuery ?? query, gameVersion, modLoader, offset, pageSize, ct) : null;
 
         // 用 Task.WhenAll 而不是逐个 await：虽然两个 Task 在上面赋值时已经开始并发执行，
         // 顺序 await 不会真的让第二个任务"等"第一个跑完，但写成 WhenAll 让并发意图在代码上
@@ -105,8 +125,29 @@ public class ModSearchService
         var searchCurseForge = source is ModSource.Combined or ModSource.CurseForge;
         var offset = pageIndex * pageSize;
 
-        var modrinthTask = searchModrinth ? SearchModrinthResourceSafe(type, query, gameVersion, offset, pageSize, ct, modLoader) : null;
-        var curseForgeTask = searchCurseForge ? SearchCurseForgeResourceSafe(type, query, gameVersion, offset, pageSize, ct, modLoader) : null;
+        // 中文搜索翻译只对数据包生效（跟 PCL2 一致）：材质包/光影包的名称本身大多没有对应的
+        // MC 百科中文名条目（WikiEntry 数据库主要收录的是 Mod），贸然套用会经常翻译不出结果
+        // 或者翻译错方向；数据包跟 Mod 共用同一套 Slug/中文名体系，可以安全复用。
+        var effectiveModrinthQuery = query;
+        var effectiveCurseForgeQuery = query;
+        string? translatedForDisplay = null;
+        if (type == ModrinthResourceType.DataPack && ChineseModSearchTranslator.IsChineseQuery(query))
+        {
+            if (searchModrinth)
+            {
+                var mrTranslated = ChineseModSearchTranslator.Translate(query, ModSource.Modrinth);
+                if (mrTranslated.Keyword != null) { effectiveModrinthQuery = mrTranslated.Keyword; translatedForDisplay ??= mrTranslated.Keyword; }
+            }
+            if (searchCurseForge)
+            {
+                var crTranslated = ChineseModSearchTranslator.Translate(query, ModSource.CurseForge);
+                if (crTranslated.Keyword != null) { effectiveCurseForgeQuery = crTranslated.Keyword; translatedForDisplay ??= crTranslated.Keyword; }
+            }
+        }
+        if (translatedForDisplay != null) outcome.TranslatedFrom = translatedForDisplay;
+
+        var modrinthTask = searchModrinth ? SearchModrinthResourceSafe(type, effectiveModrinthQuery, gameVersion, offset, pageSize, ct, modLoader) : null;
+        var curseForgeTask = searchCurseForge ? SearchCurseForgeResourceSafe(type, effectiveCurseForgeQuery, gameVersion, offset, pageSize, ct, modLoader) : null;
 
         if (modrinthTask != null && curseForgeTask != null) await Task.WhenAll(modrinthTask, curseForgeTask);
         else if (modrinthTask != null) await modrinthTask;
@@ -140,7 +181,9 @@ public class ModSearchService
             var items = result.Hits.Select(h => new UnifiedResourceItem
             {
                 Source = ModSource.Modrinth,
-                Title = h.Title,
+                // 中文优先展示："中文名 (English Title)"；查不到中文对照则保持英文原样，
+                // 见 ModDisplayNameResolver 注释（只做精确 Slug 匹配，不做模糊猜测）。
+                Title = ModDisplayNameResolver.Resolve(ModSource.Modrinth, h.Slug, h.Title),
                 Description = h.Description,
                 Author = h.Author,
                 IconUrl = h.IconUrl,
@@ -181,6 +224,9 @@ public class ModSearchService
             var items = result.Data.Select(m => new UnifiedResourceItem
             {
                 Source = ModSource.CurseForge,
+                // 注意：这里没有走 ModDisplayNameResolver——CurseForge /mods/search 响应体不带
+                // slug 字段，只能查到 Id/Name，没有能安全做精确匹配的键，所以保持英文标题，
+                // 不用名称模糊匹配代替（避免把中文名安到不相关的 Mod 上），详见该类的注释。
                 Title = m.Name,
                 Description = m.Summary,
                 Author = m.AuthorsDisplay,
@@ -213,7 +259,8 @@ public class ModSearchService
             var items = result.Hits.Select(h => new UnifiedModItem
             {
                 Source = ModSource.Modrinth,
-                Title = h.Title,
+                // 同上：中文优先展示，见 ModDisplayNameResolver 注释。
+                Title = ModDisplayNameResolver.Resolve(ModSource.Modrinth, h.Slug, h.Title),
                 Description = h.Description,
                 Author = h.Author,
                 IconUrl = h.IconUrl,
@@ -238,6 +285,8 @@ public class ModSearchService
             var items = result.Data.Select(m => new UnifiedModItem
             {
                 Source = ModSource.CurseForge,
+                // 同上（SearchCurseForgeResourceSafe 里的注释）：CurseForge 搜索结果没有 slug，
+                // 保持英文标题，不做名称模糊匹配代替。
                 Title = m.Name,
                 Description = m.Summary,
                 Author = m.AuthorsDisplay,

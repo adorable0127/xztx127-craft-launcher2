@@ -191,4 +191,16 @@ public partial class HomePage : UserControl
     private void TileServerManager_Click(object sender, RoutedEventArgs e) => _owner.NavigateToServerManager();
 
     private void TileSettings_Click(object sender, RoutedEventArgs e) => _owner.NavigateToSettings();
+
+    /// <summary>
+    /// 顶部「🌐 语言」按钮：打开独立的语言选择弹窗（LanguageSelectDialog）。选择后弹窗内部
+    /// 自己完成保存+应用+关闭，这里不需要处理返回值或做任何后续刷新——语言切换后的界面
+    /// 刷新由 LocalizationService.Apply 里复用的 ThemeService 窗口刷新逻辑统一处理，
+    /// 首页这里不用额外调用什么方法。
+    /// </summary>
+    private void LanguageEntryButton_Click(object sender, RoutedEventArgs e)
+    {
+        var dlg = new LanguageSelectDialog(_owner.ConfigService);
+        OverlayDialogService.ShowModal(dlg);
+    }
 }

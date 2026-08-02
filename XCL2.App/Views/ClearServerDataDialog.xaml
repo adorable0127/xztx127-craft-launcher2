@@ -1,11 +1,10 @@
-<Window x:Class="XCL2.App.Views.ClearServerDataWindow"
+<local:OverlayDialogControl x:Class="XCL2.App.Views.ClearServerDataDialog"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="清除服务器数据"
-        Width="440" Height="330"
-        WindowStartupLocation="CenterOwner"
-        ResizeMode="NoResize"
-        Background="{DynamicResource PanelBrush}">
+        xmlns:local="clr-namespace:XCL2.App.Views"
+        Width="440">
+    <!-- 迁移自原 ClearServerDataWindow（独立 Window），改造成进程内 Overlay 弹窗，
+         见 IOverlayDialog.cs / OverlayDialogService.cs 顶部注释。 -->
     <StackPanel Margin="20">
         <TextBlock Text="⚠ 清除服务器数据" FontSize="16" FontWeight="Bold"
                    Foreground="{DynamicResource DangerBrush}" Margin="0,0,0,10"/>
@@ -27,4 +26,4 @@
                     IsEnabled="False" Click="Confirm_Click"/>
         </StackPanel>
     </StackPanel>
-</Window>
+</local:OverlayDialogControl>

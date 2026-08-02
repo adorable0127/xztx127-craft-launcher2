@@ -12,13 +12,18 @@ namespace XCL2.App.Views;
 ///
 /// 现在改成"点哪个版本，就在这个版本上问一次装什么"，跟 PCL/HMCL 等主流启动器的下载体验一致，
 /// 不需要预先做任何全局筛选，每次点击都是一次独立、完整的选择。
+///
+/// 迁移记录：原来是独立 Window（LoaderChoiceWindow），现在改成挂在 MainWindow
+/// Overlay 层里的 UserControl（继承 OverlayDialogControl，见 IOverlayDialog.cs）。
+/// 原来"DialogResult = true; Close();"两行，现在统一改成调用基类的
+/// CloseWith(true/false)。
 /// </summary>
-public partial class LoaderChoiceWindow : Window
+public partial class LoaderChoiceDialog : OverlayDialogControl
 {
     /// <summary>用户确认选择的加载器类型；取消返回 null。</summary>
     public ServerCoreType SelectedLoader { get; private set; } = ServerCoreType.Vanilla;
 
-    public LoaderChoiceWindow(string mcVersionId)
+    public LoaderChoiceDialog(string mcVersionId)
     {
         InitializeComponent();
         TitleText.Text = $"安装 {mcVersionId}";
@@ -32,13 +37,11 @@ public partial class LoaderChoiceWindow : Window
             : OptNeoForge.IsChecked == true ? ServerCoreType.NeoForge
             : ServerCoreType.Quilt;
 
-        DialogResult = true;
-        Close();
+        CloseWith(true);
     }
 
     private void Cancel_Click(object sender, RoutedEventArgs e)
     {
-        DialogResult = false;
-        Close();
+        CloseWith(false);
     }
 }

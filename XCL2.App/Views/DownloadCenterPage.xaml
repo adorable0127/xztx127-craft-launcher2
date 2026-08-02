@@ -243,7 +243,7 @@
 
                     <!-- 不再有顶部"加载器筛选"预选行（之前需要先切一次顶部单选、再回来点行内按钮，
                          两步分离容易搞混，且一次只能锁定一种加载器）。现在每一行的"下载安装"按钮
-                         点击后直接弹出 LoaderChoiceWindow，一步选择"原版/Fabric/Forge/NeoForge"，
+                         点击后直接弹出 LoaderChoiceDialog，一步选择"原版/Fabric/Forge/NeoForge"，
                          选完立即进入对应安装流程，见 InstallVersion_Click。 -->
                     <Grid Grid.Row="1" Margin="0,0,0,10">
                         <Grid.ColumnDefinitions>
@@ -338,6 +338,7 @@
                                 <RowDefinition Height="Auto"/>
                                 <RowDefinition Height="Auto"/>
                                 <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
                             </Grid.RowDefinitions>
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="*"/>
@@ -367,6 +368,23 @@
                                          TextChanged="ResourceFilter_Changed"
                                          ToolTip="限定游戏版本，例如 1.20.1；留空不限定"/>
                             </StackPanel>
+                            <StackPanel Grid.Row="2" Grid.Column="0" Grid.ColumnSpan="3" Margin="0,8,0,0">
+                                <!-- 版本快捷选择条：点一下直接把常见/常用游戏版本号填进上面的"版本"输入框，
+                                     不用自己手打——原需求"选择的都是常见的常用的游戏版本（或者输入）"，
+                                     跟输入框是同一份数据、双向不冲突：点按钮 = 帮用户填字，用户自己手打
+                                     任意版本号（输入框本身没有被禁用/只读）依然完全可行。
+                                     x:Name 供 ResourceVersionChip_Click 统一处理，Tag 是要填入的版本号
+                                     字符串（"" 代表"全部"，即清空版本筛选）。 -->
+                                <WrapPanel x:Name="ResourceVersionChipPanel">
+                                    <Button Content="全部" Style="{StaticResource VersionChipButton}" Tag="" Click="ResourceVersionChip_Click"/>
+                                    <Button Content="1.21" Style="{StaticResource VersionChipButton}" Tag="1.21" Click="ResourceVersionChip_Click"/>
+                                    <Button Content="1.20" Style="{StaticResource VersionChipButton}" Tag="1.20" Click="ResourceVersionChip_Click"/>
+                                    <Button Content="1.19" Style="{StaticResource VersionChipButton}" Tag="1.19" Click="ResourceVersionChip_Click"/>
+                                    <Button Content="1.18" Style="{StaticResource VersionChipButton}" Tag="1.18" Click="ResourceVersionChip_Click"/>
+                                    <Button Content="1.17" Style="{StaticResource VersionChipButton}" Tag="1.17" Click="ResourceVersionChip_Click"/>
+                                    <Button Content="1.16" Style="{StaticResource VersionChipButton}" Tag="1.16" Click="ResourceVersionChip_Click"/>
+                                </WrapPanel>
+                            </StackPanel>
                             <StackPanel Grid.Row="1" Grid.Column="2" Margin="0,10,0,0">
                                 <TextBlock Text="类型" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4"/>
                                 <ComboBox x:Name="ResourceTypeCombo" Style="{StaticResource FilterComboBox}"
@@ -377,7 +395,7 @@
                                 </ComboBox>
                             </StackPanel>
 
-                            <StackPanel Grid.Row="2" Grid.Column="0" Grid.ColumnSpan="3" Orientation="Horizontal" Margin="0,14,0,0">
+                            <StackPanel Grid.Row="3" Grid.Column="0" Grid.ColumnSpan="3" Orientation="Horizontal" Margin="0,14,0,0">
                                 <Button Content="搜索" Style="{StaticResource PrimaryButton}" Padding="20,8" Click="ResourceSearch_Click"
                                         ToolTip="列表已自动刷新；网络失败或想立即按当前条件重新搜索时可点这里"/>
                                 <Button Content="重置条件" Style="{StaticResource SecondaryButton}" Padding="20,8" Margin="10,0,0,0"
@@ -582,6 +600,7 @@
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto"/>
                         <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
                         <RowDefinition Height="*"/>
                         <RowDefinition Height="Auto"/>
                     </Grid.RowDefinitions>
@@ -612,7 +631,18 @@
                                 ToolTip="列表已自动刷新；网络失败可在此手动重试"/>
                     </Grid>
 
-                    <ListBox x:Name="MapListBox" Grid.Row="2" BorderThickness="0" Background="Transparent"
+                    <!-- 版本快捷选择条，同 Mod/Resource 面板，见 ResourceVersionChipPanel 注释。 -->
+                    <WrapPanel x:Name="MapVersionChipPanel" Grid.Row="2" Margin="0,0,0,10">
+                        <Button Content="全部" Style="{StaticResource VersionChipButton}" Tag="" Click="MapVersionChip_Click"/>
+                        <Button Content="1.21" Style="{StaticResource VersionChipButton}" Tag="1.21" Click="MapVersionChip_Click"/>
+                        <Button Content="1.20" Style="{StaticResource VersionChipButton}" Tag="1.20" Click="MapVersionChip_Click"/>
+                        <Button Content="1.19" Style="{StaticResource VersionChipButton}" Tag="1.19" Click="MapVersionChip_Click"/>
+                        <Button Content="1.18" Style="{StaticResource VersionChipButton}" Tag="1.18" Click="MapVersionChip_Click"/>
+                        <Button Content="1.17" Style="{StaticResource VersionChipButton}" Tag="1.17" Click="MapVersionChip_Click"/>
+                        <Button Content="1.16" Style="{StaticResource VersionChipButton}" Tag="1.16" Click="MapVersionChip_Click"/>
+                    </WrapPanel>
+
+                    <ListBox x:Name="MapListBox" Grid.Row="3" BorderThickness="0" Background="Transparent"
                              ItemContainerStyle="{StaticResource DownloadListItem}">
                         <ListBox.ItemTemplate>
                             <DataTemplate>
@@ -642,7 +672,7 @@
                     </ListBox>
 
                     <!-- 分页条：跟 Mod/资源包面板同款样式。 -->
-                    <Grid Grid.Row="3" Margin="0,8,0,0">
+                    <Grid Grid.Row="4" Margin="0,8,0,0">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="Auto"/>
                             <ColumnDefinition Width="*"/>
@@ -699,6 +729,7 @@
                                     <RowDefinition Height="Auto"/>
                                     <RowDefinition Height="Auto"/>
                                     <RowDefinition Height="Auto"/>
+                                    <RowDefinition Height="Auto"/>
                                 </Grid.RowDefinitions>
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="*"/>
@@ -734,11 +765,25 @@
                                         <ComboBoxItem Content="不限加载器" IsSelected="True" Tag=""/>
                                         <ComboBoxItem Content="Fabric" Tag="fabric"/>
                                         <ComboBoxItem Content="Forge" Tag="forge"/>
+                                        <ComboBoxItem Content="NeoForge" Tag="neoforge"/>
                                         <ComboBoxItem Content="Quilt" Tag="quilt"/>
                                     </ComboBox>
                                 </StackPanel>
 
-                                <StackPanel Grid.Row="2" Grid.Column="0" Grid.ColumnSpan="3" Orientation="Horizontal" Margin="0,14,0,0">
+                                <StackPanel Grid.Row="2" Grid.Column="0" Grid.ColumnSpan="3" Margin="0,8,0,0">
+                                    <!-- 版本快捷选择条，同 Resource 面板的 ResourceVersionChipPanel，见那边注释。 -->
+                                    <WrapPanel x:Name="ModVersionChipPanel">
+                                        <Button Content="全部" Style="{StaticResource VersionChipButton}" Tag="" Click="ModVersionChip_Click"/>
+                                        <Button Content="1.21" Style="{StaticResource VersionChipButton}" Tag="1.21" Click="ModVersionChip_Click"/>
+                                        <Button Content="1.20" Style="{StaticResource VersionChipButton}" Tag="1.20" Click="ModVersionChip_Click"/>
+                                        <Button Content="1.19" Style="{StaticResource VersionChipButton}" Tag="1.19" Click="ModVersionChip_Click"/>
+                                        <Button Content="1.18" Style="{StaticResource VersionChipButton}" Tag="1.18" Click="ModVersionChip_Click"/>
+                                        <Button Content="1.17" Style="{StaticResource VersionChipButton}" Tag="1.17" Click="ModVersionChip_Click"/>
+                                        <Button Content="1.16" Style="{StaticResource VersionChipButton}" Tag="1.16" Click="ModVersionChip_Click"/>
+                                    </WrapPanel>
+                                </StackPanel>
+
+                                <StackPanel Grid.Row="3" Grid.Column="0" Grid.ColumnSpan="3" Orientation="Horizontal" Margin="0,14,0,0">
                                     <Button Content="搜索" Style="{StaticResource PrimaryButton}" Padding="20,8" Click="ModSearch_Click"
                                             ToolTip="列表已自动刷新；网络失败或想立即按当前条件重新搜索时可点这里"/>
                                     <Button Content="重置条件" Style="{StaticResource SecondaryButton}" Padding="20,8" Margin="10,0,0,0"

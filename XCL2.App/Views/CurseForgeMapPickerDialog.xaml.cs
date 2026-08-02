@@ -6,14 +6,15 @@ using XCL2.App.Services;
 
 namespace XCL2.App.Views;
 
-/// <summary>地图文件选择弹窗：展示某个 CurseForge 地图下所有可下载文件，选中后下载并解压到 saves/。</summary>
-public partial class CurseForgeMapPickerWindow : Window
+/// <summary>地图文件选择弹窗：展示某个 CurseForge 地图下所有可下载文件，选中后下载并解压到 saves/。
+/// 迁移记录：原来是独立 Window（CurseForgeMapPickerWindow），现在改成 Overlay 弹窗。</summary>
+public partial class CurseForgeMapPickerDialog : OverlayDialogControl
 {
     private readonly CurseForgeService _svc;
     private readonly string _minecraftDir;
     private readonly ObservableCollection<MapFileDisplayItem> _files = new();
 
-    public CurseForgeMapPickerWindow(CurseForgeService svc, string minecraftDir, string mapName, List<CurseForgeFile> files)
+    public CurseForgeMapPickerDialog(CurseForgeService svc, string minecraftDir, string mapName, List<CurseForgeFile> files)
     {
         _svc = svc;
         _minecraftDir = minecraftDir;
@@ -28,7 +29,7 @@ public partial class CurseForgeMapPickerWindow : Window
     {
         if (sender is not Button btn || btn.Tag is not MapFileDisplayItem item) return;
 
-        var progressWin = new ProgressWindow($"正在下载 {item.File.FileName} ...") { Owner = this };
+        var progressWin = new ProgressDialog($"正在下载 {item.File.FileName} ...");
         progressWin.Show();
         try
         {

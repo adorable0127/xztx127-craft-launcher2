@@ -148,7 +148,7 @@ public partial class FirstRunWizardWindow : Window
             // 只是探测，不下载；找不到就提示用户点"一键安装"，这一步不阻塞用户往下走，
             // 因为高级用户可能想跳过、之后自己在设置页指定路径。
             var found = await System.Threading.Tasks.Task.Run(() =>
-                _javaService.FindJava(_owner.ConfigService.Config.JavaPath));
+                _javaService.FindJava(_owner.ConfigService.Config.JavaPath, configService: _owner.ConfigService));
 
             if (found != null)
             {
@@ -174,7 +174,7 @@ public partial class FirstRunWizardWindow : Window
     private async void AutoInstallJava_Click(object sender, RoutedEventArgs e)
     {
         AutoInstallJavaBtn.IsEnabled = false;
-        var progressWin = new ProgressWindow("正在下载 Java 运行时...") { Owner = this };
+        var progressWin = new ProgressDialog("正在下载 Java 运行时...");
         progressWin.Show();
         try
         {

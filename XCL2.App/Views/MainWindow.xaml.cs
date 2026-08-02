@@ -2,6 +2,8 @@ using System;
 using System.IO;
 using System.Threading.Tasks;
 using System.Windows;
+using System.Windows.Input;
+using System.Windows.Media;
 using System.Windows.Media.Animation;
 using System.Windows.Threading;
 using XCL2.App.Models;
@@ -57,9 +59,75 @@ public partial class MainWindow : Window
     /// <summary>启动按钮的冷却时长。1 秒足够挡住手滑连点，又不会让正常用户感觉卡顿。</summary>
     private static readonly TimeSpan LaunchClickCooldown = TimeSpan.FromSeconds(1);
 
+    /// <summary>记录窗口最近一次处于"非最小化"状态时的 WindowState(Normal 或 Maximized)。
+    /// 修复"启动/下载成功弹窗出现时启动器窗口会自动最小化"：如果窗口在弹窗前已经被系统
+    /// (或前台焦点被刚拉起的游戏进程抢走)意外最小化，简单粗暴地把 WindowState 设成
+    /// Normal 会导致原本是最大化的窗口意外变回还原态；这里记住恢复前的真实状态，
+    /// 保证"最小化前是最大化"的窗口在恢复时也还是最大化，而不是每次都被强制还原成小窗。</summary>
+    private WindowState _lastNonMinimizedWindowState = WindowState.Normal;
+
+    /// <summary>修复"启动成功/下载成功等提示弹窗出现时启动器主窗口会自动最小化"：耗时操作
+    /// (下载、安装、启动游戏等)执行期间，用户可能切到了其它窗口，或者刚拉起的游戏进程抢走了
+    /// 前台焦点，导致主窗口在弹提示的这一刻已经不是前台/甚至被系统最小化。各个页面
+    /// (DownloadCenterPage/ModManagerPage 等)在弹出"成功"提示前调用这个方法，统一把主窗口
+    /// 从 Minimized 恢复到恢复前的真实状态(Normal 或 Maximized，见 _lastNonMinimizedWindowState
+    /// 的注释)并带到前台，不需要每个调用点各自处理窗口状态。</summary>
+    public void EnsureVisibleForDialog()
+    {
+        if (WindowState == WindowState.Minimized)
+            WindowState = _lastNonMinimizedWindowState;
+        Activate();
+    }
+
     public MainWindow()
     {
         InitializeComponent();
+
+        // 标题栏跟随深浅色模式（修复"顶部白条"）现在由 App.xaml.cs 里注册的
+        // EventManager.RegisterClassHandler 对所有 Window 统一处理，MainWindow 不需要
+        // 再单独接线，见 WindowChromeService 类注释。
+
+        // F11 全屏切换：只在主窗口生效，Key.System 分支处理是因为 F11 在部分系统/输入法
+        // 状态下会被识别为"系统键"（Alt 组合键那一类路由），PreviewKeyDown 阶段
+        // e.Key == Key.System 时真正的键值在 e.SystemKey 里，两个都要判断到才不会漏掉。
+        PreviewKeyDown += (_, e) =>
+        {
+            var key = e.Key == Key.System ? e.SystemKey : e.Key;
+            if (key != Key.F11) return;
+            WindowChromeService.ToggleFullScreen(this);
+            e.Handled = true;
+        };
+
+        // Esc 关闭当前最顶层的进程内弹窗（Overlay），跟 Windows 系统对话框的通行习惯
+        // 一致。放在这里而不是每个弹窗 UserControl 自己接线，是因为 Esc 需要在整个
+        // MainWindow 范围内都能生效（弹窗内部任意控件获得焦点时都要能按 Esc 关闭），
+        // 而不是只在弹窗自己的可视化树内监听——同一个原因，F11 全屏判断也放在这一层。
+        PreviewKeyDown += (_, e) =>
+        {
+            if (e.Key != Key.Escape) return;
+            if (!OverlayDialogService.HasActiveOverlay) return;
+            OverlayDialogService.RequestDismissTopByEscape();
+            e.Handled = true;
+        };
+
+        // 注册为 Overlay 弹窗宿主：进程内只有一个 MainWindow 实例，全部 24 个原独立
+        // Window 弹窗迁移后都通过 OverlayDialogService 挂载到这里的 OverlayRoot。
+        // 见 OverlayDialogService.cs 顶部的整体设计注释。
+        OverlayDialogService.Register(this);
+
+        StateChanged += (_, _) =>
+        {
+            if (WindowState != WindowState.Minimized) _lastNonMinimizedWindowState = WindowState;
+        };
+
+        // 「实验性功能」导航按钮只在启动器界面语言是简体中文时显示（见
+        // LocalizationService.ExperimentalFeaturesLanguageGate 注释）。构造时立即按当前语言
+        // 同步一次，并订阅 LanguageChanged，保证用户在运行时切换语言后这个按钮立即跟着
+        // 显示/隐藏，不需要重启或切页面才生效。
+        RefreshExperimentalNavVisibility();
+        LocalizationService.LanguageChanged += RefreshExperimentalNavVisibility;
+        Closed += (_, _) => LocalizationService.LanguageChanged -= RefreshExperimentalNavVisibility;
+
         ConfigService.Load();
         ServerInstanceService.Load();
 
@@ -69,13 +137,13 @@ public partial class MainWindow : Window
         if (ServerInstanceService.LastLoadError != null)
         {
             var recovered = ServerInstanceService.Instances.Count > 0;
-            MessageBox.Show(
+            MessageBoxDialog.ShowWarning(
                 (recovered
                     ? "服务器列表配置文件（servers.json）读取失败，已自动从备份文件恢复。\n"
                     : "服务器列表配置文件（servers.json）读取失败，且没有可用的备份，服务器列表已重置为空。\n" +
                       "原有服务器的文件本身没有丢失，可以在「服务端管理」页重新创建实例并指向原目录。\n") +
                 $"\n错误详情：{ServerInstanceService.LastLoadError.Message}",
-                "服务器列表读取异常", MessageBoxButton.OK, MessageBoxImage.Warning);
+                "服务器列表读取异常");
         }
 
         // 访客模式：如果配置里这个开关已经打开(比如上次关闭启动器前就是开启状态)，
@@ -232,9 +300,9 @@ public partial class MainWindow : Window
             RefreshSidebar();
 
             var names = string.Join("\n", newlyAdded.Select(f => $"• {f.Name}  ({f.Path})"));
-            MessageBox.Show(
+            MessageBoxDialog.ShowInfo(
                 $"启动时自动发现了 {newlyAdded.Count} 个新的 .minecraft 文件夹，已加入「版本选择」页的文件夹列表：\n\n{names}",
-                "自动发现新文件夹", MessageBoxButton.OK, MessageBoxImage.Information);
+                "自动发现新文件夹");
         }
         catch (Exception ex)
         {
@@ -255,7 +323,7 @@ public partial class MainWindow : Window
         // 修复"切换大界面时下载窗口还在"：旧页面（比如下载中心）弹出的 ProgressWindow
         // 是独立顶层窗口，不会因为 MainContent.Content 被替换而自动关闭。这里在真正
         // 切换内容之前统一关掉所有当前存活的进度弹窗，视为"打断操作"。
-        Views.ProgressWindow.CloseAll();
+        Views.ProgressDialog.CloseAll();
 
         if (!ConfigService.Config.EnablePageAnimations)
         {
@@ -455,6 +523,20 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
+    /// 根据当前启动器界面语言控制侧边栏"实验性功能"按钮的显隐（见
+    /// LocalizationService.ExperimentalFeaturesLanguageGate 注释：这批功能还没有多语言界面，
+    /// 只在简体中文下展示）。构造函数调用一次做初始同步，LanguageChanged 事件触发时
+    /// 再调一次，保证运行时切换语言立即生效，不需要重启/切页面。
+    /// </summary>
+    private void RefreshExperimentalNavVisibility()
+    {
+        NavExperimentalButton.Visibility =
+            LocalizationService.CurrentLanguageCode == LocalizationService.ExperimentalFeaturesLanguageGate
+                ? Visibility.Visible
+                : Visibility.Collapsed;
+    }
+
+    /// <summary>
     /// "实验性功能"统一入口：第一次打开（cfg.ExperimentalFeaturesUnlocked 还是 false）先弹
     /// ExperimentalGateWindow 强制等待 10 秒确认，确认过一次之后这个标记会持久化保存，
     /// 后续再打开直接展示面板，不需要重复罚站。
@@ -547,13 +629,13 @@ public partial class MainWindow : Window
         // 保持原来的行为不变，不会为"没有可选"这种情况也多此一举地弹一次框。
         if (!cfg.GuestModeEnabled && ConfigService.Accounts.Count > 1)
         {
-            var picker = new AccountPickerWindow(ConfigService.Accounts, cfg.LastSelectedAccountId) { Owner = this };
-            if (picker.ShowDialog() != true)
+            var picker = new AccountPickerDialog(ConfigService.Accounts, cfg.LastSelectedAccountId);
+            if (OverlayDialogService.ShowModal(picker) != true)
             {
                 // Round16 反馈：之前这里直接静默 return，用户点"取消"后界面毫无反应，
                 // 体验上跟"点了没反应/软件卡死"没区别。这里跟同一方法里其它分支
                 // （没账户/没选文件夹）一样用 MessageBox 给一句明确提示。
-                MessageBox.Show("已取消启动。", "提示", MessageBoxButton.OK, MessageBoxImage.Information);
+                MessageBoxDialog.ShowInfo("已取消启动。", "提示");
                 return;
             }
             account = picker.SelectedAccount;
@@ -571,13 +653,13 @@ public partial class MainWindow : Window
 
         if (account == null)
         {
-            MessageBox.Show("请先在“账户管理”中登录或创建一个离线账户。", "提示", MessageBoxButton.OK, MessageBoxImage.Information);
+            MessageBoxDialog.ShowInfo("请先在“账户管理”中登录或创建一个离线账户。", "提示");
             NavAccounts_Click(sender, e);
             return;
         }
         if (folder == null || string.IsNullOrEmpty(cfg.SelectedVersionId))
         {
-            MessageBox.Show("请先在“版本选择”中选择 .minecraft 文件夹和游戏版本。", "提示", MessageBoxButton.OK, MessageBoxImage.Information);
+            MessageBoxDialog.ShowInfo("请先在“版本选择”中选择 .minecraft 文件夹和游戏版本。");
             NavVersions_Click(sender, e);
             return;
         }
@@ -613,11 +695,11 @@ public partial class MainWindow : Window
                 {
                     // access token 已经确实过期、且刷新拿不到新的——不能再往下启动，
                     // 否则就是本节注释描述的"静默变 Demo"现象。
-                    MessageBox.Show(
+                    MessageBoxDialog.ShowWarning(
                         $"账户「{account.Username}」的登录状态已过期，且自动刷新失败，请重新登录微软账户后再启动游戏。\n" +
                         "（如果直接用过期状态启动，Minecraft 会静默进入离线试玩(Demo)模式而不会报错，" +
                         "为避免这种情况这里主动拦截。）",
-                        "需要重新登录", MessageBoxButton.OK, MessageBoxImage.Warning);
+                        "需要重新登录");
                     NavAccounts_Click(sender, e);
                     return;
                 }
@@ -662,7 +744,7 @@ public partial class MainWindow : Window
             // 记录的文件如果已经被移动/删除(ResolveJavaPath 返回 null)，则安全回退到旧的搜索逻辑。
             var javaIdOverride = cfg.VersionJavaIdOverrides.TryGetValue(cfg.SelectedVersionId, out var vjid) ? vjid : cfg.SelectedJavaId;
             var javaPath = ConfigService.ResolveJavaPath(javaIdOverride)
-                ?? javaService.FindJava(cfg.JavaPath, preferMajor);
+                ?? javaService.FindJava(cfg.JavaPath, preferMajor, ConfigService);
             var justDownloaded = false;
 
             // 启动前 Java 版本匹配检查：javaIdOverride 这条路径(用户在设置里指定了某个具体 Java，
@@ -690,23 +772,23 @@ public partial class MainWindow : Window
                     if (cfg.EnforceJavaVersionMatch)
                     {
                         // 强制模式：不给"仍然使用"的选项，弹窗只是告知，点确定就直接切换。
-                        MessageBox.Show(
+                        MessageBoxDialog.ShowWarning(
                             $"你为这个版本手动指定的 Java 是 {actualMajor}，但这个版本自动匹配的应该是 Java {preferMajor}" +
                             $"（如果不手动指定，启动器本来会自动帮你选到这个版本）。\n\n" +
                             $"已开启「强制使用匹配 Java」，将自动切换到 Java {preferMajor} 后再启动。\n{suggestion}",
-                            "Java 版本不匹配，已自动切换", MessageBoxButton.OK, MessageBoxImage.Warning);
+                            "Java 版本不匹配，已自动切换");
                         shouldSwitch = true;
                     }
                     else
                     {
-                        var switchResult = MessageBox.Show(
+                        var switchResult = MessageBoxDialog.ShowConfirm(
                             $"你为这个版本手动指定的 Java 是 {actualMajor}，但这个版本自动匹配的应该是 Java {preferMajor}" +
                             $"（如果不手动指定，启动器本来会自动帮你选到这个版本）。用不匹配的版本启动很可能会崩溃" +
                             $"（常见报错如 UnsupportedClassVersionError）。\n\n{suggestion}\n\n" +
                             $"点「是」改用匹配的 Java {preferMajor}；点「否」仍然使用当前这个 Java {actualMajor}（不建议，除非你清楚自己在做什么）。\n\n" +
                             $"提示：可以在「设置」页开启「强制使用匹配 Java」，开启后遇到这种情况会直接自动切换，不再询问。",
-                            "Java 版本可能不匹配", MessageBoxButton.YesNo, MessageBoxImage.Warning);
-                        shouldSwitch = switchResult == MessageBoxResult.Yes;
+                            "Java 版本可能不匹配");
+                        shouldSwitch = switchResult;
                     }
 
                     if (shouldSwitch)
@@ -714,7 +796,7 @@ public partial class MainWindow : Window
                         // 改用匹配版本：优先用列表里已登记的匹配项，没有就清空覆盖走回下面的
                         // 自动探测/下载逻辑（preferMajor 已经算好了，FindJava/下载都会用它）。
                         javaPath = matchedInList != null ? ConfigService.ResolveJavaPath(matchedInList.Id) : null;
-                        javaPath ??= javaService.FindJava(null, preferMajor);
+                        javaPath ??= javaService.FindJava(null, preferMajor, ConfigService);
                     }
                     // 非强制模式选"否"：保留原 javaPath 不变，尊重用户的明确选择。
                 }
@@ -724,12 +806,14 @@ public partial class MainWindow : Window
                 var versionHint = preferMajor is > 0
                     ? $"这个版本需要 Java {preferMajor}，但未找到匹配的 Java（可能没安装，或已安装的版本不对）。"
                     : "未检测到可用的 Java 环境。";
-                var result = MessageBox.Show($"{versionHint}\n是否自动下载对应的便携版 Java？",
-                    "需要 Java", MessageBoxButton.YesNo, MessageBoxImage.Question);
-                if (result != MessageBoxResult.Yes) return;
+                var result = MessageBoxDialog.ShowConfirm($"{versionHint}\n是否自动下载对应的便携版 Java？",
+                    "需要 Java");
+                if (!result) return;
 
-                var progressWin = new ProgressWindow("正在下载 Java 运行时...");
-                progressWin.Owner = this;
+                var progressWin = new ProgressDialog("正在下载 Java 运行时...");
+                // ProgressDialog 迁移成 Overlay 之后已经不是独立 Window，没有 Owner 属性了——
+                // 它现在挂在 MainWindow 自己的 Overlay 层里，天然"属于"当前主窗口，不需要
+                // 也不能再显式赋 Owner（迁移前遗留的这行赋值如果留着会导致编译失败）。
                 progressWin.Show();
                 try
                 {
@@ -789,8 +873,8 @@ public partial class MainWindow : Window
                 var skinService = new SkinService();
                 if (!File.Exists(skinService.AuthlibInjectorPath))
                 {
-                    var skinProgressWin = new ProgressWindow("正在下载万能皮肤补丁...");
-                    skinProgressWin.Owner = this;
+                    var skinProgressWin = new ProgressDialog("正在下载万能皮肤补丁...");
+                    // 同上：ProgressDialog 现在是 Overlay 弹窗，没有 Owner 属性了。
                     skinProgressWin.Show();
                     try
                     {
@@ -801,9 +885,7 @@ public partial class MainWindow : Window
                         var hint = account.Type == AccountType.AuthServer
                             ? "下载万能皮肤补丁失败，本次将无法通过认证服务器的皮肤/会话校验：\n"
                             : "下载万能皮肤补丁失败，本次将不会显示自定义皮肤：\n";
-                        MessageBox.Show(
-                            hint + skinEx.Message,
-                            "皮肤补丁下载失败", MessageBoxButton.OK, MessageBoxImage.Warning);
+                        MessageBoxDialog.ShowWarning(hint + skinEx.Message, "皮肤补丁下载失败");
                     }
                     finally { skinProgressWin.Close(); }
                 }
@@ -834,6 +916,7 @@ public partial class MainWindow : Window
                 ShowConsoleWindow = cfg.EnableGameConsoleWindow,
                 IsolateVersion = isolateVersion,
                 GameLanguage = cfg.GameLanguage,
+                VersionTypeLabel = cfg.GameVersionTypeLabel,
                 SkinJvmArgs = skinJvmArgs,
                 // 自定义 JVM 参数仅在高手模式下生效：普通模式下即使配置里残留了历史值，
                 // 也不应该被悄悄应用，避免用户切回普通模式后出现"不知道为什么还生效"的困惑。
@@ -866,13 +949,13 @@ public partial class MainWindow : Window
                 // 没跟上而遗漏。之前只会弹"请重新安装/补全依赖库"的死路提示，用户还得自己
                 // 想办法去哪里"重新安装"——现在提供"自动补全"，复用
                 // DownloadService.DownloadLibrariesOnlyAsync 补齐缺失库后原地重试启动。
-                var repair = MessageBox.Show(
+                var repair = MessageBoxDialog.ShowConfirm(
                     mle.Message + "\n\n是否现在自动下载补全这些缺失的库？",
-                    "缺少依赖库", MessageBoxButton.YesNo, MessageBoxImage.Warning);
-                if (repair != MessageBoxResult.Yes) return;
+                    "缺少依赖库");
+                if (!repair) return;
 
-                var repairWin = new ProgressWindow("正在补全缺失的依赖库...");
-                repairWin.Owner = this;
+                var repairWin = new ProgressDialog("正在补全缺失的依赖库...");
+                // 同上：ProgressDialog 现在是 Overlay 弹窗，没有 Owner 属性了。
                 repairWin.Show();
                 try
                 {
@@ -944,10 +1027,10 @@ public partial class MainWindow : Window
                             var names = string.Join("\n", scan.Modules
                                 .Where(m => m.Risk == ModuleRisk.Suspicious)
                                 .Select(m => $"· {m.FileName}  [{m.MatchedRule}]\n  路径: {m.FullPath}"));
-                            Dispatcher.Invoke(() => MessageBox.Show(
+                            Dispatcher.Invoke(() => MessageBoxDialog.ShowWarning(
                                 "注入检测发现可疑模块，游戏进程中可能存在外挂或密码窃取风险：\n\n" + names +
                                 "\n\n建议：立即考虑关闭游戏并修改微软账户密码，同时检查这些文件的来源。",
-                                "⚠ 注入检测警告", MessageBoxButton.OK, MessageBoxImage.Warning));
+                                "⚠ 注入检测警告"));
                         }
                     }
                     catch { /* 扫描失败不影响正常游戏 */ }
@@ -968,6 +1051,17 @@ public partial class MainWindow : Window
                 return false;
             });
 
+            // 修复"启动成功/启动异常弹窗出现时启动器窗口会自动最小化"：上面等待最多 3 秒观察
+            // 游戏进程是否提前退出的这段时间里，刚拉起的 Java/游戏窗口很容易抢到前台焦点，
+            // 之前这里的系统原生 MessageBox.Show 没有显式传 Owner，弹窗触发时启动器主窗口
+            // 已经不是前台窗口，Windows 有时会把这个已经失去前台焦点、又刚好被系统认为
+            // "不活跃"的窗口直接最小化。现在改用进程内 Overlay 弹窗（MessageBoxDialog）后，
+            // 弹窗本身就是挂在 MainWindow 可视化树里的一部分，天然跟随主窗口，不存在"独立
+            // Win32 窗口跟主窗口分离"这个问题了；但主窗口自己被最小化的情况依然可能发生
+            // （见上面的原因），所以这里仍然需要在弹窗前调用 EnsureVisibleForDialog()
+            // 主动把主窗口从 Minimized 恢复。
+            EnsureVisibleForDialog();
+
             if (exitedEarly)
             {
                 string output;
@@ -976,16 +1070,15 @@ public partial class MainWindow : Window
                 var exitCode = -1;
                 try { exitCode = processInfo.Process.ExitCode; } catch { /* 忽略 */ }
 
-                MessageBox.Show(
+                MessageBoxDialog.ShowWarning(
                     $"游戏进程刚启动就退出了（退出码 {exitCode}），大概率没有正常运行起来。\n\n" +
                     "最近的控制台输出：\n" + (string.IsNullOrWhiteSpace(tail) ? "(没有捕获到任何输出，可能是 Java 本身启动失败)" : tail) +
                     "\n\n可以到「日志」页的「游戏日志」/「崩溃报告分析」标签查看更多细节。",
-                    "启动异常", MessageBoxButton.OK, MessageBoxImage.Warning);
+                    "启动异常");
             }
             else
             {
-                MessageBox.Show($"游戏已启动：{account.DisplayLabel} - {cfg.SelectedVersionId}", "启动成功",
-                    MessageBoxButton.OK, MessageBoxImage.Information);
+                MessageBoxDialog.ShowSuccess($"游戏已启动：{account.DisplayLabel} - {cfg.SelectedVersionId}", "启动成功");
             }
         }
         catch (Exception ex)
@@ -999,12 +1092,12 @@ public partial class MainWindow : Window
     {
         if (ProcessManager.Running.Count == 0)
         {
-            MessageBox.Show("当前没有正在运行的游戏。", "提示", MessageBoxButton.OK, MessageBoxImage.Information);
+            MessageBoxDialog.ShowInfo("当前没有正在运行的游戏。");
             return;
         }
-        var confirm = MessageBox.Show($"确定要关闭全部 {ProcessManager.Running.Count} 个正在运行的游戏吗？",
-            "一键关闭游戏", MessageBoxButton.YesNo, MessageBoxImage.Question);
-        if (confirm == MessageBoxResult.Yes)
+        var confirm = MessageBoxDialog.ShowConfirm($"确定要关闭全部 {ProcessManager.Running.Count} 个正在运行的游戏吗？",
+            "一键关闭游戏");
+        if (confirm)
         {
             ProcessManager.CloseAll();
             RefreshSidebar();
@@ -1016,7 +1109,7 @@ public partial class MainWindow : Window
     {
         if (ProcessManager.Running.Count == 0)
         {
-            MessageBox.Show("当前没有正在运行的游戏。", "提示", MessageBoxButton.OK, MessageBoxImage.Information);
+            MessageBoxDialog.ShowInfo("当前没有正在运行的游戏。");
             return;
         }
         var win = new ProcessManagerWindow(ProcessManager, ProcessManagerWindow.Mode.SelectToClose) { Owner = this };
@@ -1032,11 +1125,92 @@ public partial class MainWindow : Window
     {
         if (ProcessManager.Running.Count == 0)
         {
-            MessageBox.Show("当前没有正在运行的游戏。", "提示", MessageBoxButton.OK, MessageBoxImage.Information);
+            MessageBoxDialog.ShowInfo("当前没有正在运行的游戏。");
             return;
         }
         var win = new ProcessManagerWindow(ProcessManager, ProcessManagerWindow.Mode.MarkUnresponsive) { Owner = this };
         win.ShowDialog();
         RefreshSidebar();
+    }
+
+    // ===================================================================
+    // ===== Overlay 弹窗宿主实现（配合 OverlayDialogService 使用） =====
+    // 这几个方法是 internal，只给同程序集内的 OverlayDialogService 调用，不对外暴露——
+    // "怎么把一个弹窗塞进/摘出可视化树、怎么播放进出场动画"是纯粹的宿主实现细节，
+    // OverlayDialogService 只需要知道"渲染这个内容"和"收起整个遮罩层"这两个操作，
+    // 不需要关心 MainWindow.xaml 里具体是哪几个命名元素在起作用。
+    // ===================================================================
+
+    /// <summary>把某个弹窗内容渲染到 Overlay 层并显示，播放进场动画。
+    /// animateIn=false 用于"弹窗里弹出的子弹窗关闭后，恢复显示上一层"的场景——那种情况
+    /// 更接近"揭开覆盖层露出原来就在那的内容"，用更快、更轻的过渡即可，不需要完整的
+    /// 进场动画，避免用户以为又打开了一个全新的弹窗。</summary>
+    internal void OverlayRenderEntry(object content, bool animateIn)
+    {
+        OverlayRoot.Visibility = Visibility.Visible;
+        OverlayContentHost.Content = content;
+
+        // 每次都重新测量一次内容尺寸：不同弹窗大小不同，OverlayCard 靠
+        // HorizontalAlignment/VerticalAlignment=Center 自动居中，不需要手动算坐标。
+        if (!animateIn)
+        {
+            OverlayScrim.Opacity = 1;
+            OverlayCardScale.ScaleX = 1;
+            OverlayCardScale.ScaleY = 1;
+            OverlayCard.Opacity = 1;
+            return;
+        }
+
+        // 进场动画：遮罩淡入 + 卡片从 96% 缩放到 100% 同时淡入，跟主流弹窗库（比如网页端
+        // Modal）的观感一致，比"瞬间出现"更柔和，也能让用户明确注意到"有新内容出现了"。
+        OverlayScrim.Opacity = 0;
+        OverlayCard.Opacity = 0;
+        OverlayCardScale.ScaleX = 0.96;
+        OverlayCardScale.ScaleY = 0.96;
+
+        var duration = TimeSpan.FromMilliseconds(140);
+        var ease = new QuadraticEase { EasingMode = EasingMode.EaseOut };
+
+        OverlayScrim.BeginAnimation(OpacityProperty, new DoubleAnimation(0, 1, duration) { EasingFunction = ease });
+        OverlayCard.BeginAnimation(OpacityProperty, new DoubleAnimation(0, 1, duration) { EasingFunction = ease });
+        OverlayCardScale.BeginAnimation(ScaleTransform.ScaleXProperty, new DoubleAnimation(0.96, 1, duration) { EasingFunction = ease });
+        OverlayCardScale.BeginAnimation(ScaleTransform.ScaleYProperty, new DoubleAnimation(0.96, 1, duration) { EasingFunction = ease });
+    }
+
+    /// <summary>播放退场动画后调用 onComplete（由 OverlayDialogService 传入，负责把结果
+    /// 回传给等待方、以及恢复上一层弹窗或彻底收起 Overlay）。</summary>
+    internal void OverlayDismissEntry(object content, Action onComplete)
+    {
+        var duration = TimeSpan.FromMilliseconds(110);
+        var ease = new QuadraticEase { EasingMode = EasingMode.EaseIn };
+
+        var cardFade = new DoubleAnimation(1, 0, duration) { EasingFunction = ease };
+        cardFade.Completed += (_, _) =>
+        {
+            if (ReferenceEquals(OverlayContentHost.Content, content)) OverlayContentHost.Content = null;
+            onComplete();
+        };
+
+        OverlayCard.BeginAnimation(OpacityProperty, cardFade);
+        OverlayScrim.BeginAnimation(OpacityProperty, new DoubleAnimation(1, 0, duration) { EasingFunction = ease });
+        OverlayCardScale.BeginAnimation(ScaleTransform.ScaleXProperty, new DoubleAnimation(1, 0.96, duration) { EasingFunction = ease });
+        OverlayCardScale.BeginAnimation(ScaleTransform.ScaleYProperty, new DoubleAnimation(1, 0.96, duration) { EasingFunction = ease });
+    }
+
+    /// <summary>整个弹窗栈都关闭完了，彻底收起 OverlayRoot（Visibility=Collapsed，
+    /// 恢复"不占用命中测试"的状态，见 MainWindow.xaml 对 OverlayRoot 的注释）。</summary>
+    internal void OverlayHideRoot()
+    {
+        OverlayRoot.Visibility = Visibility.Collapsed;
+    }
+
+    /// <summary>点击遮罩（弹窗卡片以外的半透明黑色区域）。只有事件源就是 OverlayScrim
+    /// 本身时才处理——弹窗卡片内部控件的点击事件会先被卡片内部消费，理论上不会冒泡到
+    /// 这里，这个判断是双重保险，避免未来某个弹窗内容意外把事件冒泡上来时被误判成
+    /// "点了背景"而错误关闭。</summary>
+    private void OverlayScrim_MouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+    {
+        if (!ReferenceEquals(e.OriginalSource, OverlayScrim)) return;
+        OverlayDialogService.RequestDismissTopByBackgroundClick();
     }
 }

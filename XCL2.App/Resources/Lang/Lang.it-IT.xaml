@@ -1,0 +1,52 @@
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                    xmlns:system="clr-namespace:System;assembly=mscorlib">
+
+    <!-- Italiano (Italia). L'insieme delle chiavi deve corrispondere esattamente a Lang.zh-Hans.xaml — vedi README.md. -->
+
+    <system:String x:Key="Str_Lang_DialogTitle">Seleziona lingua</system:String>
+    <system:String x:Key="Str_Lang_EntryButton">Lingua</system:String>
+    <system:String x:Key="Str_Lang_ExperimentalNotice">Alcune funzionalità sperimentali sono disponibili solo nell'interfaccia in cinese semplificato. Dopo il cambio lingua, queste funzionalità saranno temporaneamente nascoste (le funzionalità stesse restano attive, manca solo la traduzione).</system:String>
+    <system:String x:Key="Str_Lang_Ok">OK</system:String>
+    <system:String x:Key="Str_Lang_Cancel">Annulla</system:String>
+
+    <system:String x:Key="Str_Home_Welcome">Benvenuto in XCL2</system:String>
+    <system:String x:Key="Str_Home_Subtitle">xztx127-craft-launcher 2</system:String>
+    <system:String x:Key="Str_Home_Toggle_DarkMode">Modalità scura</system:String>
+    <system:String x:Key="Str_Home_Toggle_LightMode">Modalità chiara</system:String>
+    <system:String x:Key="Str_Home_Toggle_AutoCycle">Ciclo automatico</system:String>
+    <system:String x:Key="Str_Home_Toggle_AutoCycleOn">Ciclo automatico: attivo</system:String>
+    <system:String x:Key="Str_Home_Toggle_NormalMode">Modalità normale</system:String>
+    <system:String x:Key="Str_Home_Toggle_ExpertMode">Modalità esperto</system:String>
+    <system:String x:Key="Str_Home_Toggle_GuestMode">Modalità ospite</system:String>
+    <system:String x:Key="Str_Home_Toggle_GuestModeOn">Modalità ospite: attiva</system:String>
+        <system:String x:Key="Str_Home_Tile_Account_Title">Accesso account</system:String>
+    <system:String x:Key="Str_Home_Tile_Account_Desc">Account offline / account Microsoft, cambia in qualsiasi momento</system:String>
+    <system:String x:Key="Str_Home_Tile_Launch_Title">Avvia gioco</system:String>
+    <system:String x:Key="Str_Home_Tile_Launch_Desc">Gioca direttamente con la versione e l'account attualmente selezionati</system:String>
+    <system:String x:Key="Str_Home_Tile_QuickStart_Title">Avvio rapido</system:String>
+    <system:String x:Key="Str_Home_Tile_QuickStart_Desc">Versione, loader e mod in un solo passaggio</system:String>
+    <system:String x:Key="Str_Home_Tile_Download_Title">Centro download</system:String>
+    <system:String x:Key="Str_Home_Tile_Download_Desc">Scarica il core del gioco, mod, mappe e resource pack</system:String>
+    <system:String x:Key="Str_Home_Tile_ServerManager_Title">Gestione server</system:String>
+    <system:String x:Key="Str_Home_Tile_ServerManager_Desc">Crea/avvia un server locale, con guide LAN/tunneling</system:String>
+    <system:String x:Key="Str_Home_Tile_Settings_Title">Impostazioni</system:String>
+    <system:String x:Key="Str_Home_Tile_Settings_Desc">Java, cambio modalità, dimensione finestra e altro</system:String>
+
+    <system:String x:Key="Str_Main_WindowTitlePrefix">XCL2 - xztx127-craft-launcher 2</system:String>
+    <system:String x:Key="Str_Nav_Home">Home</system:String>
+    <system:String x:Key="Str_Nav_Versions">Versioni</system:String>
+    <system:String x:Key="Str_Nav_Download">Download</system:String>
+    <system:String x:Key="Str_Nav_Multiplayer">Multigiocatore</system:String>
+    <system:String x:Key="Str_Nav_ModManager">Gestione mod</system:String>
+    <system:String x:Key="Str_Nav_ServerManager">Gestione server</system:String>
+    <system:String x:Key="Str_Nav_Accounts">Account</system:String>
+    <system:String x:Key="Str_Nav_Settings">Impostazioni</system:String>
+    <system:String x:Key="Str_Nav_Logs">Log</system:String>
+    <system:String x:Key="Str_Nav_Experimental">Funzionalità sperimentali</system:String>
+
+    <system:String x:Key="Str_Settings_LanguageSection_Title">Lingua dell'interfaccia del launcher</system:String>
+    <system:String x:Key="Str_Settings_LanguageSection_Hint">Applicato immediatamente, senza riavvio. Imposta la lingua dell'interfaccia del launcher — indipendente dalla "lingua di gioco" qui sotto.</system:String>
+    <system:String x:Key="Str_Settings_LanguageSection_OpenPicker">🌐 Seleziona lingua</system:String>
+
+</ResourceDictionary>

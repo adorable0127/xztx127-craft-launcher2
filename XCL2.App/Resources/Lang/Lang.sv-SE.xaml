@@ -1,0 +1,52 @@
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                    xmlns:system="clr-namespace:System;assembly=mscorlib">
+
+    <!-- Svenska (Sverige). Nyckeluppsättningen måste exakt matcha Lang.zh-Hans.xaml — se README.md. -->
+
+    <system:String x:Key="Str_Lang_DialogTitle">Välj språk</system:String>
+    <system:String x:Key="Str_Lang_EntryButton">Språk</system:String>
+    <system:String x:Key="Str_Lang_ExperimentalNotice">Vissa experimentella funktioner finns bara i det förenklade kinesiska gränssnittet. Efter att du bytt språk döljs dessa funktioner tillfälligt (funktionerna fungerar fortfarande, det saknas bara en översättning).</system:String>
+    <system:String x:Key="Str_Lang_Ok">OK</system:String>
+    <system:String x:Key="Str_Lang_Cancel">Avbryt</system:String>
+
+    <system:String x:Key="Str_Home_Welcome">Välkommen till XCL2</system:String>
+    <system:String x:Key="Str_Home_Subtitle">xztx127-craft-launcher 2</system:String>
+    <system:String x:Key="Str_Home_Toggle_DarkMode">Mörkt läge</system:String>
+    <system:String x:Key="Str_Home_Toggle_LightMode">Ljust läge</system:String>
+    <system:String x:Key="Str_Home_Toggle_AutoCycle">Automatisk växling</system:String>
+    <system:String x:Key="Str_Home_Toggle_AutoCycleOn">Automatisk växling: På</system:String>
+    <system:String x:Key="Str_Home_Toggle_NormalMode">Normalt läge</system:String>
+    <system:String x:Key="Str_Home_Toggle_ExpertMode">Expertläge</system:String>
+    <system:String x:Key="Str_Home_Toggle_GuestMode">Gästläge</system:String>
+    <system:String x:Key="Str_Home_Toggle_GuestModeOn">Gästläge: På</system:String>
+        <system:String x:Key="Str_Home_Tile_Account_Title">Kontoinloggning</system:String>
+    <system:String x:Key="Str_Home_Tile_Account_Desc">Offlinekonto / Microsoft-konto, byt när som helst</system:String>
+    <system:String x:Key="Str_Home_Tile_Launch_Title">Starta spelet</system:String>
+    <system:String x:Key="Str_Home_Tile_Launch_Desc">Spela direkt med den valda versionen och kontot</system:String>
+    <system:String x:Key="Str_Home_Tile_QuickStart_Title">Snabbstart</system:String>
+    <system:String x:Key="Str_Home_Tile_QuickStart_Desc">Version, loader och mods i ett enda steg</system:String>
+    <system:String x:Key="Str_Home_Tile_Download_Title">Nedladdningscenter</system:String>
+    <system:String x:Key="Str_Home_Tile_Download_Desc">Ladda ner spelkärna, mods, kartor och resurspaket</system:String>
+    <system:String x:Key="Str_Home_Tile_ServerManager_Title">Serverhantering</system:String>
+    <system:String x:Key="Str_Home_Tile_ServerManager_Desc">Skapa/starta en lokal server, inklusive guider för LAN/tunneling</system:String>
+    <system:String x:Key="Str_Home_Tile_Settings_Title">Inställningar</system:String>
+    <system:String x:Key="Str_Home_Tile_Settings_Desc">Java, lägesbyte, fönsterstorlek med mera</system:String>
+
+    <system:String x:Key="Str_Main_WindowTitlePrefix">XCL2 - xztx127-craft-launcher 2</system:String>
+    <system:String x:Key="Str_Nav_Home">Hem</system:String>
+    <system:String x:Key="Str_Nav_Versions">Versioner</system:String>
+    <system:String x:Key="Str_Nav_Download">Nedladdning</system:String>
+    <system:String x:Key="Str_Nav_Multiplayer">Flerspelarläge</system:String>
+    <system:String x:Key="Str_Nav_ModManager">Modhantering</system:String>
+    <system:String x:Key="Str_Nav_ServerManager">Serverhantering</system:String>
+    <system:String x:Key="Str_Nav_Accounts">Konton</system:String>
+    <system:String x:Key="Str_Nav_Settings">Inställningar</system:String>
+    <system:String x:Key="Str_Nav_Logs">Loggar</system:String>
+    <system:String x:Key="Str_Nav_Experimental">Experimentella funktioner</system:String>
+
+    <system:String x:Key="Str_Settings_LanguageSection_Title">Språk för launcherns gränssnitt</system:String>
+    <system:String x:Key="Str_Settings_LanguageSection_Hint">Träder i kraft omedelbart, ingen omstart krävs. Detta ställer in språket för launcherns gränssnitt — separat från "språk i spelet" nedan.</system:String>
+    <system:String x:Key="Str_Settings_LanguageSection_OpenPicker">🌐 Välj språk</system:String>
+
+</ResourceDictionary>

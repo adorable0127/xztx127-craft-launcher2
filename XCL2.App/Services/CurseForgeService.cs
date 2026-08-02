@@ -75,7 +75,7 @@ public class CurseForgeService
     /// <summary>
     /// 底层通用搜索，按 classId 区分地图(17)/Mod(6)等类别。
     /// modLoaderType 只在搜 Mod 时有意义：CurseForge modLoaderType 编号 1=Forge 2=Cauldron 3=LiteLoader
-    /// 4=Fabric 5=Quilt（官方 v1 文档定义），不认识的字符串就不传，交给用户自己在结果里筛选版本。
+    /// 4=Fabric 5=Quilt 6=NeoForge（官方 v1 文档定义），不认识的字符串就不传，交给用户自己在结果里筛选版本。
     /// </summary>
     private async Task<CurseForgeSearchResult> SearchByClassAsync(int classId, string query, string? gameVersion,
         string? modLoader, int index, int pageSize, CancellationToken ct)
@@ -94,6 +94,7 @@ public class CurseForgeService
                 "forge" => 1,
                 "fabric" => 4,
                 "quilt" => 5,
+                "neoforge" => 6,
                 _ => (int?)null
             };
             if (loaderType != null) url += $"&modLoaderType={loaderType}";

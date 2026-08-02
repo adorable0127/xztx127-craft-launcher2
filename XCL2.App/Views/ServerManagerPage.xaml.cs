@@ -48,7 +48,7 @@ public partial class ServerManagerPage : UserControl
     // ===== 资源包下载面板：与 DownloadCenterPage 的材质包分类共用 ModrinthService/CurseForgeService/
     // ModSearchService（这几个服务类本身不跟 .minecraft 目录绑定，创建成本也很低，没必要要求
     // MainWindow 注入同一个实例；跟 DownloadCenterPage 保持各自独立一份是这个项目里已有的模式，
-    // 比如 CurseForgeMapPickerWindow/ModManagerPage 也都是各自 new 一份）。
+    // 比如 CurseForgeMapPickerDialog/ModManagerPage 也都是各自 new 一份）。
     private readonly ModrinthService _resourceModrinth = new();
     private readonly CurseForgeKeyService _resourceCurseForgeKeyService = new();
     private CurseForgeService? _resourceCurseForge;
@@ -254,12 +254,12 @@ public partial class ServerManagerPage : UserControl
     {
         if (McVersionCombo.SelectedItem is not string mcVersion)
         {
-            MessageBox.Show("请先选择 Minecraft 版本。", "提示", MessageBoxButton.OK, MessageBoxImage.Information);
+            MessageBoxDialog.ShowInfo("请先选择 Minecraft 版本。");
             return;
         }
         if (string.IsNullOrWhiteSpace(TargetDirBox.Text))
         {
-            MessageBox.Show("请先选择安装位置。", "提示", MessageBoxButton.OK, MessageBoxImage.Information);
+            MessageBoxDialog.ShowInfo("请先选择安装位置。");
             return;
         }
 
@@ -267,10 +267,10 @@ public partial class ServerManagerPage : UserControl
         if (System.IO.Directory.Exists(TargetDirBox.Text) &&
             System.IO.Directory.EnumerateFileSystemEntries(TargetDirBox.Text).Any())
         {
-            var confirm = MessageBox.Show(
+            var confirm = MessageBoxDialog.ShowConfirm(
                 $"目标目录「{TargetDirBox.Text}」不是空目录，服务端文件会下载到这个目录下。确定继续吗？",
-                "确认", MessageBoxButton.YesNo, MessageBoxImage.Warning);
-            if (confirm != MessageBoxResult.Yes) return;
+                "确认");
+            if (!confirm) return;
         }
 
         var buildVersion = (BuildVersionCombo.SelectedItem as ServerCoreBuild)?.DisplayVersion;
@@ -338,10 +338,9 @@ public partial class ServerManagerPage : UserControl
                 var registered = RegisterDownloadedInstance(req.TargetDir, _selectedCoreType, mcVersion,
                     result.ServerJarFileName ?? "server.jar", isScript: false, result.RequiredJavaMajorVersion);
 
-                MessageBox.Show(registered
+                MessageBoxDialog.ShowSuccess(registered
                         ? $"服务端核心下载完成，已自动添加到「服务器列表」：\n{result.DownloadedFilePath}"
-                        : $"服务端核心下载完成：\n{result.DownloadedFilePath}\n\n（未能自动添加到服务器列表，可以在「创建服务器」里手动指向这个目录。）",
-                    "成功", MessageBoxButton.OK, MessageBoxImage.Information);
+                        : $"服务端核心下载完成：\n{result.DownloadedFilePath}\n\n（未能自动添加到服务器列表，可以在「创建服务器」里手动指向这个目录。）");
             }
         }
         catch (Exception ex)
@@ -360,12 +359,12 @@ public partial class ServerManagerPage : UserControl
         if (_pendingInstallResult == null || _pendingInstallTargetDir == null) return;
 
         var javaPath = _javaService.FindJava(_owner.ConfigService.Config.JavaPath,
-            _owner.ConfigService.Config.PreferredJavaMajorVersion);
+            _owner.ConfigService.Config.PreferredJavaMajorVersion, _owner.ConfigService);
         if (javaPath == null)
         {
-            MessageBox.Show(
+            MessageBoxDialog.ShowWarning(
                 "没有找到可用的 Java，无法运行安装器。请先在「设置」页配置或下载 Java 后再试。",
-                "缺少 Java", MessageBoxButton.OK, MessageBoxImage.Warning);
+                "缺少 Java");
             return;
         }
 
@@ -421,10 +420,9 @@ public partial class ServerManagerPage : UserControl
                 _pendingInstallMcVersionForRegister ?? "", launchTarget, launchTargetIsScript,
                 _pendingInstallResult.RequiredJavaMajorVersion, javaPath);
 
-            MessageBox.Show(registered
+            MessageBoxDialog.ShowSuccess(registered
                     ? $"{(_pendingInstallResult.RequiresBuild ? "编译" : "安装")}完成！服务端已生成到：\n{_pendingInstallTargetDir}\n\n生成文件：{resultPath}\n\n已自动添加到「服务器列表」。"
-                    : $"{(_pendingInstallResult.RequiresBuild ? "编译" : "安装")}完成！服务端已生成到：\n{_pendingInstallTargetDir}\n\n生成文件：{resultPath}",
-                "成功", MessageBoxButton.OK, MessageBoxImage.Information);
+                    : $"{(_pendingInstallResult.RequiresBuild ? "编译" : "安装")}完成！服务端已生成到：\n{_pendingInstallTargetDir}\n\n生成文件：{resultPath}");
             _pendingInstallResult = null;
             _pendingInstallMcVersion = null;
         }
@@ -487,7 +485,7 @@ public partial class ServerManagerPage : UserControl
             }
 
             var resolvedJavaPath = javaPath
-                ?? _javaService.FindJava(_owner.ConfigService.Config.JavaPath, requiredJavaMajorVersion);
+                ?? _javaService.FindJava(_owner.ConfigService.Config.JavaPath, requiredJavaMajorVersion, _owner.ConfigService);
 
             var displayName = Path.GetFileName(fullDir.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
             if (string.IsNullOrWhiteSpace(displayName)) displayName = $"{coreType} {mcVersion}";
@@ -564,8 +562,7 @@ public partial class ServerManagerPage : UserControl
         var instance = GetPreferredInstance();
         if (instance == null)
         {
-            MessageBox.Show("还没有任何服务器，请先用「傻瓜式开服」创建一个。",
-                "提示", MessageBoxButton.OK, MessageBoxImage.Information);
+            MessageBoxDialog.ShowInfo("还没有任何服务器，请先用「傻瓜式开服」创建一个。");
             return;
         }
 
@@ -597,8 +594,7 @@ public partial class ServerManagerPage : UserControl
         var instance = GetPreferredInstance();
         if (instance == null)
         {
-            MessageBox.Show("还没有任何服务器，请先用「傻瓜式开服」创建一个。",
-                "提示", MessageBoxButton.OK, MessageBoxImage.Information);
+            MessageBoxDialog.ShowInfo("还没有任何服务器，请先用「傻瓜式开服」创建一个。");
             return;
         }
 
@@ -886,14 +882,13 @@ public partial class ServerManagerPage : UserControl
 
     private void SelectInstanceJava(ServerInstance instance)
     {
-        var window = new SelectJavaWindow(_owner.ConfigService, instance.JavaId, instance.JavaPath)
-        { Owner = Window.GetWindow(this) };
-        if (window.ShowDialog() != true) return;
+        var dlg = new SelectJavaDialog(_owner.ConfigService, instance.JavaId, instance.JavaPath);
+        if (OverlayDialogService.ShowModal(dlg) != true) return;
 
-        instance.JavaId = window.SelectedJavaId;
-        instance.JavaPath = window.SelectedJavaPath ?? instance.JavaPath;
+        instance.JavaId = dlg.SelectedJavaId;
+        instance.JavaPath = dlg.SelectedJavaPath ?? instance.JavaPath;
         _owner.ServerInstanceService.Update(instance);
-        MessageBox.Show($"「{instance.DisplayName}」的 Java 已更新。", "已保存", MessageBoxButton.OK, MessageBoxImage.Information);
+        MessageBoxDialog.ShowSuccess($"「{instance.DisplayName}」的 Java 已更新。", "已保存");
     }
 
     private void CreateServer_Click(object sender, RoutedEventArgs e)
@@ -914,7 +909,7 @@ public partial class ServerManagerPage : UserControl
         }
         catch (Exception ex)
         {
-            MessageBox.Show($"启动失败：\n{ex.Message}", "错误", MessageBoxButton.OK, MessageBoxImage.Error);
+            MessageBoxDialog.ShowError($"启动失败：\n{ex.Message}");
         }
     }
 
@@ -958,10 +953,10 @@ public partial class ServerManagerPage : UserControl
 
     private async Task StopInstanceAsync(ServerInstance instance)
     {
-        var confirm = MessageBox.Show(
+        var confirm = MessageBoxDialog.ShowConfirm(
             $"确定要停止服务器「{instance.DisplayName}」吗？会先尝试正常关服保存世界。",
-            "确认停止", MessageBoxButton.YesNo, MessageBoxImage.Question);
-        if (confirm != MessageBoxResult.Yes) return;
+            "确认停止");
+        if (!confirm) return;
 
         try
         {
@@ -969,7 +964,7 @@ public partial class ServerManagerPage : UserControl
         }
         catch (Exception ex)
         {
-            MessageBox.Show($"停止失败：\n{ex.Message}", "错误", MessageBoxButton.OK, MessageBoxImage.Error);
+            MessageBoxDialog.ShowError($"停止失败：\n{ex.Message}");
         }
         finally
         {
@@ -988,16 +983,16 @@ public partial class ServerManagerPage : UserControl
     {
         if (_owner.ServerProcessManager.IsRunning(instance.Id))
         {
-            MessageBox.Show("服务器正在运行，请先停止后再删除。", "提示", MessageBoxButton.OK, MessageBoxImage.Information);
+            MessageBoxDialog.ShowInfo("服务器正在运行，请先停止后再删除。");
             return;
         }
 
-        var confirm = MessageBox.Show(
+        var confirm = MessageBoxDialog.ShowConfirm(
             $"确定要删除服务器「{instance.DisplayName}」吗？\n\n" +
             "这里只会移除启动器里的记录，不会删除磁盘上的服务端文件夹。\n" +
             "如果需要连同存档/配置一起删除，请使用「更多」菜单里的「清除服务器数据」。",
-            "确认删除", MessageBoxButton.YesNo, MessageBoxImage.Warning);
-        if (confirm != MessageBoxResult.Yes) return;
+            "确认删除");
+        if (!confirm) return;
 
         try
         {
@@ -1006,7 +1001,7 @@ public partial class ServerManagerPage : UserControl
         }
         catch (Exception ex)
         {
-            MessageBox.Show($"删除失败：\n{ex.Message}", "错误", MessageBoxButton.OK, MessageBoxImage.Error);
+            MessageBoxDialog.ShowError($"删除失败：\n{ex.Message}");
         }
     }
 
@@ -1021,22 +1016,18 @@ public partial class ServerManagerPage : UserControl
     {
         if (_owner.ServerProcessManager.IsRunning(instance.Id))
         {
-            MessageBox.Show("服务器正在运行，请先停止后再清除数据。", "提示", MessageBoxButton.OK, MessageBoxImage.Information);
+            MessageBoxDialog.ShowInfo("服务器正在运行，请先停止后再清除数据。");
             return;
         }
 
-        var dlg = new ClearServerDataWindow(instance.DisplayName, instance.Directory)
-        {
-            Owner = Window.GetWindow(this)
-        };
-        if (dlg.ShowDialog() != true || !dlg.Confirmed) return;
+        var dlg = new ClearServerDataDialog(instance.DisplayName, instance.Directory);
+        if (OverlayDialogService.ShowModal(dlg) != true || !dlg.Confirmed) return;
 
         try
         {
             _owner.ServerInstanceService.Remove(instance.Id, deleteFiles: true);
             RefreshInstanceList();
-            MessageBox.Show($"「{instance.DisplayName}」的数据已永久清除。", "已清除",
-                MessageBoxButton.OK, MessageBoxImage.Information);
+            MessageBoxDialog.ShowSuccess($"「{instance.DisplayName}」的数据已永久清除。", "已清除");
         }
         catch (Exception ex)
         {
@@ -1070,11 +1061,11 @@ public partial class ServerManagerPage : UserControl
         try
         {
             _transferService.Export(instance, dlg.FileName);
-            MessageBox.Show("导出完成。", "存档导出", MessageBoxButton.OK, MessageBoxImage.Information);
+            MessageBoxDialog.ShowSuccess("导出完成。", "存档导出");
         }
         catch (Exception ex)
         {
-            MessageBox.Show($"导出失败：\n{ex.Message}", "错误", MessageBoxButton.OK, MessageBoxImage.Error);
+            MessageBoxDialog.ShowError($"导出失败：\n{ex.Message}");
         }
     }
 
@@ -1087,18 +1078,18 @@ public partial class ServerManagerPage : UserControl
     {
         if (_owner.ServerProcessManager.IsRunning(instance.Id))
         {
-            MessageBox.Show("服务器正在运行，请先停止后再导入。", "提示", MessageBoxButton.OK, MessageBoxImage.Information);
+            MessageBoxDialog.ShowInfo("服务器正在运行，请先停止后再导入。");
             return;
         }
 
         var dlg = new OpenFileDialog { Title = "导入服务器存档", Filter = "XCL2 服务器存档 (*.xcl2server)|*.xcl2server|所有文件 (*.*)|*.*" };
         if (dlg.ShowDialog() != true) return;
 
-        var confirm = MessageBox.Show(
+        var confirm = MessageBoxDialog.ShowConfirm(
             $"即将把存档内容合并覆盖到「{instance.DisplayName}」的服务器目录：\n{instance.Directory}\n\n" +
             "同名文件会被存档内容覆盖，其余现有文件保留。此操作不可撤销，建议先自行备份重要数据。",
-            "确认导入", MessageBoxButton.YesNo, MessageBoxImage.Warning);
-        if (confirm != MessageBoxResult.Yes) return;
+            "确认导入");
+        if (!confirm) return;
 
         try
         {
@@ -1107,11 +1098,11 @@ public partial class ServerManagerPage : UserControl
                 ? $"\n\n存档内附带的原始配置：{manifest.CoreType} · MC {manifest.McVersion}，内存 {manifest.MinMemoryMb}~{manifest.MaxMemoryMb}MB。\n" +
                   "如果需要按这份配置更新当前实例，请手动在创建/编辑向导里调整。"
                 : "";
-            MessageBox.Show("导入完成。" + extra, "存档导入", MessageBoxButton.OK, MessageBoxImage.Information);
+            MessageBoxDialog.ShowSuccess("导入完成。" + extra, "存档导入");
         }
         catch (Exception ex)
         {
-            MessageBox.Show($"导入失败：\n{ex.Message}", "错误", MessageBoxButton.OK, MessageBoxImage.Error);
+            MessageBoxDialog.ShowError($"导入失败：\n{ex.Message}");
         }
     }
 
@@ -1133,7 +1124,7 @@ public partial class ServerManagerPage : UserControl
         }
         catch (Exception ex)
         {
-            MessageBox.Show($"设置图标失败：\n{ex.Message}", "错误", MessageBoxButton.OK, MessageBoxImage.Error);
+            MessageBoxDialog.ShowError($"设置图标失败：\n{ex.Message}");
         }
     }
 
@@ -1153,15 +1144,13 @@ public partial class ServerManagerPage : UserControl
     /// </summary>
     private void RenameInstance(ServerInstance instance)
     {
-        var dlg = new RenameInstanceWindow(
+        var dlg = new RenameInstanceDialog(
             instance.DisplayName,
             isNameTaken: candidate => candidate != instance.DisplayName &&
-                _owner.ServerInstanceService.Instances.Any(i => i.Id != instance.Id && i.DisplayName == candidate))
-        {
-            Owner = Window.GetWindow(this)
-        };
+                _owner.ServerInstanceService.Instances.Any(i => i.Id != instance.Id && i.DisplayName == candidate),
+            title: "重命名服务器");
 
-        if (dlg.ShowDialog() != true) return;
+        if (OverlayDialogService.ShowModal(dlg) != true) return;
 
         instance.DisplayName = dlg.NewName;
         _owner.ServerInstanceService.Update(instance);
@@ -1184,15 +1173,15 @@ public partial class ServerManagerPage : UserControl
     {
         if (_owner.ServerProcessManager.IsRunning(instance.Id))
         {
-            MessageBox.Show("服务器正在运行，请先停止后再重新安装核心。", "提示", MessageBoxButton.OK, MessageBoxImage.Information);
+            MessageBoxDialog.ShowInfo("服务器正在运行，请先停止后再重新安装核心。");
             return;
         }
 
-        var confirm = MessageBox.Show(
+        var confirm = MessageBoxDialog.ShowConfirm(
             $"即将为「{instance.DisplayName}」重新下载并覆盖安装服务端核心文件。\n" +
             "world 存档等其余文件不会被清空，但核心 jar/启动脚本会被替换。是否继续？",
-            "确认重新安装", MessageBoxButton.YesNo, MessageBoxImage.Warning);
-        if (confirm != MessageBoxResult.Yes) return;
+            "确认重新安装");
+        if (!confirm) return;
 
         var wizard = new CreateServerWindow(_owner, reinstallTarget: instance) { Owner = Window.GetWindow(this) };
         wizard.ShowDialog();
@@ -1363,9 +1352,9 @@ public partial class ServerManagerPage : UserControl
             if (showEmptyHint)
             {
                 if (outcome.Items.Count == 0 && outcome.Warnings.Count == 0)
-                    MessageBox.Show("没有找到匹配的资源，换个关键词试试。", "提示", MessageBoxButton.OK, MessageBoxImage.Information);
+                    MessageBoxDialog.ShowInfo("没有找到匹配的资源，换个关键词试试。");
                 else if (outcome.Warnings.Count > 0)
-                    MessageBox.Show(string.Join("\n", outcome.Warnings), "部分来源搜索失败", MessageBoxButton.OK, MessageBoxImage.Warning);
+                    MessageBoxDialog.ShowWarning(string.Join("\n", outcome.Warnings), "部分来源搜索失败");
             }
         }
         catch (Exception ex)
@@ -1379,31 +1368,22 @@ public partial class ServerManagerPage : UserControl
     private async void ServerResourceListItem_Click(object sender, MouseButtonEventArgs e)
     {
         if (sender is not Grid grid || grid.Tag is not UnifiedResourceItem item) return;
-        await ToggleServerResourceExpandAsync(item);
+        await OpenServerResourceDetailAsync(item);
     }
 
-    /// <summary>展开/收起服务端资源条目的内联版本面板，跟 DownloadCenterPage.ToggleResourceExpandAsync
-    /// 是同一个思路，区别只在于：1) 下载目标目录是 ServerTargetCombo 选中的服务器实例目录，
+    /// <summary>点击资源条目：整页跳转到 ModDetailPage，取代原来已废弃的"卡片内联展开"样式
+    /// (旧版 ToggleServerResourceExpandAsync)——跟客户端 DownloadCenterPage.OpenResourceDetailAsync
+    /// 是同一套交互，区别只在于：1) 下载目标目录是 ServerTargetCombo 选中的服务器实例目录，
     /// 不是 .minecraft 文件夹；2) 数据包场景下"目标世界文件夹"来自 ServerDataPackWorldBox 这个
-    /// 单一输入框（不是像客户端那样扫描现有存档列表），所以 SaveNames 只填一项。</summary>
-    private async Task ToggleServerResourceExpandAsync(UnifiedResourceItem item)
+    /// 单一输入框（不是像客户端那样扫描现有存档列表），所以 SaveNames 只填一项；3) 服务端资源
+    /// 暂不接入收藏功能，onFavoriteToggle 传 null。</summary>
+    private async Task OpenServerResourceDetailAsync(UnifiedResourceItem item)
     {
-        if (item.IsExpanded)
-        {
-            item.IsExpanded = false;
-            return;
-        }
-
         if (ServerTargetCombo.SelectedItem is not ServerInstance targetInstance)
         {
-            MessageBox.Show("请先在上面选择一个要下载到的服务器（还没有服务器的话，先去「服务器列表」创建一个）。",
-                "提示", MessageBoxButton.OK, MessageBoxImage.Information);
+            MessageBoxDialog.ShowInfo("请先在上面选择一个要下载到的服务器（还没有服务器的话，先去「服务器列表」创建一个）。");
             return;
         }
-
-        foreach (var other in _serverResources) if (other != item) other.IsExpanded = false;
-        item.IsExpanded = true;
-        if (item.VersionsLoaded) return;
 
         item.IsDataPack = _serverResourceType == ModrinthResourceType.DataPack;
         if (item.IsDataPack)
@@ -1414,10 +1394,68 @@ public partial class ServerManagerPage : UserControl
             item.SelectedSaveName = worldName;
         }
 
+        var sourceUrl = item.RawItem switch
+        {
+            ModrinthSearchHit h => $"https://modrinth.com/{ServerResourceProjectTypeSlug(_serverResourceType)}/{h.Slug}",
+            CurseForgeMod m => m.Links?.WebsiteUrl,
+            _ => null
+        };
+
+        var detail = new ModDetailPage(
+            ModDetailPage.DetailMode.DirectDownload,
+            item.Title, item.Description, item.IconUrl, item.Author, item.Downloads,
+            item.SourceLabel, sourceUrl, item, item.IsFavorite,
+            onFavoriteToggle: null,
+            onBack: HideServerResourceDetail,
+            onDownload: entry => DownloadServerResourceInlineAsync(item, entry, targetInstance),
+            isDataPack: item.IsDataPack,
+            saveNames: item.SaveNames);
+
+        ShowServerResourceDetail(detail);
+
+        if (item.VersionsLoaded)
+        {
+            detail.SetFlatEntries(item.Versions);
+            detail.ShowGroups(item.Groups);
+            return;
+        }
+
+        detail.ShowLoading();
+        await LoadServerResourceVersionsAsync(item, ServerResourceGameVersionBox.Text?.Trim());
+        detail.SetFlatEntries(item.Versions);
+        detail.ShowGroups(item.Groups);
+    }
+
+    private void ShowServerResourceDetail(ModDetailPage page)
+    {
+        DetailHost.Content = page;
+        DetailHost.Visibility = Visibility.Visible;
+    }
+
+    private void HideServerResourceDetail()
+    {
+        DetailHost.Visibility = Visibility.Collapsed;
+        DetailHost.Content = null;
+    }
+
+    private static string ServerResourceProjectTypeSlug(ModrinthResourceType type) => type switch
+    {
+        ModrinthResourceType.ResourcePack => "resourcepack",
+        ModrinthResourceType.Shader => "shader",
+        ModrinthResourceType.DataPack => "mod",
+        ModrinthResourceType.Plugin => "plugin",
+        ModrinthResourceType.Mod => "mod",
+        _ => "mod"
+    };
+
+    /// <summary>拉取一个服务端资源条目的版本列表并分组，从原来 ToggleServerResourceExpandAsync
+    /// 里抽出来的共享逻辑，供整页详情复用，跟 DownloadCenterPage.LoadResourceVersionsAsync
+    /// 是同一个思路。</summary>
+    private async Task LoadServerResourceVersionsAsync(UnifiedResourceItem item, string? gameVersion)
+    {
         item.IsLoadingVersions = true;
         try
         {
-            var gameVersion = ServerResourceGameVersionBox.Text?.Trim();
             item.Versions.Clear();
 
             if (item.Source == ModSource.Modrinth)
@@ -1432,9 +1470,8 @@ public partial class ServerManagerPage : UserControl
                 // (CurseForgeResourceKind 没有 Mod 这个成员)。
                 if (_serverResourceType == ModrinthResourceType.Mod)
                 {
-                    item.IsExpanded = false;
-                    MessageBox.Show("Mod 类型目前仅支持从 Modrinth 下载，请把上方来源切换为「仅 Modrinth」或「综合」。",
-                        "提示", MessageBoxButton.OK, MessageBoxImage.Information);
+                    MessageBoxDialog.ShowInfo("Mod 类型目前仅支持从 Modrinth 下载，请把上方来源切换为「仅 Modrinth」或「综合」。");
+                    item.HasNoResults = true;
                     return;
                 }
 
@@ -1443,16 +1480,19 @@ public partial class ServerManagerPage : UserControl
                 foreach (var f in files) item.Versions.Add(new InlineVersionEntry(f));
             }
             item.HasNoResults = item.Versions.Count == 0;
+
+            item.Groups.Clear();
+            foreach (var g in ModVersionGrouping.Group(item.Versions)) item.Groups.Add(g);
+            if (item.Groups.Count > 0) item.Groups[0].IsExpanded = true;
+
             item.VersionsLoaded = true;
         }
         catch (CurseForgeKeyMissingException ex)
         {
-            item.IsExpanded = false;
-            MessageBox.Show(ex.Message, "未配置 Key", MessageBoxButton.OK, MessageBoxImage.Information);
+            MessageBoxDialog.ShowInfo(ex.Message, "未配置 Key");
         }
         catch (Exception ex)
         {
-            item.IsExpanded = false;
             ErrorPresenter.ShowFriendlyError("获取版本列表失败，可能是网络连接问题或下载源暂时不可用，请检查网络后重试。", $"[获取版本列表失败] {ex}", "获取版本列表失败");
         }
         finally
@@ -1461,48 +1501,18 @@ public partial class ServerManagerPage : UserControl
         }
     }
 
-    /// <summary>展开面板里点"下载"：这里的 Tag 是 InlineVersionEntry，服务端场景的宿主条目
-    /// 只可能来自 _serverResources（跟 DownloadCenterPage 的 Mod/Resource 两种面板是不同的
-    /// ObservableCollection 实例，不会混淆），所以直接在 _serverResources 里按引用找宿主，
-    /// 不需要像 DownloadCenterPage 那样沿可视化树查找——这个页面的展开面板只服务一种场景。</summary>
-    private async void InlineVersionDownload_Click(object sender, RoutedEventArgs e)
+    /// <summary>ModDetailPage 里点"下载"回调，目标目录是 OpenServerResourceDetailAsync 打开
+    /// 详情页那一刻就已经确定好的服务器实例（避免用户在详情页停留期间切换了 ServerTargetCombo
+    /// 导致下载目录和预期不一致）。</summary>
+    private async Task DownloadServerResourceInlineAsync(UnifiedResourceItem item, InlineVersionEntry entry, ServerInstance targetInstance)
     {
-        // 同 DownloadCenterPage：这个处理器挂在 ListBox 上接收冒泡的 Button.Click，
-        // 因为按钮的 DataTemplate 定义在 App.xaml 全局资源里，不能直接在按钮上写 Click=。
-        if (FindAncestorButton(e.OriginalSource as DependencyObject) is not Button btn) return;
-        if (btn.Tag is not InlineVersionEntry entry) return;
-        var host = _serverResources.FirstOrDefault(r => r.IsExpanded && r.Versions.Contains(entry));
-        if (host == null) return;
-        await DownloadServerResourceInlineAsync(host, entry);
-    }
-
-    /// <summary>从事件原始来源沿可视化树向上找到最近的 Button。</summary>
-    private static Button? FindAncestorButton(DependencyObject? start)
-    {
-        var current = start;
-        while (current != null)
-        {
-            if (current is Button btn) return btn;
-            current = VisualTreeHelper.GetParent(current);
-        }
-        return null;
-    }
-
-    private async Task DownloadServerResourceInlineAsync(UnifiedResourceItem item, InlineVersionEntry entry)
-    {
-        if (ServerTargetCombo.SelectedItem is not ServerInstance targetInstance)
-        {
-            MessageBox.Show("请先在上面选择一个要下载到的服务器。", "提示", MessageBoxButton.OK, MessageBoxImage.Information);
-            return;
-        }
         if (item.IsDataPack && string.IsNullOrEmpty(item.SelectedSaveName))
         {
-            MessageBox.Show("请先填写要安装到哪个存档（数据包必须放进具体存档才会生效）。",
-                "提示", MessageBoxButton.OK, MessageBoxImage.Information);
+            MessageBoxDialog.ShowInfo("请先填写要安装到哪个存档（数据包必须放进具体存档才会生效）。");
             return;
         }
 
-        var progressWin = new ProgressWindow($"正在下载 {entry.Name} ...") { Owner = Window.GetWindow(this) };
+        var progressWin = new ProgressDialog($"正在下载 {entry.Name} ...");
         progressWin.Show();
         try
         {
@@ -1526,7 +1536,8 @@ public partial class ServerManagerPage : UserControl
                 path = await GetResourceCurseForge().DownloadResourceAsync(targetInstance.Directory, kind,
                     (CurseForgeFile)entry.RawVersion, progress, item.IsDataPack ? item.SelectedSaveName : null);
             }
-            MessageBox.Show($"下载完成：\n{path}", "成功", MessageBoxButton.OK, MessageBoxImage.Information);
+            _owner.EnsureVisibleForDialog();
+            MessageBoxDialog.ShowSuccess($"下载完成：\n{path}");
         }
         catch (Exception ex)
         {

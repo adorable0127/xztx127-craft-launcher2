@@ -164,7 +164,7 @@ public partial class ModManagerPage : UserControl
         var gameDir = GetEffectiveGameDir();
         if (gameDir == null)
         {
-            MessageBox.Show("请先选择一个文件夹和版本。", "提示", MessageBoxButton.OK, MessageBoxImage.Information);
+            MessageBoxDialog.ShowInfo("请先选择一个文件夹和版本。");
             return;
         }
 
@@ -183,7 +183,7 @@ public partial class ModManagerPage : UserControl
         var analysis = _dependencyAnalysisService.Analyze(enabledMods);
         if (!analysis.HasMissingDependencies)
         {
-            MessageBox.Show("没有发现缺失的前置模组。", "检查完成", MessageBoxButton.OK, MessageBoxImage.Information);
+            MessageBoxDialog.ShowInfo("没有发现缺失的前置模组。", "检查完成");
             return;
         }
 
@@ -231,9 +231,9 @@ public partial class ModManagerPage : UserControl
     {
         if (sender is not Button btn || btn.Tag is not LocalModDisplayItem item) return;
 
-        var confirm = MessageBox.Show($"确定要删除「{item.DisplayName}」吗？此操作无法撤销。",
-            "确认删除", MessageBoxButton.YesNo, MessageBoxImage.Warning);
-        if (confirm != MessageBoxResult.Yes) return;
+        var confirm = MessageBoxDialog.ShowConfirm($"确定要删除「{item.DisplayName}」吗？此操作无法撤销。",
+            "确认删除");
+        if (!confirm) return;
 
         try
         {
@@ -253,7 +253,7 @@ public partial class ModManagerPage : UserControl
         var version = VersionCombo.SelectedItem as GameVersion;
         if (gameDir == null || version == null)
         {
-            MessageBox.Show("请先选择一个文件夹和版本。", "提示", MessageBoxButton.OK, MessageBoxImage.Information);
+            MessageBoxDialog.ShowInfo("请先选择一个文件夹和版本。");
             return;
         }
 
@@ -273,7 +273,7 @@ public partial class ModManagerPage : UserControl
         // 时手动打了 .mrpack 扩展名——统一以实际文件名的扩展名为准，比只看 FilterIndex 更可靠。
         var exportAsMrpack = string.Equals(Path.GetExtension(dialog.FileName), ".mrpack", StringComparison.OrdinalIgnoreCase);
 
-        var progressWin = new ProgressWindow("正在导出整合包 ...") { Owner = Window.GetWindow(this) };
+        var progressWin = new ProgressDialog("正在导出整合包 ...");
         progressWin.Show();
         try
         {
@@ -289,7 +289,7 @@ public partial class ModManagerPage : UserControl
                 _modpackService.ExportMrpack(gameDir, dialog.FileName, manifest, progress);
             else
                 _modpackService.Export(gameDir, dialog.FileName, manifest, progress);
-            MessageBox.Show($"整合包已导出到：\n{dialog.FileName}", "成功", MessageBoxButton.OK, MessageBoxImage.Information);
+            MessageBoxDialog.ShowSuccess($"整合包已导出到：\n{dialog.FileName}");
         }
         catch (Exception ex)
         {
@@ -307,7 +307,7 @@ public partial class ModManagerPage : UserControl
         var gameDir = GetEffectiveGameDir();
         if (gameDir == null)
         {
-            MessageBox.Show("请先选择一个文件夹和版本。", "提示", MessageBoxButton.OK, MessageBoxImage.Information);
+            MessageBoxDialog.ShowInfo("请先选择一个文件夹和版本。");
             return;
         }
 
@@ -335,10 +335,10 @@ public partial class ModManagerPage : UserControl
               "部分 mod 下载源如果暂时不可用，会跳过并在导入完成后提示，不影响其余内容导入。确定要继续吗？"
             : "导入会把整合包内的 mods/config/resourcepacks/shaderpacks 合并覆盖到当前选中的版本目录，\n" +
               "同名文件会被整合包内容覆盖。确定要继续吗？";
-        var confirm = MessageBox.Show(confirmMsg, "确认导入", MessageBoxButton.YesNo, MessageBoxImage.Warning);
-        if (confirm != MessageBoxResult.Yes) return;
+        var confirm = MessageBoxDialog.ShowConfirm(confirmMsg, "确认导入");
+        if (!confirm) return;
 
-        var progressWin = new ProgressWindow("正在导入整合包 ...") { Owner = Window.GetWindow(this) };
+        var progressWin = new ProgressDialog("正在导入整合包 ...");
         progressWin.Show();
         try
         {
@@ -351,14 +351,16 @@ public partial class ModManagerPage : UserControl
                       $"可以之后去「Mod 管理」页手动补装：\n" + string.Join("\n", result.FailedFiles.Take(10)) +
                       (result.FailedFiles.Count > 10 ? $"\n... 等共 {result.FailedFiles.Count} 个" : "")
                     : "";
-                MessageBox.Show($"整合包已导入。\n整合包名称：{result.Name}{failedInfo}", "成功",
-                    MessageBoxButton.OK, failedInfo.Length > 0 ? MessageBoxImage.Warning : MessageBoxImage.Information);
+                if (failedInfo.Length > 0)
+                    MessageBoxDialog.ShowWarning($"整合包已导入。\n整合包名称：{result.Name}{failedInfo}", "成功");
+                else
+                    MessageBoxDialog.ShowSuccess($"整合包已导入。\n整合包名称：{result.Name}{failedInfo}");
             }
             else
             {
                 var manifest = _modpackService.Import(dialog.FileName, gameDir, progress);
                 var nameInfo = manifest != null ? $"\n整合包名称：{manifest.Name}" : "";
-                MessageBox.Show($"整合包已导入。{nameInfo}", "成功", MessageBoxButton.OK, MessageBoxImage.Information);
+                MessageBoxDialog.ShowSuccess($"整合包已导入。{nameInfo}");
             }
             RefreshMods();
         }

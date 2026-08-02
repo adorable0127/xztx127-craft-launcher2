@@ -17,6 +17,16 @@
             <TextBlock x:Name="AdvancedModeHintText" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}"
                        Margin="0,0,0,16" TextWrapping="Wrap"/>
 
+            <!-- 启动器界面语言：跟下面「游戏内语言」是两个独立设置，见 AppConfig.LauncherLanguage
+                 和 Resources/Lang/README.md 的说明。这里跟首页顶部的"🌐 语言"按钮打开的是
+                 同一个 LanguageSelectDialog，共享同一份切换逻辑，两处操作互相同步。 -->
+            <TextBlock Text="{DynamicResource Str_Settings_LanguageSection_Title}" FontSize="14" FontWeight="Bold" Margin="0,0,0,4"/>
+            <TextBlock Text="{DynamicResource Str_Settings_LanguageSection_Hint}" FontSize="11"
+                       Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,8" TextWrapping="Wrap"/>
+            <Button x:Name="OpenLanguagePickerBtn" Content="{DynamicResource Str_Settings_LanguageSection_OpenPicker}"
+                    Style="{StaticResource SecondaryButton}" HorizontalAlignment="Left" Padding="14,8"
+                    Margin="0,0,0,20" Click="OpenLanguagePicker_Click"/>
+
             <Button Content="🧭 重新打开新手引导" HorizontalAlignment="Left" Padding="10,6" Margin="0,0,0,16"
                     Click="ReopenWizard_Click"/>
 
@@ -99,6 +109,18 @@
             <ListBox x:Name="JavaListBox" Height="120" Margin="0,0,0,8"
                      DisplayMemberPath="DisplayText"/>
 
+            <!-- 优先级排序：上移/下移调整 Java 列表顺序，FindJava 自动匹配(没有为某个版本/服务器
+                 单独指定 Java 时)会按这个顺序从高到低依次尝试，选第一个跟当前 MC 版本兼容的那个。
+                 之前只能通过"全局默认 Java"强制指定一个，覆盖不到所有场景(比如同时有需要
+                 Java 21 的新版本和需要 Java 8 的老 mod)；现在维护一份优先级列表，不同版本各自
+                 匹配到列表里排最靠前、又满足版本要求的那个，不需要来回手动切换。 -->
+            <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                <Button Content="↑ 提高优先级" Padding="10,6" Margin="0,0,8,0" Click="MoveJavaUp_Click"
+                        ToolTip="把选中的 Java 往列表前面移一位；自动匹配时会优先尝试排在前面的条目"/>
+                <Button Content="↓ 降低优先级" Padding="10,6" Click="MoveJavaDown_Click"
+                        ToolTip="把选中的 Java 往列表后面移一位"/>
+            </StackPanel>
+
             <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
                 <Button Content="🔄 刷新（自动探测）" Padding="10,6" Margin="0,0,8,0" Click="RefreshDetectJava_Click"
                         ToolTip="快速查找本机常见位置(便携版目录/JAVA_HOME/注册表/PATH)已装的 Java，一键批量加入下面的列表；不会遍历整个磁盘，几秒内完成"/>
@@ -165,6 +187,12 @@
                 <ComboBoxItem Content="한국어" Tag="ko_kr"/>
             </ComboBox>
 
+            <!-- 游戏内左下角"版本类型"水印文字：对应启动参数 versionType（Minecraft 客户端
+                 原生会把这个值渲染在主菜单/游戏内左下角），见 AppConfig.GameVersionTypeLabel 注释。
+                 默认 "XCL2"，用户可以改成任意文字，留空则退回官方原始的 "release"。 -->
+            <TextBlock Text="游戏内水印文字（左下角显示，如 &quot;XCL2&quot;；留空则显示官方原始的 &quot;release&quot;）" Margin="0,0,0,4"/>
+            <TextBox x:Name="GameVersionTypeLabelBox" Width="220" HorizontalAlignment="Left" Margin="0,0,0,20"/>
+
             <!-- 界面切换动画开关：控制左侧导航栏切页时右侧内容区的淡入过渡效果。
                  默认开启；觉得切页慢/动画多余的用户可以关掉，关闭后切页恢复瞬间直接替换，
                  不跑任何动画。见 MainWindow.SetMainContent。 -->
@@ -215,7 +243,7 @@
                  具体显示成浅色版还是深色版由 IsDarkMode 决定——见首页/主界面的「模式设置」
                  按钮，或者下面的自动循环。这里选的只是色相，不管深浅。 -->
             <TextBlock Text="配色皮肤（色系）" FontSize="14" FontWeight="Bold" Margin="0,0,0,4"/>
-            <ComboBox x:Name="UiSkinCombo" Padding="8" Margin="0,0,0,4" HorizontalAlignment="Left" MinWidth="160"
+            <ComboBox x:Name="UiSkinCombo" Style="{StaticResource TallPopupComboBox}" Padding="8" Margin="0,0,0,4" HorizontalAlignment="Left" MinWidth="160"
                       ToolTip="切换启动器的配色色相；每个色系都各自有浅色版和深色版，具体显示深色还是浅色由首页「模式设置」按钮或下面的自动循环决定。"/>
             <TextBlock Text="需要点下面的「保存设置」才会生效；预览效果会在保存后立即应用，不需要重启启动器。"
                        FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,20" TextWrapping="Wrap"/>

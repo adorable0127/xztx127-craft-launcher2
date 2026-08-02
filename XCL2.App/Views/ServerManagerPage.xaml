@@ -137,6 +137,12 @@
 
         <!-- 右侧内容区 -->
         <Border Grid.Column="2" Background="{DynamicResource PanelBrush}" CornerRadius="10" Padding="20">
+            <Grid>
+            <!-- 修复：服务端"插件下载/资源包"面板之前一直用的是已废弃的"卡片内联展开"样式
+                 (InlineVersionExpandPanel_Resource)，跟客户端下载中心早就换掉的旧样式一样；
+                 现在统一改成跟 DownloadCenterPage 完全相同的"整页跳转详情"(ModDetailPage)。
+                 DetailHost 是跟 DockPanel 同级的覆盖层，点击资源条目后盖住整个内容区显示详情，
+                 点返回收起后原样恢复列表/筛选条件，跟 DownloadCenterPage 的 DetailHost 是同一套思路。 -->
             <DockPanel>
 
                 <!-- ===== 首页面板 ===== -->
@@ -363,18 +369,24 @@
                     <!-- 资源类型选择：插件(默认)/资源包/数据包/光影包/Mod。不同分类的下载入口
                          (Category_Checked 里的 tag)各自独立，但落到同一个物理面板复用逻辑，
                          这一排按钮才是真正决定"这次搜索/下载哪种资源"的开关。 -->
-                    <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="0,0,0,10">
+                    <!-- 修复"Mod(需 Fabric/Forge/NeoForge 服务端)"点不到的问题：这一项文字明显比
+                         其它几项长，之前用 Orientation="Horizontal" 的 StackPanel 排列，StackPanel
+                         横向排列时不会自动换行——窗口不够宽时最后一项会被挤出父容器的可视/可点击
+                         范围之外（父级 Border 会裁掉溢出内容），看起来这一项"消失"或"点不到"。
+                         改成 WrapPanel 后，空间不够时会自动换到下一行，任何窗口宽度下都能完整显示
+                         并点击到，不会再被裁切到看不见/点不到的地方。 -->
+                    <WrapPanel Grid.Row="1" Orientation="Horizontal" Margin="0,0,0,10">
                         <RadioButton x:Name="SrvResPlugin" Style="{StaticResource DownloadCategoryButton}" IsChecked="True"
-                                     Content="插件" Checked="ServerResourceType_Checked" Tag="Plugin" Margin="0,0,6,0"/>
+                                     Content="插件" Checked="ServerResourceType_Checked" Tag="Plugin" Margin="0,0,6,4"/>
                         <RadioButton x:Name="SrvResResourcePack" Style="{StaticResource DownloadCategoryButton}"
-                                     Content="资源包" Checked="ServerResourceType_Checked" Tag="ResourcePack" Margin="0,0,6,0"/>
+                                     Content="资源包" Checked="ServerResourceType_Checked" Tag="ResourcePack" Margin="0,0,6,4"/>
                         <RadioButton x:Name="SrvResDataPack" Style="{StaticResource DownloadCategoryButton}"
-                                     Content="数据包" Checked="ServerResourceType_Checked" Tag="DataPack" Margin="0,0,6,0"/>
+                                     Content="数据包" Checked="ServerResourceType_Checked" Tag="DataPack" Margin="0,0,6,4"/>
                         <RadioButton x:Name="SrvResShader" Style="{StaticResource DownloadCategoryButton}"
-                                     Content="光影包" Checked="ServerResourceType_Checked" Tag="Shader" Margin="0,0,6,0"/>
+                                     Content="光影包" Checked="ServerResourceType_Checked" Tag="Shader" Margin="0,0,6,4"/>
                         <RadioButton x:Name="SrvResMod" Style="{StaticResource DownloadCategoryButton}"
-                                     Content="Mod(需 Fabric/Forge/NeoForge 服务端)" Checked="ServerResourceType_Checked" Tag="Mod"/>
-                    </StackPanel>
+                                     Content="Mod(需 Fabric/Forge/NeoForge 服务端)" Checked="ServerResourceType_Checked" Tag="Mod" Margin="0,0,6,4"/>
+                    </WrapPanel>
 
                     <!-- 仿 PCL「搜索 Mod」筛选栏：名称/来源 一行，版本/(数据包场景下是"目标世界文件夹") 一行，
                          两列网格 + 搜索/重置按钮，跟 DownloadCenterPage 的 Mod/资源面板同一套结构。
@@ -449,14 +461,17 @@
                         </Grid>
                     </Border>
 
+                    <!-- 修复：跟客户端下载中心一样，点击条目不再是"卡片内联展开"(旧样式)，
+                         而是整页跳转到 ModDetailPage(见 code-behind ServerResourceListItem_Click /
+                         OpenServerResourceDetailAsync)。下载目标目录是 ServerTargetCombo 选中的
+                         服务器实例目录，跟原来的目录解析逻辑一致，只是不再需要 Button.Click 冒泡
+                         处理内联下载按钮——下载按钮现在在 ModDetailPage 内部。 -->
                     <ListBox x:Name="ServerResourceListBox" Grid.Row="4" BorderThickness="0" Background="Transparent"
-                             ItemContainerStyle="{StaticResource DownloadListItem}"
-                             Button.Click="InlineVersionDownload_Click">
+                             ItemContainerStyle="{StaticResource DownloadListItem}">
                         <ListBox.ItemTemplate>
                             <DataTemplate>
-                                <StackPanel>
                                 <Grid Margin="4,8" Cursor="Hand" Background="Transparent" Tag="{Binding}"
-                                      MouseLeftButtonUp="ServerResourceListItem_Click" ToolTip="点击展开/收起可下载的版本">
+                                      MouseLeftButtonUp="ServerResourceListItem_Click" ToolTip="点击查看详情和可下载的版本">
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="Auto"/>
                                         <ColumnDefinition Width="*"/>
@@ -478,12 +493,6 @@
                                         </TextBlock>
                                     </StackPanel>
                                 </Grid>
-                                <!-- 卡片内联展开：仿 PCL，取代原来的 ModrinthVersionPickerWindow/
-                                     CurseForgeResourcePickerWindow 弹窗。下载目标目录是服务器实例目录，
-                                     具体在 code-behind InlineVersionDownload_Click 里按 ServerTargetCombo
-                                     选中的实例解析，跟原来 ViewServerResourceVersionsAsync 的目录逻辑一致。 -->
-                                <ContentPresenter Content="{Binding}" ContentTemplate="{StaticResource InlineVersionExpandPanel_Resource}"/>
-                                </StackPanel>
                             </DataTemplate>
                         </ListBox.ItemTemplate>
                     </ListBox>
@@ -495,6 +504,12 @@
                 </Grid>
 
             </DockPanel>
+
+            <!-- 服务端资源详情覆盖层：跟 DownloadCenterPage 的 DetailHost 同一套思路，
+                 点击插件/资源包/数据包/光影包/Mod 条目后盖住整个内容区显示 ModDetailPage，
+                 返回时收起即可，不影响下层筛选条件/已加载的搜索结果。 -->
+            <ContentControl x:Name="DetailHost" Visibility="Collapsed" Background="{DynamicResource PanelBrush}"/>
+            </Grid>
         </Border>
     </Grid>
 </UserControl>

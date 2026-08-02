@@ -195,7 +195,7 @@ public partial class LogsPage : UserControl
     {
         if (ScanProcessCombo.SelectedItem is not GameProcessInfo info)
         {
-            MessageBox.Show("请先选择一个正在运行的游戏进程。", "提示", MessageBoxButton.OK, MessageBoxImage.Information);
+            MessageBoxDialog.ShowInfo("请先选择一个正在运行的游戏进程。", "提示");
             return;
         }
 
@@ -218,7 +218,6 @@ public partial class LogsPage : UserControl
             .ToList();
 
         if (result.HasSuspiciousModule)
-            MessageBox.Show("扫描发现可疑模块，请在列表中查看标记为「⚠ 可疑」的条目，建议立即处理。",
-                "注入检测", MessageBoxButton.OK, MessageBoxImage.Warning);
+            MessageBoxDialog.ShowWarning("扫描发现可疑模块，请在列表中查看标记为「⚠ 可疑」的条目，建议立即处理。", "注入检测");
     }
 }

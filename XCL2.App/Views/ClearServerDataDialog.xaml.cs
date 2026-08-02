@@ -10,8 +10,10 @@ namespace XCL2.App.Views;
 /// 只有"输入框里的内容跟服务器名称完全一致"时"永久删除"按钮才会启用，用打字这个动作本身
 /// 拖住用户的手速，让人有机会在按下去之前再想一下，比一个"确定/取消"的 MessageBox 更难被
 /// 手滑点掉——这个模式在很多"删除仓库/删除数据库"这类不可逆操作的产品里很常见。
+///
+/// 迁移记录：原来是独立 Window（ClearServerDataWindow），现在改成 Overlay 弹窗。
 /// </summary>
-public partial class ClearServerDataWindow : Window
+public partial class ClearServerDataDialog : OverlayDialogControl
 {
     private readonly string _expectedName;
 
@@ -20,7 +22,7 @@ public partial class ClearServerDataWindow : Window
 
     /// <param name="instanceName">要清除的服务器实例显示名称，用户必须在输入框里原样输入这个值。</param>
     /// <param name="directory">服务端所在目录，仅用于警告文案里展示给用户看，不参与任何校验逻辑。</param>
-    public ClearServerDataWindow(string instanceName, string directory)
+    public ClearServerDataDialog(string instanceName, string directory)
     {
         _expectedName = instanceName;
         InitializeComponent();
@@ -50,14 +52,12 @@ public partial class ClearServerDataWindow : Window
         }
 
         Confirmed = true;
-        DialogResult = true;
-        Close();
+        CloseWith(true);
     }
 
     private void Cancel_Click(object sender, RoutedEventArgs e)
     {
         Confirmed = false;
-        DialogResult = false;
-        Close();
+        CloseWith(false);
     }
 }

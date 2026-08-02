@@ -1126,7 +1126,7 @@ public partial class QuickStartWizardWindow : Window
             ? ServerJavaRequirement.EstimateMajorVersionForMcVersion(mcVersionForEstimate)
             : (int?)null;
 
-        var found = _javaService.FindJava(cfg.JavaPath, preferMajor);
+        var found = _javaService.FindJava(cfg.JavaPath, preferMajor, _owner.ConfigService);
         if (found != null)
         {
             ReportRun("检查 Java 环境", $"已找到可用 Java：{found}", stageOffset + stageWeight);

@@ -17,7 +17,7 @@ namespace XCL2.App.Services;
 public static class ErrorPresenter
 {
     /// <summary>本项目的 GitHub 仓库地址，日志/问题反馈的默认落脚点。</summary>
-    public const string GitHubRepoUrl = "https://github.com/xztx127-craft/xcl2";
+    public const string GitHubRepoUrl = "https://github.com/adorable0127/xztx127-craft-launcher2";
 
     /// <summary>
     /// 显示一个用户友好的错误弹窗：只给出场景化的中文概括（不含状态码/异常类型名），
@@ -31,12 +31,16 @@ public static class ErrorPresenter
     {
         LogTechnicalDetail(technicalDetail);
 
-        MessageBox.Show(
+        // 改用进程内 Overlay 弹窗（Views.MessageBoxDialog），不再是系统原生 MessageBox——
+        // 原生 MessageBox 是 Win32 对话框，样式跟启动器自己的皮肤系统完全脱节，错误提示
+        // 又是玩家最容易频繁看到的弹窗类型之一，所以这一类优先迁移。见
+        // Views/MessageBoxDialog.xaml.cs 顶部注释。
+        Views.MessageBoxDialog.ShowError(
             $"{friendlySummary}\n\n" +
             "详细的技术日志已经自动保存在本地，如果这个问题反复出现：\n" +
             "1. 打开「日志」页面，把完整日志内容发给你信任的专业人士（不要只发窗口截图，截图经常漏掉关键信息）；\n" +
             $"2. 或者前往 GitHub 提交反馈：{GitHubRepoUrl}",
-            title, MessageBoxButton.OK, MessageBoxImage.Warning);
+            title);
     }
 
     /// <summary>把技术细节追加写入 xcl2/logs/crash.log，静默失败（写日志本身不应该再抛出新异常打断主流程）。</summary>

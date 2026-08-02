@@ -31,10 +31,30 @@ public class AppConfig
     /// <summary>
     /// 游戏内语言（Minecraft 的 options.txt lang 字段格式，如 "zh_cn"、"en_us"）。
     /// 注意：这是"游戏内显示语言"，跟启动器界面本身用什么语言是两回事——
-    /// 启动器 UI 目前固定中文，这里只影响 Minecraft 客户端本体的语言。
+    /// 启动器 UI 语言见下面的 LauncherLanguage，这里只影响 Minecraft 客户端本体的语言。
     /// 默认简体中文，符合大多数用户预期。
     /// </summary>
     public string GameLanguage { get; set; } = "zh_cn";
+
+    /// <summary>
+    /// 启动器界面（不是游戏内）使用的语言，取值是 LocalizationService.SupportedLanguages
+    /// 里的 Code（如 "zh-Hans"、"en-US"），跟上面 GameLanguage 的格式（options.txt 风格）
+    /// 完全不同、互不影响，不要混用。默认简体中文，即当前启动器最初唯一支持的语言，
+    /// 保证升级到这个版本的老用户不会因为新增多语言功能而"莫名其妙变成别的语言"。
+    /// 见 Resources/Lang/README.md 了解整套多语言资源的组织方式。
+    /// </summary>
+    public string LauncherLanguage { get; set; } = "zh-Hans";
+
+    /// <summary>
+    /// 游戏内左下角"版本类型"水印文字（对应启动参数 --versionType，Minecraft 客户端本身
+    /// 就会把这个值渲染在主菜单/游戏内左下角，例如原版官方启动器传的是 "release"，
+    /// PCL2/HMCL 等第三方启动器习惯借用这个位置显示启动器品牌）。
+    /// 默认 "XCL2"，用户可以在设置页改成别的文字，或清空后退回官方原始的 "release"
+    /// （LauncherService.BuildArguments 里 string.IsNullOrWhiteSpace 时会这样兜底）。
+    /// 这是"游戏内"的品牌展示，跟上面 LauncherLanguage（启动器界面语言）是两个完全独立的
+    /// 概念，不要混淆——一个决定游戏窗口里显示什么，一个决定启动器窗口本身显示什么语言。
+    /// </summary>
+    public string GameVersionTypeLabel { get; set; } = "XCL2";
 
     /// <summary>是否已经完成过首次启动向导（新手引导）。默认 false；向导跑完/用户主动跳过后设为 true，
     /// 之后启动器不会再自动弹出，但用户仍可在设置页手动"重新打开新手引导"。</summary>

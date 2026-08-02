@@ -28,12 +28,12 @@ public partial class DownloadCenterPage : UserControl
     /// 是社区启动器的标配功能）另存到任意位置。返回 null 表示用户取消了本次下载。</summary>
     private static string? PromptSaveDirectory(string defaultDir, string itemName)
     {
-        var choice = MessageBox.Show(
+        var choice = MessageBoxDialog.ShowYesNoCancel(
             $"「{itemName}」将下载到：\n{defaultDir}\n\n点击「是」使用该目录，点击「否」选择其他目录，点击「取消」放弃本次下载。",
-            "选择保存位置", MessageBoxButton.YesNoCancel, MessageBoxImage.Question);
+            "选择保存位置");
 
-        if (choice == MessageBoxResult.Cancel) return null;
-        if (choice == MessageBoxResult.Yes) return defaultDir;
+        if (choice == XclMessageResult.Cancel) return null;
+        if (choice == XclMessageResult.Yes) return defaultDir;
 
         // 用户选"否"：调起 Windows 原生资源管理器文件夹选择框。
         var dialog = new Microsoft.Win32.OpenFolderDialog
@@ -582,9 +582,9 @@ public partial class DownloadCenterPage : UserControl
     private void OnlineListBox_SelectionChanged(object sender, SelectionChangedEventArgs e) { }
 
     /// <summary>
-    /// 点击某个版本的"下载安装"按钮：先弹出 LoaderChoiceWindow 让用户一步选择
+    /// 点击某个版本的"下载安装"按钮：先弹出 LoaderChoiceDialog 让用户一步选择
     /// "原版/Fabric/Forge/NeoForge"，不再依赖点击前先切换页面顶部的加载器筛选行——
-    /// 见 LoaderChoiceWindow 类注释，这是本轮解决"下载生态割裂"的核心改动。
+    /// 见 LoaderChoiceDialog 类注释，这是本轮解决"下载生态割裂"的核心改动。
     /// 用户取消选择窗口则整个安装动作中止，不做任何事。
     /// </summary>
     private async void InstallVersion_Click(object sender, RoutedEventArgs e)
@@ -598,27 +598,27 @@ public partial class DownloadCenterPage : UserControl
 
         if (folder == null)
         {
-            MessageBox.Show("请先去「版本选择」页添加一个 .minecraft 文件夹。", "提示", MessageBoxButton.OK, MessageBoxImage.Information);
+            MessageBoxDialog.ShowInfo("请先去「版本选择」页添加一个 .minecraft 文件夹。");
             return;
         }
 
-        var choiceWindow = new LoaderChoiceWindow(entry.Id) { Owner = Window.GetWindow(this) };
-        if (choiceWindow.ShowDialog() != true) return; // 用户点了"取消"
+        var choiceDialog = new LoaderChoiceDialog(entry.Id);
+        if (OverlayDialogService.ShowModal(choiceDialog) != true) return; // 用户点了"取消"
 
         // 选了 Fabric/Forge/NeoForge：跳转到 InstallClientLoaderWindow，预选好加载器类型 + 这一行
         // 的 MC 版本号，复用现成的三级联动安装逻辑，不在这里重新实现一遍加载器安装。
-        if (choiceWindow.SelectedLoader != ServerCoreType.Vanilla)
+        if (choiceDialog.SelectedLoader != ServerCoreType.Vanilla)
         {
-            var loaderWindow = new InstallClientLoaderWindow(_owner, choiceWindow.SelectedLoader, entry.Id) { Owner = Window.GetWindow(this) };
+            var loaderWindow = new InstallClientLoaderWindow(_owner, choiceDialog.SelectedLoader, entry.Id) { Owner = Window.GetWindow(this) };
             if (loaderWindow.ShowDialog() == true && loaderWindow.InstalledVersionId != null)
             {
-                MessageBox.Show($"版本「{loaderWindow.InstalledVersionId}」安装完成！可以在「版本选择」页选中它。",
-                    "成功", MessageBoxButton.OK, MessageBoxImage.Information);
+                _owner.EnsureVisibleForDialog();
+                MessageBoxDialog.ShowSuccess($"版本「{loaderWindow.InstalledVersionId}」安装完成！可以在「版本选择」页选中它。");
             }
             return;
         }
 
-        var progressWin = new ProgressWindow($"正在安装 {entry.Id} ...") { Owner = Window.GetWindow(this) };
+        var progressWin = new ProgressDialog($"正在安装 {entry.Id} ...");
         progressWin.Show();
         try
         {
@@ -626,7 +626,8 @@ public partial class DownloadCenterPage : UserControl
             // 场景，应该按设置页里的"多线程下载/限速/智能限速"配置来，而不是永远单线程不限速。
             using var svc = DownloadService.CreateFromConfig(_owner.ConfigService.Config);
             await svc.InstallVersionAsync(folder.Path, entry, progressWin.Progress);
-            MessageBox.Show($"{entry.Id} 安装完成！", "成功", MessageBoxButton.OK, MessageBoxImage.Information);
+            _owner.EnsureVisibleForDialog();
+            MessageBoxDialog.ShowSuccess($"{entry.Id} 安装完成！");
         }
         catch (Exception ex)
         {
@@ -784,6 +785,18 @@ public partial class DownloadCenterPage : UserControl
     private async void ResourceSearch_Click(object sender, RoutedEventArgs e) => await RunResourceSearchAsync(showEmptyHint: true);
 
     /// <summary>
+    /// 版本快捷选择条点击：把按钮 Tag（版本号，""代表"全部"/清空）填进"版本"输入框。
+    /// 不需要在这里自己再调一次搜索——TextBox.Text 赋值会触发 TextChanged，走原有的
+    /// ResourceFilter_Changed → Debounce → RunResourceSearchAsync 那条路径，
+    /// 跟用户手打版本号触发搜索是完全同一套逻辑，这里只是"代打字"。
+    /// </summary>
+    private void ResourceVersionChip_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button btn) return;
+        ResourceGameVersionBox.Text = btn.Tag as string ?? "";
+    }
+
+    /// <summary>
     /// 搜索框/游戏版本号输入变化：走防抖，不打断用户打字，也不在每次搜索为空时弹提示框打扰（
     /// 静默完成即可，只有用户主动点"手动刷新"按钮时才在无结果时弹提示，见 showEmptyHint 参数）。
     /// </summary>
@@ -851,9 +864,9 @@ public partial class DownloadCenterPage : UserControl
             if (showEmptyHint)
             {
                 if (outcome.Items.Count == 0 && outcome.Warnings.Count == 0)
-                    MessageBox.Show("没有找到匹配的资源，换个关键词试试。", "提示", MessageBoxButton.OK, MessageBoxImage.Information);
+                    MessageBoxDialog.ShowInfo("没有找到匹配的资源，换个关键词试试。");
                 else if (outcome.Warnings.Count > 0)
-                    MessageBox.Show(string.Join("\n", outcome.Warnings), "部分来源搜索失败", MessageBoxButton.OK, MessageBoxImage.Warning);
+                    MessageBoxDialog.ShowWarning(string.Join("\n", outcome.Warnings), "部分来源搜索失败");
             }
         }
         catch (Exception ex)
@@ -932,7 +945,7 @@ public partial class DownloadCenterPage : UserControl
 
         if (folder == null)
         {
-            MessageBox.Show("请先去「版本选择」页添加一个 .minecraft 文件夹。", "提示", MessageBoxButton.OK, MessageBoxImage.Information);
+            MessageBoxDialog.ShowInfo("请先去「版本选择」页添加一个 .minecraft 文件夹。");
             return;
         }
 
@@ -942,8 +955,7 @@ public partial class DownloadCenterPage : UserControl
             foreach (var name in _folderService.ScanSaves(folder.Path)) item.SaveNames.Add(name);
             if (item.SaveNames.Count == 0)
             {
-                MessageBox.Show("当前文件夹下还没有任何存档，数据包必须安装到具体存档里，请先创建一个存档再来下载。",
-                    "提示", MessageBoxButton.OK, MessageBoxImage.Information);
+                MessageBoxDialog.ShowInfo("当前文件夹下还没有任何存档，数据包必须安装到具体存档里，请先创建一个存档再来下载。");
                 return;
             }
             item.SelectedSaveName = item.SaveNames[0];
@@ -1021,7 +1033,7 @@ public partial class DownloadCenterPage : UserControl
         }
         catch (CurseForgeKeyMissingException ex)
         {
-            MessageBox.Show(ex.Message, "未配置 Key", MessageBoxButton.OK, MessageBoxImage.Information);
+            MessageBoxDialog.ShowInfo(ex.Message, "未配置 Key");
         }
         catch (Exception ex)
         {
@@ -1116,8 +1128,7 @@ public partial class DownloadCenterPage : UserControl
     {
         if (item.IsDataPack && string.IsNullOrEmpty(item.SelectedSaveName))
         {
-            MessageBox.Show("请先选择要安装到哪个存档（数据包必须放进具体存档才会生效）。",
-                "提示", MessageBoxButton.OK, MessageBoxImage.Information);
+            MessageBoxDialog.ShowInfo("请先选择要安装到哪个存档（数据包必须放进具体存档才会生效）。");
             return;
         }
 
@@ -1140,7 +1151,7 @@ public partial class DownloadCenterPage : UserControl
             effectiveDir = chosen;
         }
 
-        var progressWin = new ProgressWindow($"正在下载 {entry.Name} ...") { Owner = Window.GetWindow(this) };
+        var progressWin = new ProgressDialog($"正在下载 {entry.Name} ...");
         progressWin.Show();
         try
         {
@@ -1163,7 +1174,8 @@ public partial class DownloadCenterPage : UserControl
                 path = await GetCurseForge().DownloadResourceAsync(effectiveDir, kind,
                     (CurseForgeFile)entry.RawVersion, progress, item.IsDataPack ? item.SelectedSaveName : null);
             }
-            MessageBox.Show($"下载完成：\n{path}", "成功", MessageBoxButton.OK, MessageBoxImage.Information);
+            _owner.EnsureVisibleForDialog();
+            MessageBoxDialog.ShowSuccess($"下载完成：\n{path}");
         }
         catch (Exception ex)
         {
@@ -1215,6 +1227,13 @@ public partial class DownloadCenterPage : UserControl
         };
         _modPageIndex = 0; // 换来源后结果集完全不同，页码回到第一页
         _ = RunModSearchAsync(); // 切换来源后用同一个关键词立即重新搜索一次，不需要用户再点搜索按钮
+    }
+
+    /// <summary>版本快捷选择条点击，同 ResourceVersionChip_Click，见那边注释。</summary>
+    private void ModVersionChip_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button btn) return;
+        ModGameVersionBox.Text = btn.Tag as string ?? "";
     }
 
     /// <summary>搜索框/游戏版本号/加载器下拉框变化：走防抖，停顿后自动重新搜索。筛选条件变了，
@@ -1325,9 +1344,9 @@ public partial class DownloadCenterPage : UserControl
             if (showHints)
             {
                 if (outcome.Items.Count == 0 && outcome.Warnings.Count == 0)
-                    MessageBox.Show("没有找到匹配的 Mod，换个关键词试试。", "提示", MessageBoxButton.OK, MessageBoxImage.Information);
+                    MessageBoxDialog.ShowInfo("没有找到匹配的 Mod，换个关键词试试。");
                 else if (outcome.Warnings.Count > 0)
-                    MessageBox.Show(string.Join("\n", outcome.Warnings), "部分来源搜索失败", MessageBoxButton.OK, MessageBoxImage.Warning);
+                    MessageBoxDialog.ShowWarning(string.Join("\n", outcome.Warnings), "部分来源搜索失败");
             }
         }
         catch (Exception ex)
@@ -1364,7 +1383,7 @@ public partial class DownloadCenterPage : UserControl
         }
         catch (Exception ex)
         {
-            MessageBox.Show("无法打开浏览器：\n" + ex.Message, "错误", MessageBoxButton.OK, MessageBoxImage.Error);
+            MessageBoxDialog.ShowError("无法打开浏览器：\n" + ex.Message);
         }
     }
 
@@ -1399,7 +1418,7 @@ public partial class DownloadCenterPage : UserControl
 
         if (folder == null)
         {
-            MessageBox.Show("请先去「版本选择」页添加一个 .minecraft 文件夹。", "提示", MessageBoxButton.OK, MessageBoxImage.Information);
+            MessageBoxDialog.ShowInfo("请先去「版本选择」页添加一个 .minecraft 文件夹。");
             return;
         }
 
@@ -1467,7 +1486,7 @@ public partial class DownloadCenterPage : UserControl
         }
         catch (CurseForgeKeyMissingException ex)
         {
-            MessageBox.Show(ex.Message, "未配置 Key", MessageBoxButton.OK, MessageBoxImage.Information);
+            MessageBoxDialog.ShowInfo(ex.Message, "未配置 Key");
         }
         catch (Exception ex)
         {
@@ -1538,7 +1557,7 @@ public partial class DownloadCenterPage : UserControl
         var targetDir = PromptSaveDirectory(folder.Path, entry.Name);
         if (targetDir == null) return; // 用户取消
 
-        var progressWin = new ProgressWindow($"正在下载 {entry.Name} ...") { Owner = Window.GetWindow(this) };
+        var progressWin = new ProgressDialog($"正在下载 {entry.Name} ...");
         progressWin.Show();
         try
         {
@@ -1548,7 +1567,8 @@ public partial class DownloadCenterPage : UserControl
                 path = await _modrinth.DownloadResourceAsync(targetDir, ModrinthResourceType.Mod, (ModrinthVersion)entry.RawVersion, progress);
             else
                 path = await GetCurseForge().DownloadModAsync(targetDir, (CurseForgeFile)entry.RawVersion, progress);
-            MessageBox.Show($"Mod 已安装到：\n{path}", "成功", MessageBoxButton.OK, MessageBoxImage.Information);
+            _owner.EnsureVisibleForDialog();
+            MessageBoxDialog.ShowSuccess($"Mod 已安装到：\n{path}");
         }
         catch (Exception ex)
         {
@@ -1564,6 +1584,13 @@ public partial class DownloadCenterPage : UserControl
     {
         _mapPageIndex = 0;
         await RunMapSearchAsync(showHints: true);
+    }
+
+    /// <summary>版本快捷选择条点击，同 ResourceVersionChip_Click，见那边注释。</summary>
+    private void MapVersionChip_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button btn) return;
+        MapGameVersionBox.Text = btn.Tag as string ?? "";
     }
 
     /// <summary>搜索框/游戏版本号变化：走防抖，停顿后自动重新搜索。</summary>
@@ -1618,14 +1645,14 @@ public partial class DownloadCenterPage : UserControl
             MapNextPageButton.IsEnabled = HasMorePages(_mapPageIndex, mapTotal, 0);
 
             if (showHints && result.Data.Count == 0)
-                MessageBox.Show("没有找到匹配的地图，换个关键词试试。", "提示", MessageBoxButton.OK, MessageBoxImage.Information);
+                MessageBoxDialog.ShowInfo("没有找到匹配的地图，换个关键词试试。");
         }
         catch (CurseForgeKeyMissingException ex)
         {
             if (seq != _mapSearchSeq) return;
             if (showHints)
             {
-                MessageBox.Show(ex.Message, "未配置 Key", MessageBoxButton.OK, MessageBoxImage.Information);
+                MessageBoxDialog.ShowInfo(ex.Message, "未配置 Key");
                 Category_Checked(CatMap, new RoutedEventArgs()); // 重新走一遍分类切换逻辑，切到"未配置key"提示面板
             }
         }
@@ -1638,8 +1665,8 @@ public partial class DownloadCenterPage : UserControl
     }
 
     /// <summary>整行点击进详情页，同 ModListItem_Click 的思路。地图原来是弹
-    /// CurseForgeMapPickerWindow 独立窗口，现在改成走 ModDetailPage 整页详情，
-    /// CurseForgeMapPickerWindow.xaml(.cs) 文件本身保留不删，只是不再从这个入口调用。</summary>
+    /// CurseForgeMapPickerDialog（原 CurseForgeMapPickerWindow 独立窗口迁移而来）弹窗，
+    /// 现在改成走 ModDetailPage 整页详情，CurseForgeMapPickerDialog.xaml(.cs) 文件本身保留不删，只是不再从这个入口调用。</summary>
     private async void MapListItem_Click(object sender, MouseButtonEventArgs e)
     {
         if (sender is not Grid grid || grid.Tag is not CurseForgeMod mod) return;
@@ -1662,7 +1689,7 @@ public partial class DownloadCenterPage : UserControl
 
         if (folder == null)
         {
-            MessageBox.Show("请先去「版本选择」页添加一个 .minecraft 文件夹。", "提示", MessageBoxButton.OK, MessageBoxImage.Information);
+            MessageBoxDialog.ShowInfo("请先去「版本选择」页添加一个 .minecraft 文件夹。");
             return;
         }
 
@@ -1690,7 +1717,7 @@ public partial class DownloadCenterPage : UserControl
         catch (CurseForgeKeyMissingException ex)
         {
             detail.ShowGroups(Enumerable.Empty<VersionGroup>());
-            MessageBox.Show(ex.Message, "未配置 Key", MessageBoxButton.OK, MessageBoxImage.Information);
+            MessageBoxDialog.ShowInfo(ex.Message, "未配置 Key");
         }
         catch (Exception ex)
         {
@@ -1700,7 +1727,7 @@ public partial class DownloadCenterPage : UserControl
     }
 
     /// <summary>地图详情页里点"下载"：直接下载并解压到当前 .minecraft 文件夹的 saves 目录下，
-    /// 复用 CurseForgeService.DownloadMapAsync——跟原来 CurseForgeMapPickerWindow.Download_Click
+    /// 复用 CurseForgeService.DownloadMapAsync——跟原来 CurseForgeMapPickerDialog.Download_Click
     /// 调用的是同一个方法，只是调用点从弹窗换成了详情页回调。</summary>
     private async Task DownloadMapInlineAsync(string folderPath, CurseForgeMod mod, InlineVersionEntry entry)
     {
@@ -1711,13 +1738,14 @@ public partial class DownloadCenterPage : UserControl
         if (chosenDir == null) return; // 用户取消
         folderPath = chosenDir;
 
-        var progressWin = new ProgressWindow($"正在下载 {entry.Name} ...") { Owner = Window.GetWindow(this) };
+        var progressWin = new ProgressDialog($"正在下载 {entry.Name} ...");
         progressWin.Show();
         try
         {
             var progress = new Progress<string>(msg => progressWin.Progress.Report(new ProgressInfo("下载中", 0, 1, msg)));
             var path = await GetCurseForge().DownloadMapAsync(folderPath, (CurseForgeFile)entry.RawVersion, progress);
-            MessageBox.Show($"地图已下载到：\n{path}", "成功", MessageBoxButton.OK, MessageBoxImage.Information);
+            _owner.EnsureVisibleForDialog();
+            MessageBoxDialog.ShowSuccess($"地图已下载到：\n{path}");
         }
         catch (Exception ex)
         {

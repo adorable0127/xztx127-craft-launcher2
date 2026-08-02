@@ -69,7 +69,7 @@ public partial class InstallClientLoaderWindow : Window
         BuildVersionCombo.ItemsSource = _buildVersions;
         BuildVersionCombo.DisplayMemberPath = nameof(ServerCoreBuild.DisplayVersion);
 
-        var detected = _javaService.FindJava(_owner.ConfigService.Config.JavaPath);
+        var detected = _javaService.FindJava(_owner.ConfigService.Config.JavaPath, configService: _owner.ConfigService);
         JavaPathBox.Text = detected ?? "";
 
         // 应用预选的加载器类型：XAML 默认选中的是 Fabric（LoaderFabric IsChecked="True"），
@@ -250,7 +250,7 @@ public partial class InstallClientLoaderWindow : Window
         if (_selectedLoaderType is not (ServerCoreType.Fabric or ServerCoreType.Quilt) && McVersionCombo.SelectedItem is string mcVersion)
             preferMajor = ServerJavaRequirement.EstimateMajorVersionForMcVersion(mcVersion);
 
-        var found = _javaService.FindJava(null, preferMajor);
+        var found = _javaService.FindJava(null, preferMajor, _owner.ConfigService);
         if (found == null)
         {
             MessageBox.Show("没有检测到可用的 Java。请在「设置」页先下载/配置 Java，或者手动填写路径。",

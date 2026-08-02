@@ -1,0 +1,54 @@
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                    xmlns:system="clr-namespace:System;assembly=mscorlib">
+
+    <!-- 粵語（yue-Hant，用繁體字書寫口語粵語）。key 集合必须跟 Lang.zh-Hans.xaml 完全一致。
+         注：粵語書面口語化程度目前只做到"日常常见用词"级别（如"睇" "嘅" "唔"），
+         专业术语（Mod、Java、启动器等）保留原词，这是粤语技术文案的通行做法。 -->
+
+    <system:String x:Key="Str_Lang_DialogTitle">揀語言</system:String>
+    <system:String x:Key="Str_Lang_EntryButton">語言</system:String>
+    <system:String x:Key="Str_Lang_ExperimentalNotice">部分實驗性功能淨係開放俾簡體中文介面；轉去其他語言之後，呢啲實驗性功能會暫時隱藏（功能本身冇受影響，淨係未有對應語言嘅介面翻譯）。</system:String>
+    <system:String x:Key="Str_Lang_Ok">確定</system:String>
+    <system:String x:Key="Str_Lang_Cancel">取消</system:String>
+
+    <system:String x:Key="Str_Home_Welcome">歡迎使用 XCL2</system:String>
+    <system:String x:Key="Str_Home_Subtitle">xztx127-craft-launcher 2</system:String>
+    <system:String x:Key="Str_Home_Toggle_DarkMode">深色模式</system:String>
+    <system:String x:Key="Str_Home_Toggle_LightMode">淺色模式</system:String>
+    <system:String x:Key="Str_Home_Toggle_AutoCycle">自動循環</system:String>
+    <system:String x:Key="Str_Home_Toggle_AutoCycleOn">自動循環：已開啟</system:String>
+    <system:String x:Key="Str_Home_Toggle_NormalMode">普通模式</system:String>
+    <system:String x:Key="Str_Home_Toggle_ExpertMode">專家模式</system:String>
+    <system:String x:Key="Str_Home_Toggle_GuestMode">訪客模式</system:String>
+    <system:String x:Key="Str_Home_Toggle_GuestModeOn">訪客模式：已開啟</system:String>
+        <system:String x:Key="Str_Home_Tile_Account_Title">帳戶登入</system:String>
+    <system:String x:Key="Str_Home_Tile_Account_Desc">離線帳戶／微軟帳戶，隨時切換</system:String>
+    <system:String x:Key="Str_Home_Tile_Launch_Title">開始遊戲</system:String>
+    <system:String x:Key="Str_Home_Tile_Launch_Desc">用返你揀咗嘅版本同帳戶直接開玩</system:String>
+    <system:String x:Key="Str_Home_Tile_QuickStart_Title">一鍵開始遊戲</system:String>
+    <system:String x:Key="Str_Home_Tile_QuickStart_Desc">版本、載入器、Mod 一步搞掂</system:String>
+    <system:String x:Key="Str_Home_Tile_Download_Title">下載中心</system:String>
+    <system:String x:Key="Str_Home_Tile_Download_Desc">下載遊戲核心、Mod、地圖、資源包</system:String>
+    <system:String x:Key="Str_Home_Tile_ServerManager_Title">伺服器管理</system:String>
+    <system:String x:Key="Str_Home_Tile_ServerManager_Desc">開/整本機伺服器，有齊連線同內網穿透教學</system:String>
+    <system:String x:Key="Str_Home_Tile_Settings_Title">設定</system:String>
+    <system:String x:Key="Str_Home_Tile_Settings_Desc">Java、模式切換、視窗大細等</system:String>
+
+    <system:String x:Key="Str_Main_WindowTitlePrefix">XCL2 - xztx127-craft-launcher 2</system:String>
+    <system:String x:Key="Str_Nav_Home">主頁</system:String>
+    <system:String x:Key="Str_Nav_Versions">版本選擇</system:String>
+    <system:String x:Key="Str_Nav_Download">下載</system:String>
+    <system:String x:Key="Str_Nav_Multiplayer">連線</system:String>
+    <system:String x:Key="Str_Nav_ModManager">Mod 管理</system:String>
+    <system:String x:Key="Str_Nav_ServerManager">伺服端管理</system:String>
+    <system:String x:Key="Str_Nav_Accounts">帳戶管理</system:String>
+    <system:String x:Key="Str_Nav_Settings">設定</system:String>
+    <system:String x:Key="Str_Nav_Logs">日誌</system:String>
+    <system:String x:Key="Str_Nav_Experimental">實驗性功能</system:String>
+
+    <system:String x:Key="Str_Settings_LanguageSection_Title">啟動器介面語言</system:String>
+    <system:String x:Key="Str_Settings_LanguageSection_Hint">揀完即刻生效，唔使重新啟動啟動器；呢度揀嘅係「啟動器介面」用嘅語言，同下面「遊戲內語言」係兩回事。</system:String>
+    <system:String x:Key="Str_Settings_LanguageSection_OpenPicker">🌐 揀語言</system:String>
+
+</ResourceDictionary>
