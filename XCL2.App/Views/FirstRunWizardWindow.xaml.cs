@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.IO;
 using System.Windows;
 using System.Windows.Controls;
@@ -220,19 +221,173 @@ public partial class FirstRunWizardWindow : Window
         var name = string.IsNullOrWhiteSpace(OfflineNameBox.Text) ? "Player" : OfflineNameBox.Text.Trim();
         var account = OfflineAuthService.CreateOfflineAccount(name);
         _owner.ConfigService.AddOrUpdateAccount(account);
-        _owner.ConfigService.SelectAccount(account.Id);
+        // 需求变更：创建账户之后不再自动选中，需要用户之后在"账户管理"页或者启动游戏时弹出的
+        // 账户选择框里自己选用。_accountStepDone 仍然标记为 true——这一步的目的是"确保至少有
+        // 一个账户可用"，不代表"已经确定要用哪个账户启动"，跟自动选中是两件事。
         _accountStepDone = true;
         UpdateAccountStatusText();
-        MessageBox.Show($"离线账户「{name}」创建成功，已自动选中。", "完成", MessageBoxButton.OK, MessageBoxImage.Information);
+        MessageBox.Show($"离线账户「{name}」创建成功，之后可以在「账户管理」页或启动游戏时选用它。", "完成", MessageBoxButton.OK, MessageBoxImage.Information);
     }
 
     private void GotoMicrosoftLogin_Click(object sender, RoutedEventArgs e)
     {
-        // 微软登录流程本身较长（设备码/网页跳转），不适合塞进向导弹窗里，
+        // 微软登录流程本身较长（设备码/网页跳转），不想在向导弹窗里登录的用户可以用这个按钮
         // 直接关闭向导、跳转到主窗口的账户管理页，让用户在那边完整走完登录。
         ApplyFolderAndLanguage();
         Complete(markCompleted: false); // 先不标记"已完成"，等用户登录完自己回来重开向导或者直接开玩都行
         _owner.NavigateToAccounts();
+    }
+
+    /// <summary>
+    /// 在向导内直接完成微软登录（浏览器/设备码方式），照抄 LoginPage.AddMicrosoft_Click 的写法。
+    /// 登录成功后不自动选中账户（需求变更，见 CreateOffline_Click 的同类注释），只刷新状态文本，
+    /// 用户之后在「账户管理」页或启动游戏弹出的账户选择框里自己选用。
+    /// </summary>
+    private async void MicrosoftLoginBrowser_Click(object sender, RoutedEventArgs e)
+    {
+        AccountStatusText.Text = "正在准备登录，请稍候...";
+
+        MicrosoftAuthService auth;
+        try
+        {
+            auth = new MicrosoftAuthService();
+        }
+        catch (AuthStepException ex)
+        {
+            AccountStatusText.Text = $"登录在「{ex.Step}」这一步失败：{ex.Message}";
+            return;
+        }
+
+        var cts = new CancellationTokenSource();
+        DeviceCodeWindow? popup = null;
+
+        auth.UserCodeReady += (uri, code) =>
+        {
+            Dispatcher.Invoke(() =>
+            {
+                popup = new DeviceCodeWindow(uri, code, cts) { Owner = this };
+                popup.Show();
+            });
+        };
+        auth.StatusChanged += status => Dispatcher.Invoke(() => popup?.SetStatus(status));
+
+        try
+        {
+            var account = await auth.LoginInteractiveAsync(cts.Token);
+            popup?.Dispatcher.Invoke(() => popup.Close());
+
+            if (account == null)
+            {
+                AccountStatusText.Text = "微软账户登录失败或已取消，请重试。";
+                return;
+            }
+            _owner.ConfigService.AddOrUpdateAccount(account);
+            _accountStepDone = true;
+            UpdateAccountStatusText();
+        }
+        catch (OperationCanceledException)
+        {
+            popup?.Dispatcher.Invoke(() => popup.Close());
+            AccountStatusText.Text = "登录已取消。";
+        }
+        catch (AuthStepException ex)
+        {
+            popup?.Dispatcher.Invoke(() => popup.Close());
+            AccountStatusText.Text = $"登录在「{ex.Step}」这一步失败：{ex.Message}";
+        }
+        catch (Exception ex)
+        {
+            popup?.Dispatcher.Invoke(() => popup.Close());
+            ErrorPresenter.LogTechnicalDetail($"微软账户登录(浏览器，新手向导内)出错: {ex}");
+            AccountStatusText.Text = "登录出错，请检查网络连接后重试。";
+        }
+    }
+
+    /// <summary>内嵌登录版本，照抄 LoginPage.AddMicrosoftEmbedded_Click。</summary>
+    private async void MicrosoftLoginEmbedded_Click(object sender, RoutedEventArgs e)
+    {
+        if (!WebView2RuntimeDetector.IsAvailable())
+        {
+            var choice = MessageBoxDialog.ShowConfirm(
+                "本机未检测到 WebView2 运行时，无法使用内嵌登录。\n\n" +
+                "点「是」前往下载 WebView2 运行时（安装后重启本程序即可使用内嵌登录）；\n" +
+                "点「否」改用「浏览器登录」（不需要 WebView2，效果相同）。",
+                "未检测到 WebView2 运行时");
+
+            if (choice)
+            {
+                try
+                {
+                    Process.Start(new ProcessStartInfo(WebView2RuntimeDetector.DownloadUrl) { UseShellExecute = true });
+                }
+                catch (Exception ex)
+                {
+                    ErrorPresenter.LogTechnicalDetail($"打开 WebView2 下载页失败: {ex}");
+                    AccountStatusText.Text = $"打开下载页失败，请手动访问：{WebView2RuntimeDetector.DownloadUrl}";
+                }
+            }
+            else
+            {
+                AccountStatusText.Text = "已取消内嵌登录，可以点击「浏览器登录」改用系统浏览器完成登录。";
+            }
+            return;
+        }
+
+        AccountStatusText.Text = "正在打开内嵌登录窗口...";
+
+        MicrosoftAuthService auth;
+        string url, verifier;
+        MicrosoftLoginWindow popup;
+        try
+        {
+            auth = new MicrosoftAuthService();
+            (url, verifier) = auth.BuildInteractiveAuthorizeUrl();
+            popup = new MicrosoftLoginWindow(url) { Owner = this };
+        }
+        catch (AuthStepException ex)
+        {
+            AccountStatusText.Text = $"登录在「{ex.Step}」这一步失败：{ex.Message}";
+            return;
+        }
+
+        string code;
+        try
+        {
+            popup.Show();
+            code = await popup.WaitForCodeAsync();
+        }
+        catch (OperationCanceledException)
+        {
+            AccountStatusText.Text = "登录已取消。";
+            return;
+        }
+        catch (AuthStepException ex)
+        {
+            AccountStatusText.Text = $"登录在「{ex.Step}」这一步失败：{ex.Message}";
+            return;
+        }
+
+        try
+        {
+            var account = await auth.LoginWithAuthorizationCodeAsync(code, verifier);
+            if (account == null)
+            {
+                AccountStatusText.Text = "微软账户登录失败，请重试。";
+                return;
+            }
+            _owner.ConfigService.AddOrUpdateAccount(account);
+            _accountStepDone = true;
+            UpdateAccountStatusText();
+        }
+        catch (AuthStepException ex)
+        {
+            AccountStatusText.Text = $"登录在「{ex.Step}」这一步失败：{ex.Message}";
+        }
+        catch (Exception ex)
+        {
+            ErrorPresenter.LogTechnicalDetail($"微软账户登录(内嵌，新手向导内)出错: {ex}");
+            AccountStatusText.Text = "登录出错，请检查网络连接后重试。";
+        }
     }
 
     // ---------- 通用：步骤切换 ----------
@@ -379,7 +534,8 @@ public partial class FirstRunWizardWindow : Window
                 var name = string.IsNullOrWhiteSpace(OfflineNameBox.Text) ? "Player" : OfflineNameBox.Text.Trim();
                 var account = OfflineAuthService.CreateOfflineAccount(name);
                 _owner.ConfigService.AddOrUpdateAccount(account);
-                _owner.ConfigService.SelectAccount(account.Id);
+                // 需求变更：一键完成流程里自动创建的默认账户，同样不再自动选中——
+                // 启动游戏时会弹出账户选择框让用户明确选用，跟手动创建账户的行为保持一致。
                 _accountStepDone = true;
             }
 

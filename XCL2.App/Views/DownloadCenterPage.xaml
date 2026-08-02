@@ -100,8 +100,12 @@
                                                                             <Run Text=" · 支持: "/><Run Text="{Binding GameVersionsText, Mode=OneWay}"/>
                                                                         </TextBlock>
                                                                     </StackPanel>
+                                                                    <!-- 修复：这里之前单独覆盖了 Padding="14,6" FontSize="13"，比 PrimaryButton
+                                                                         默认的 Padding="12,8" FontSize="15"（见"下载安装"按钮）还小，导致同一个
+                                                                         页面里"下载"按钮比其它主按钮明显小一圈。现在去掉这个覆盖，改用样式默认值，
+                                                                         跟"下载安装""搜索"等按钮保持同样大小。 -->
                                                                     <Button Grid.Column="1" Content="下载" Style="{StaticResource PrimaryButton}"
-                                                                            Padding="14,6" FontSize="13" Tag="{Binding}"/>
+                                                                            Tag="{Binding}"/>
                                                                 </Grid>
                                                             </Border>
                                                         </DataTemplate>
@@ -188,6 +192,17 @@
                     <StackPanel Orientation="Horizontal">
                         <TextBlock Text="✨" FontFamily="Segoe UI Emoji" VerticalAlignment="Center"/>
                         <TextBlock Text="光影包" Margin="8,0,0,0" VerticalAlignment="Center"/>
+                    </StackPanel>
+                </RadioButton>
+                <!-- 整合包分类：跟材质包/数据包/光影包共用同一个 ResourcePanel（见
+                     SwitchResourceCategory 注释），只是多了一种 _currentResourceType 取值。
+                     目前只接 Modrinth 一侧来源（.mrpack），下载后走 ModpackService.ImportMrpackAsync
+                     解析清单逐个下载 mod，跟别的资源类型"下载即落地单个文件"的处理完全不同。 -->
+                <RadioButton x:Name="CatModpack" Style="{StaticResource DownloadCategoryButton}"
+                             Checked="Category_Checked" Tag="modpack">
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Text="📚" FontFamily="Segoe UI Emoji" VerticalAlignment="Center"/>
+                        <TextBlock Text="整合包" Margin="8,0,0,0" VerticalAlignment="Center"/>
                     </StackPanel>
                 </RadioButton>
                 <RadioButton x:Name="CatMap" Style="{StaticResource DownloadCategoryButton}"
@@ -392,6 +407,7 @@
                                     <ComboBoxItem Content="材质包" IsSelected="True" Tag="ResourcePack"/>
                                     <ComboBoxItem Content="数据包" Tag="DataPack"/>
                                     <ComboBoxItem Content="光影包" Tag="Shader"/>
+                                    <ComboBoxItem Content="整合包" Tag="Modpack"/>
                                 </ComboBox>
                             </StackPanel>
 
@@ -768,19 +784,6 @@
                                         <ComboBoxItem Content="NeoForge" Tag="neoforge"/>
                                         <ComboBoxItem Content="Quilt" Tag="quilt"/>
                                     </ComboBox>
-                                </StackPanel>
-
-                                <StackPanel Grid.Row="2" Grid.Column="0" Grid.ColumnSpan="3" Margin="0,8,0,0">
-                                    <!-- 版本快捷选择条，同 Resource 面板的 ResourceVersionChipPanel，见那边注释。 -->
-                                    <WrapPanel x:Name="ModVersionChipPanel">
-                                        <Button Content="全部" Style="{StaticResource VersionChipButton}" Tag="" Click="ModVersionChip_Click"/>
-                                        <Button Content="1.21" Style="{StaticResource VersionChipButton}" Tag="1.21" Click="ModVersionChip_Click"/>
-                                        <Button Content="1.20" Style="{StaticResource VersionChipButton}" Tag="1.20" Click="ModVersionChip_Click"/>
-                                        <Button Content="1.19" Style="{StaticResource VersionChipButton}" Tag="1.19" Click="ModVersionChip_Click"/>
-                                        <Button Content="1.18" Style="{StaticResource VersionChipButton}" Tag="1.18" Click="ModVersionChip_Click"/>
-                                        <Button Content="1.17" Style="{StaticResource VersionChipButton}" Tag="1.17" Click="ModVersionChip_Click"/>
-                                        <Button Content="1.16" Style="{StaticResource VersionChipButton}" Tag="1.16" Click="ModVersionChip_Click"/>
-                                    </WrapPanel>
                                 </StackPanel>
 
                                 <StackPanel Grid.Row="3" Grid.Column="0" Grid.ColumnSpan="3" Orientation="Horizontal" Margin="0,14,0,0">

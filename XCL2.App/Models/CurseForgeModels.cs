@@ -26,6 +26,13 @@ public static class CurseForgeConstants
     /// <summary>Bukkit 插件(Bukkit Plugins)分类的 classId，CurseForge Minecraft 分类体系固定值。
     /// 用于服务端管理页的"插件下载"分类——之前该分类完全没实现，只是占位符。</summary>
     public const int BukkitPluginsClassId = 5;
+    /// <summary>整合包(Modpacks)分类的 classId，CurseForge Minecraft 分类体系固定值。目前只用于
+    /// 常量登记，CurseForgeService 暂不通过这个 id 实际搜索——CurseForge 整合包用的是自己的
+    /// manifest.json 清单格式，跟 Modrinth 的 .mrpack(modrinth.index.json) 不是一回事，
+    /// ModpackService 目前只实现了 .mrpack 的解析/安装，贸然把 CurseForge 整合包混进结果列表
+    /// 会出现"能搜到、点下载却装不了"的情况，所以整合包下载分类目前只接 Modrinth 一侧来源，
+    /// 等 ModpackService 补上 CurseForge manifest.json 的安装支持后再启用。</summary>
+    public const int ModpacksClassId = 4471;
 }
 
 /// <summary>材质包/光影包/数据包三种资源类型，供 CurseForgeService.SearchResourcesAsync/DownloadResourceAsync

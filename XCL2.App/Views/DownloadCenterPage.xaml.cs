@@ -1,5 +1,6 @@
 using System.Collections.ObjectModel;
 using System.IO;
+using System.Net.Http;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
@@ -51,6 +52,7 @@ public partial class DownloadCenterPage : UserControl
 
     private readonly ModrinthService _modrinth = new();
     private readonly FolderService _folderService = new();
+    private readonly ModpackService _modpackService = new();
     /// <summary>材质包/数据包/光影包结果列表：原来只装 Modrinth 的 ModrinthSearchHit，
     /// 现在改成统一的 UnifiedResourceItem，才能同时展示 Modrinth + CurseForge 两个来源的结果
     /// （对应 CurseForgeService.SearchResourcesAsync 补上的搜索能力）。</summary>
@@ -255,6 +257,9 @@ public partial class DownloadCenterPage : UserControl
             case "shader":
                 SwitchResourceCategory(ModrinthResourceType.Shader, "光影包下载");
                 break;
+            case "modpack":
+                SwitchResourceCategory(ModrinthResourceType.Modpack, "整合包下载");
+                break;
             case "map":
                 if (_curseForgeKeyService.HasKey())
                 {
@@ -388,6 +393,7 @@ public partial class DownloadCenterPage : UserControl
             case ModrinthResourceType.ResourcePack: CatResourcePack.IsChecked = true; break;
             case ModrinthResourceType.DataPack: CatDataPack.IsChecked = true; break;
             case ModrinthResourceType.Shader: CatShader.IsChecked = true; break;
+            case ModrinthResourceType.Modpack: CatModpack.IsChecked = true; break;
         }
     }
 
@@ -1126,6 +1132,17 @@ public partial class DownloadCenterPage : UserControl
 
     private async Task DownloadResourceInlineAsync(UnifiedResourceItem item, InlineVersionEntry entry)
     {
+        // 整合包走完全独立的安装流程：不是"下载单文件丢进固定目录"，而是"弹窗选/建目标版本
+        // 目录，再解析 .mrpack 清单逐个下载 mod、展开 overrides"——跟下面材质包/光影包/数据包
+        // 共用的通用下载逻辑（GetEffectiveResourceDir + PromptSaveDirectory + DownloadResourceAsync）
+        // 完全不是一回事，必须在最前面单独分支拦下，不能落到下面通用逻辑里
+        // （ModrinthService.DownloadResourceAsync 对 type==Modpack 会直接抛异常，就是为了防止误用）。
+        if (_currentResourceType == ModrinthResourceType.Modpack)
+        {
+            await DownloadModpackInlineAsync(item, entry);
+            return;
+        }
+
         if (item.IsDataPack && string.IsNullOrEmpty(item.SelectedSaveName))
         {
             MessageBoxDialog.ShowInfo("请先选择要安装到哪个存档（数据包必须放进具体存档才会生效）。");
@@ -1184,6 +1201,109 @@ public partial class DownloadCenterPage : UserControl
         finally
         {
             progressWin.Close();
+        }
+    }
+
+    /// <summary>
+    /// 整合包专用下载/安装流程，取代通用的 DownloadResourceInlineAsync 单文件下载路径。
+    ///
+    /// 需求 B："整合包下载逻辑：弹出来让你选/建一个新版本目录再装（更接近'整合包=一整套独立配置'
+    /// 的直觉，避免跟你当前版本里已有的 mod 混在一起）"。
+    ///
+    /// 步骤：
+    /// 1. 弹 ModpackTargetVersionDialog 让用户选"新建独立版本目录（默认推荐）"或"装进已有版本目录"。
+    /// 2. 把 .mrpack 文件本身下载到一个临时文件（不能直接扔进目标目录——.mrpack 只是清单，
+    ///    ImportMrpackAsync 需要先读它，再决定实际要往目标目录写哪些文件）。
+    /// 3. 调用 ModpackService.ImportMrpackAsync 解析清单、下载所有 mod、展开 overrides 到目标版本目录。
+    /// 4. 新建模式下，把这个新版本目录追加注册进当前 GameFolder 的可选版本列表里（对应
+    ///    FolderService.ScanVersions 之后能在"版本选择"页看到这个新版本，不需要用户手动刷新）。
+    /// </summary>
+    private async Task DownloadModpackInlineAsync(UnifiedResourceItem item, InlineVersionEntry entry)
+    {
+        if (entry.Source != ModSource.Modrinth)
+        {
+            // 目前只接 Modrinth 一侧来源（.mrpack），跟 DownloadCenterPage.xaml 里"整合包分类"
+            // 注释的说明一致；理论上不会走到这里，因为整合包分类的搜索结果本来就只来自 Modrinth，
+            // 这里只是兜底防御，避免以后不小心把 CurseForge 结果也混进这个分类时静默出错。
+            MessageBoxDialog.ShowInfo("整合包目前只支持 Modrinth 来源，这个结果暂时无法安装。");
+            return;
+        }
+
+        var folder = _owner.ConfigService.Config.Folders
+            .FirstOrDefault(f => f.Path == _owner.ConfigService.Config.SelectedFolderPath)
+            ?? _owner.ConfigService.Config.Folders.FirstOrDefault();
+        if (folder == null) return; // 展开阶段已经校验过，这里理论上不会触发
+
+        var existingVersions = _folderService.ScanVersions(folder.Path);
+
+        var targetDialog = new ModpackTargetVersionDialog(item.Title, existingVersions);
+        if (OverlayDialogService.ShowModal(targetDialog) != true) return; // 用户取消
+
+        // 装进已有版本目录时，跟 ModManagerPage.ImportModpack_Click 一致，二次确认一下——
+        // 整合包内容会合并覆盖同名文件，用户需要明确知道这一点，而不是选完目录就悄悄覆盖。
+        if (!targetDialog.IsNewVersion)
+        {
+            var confirm = MessageBoxDialog.ShowConfirm(
+                $"整合包「{item.Title}」会合并安装到版本目录「{targetDialog.TargetVersionId}」，\n" +
+                "同名的 mod/config 文件会被覆盖，可能和已有 Mod 冲突。确定要继续吗？", "确认安装");
+            if (!confirm) return;
+        }
+
+        var targetVersionDir = Path.Combine(folder.Path, "versions", targetDialog.TargetVersionId);
+
+        var progressWin = new ProgressDialog($"正在安装整合包 {item.Title} ...");
+        progressWin.Show();
+        var tempMrpackPath = Path.Combine(Path.GetTempPath(), $"xcl2_dl_{Guid.NewGuid():N}.mrpack");
+        try
+        {
+            var version = (ModrinthVersion)entry.RawVersion;
+            var file = version.Files.FirstOrDefault(f => f.Primary) ?? version.Files.FirstOrDefault();
+            if (file == null) throw new InvalidOperationException("这个整合包版本没有可下载的文件。");
+
+            progressWin.Progress.Report(new ProgressInfo("下载整合包清单", 0, 1, file.Filename));
+            using (var http = new HttpClient())
+            using (var resp = await http.GetAsync(file.Url))
+            {
+                resp.EnsureSuccessStatusCode();
+                await using var fs = File.Create(tempMrpackPath);
+                await resp.Content.CopyToAsync(fs);
+            }
+
+            var progress = new Progress<string>(msg => progressWin.Progress.Report(new ProgressInfo("安装中", 0, 1, msg)));
+            var result = await _modpackService.ImportMrpackAsync(tempMrpackPath, targetVersionDir, progress);
+
+            // 新建模式下，把新版本目录追加进这个 GameFolder 的可选版本列表，这样"版本选择"页
+            // 下次打开就能直接看到，不需要用户手动去点"刷新"才发现整合包装到哪了。
+            if (targetDialog.IsNewVersion)
+            {
+                var cfg = _owner.ConfigService.Config;
+                cfg.SelectedFolderPath = folder.Path;
+                _owner.ConfigService.Save();
+            }
+
+            _owner.EnsureVisibleForDialog();
+            if (result.FailedFiles.Count > 0)
+            {
+                MessageBoxDialog.ShowWarning(
+                    $"整合包「{result.Name}」已安装到版本目录「{targetDialog.TargetVersionId}」，\n" +
+                    $"但有 {result.FailedFiles.Count} 个文件下载失败（可能是对应的 Mod 已在源站下架），\n" +
+                    "可以之后在「Mod 管理」页手动补装：\n" + string.Join("\n", result.FailedFiles.Take(10)) +
+                    (result.FailedFiles.Count > 10 ? $"\n... 等共 {result.FailedFiles.Count} 个" : ""), "部分安装失败");
+            }
+            else
+            {
+                MessageBoxDialog.ShowSuccess($"整合包「{result.Name}」已安装到版本目录：\n{targetVersionDir}");
+            }
+        }
+        catch (Exception ex)
+        {
+            ErrorPresenter.ShowFriendlyError("安装整合包失败，可能是网络连接问题或下载源暂时不可用，请检查网络后重试。",
+                $"[安装整合包失败] {ex}", "安装失败");
+        }
+        finally
+        {
+            progressWin.Close();
+            try { if (File.Exists(tempMrpackPath)) File.Delete(tempMrpackPath); } catch { /* 临时文件清理失败无需打扰用户 */ }
         }
     }
 
@@ -1435,7 +1555,11 @@ public partial class DownloadCenterPage : UserControl
             item.SourceLabel, sourceUrl, item, item.IsFavorite,
             onFavoriteToggle: nowFavorite => FavoriteMod_Toggle(item, nowFavorite),
             onBack: HideDetail,
-            onDownload: entry => DownloadModInlineAsync(item, entry));
+            onDownload: entry => DownloadModInlineAsync(item, entry),
+            // 需求：只给「模组管理」（下载中心 Mod 分类）加"显示/隐藏预览版"按钮，
+            // 资源包/数据包/光影包/地图详情页（下面 OpenResourceDetailAsync/OpenMapDetailAsync
+            // 两处调用 ModDetailPage）不传这个参数，保持默认 false，不出现这个按钮。
+            isMod: true);
 
         ShowDetail(detail);
 

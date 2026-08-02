@@ -107,6 +107,12 @@ public partial class SettingsPage : UserControl
 
         SkinApiRootBox.Text = cfg.SkinApiRoot;
 
+        // 功能隐藏：绑定分组数据源，再按已保存的 HiddenFeatureKeys 逐个勾选。
+        // 用 Loaded 事件而不是构造函数里直接遍历，是因为此时 ItemsControl 的
+        // 容器（每个 CheckBox）还没真正生成，直接找子控件会全部落空。
+        FeatureHideList.ItemsSource = FeatureVisibilityService.Groups;
+        Loaded += (_, _) => InitFeatureHideChecks(cfg);
+
         RefreshJavaList();
 
         // 需求：启动器在启动时(这里指打开设置页时)自动刷新一次 Java 列表，不需要用户每次都手动点
@@ -155,6 +161,12 @@ public partial class SettingsPage : UserControl
         }
         catch { /* 静默失败：这是打开设置页时的自动锦上添花操作，不应该弹窗打扰用户 */ }
     }
+
+    /// <summary>供 MainWindow.ScanJavaInBackgroundAsync 在启动时静默扫描完成后调用：
+    /// 如果用户当前正好停留在「设置」页，让新登记的 Java 立刻反映到列表框里，
+    /// 不需要用户手动切出去再切回来才能看到。RefreshJavaList 本身保持 private，
+    /// 只加这一层公开转发，避免把内部刷新细节暴露给外部随意调用。</summary>
+    public void RefreshJavaListPublic() => RefreshJavaList();
 
     /// <summary>重新从 cfg.InstalledJavas 刷新列表框 + 全局默认下拉框的内容，并尽量保留原来选中的那一项。
     /// 按 Priority 升序展示（数值越小越靠前=优先级越高），跟 FindJava 自动匹配实际尝试的顺序一致——
@@ -215,6 +227,44 @@ public partial class SettingsPage : UserControl
             }
         }
         if (combo.Items.Count > 0) combo.SelectedIndex = 0;
+    }
+
+    /// <summary>
+    /// 按已保存的 HiddenFeatureKeys 把功能隐藏面板里对应的 CheckBox 勾上。
+    /// 用递归找可视化树而不是给每个 CheckBox 手动 x:Name，是因为这批 CheckBox
+    /// 是 ItemsControl 嵌套 ItemsControl 动态生成的，没法在 XAML 里逐个命名。
+    /// </summary>
+    private void InitFeatureHideChecks(AppConfig cfg)
+    {
+        foreach (var checkBox in FindVisualChildren<CheckBox>(FeatureHideList))
+        {
+            if (checkBox.Tag is string key)
+                checkBox.IsChecked = cfg.HiddenFeatureKeys.Contains(key);
+        }
+    }
+
+    /// <summary>功能隐藏面板里任意一个 CheckBox 勾选状态变化时，同步写回配置的
+    /// HiddenFeatureKeys 列表。不在这里立即保存到磁盘——跟页面其它设置一样，
+    /// 统一等用户点"保存设置"（Save_Click）才落盘，避免每点一下就触发一次 IO。</summary>
+    private void FeatureHideCheck_Changed(object sender, RoutedEventArgs e)
+    {
+        if (sender is not CheckBox { Tag: string key } checkBox) return;
+        var cfg = _owner.ConfigService.Config;
+        var isHidden = checkBox.IsChecked == true;
+        if (isHidden && !cfg.HiddenFeatureKeys.Contains(key)) cfg.HiddenFeatureKeys.Add(key);
+        else if (!isHidden) cfg.HiddenFeatureKeys.Remove(key);
+    }
+
+    private static System.Collections.Generic.IEnumerable<T> FindVisualChildren<T>(DependencyObject root) where T : DependencyObject
+    {
+        var count = System.Windows.Media.VisualTreeHelper.GetChildrenCount(root);
+        for (var i = 0; i < count; i++)
+        {
+            var child = System.Windows.Media.VisualTreeHelper.GetChild(root, i);
+            if (child is T match) yield return match;
+            foreach (var descendant in FindVisualChildren<T>(child))
+                yield return descendant;
+        }
     }
 
     /// <summary>
@@ -652,6 +702,7 @@ public partial class SettingsPage : UserControl
         // 下一次每分钟定时检查。
         _owner.ReevaluateAutoThemeCycle();
         _owner.RefreshSidebar();
+        _owner.ApplyFeatureVisibility(); // 功能隐藏勾选可能变了，立即刷新导航栏对应按钮的显隐
 
         StatusText.Text = "设置已保存。";
     }

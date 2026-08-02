@@ -101,16 +101,20 @@ public class ServerCoreDownloadResult
 
 /// <summary>
 /// MC 版本号到所需 Java 主版本号的估算规则，用于 Paper/Fabric/Forge/NeoForge 这些
-/// 没有公开 javaVersion 字段可查的核心类型。规则来自 Mojang 官方公布的各版本 Java 要求：
-/// 1.26.2+ 用 Java 25，1.21~1.26.1 用 Java 21，1.18~1.20.4 用 Java 17，1.17 用 Java 16，更早用 Java 8。
+/// 没有公开 javaVersion 字段可查的核心类型。分界表（按用户最新确认的规则）：
+///   1.16 及以下         -> Java 8
+///   1.16 以上 ~ 1.20     -> Java 17（不含 1.20.1，即 1.20、1.20.0 仍是 17）
+///   1.20.1 起           -> Java 21
+///   1.26.1 及以上        -> Java 25（覆盖上面 21 那一档里 26.1 及以后的部分）
 ///
-/// 修复说明：之前这里 `minor >= 21` 这一条分支把 1.21 及以后的所有版本（包括 26.2）
-/// 都笼统地估算成 Java 21。但 26.2 官方要求的是 Java 25，这是 Mojang 对这个版本本身的
-/// 硬性要求，跟"某个 mod 自己声明需要更高 Java"是两回事——后者(mod 声明)只在客户端
+/// 修复说明（第三次修正）：这次把分界线整体按用户重新给出的表格改写，不再是"minor>=18
+/// 用 17、minor==20 且 patch>=5 才跳到 21"这种旧算法——新规则里 1.20.1 就是 21 的起点
+/// （不是 1.20.5），且 1.16 本身归在"以下"这一档用 8，"以上"从 1.17 开始才是 17。
+/// 26.1+ 这条分支必须放在判断链最前面，否则会被"minor>=21 用 21"提前截胡，match 不到 25。
+///
+/// 跟"某个 mod 自己声明需要更高 Java"是两回事——后者(mod 声明)只在客户端
 /// LauncherService.GetRequiredJavaMajorVersion 里处理，服务端这边完全没有 mod 依赖这个
-/// 概念，靠的就是这张版本估算表，之前表里没跟上 26.2 官方要求，导致新建/安装 26.2 服务端
-/// 核心时会选用 Java 21，跟客户端同一类问题：启动瞬间因为 Java 主版本不够被 JVM 直接拒绝
-/// 运行（UnsupportedClassVersionError），表现为"一启动就退出"。
+/// 概念，靠的就是这张版本估算表。
 /// </summary>
 public static class ServerJavaRequirement
 {
@@ -122,11 +126,19 @@ public static class ServerJavaRequirement
         var (major, minor, patch) = parsed.Value;
         if (major != 1) return 21;
 
-        if (minor >= 26) return patch >= 2 ? 25 : 21;
-        if (minor >= 21) return 21;
-        if (minor == 20) return patch >= 5 ? 21 : 17;
-        if (minor >= 18) return 17;
-        if (minor == 17) return 16;
+        // 1.26.1 及以上（含未来 1.27+）固定要求 Java 25，必须最先判断，
+        // 否则会被下面 "minor >= 21 -> 21" 这条分支提前拦截。
+        if (minor > 26) return 25;
+        if (minor == 26 && patch >= 1) return 25;
+
+        // 1.20.1 起（含 1.20.1、1.20.2...、1.21+ 到 1.26.0）要求 Java 21。
+        if (minor > 20) return 21;
+        if (minor == 20 && patch >= 1) return 21;
+
+        // 1.16 以上（即 1.17 起）到 1.20（不含 1.20.1）要求 Java 17。
+        if (minor >= 17) return 17;
+
+        // 1.16 及以下要求 Java 8。
         return 8;
     }
 

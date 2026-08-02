@@ -316,6 +316,38 @@
                       Content="智能限速（自动检测其他程序的网络占用，避免抢占带宽；可与上面的限速同时开启，取两者中更保守的一个）"
                       Margin="0,0,0,20"/>
 
+            <!-- 功能隐藏：勾选的功能项在界面上不再显示（导航按钮/子页面按钮/特定功能入口）。
+                 分组和 key 定义在 Services/FeatureVisibilityService.cs 里，这里用 ItemsControl
+                 动态渲染，不用为每个功能手写一个 CheckBox——新增/删减功能项时只改那边的 C# 数组，
+                 这里的 XAML 不用跟着改。按 F12 可以在任意界面临时把隐藏的功能全部显示出来
+                 （不影响这里的勾选状态，只是"临时看得见"，见 MainWindow 的全局按键处理）。 -->
+            <TextBlock Text="功能隐藏" FontSize="14" FontWeight="Bold" Margin="0,0,0,4"/>
+            <TextBlock Text="你可以隐藏不需要的页面或关闭特定功能。在任意界面按 F12 可以暂时显示被隐藏的功能。"
+                       FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,10" TextWrapping="Wrap"/>
+            <ItemsControl x:Name="FeatureHideList" Margin="0,0,0,20">
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate>
+                        <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                            <TextBlock Text="{Binding GroupLabel}" Width="110" VerticalAlignment="Top" Margin="0,4,0,0"/>
+                            <ItemsControl ItemsSource="{Binding Items}">
+                                <ItemsControl.ItemsPanel>
+                                    <ItemsPanelTemplate>
+                                        <WrapPanel/>
+                                    </ItemsPanelTemplate>
+                                </ItemsControl.ItemsPanel>
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <CheckBox Content="{Binding Label}" Tag="{Binding Key}"
+                                                  Margin="0,0,16,6" Checked="FeatureHideCheck_Changed"
+                                                  Unchecked="FeatureHideCheck_Changed"/>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </StackPanel>
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
+
             <Button Content="保存设置" Style="{StaticResource PrimaryButton}" Width="140" HorizontalAlignment="Left" Click="Save_Click"/>
             <TextBlock x:Name="StatusText" Foreground="{DynamicResource AccentBrush}" Margin="0,12,0,0"/>
         </StackPanel>

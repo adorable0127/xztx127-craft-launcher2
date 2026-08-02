@@ -22,7 +22,12 @@ public enum ModrinthResourceType
     Mod,
     /// <summary>服务端插件(Bukkit/Spigot/Paper/Purpur plugin jar)。Modrinth 项目类型为
     /// "project_type:plugin"，下载落地目录是服务器实例的 plugins/ 文件夹。</summary>
-    Plugin
+    Plugin,
+    /// <summary>整合包。Modrinth 项目类型为 "project_type:modpack"，有专门类型（不像数据包
+    /// 需要借用 mod + 分类标签）。下载到的文件是 .mrpack，需要走 ModpackService.ImportMrpackAsync
+    /// 解析清单并逐个下载 mod，不能直接当成单文件丢进某个文件夹（跟资源包/光影包/Mod 那种
+    /// "下载即安装"完全不同，见 DownloadCenterPage.xaml.cs 里整合包下载按钮的处理）。</summary>
+    Modpack
 }
 
 /// <summary>GET /v2/search 的返回结构。</summary>

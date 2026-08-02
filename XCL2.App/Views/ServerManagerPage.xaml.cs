@@ -1304,6 +1304,13 @@ public partial class ServerManagerPage : UserControl
         _ = RunServerResourceSearchAsync(showEmptyHint: true);
     }
 
+    /// <summary>版本快捷选择条点击，同 DownloadCenterPage.ResourceVersionChip_Click，见那边注释。</summary>
+    private void ServerResourceVersionChip_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button btn) return;
+        ServerResourceGameVersionBox.Text = btn.Tag as string ?? "";
+    }
+
     private void ServerResourceFilter_Changed(object sender, RoutedEventArgs e) => ServerResourceDebounce(() => _ = RunServerResourceSearchAsync());
 
     private void ServerResourceSourceCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)

@@ -1,11 +1,16 @@
 <Window x:Class="XCL2.App.Views.DeviceCodeWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="微软账户登录" Height="320" Width="460"
+        Title="微软账户登录" Width="520" MinWidth="520"
         WindowStartupLocation="CenterOwner" ResizeMode="NoResize"
+        SizeToContent="Height"
         Background="{DynamicResource PanelBrush}">
-    <StackPanel Margin="28" VerticalAlignment="Center">
-        <TextBlock Text="请在浏览器中完成登录" FontSize="18" FontWeight="Bold" HorizontalAlignment="Center" Margin="0,0,0,6"/>
+    <!-- 修复"深色主题下标题/提示文字显示不全"：原来 Width 固定 460，标题在部分系统字体/
+         DPI 缩放下实际渲染宽度会超出可用内容区，看起来像文字被裁切。这里加宽窗口并让标题
+         也支持自动换行，从根本上避免裁切。 -->
+    <StackPanel Margin="28" VerticalAlignment="Top">
+        <TextBlock Text="请在浏览器中完成登录" FontSize="18" FontWeight="Bold" HorizontalAlignment="Center"
+                   TextWrapping="Wrap" TextAlignment="Center" Margin="0,0,0,6"/>
         <TextBlock Text="已自动打开登录页面，并将下方代码复制到剪贴板，直接粘贴即可" FontSize="12"
                    Foreground="{DynamicResource TextSecondaryBrush}" HorizontalAlignment="Center"
                    TextWrapping="Wrap" TextAlignment="Center" Margin="0,0,0,20"/>
@@ -30,7 +35,7 @@
         <TextBlock x:Name="StatusText" Text="等待登录完成..." FontSize="13" Foreground="{DynamicResource TextSecondaryBrush}"
                    HorizontalAlignment="Center" Margin="0,4,0,10"/>
 
-        <Button Content="取消登录" HorizontalAlignment="Center" Click="Cancel_Click"
+        <Button Content="取消登录" HorizontalAlignment="Center" Click="Cancel_Click" Padding="10,4"
                 Background="Transparent" BorderThickness="0" Foreground="{DynamicResource TextSecondaryBrush}"/>
     </StackPanel>
 </Window>

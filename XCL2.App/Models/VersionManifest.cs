@@ -44,10 +44,32 @@ public class VersionManifestEntry
         "22w13oneblockatatime", "23w13a_or_b", "24w14potato", "25w14craftmine", "26w14a"
     };
 
+    /// <summary>
+    /// 需求变更：预览版判断不再单纯依赖 Mojang manifest 的 "type" 字段（那个字段更新滞后、
+    /// 且对愚人节版本这类特例经常不准确，只能靠上面手动维护的名单硬编码兜底），改成直接按
+    /// id 里是否包含 a / b / w / - 这几个字符判断——正式版号（如 1.21、1.20.4、26.2）只由数字和
+    /// 点号组成，不会出现这几个字符；而快照(xxwxxa/xxwxxb)、预发布(1.21-pre1)、候选版
+    /// (1.21-rc1)、愚人节版本(15w14a、23w13a_or_b)、老 alpha/beta(a1.0.4、b1.7.3) 这些非正式版
+    /// 号里几乎总会出现其中至少一个字符。这样即使未来出现没有及时加入
+    /// KnownAprilFoolsIds/官方 type 字段又标注不准的新版本，也能被正确识别为预览版，
+    /// 不用每年手动追加维护。大小写不敏感（'W' 同样算命中）。
+    /// </summary>
+    private static bool LooksLikePreviewId(string id)
+    {
+        if (string.IsNullOrEmpty(id)) return false;
+        foreach (var c in id)
+        {
+            var lower = char.ToLowerInvariant(c);
+            if (lower is 'a' or 'b' or 'w' or '-') return true;
+        }
+        return false;
+    }
+
     public VersionCategory GetCategory()
     {
         if (Type is "old_alpha" or "old_beta") return VersionCategory.Legacy;
         if (KnownAprilFoolsIds.Contains(Id)) return VersionCategory.AprilFools;
+        if (LooksLikePreviewId(Id)) return VersionCategory.Snapshot;
         return Type == "release" ? VersionCategory.Release : VersionCategory.Snapshot;
     }
 }

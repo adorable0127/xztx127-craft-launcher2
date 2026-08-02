@@ -31,10 +31,10 @@ public partial class LoginPage : UserControl
         var name = string.IsNullOrWhiteSpace(OfflineNameBox.Text) ? "Player" : OfflineNameBox.Text.Trim();
         var account = OfflineAuthService.CreateOfflineAccount(name);
         _owner.ConfigService.AddOrUpdateAccount(account);
-        _owner.ConfigService.SelectAccount(account.Id);
+        // 需求变更：新建账户之后不再自动选中，由用户自己在下面的列表里点「选用」。
         Reload();
         _owner.RefreshSidebar();
-        StatusText.Text = $"离线账户 {name} 已添加并选用。UUID: {account.Uuid}";
+        StatusText.Text = $"离线账户 {name} 已添加。UUID: {account.Uuid}，请在下方列表中点「选用」。";
     }
 
     private async void AddMicrosoft_Click(object sender, RoutedEventArgs e)
@@ -80,10 +80,10 @@ public partial class LoginPage : UserControl
                 return;
             }
             _owner.ConfigService.AddOrUpdateAccount(account);
-            _owner.ConfigService.SelectAccount(account.Id);
+            // 需求变更：登录成功之后不再自动选中，由用户自己在下面的列表里点「选用」。
             Reload();
             _owner.RefreshSidebar();
-            StatusText.Text = $"微软账户 {account.Username} 登录成功并已选用！";
+            StatusText.Text = $"微软账户 {account.Username} 登录成功，请在下方列表中点「选用」。";
         }
         catch (OperationCanceledException)
         {
@@ -182,10 +182,10 @@ public partial class LoginPage : UserControl
                 return;
             }
             _owner.ConfigService.AddOrUpdateAccount(account);
-            _owner.ConfigService.SelectAccount(account.Id);
+            // 需求变更：登录成功之后不再自动选中，由用户自己在下面的列表里点「选用」。
             Reload();
             _owner.RefreshSidebar();
-            StatusText.Text = $"微软账户 {account.Username} 登录成功并已选用！";
+            StatusText.Text = $"微软账户 {account.Username} 登录成功，请在下方列表中点「选用」。";
         }
         catch (AuthStepException ex)
         {
@@ -213,7 +213,7 @@ public partial class LoginPage : UserControl
             var account = await auth.LoginAsync(apiRoot, username, password);
 
             _owner.ConfigService.AddOrUpdateAccount(account);
-            _owner.ConfigService.SelectAccount(account.Id);
+            // 需求变更：登录成功之后不再自动选中，由用户自己在下面的列表里点「选用」。
             Reload();
             _owner.RefreshSidebar();
 
@@ -222,7 +222,7 @@ public partial class LoginPage : UserControl
             // 或者用同一个服务器再登另一个账号。
             AuthServerPasswordBox.Password = "";
 
-            StatusText.Text = $"认证服务器账户 {account.Username} 登录成功并已选用！";
+            StatusText.Text = $"认证服务器账户 {account.Username} 登录成功，请在下方列表中点「选用」。";
         }
         catch (AuthStepException ex)
         {

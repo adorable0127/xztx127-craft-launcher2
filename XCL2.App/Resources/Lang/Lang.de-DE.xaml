@@ -44,6 +44,7 @@
     <system:String x:Key="Str_Nav_Settings">Einstellungen</system:String>
     <system:String x:Key="Str_Nav_Logs">Protokolle</system:String>
     <system:String x:Key="Str_Nav_Experimental">Experimentelle Funktionen</system:String>
+    <system:String x:Key="Str_Nav_Toolbox">Werkzeugkiste</system:String>
 
     <system:String x:Key="Str_Settings_LanguageSection_Title">Sprache der Launcher-Oberfläche</system:String>
     <system:String x:Key="Str_Settings_LanguageSection_Hint">Wird sofort wirksam, kein Neustart nötig. Dies legt die Sprache der Launcher-Oberfläche fest — unabhängig von der „Sprache im Spiel" weiter unten.</system:String>

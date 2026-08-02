@@ -1,6 +1,7 @@
 using System.Collections.ObjectModel;
 using System.IO;
 using System.Linq;
+using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
 using Microsoft.Win32;
@@ -247,7 +248,7 @@ public partial class ModManagerPage : UserControl
         }
     }
 
-    private void ExportModpack_Click(object sender, RoutedEventArgs e)
+    private async void ExportModpack_Click(object sender, RoutedEventArgs e)
     {
         var gameDir = GetEffectiveGameDir();
         var version = VersionCombo.SelectedItem as GameVersion;
@@ -273,6 +274,11 @@ public partial class ModManagerPage : UserControl
         // 时手动打了 .mrpack 扩展名——统一以实际文件名的扩展名为准，比只看 FilterIndex 更可靠。
         var exportAsMrpack = string.Equals(Path.GetExtension(dialog.FileName), ".mrpack", StringComparison.OrdinalIgnoreCase);
 
+        // 修复"导出整合包时界面卡顿"：之前 _modpackService.Export(...) 是同步方法，直接在
+        // UI 线程上跑完整个复制+压缩过程，期间界面完全没响应，进度条弹窗虽然弹出来了，
+        // 但因为 UI 线程本身被占满，Progress.Report 的回调也排不上队，看起来跟没弹一样。
+        // 现在用 Task.Run 把真正的文件复制/压缩工作丢到后台线程，UI 线程只负责接收
+        // ProgressDialog.Progress 的回调刷新界面，导出过程中窗口可以正常拖动/看到实时进度。
         var progressWin = new ProgressDialog("正在导出整合包 ...");
         progressWin.Show();
         try
@@ -284,11 +290,16 @@ public partial class ModManagerPage : UserControl
                 ModLoader = version.ModLoader,
                 ModLoaderVersion = version.ModLoaderVersion
             };
-            var progress = new Progress<string>(msg => progressWin.Progress.Report(new ProgressInfo("导出中", 0, 1, msg)));
-            if (exportAsMrpack)
-                _modpackService.ExportMrpack(gameDir, dialog.FileName, manifest, progress);
-            else
-                _modpackService.Export(gameDir, dialog.FileName, manifest, progress);
+            // ProgressDialog.Progress 本身就是 IProgress<ProgressInfo>，直接传给新版
+            // Export/ExportMrpack 重载即可拿到"已复制文件数/总数 + 当前文件名"的真实进度，
+            // 不再需要用 IProgress<string> 中转成只有一句阶段文字的假进度。
+            await Task.Run(() =>
+            {
+                if (exportAsMrpack)
+                    _modpackService.ExportMrpack(gameDir, dialog.FileName, manifest, progressWin.Progress);
+                else
+                    _modpackService.Export(gameDir, dialog.FileName, manifest, progressWin.Progress);
+            });
             MessageBoxDialog.ShowSuccess($"整合包已导出到：\n{dialog.FileName}");
         }
         catch (Exception ex)

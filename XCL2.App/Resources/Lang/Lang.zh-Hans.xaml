@@ -9,7 +9,7 @@
 
     <!-- ============ 语言选择弹窗自身 ============ -->
     <system:String x:Key="Str_Lang_DialogTitle">选择语言</system:String>
-    <system:String x:Key="Str_Lang_EntryButton">语言</system:String>
+    <system:String x:Key="Str_Lang_EntryButton">语言/Language</system:String>
     <system:String x:Key="Str_Lang_ExperimentalNotice">部分实验性功能仅对简体中文界面开放；切换到其它语言后，这些实验性功能会暂时隐藏（功能本身不受影响，只是尚未提供对应语言的界面翻译）。</system:String>
     <system:String x:Key="Str_Lang_Ok">确定</system:String>
     <system:String x:Key="Str_Lang_Cancel">取消</system:String>
@@ -50,6 +50,7 @@
     <system:String x:Key="Str_Nav_Settings">设置</system:String>
     <system:String x:Key="Str_Nav_Logs">日志</system:String>
     <system:String x:Key="Str_Nav_Experimental">实验性功能</system:String>
+    <system:String x:Key="Str_Nav_Toolbox">百宝箱</system:String>
 
     <!-- ============ 设置页新增的"启动器界面语言"区块 ============ -->
     <system:String x:Key="Str_Settings_LanguageSection_Title">启动器界面语言</system:String>

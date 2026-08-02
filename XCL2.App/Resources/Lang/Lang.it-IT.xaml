@@ -44,6 +44,7 @@
     <system:String x:Key="Str_Nav_Settings">Impostazioni</system:String>
     <system:String x:Key="Str_Nav_Logs">Log</system:String>
     <system:String x:Key="Str_Nav_Experimental">Funzionalità sperimentali</system:String>
+    <system:String x:Key="Str_Nav_Toolbox">Cassetta degli attrezzi</system:String>
 
     <system:String x:Key="Str_Settings_LanguageSection_Title">Lingua dell'interfaccia del launcher</system:String>
     <system:String x:Key="Str_Settings_LanguageSection_Hint">Applicato immediatamente, senza riavvio. Imposta la lingua dell'interfaccia del launcher — indipendente dalla "lingua di gioco" qui sotto.</system:String>

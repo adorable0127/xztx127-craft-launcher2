@@ -1,64 +1,55 @@
 <Window x:Class="XCL2.App.Views.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:services="clr-namespace:XCL2.App.Services"
         Title="{DynamicResource Str_Main_WindowTitlePrefix}" Height="640" Width="1000"
+        MinHeight="480" MinWidth="820"
         WindowStartupLocation="CenterScreen"
         Icon="/Resources/app.ico"
         Background="{DynamicResource SideBrush}">
     <Grid>
         <Grid.ColumnDefinitions>
-            <ColumnDefinition Width="180"/>
+            <!-- 侧边栏宽度改成可变列（原来固定 180），配合 SidebarCollapseToggle_Click
+                 在展开(180)/收起(56，仅剩图标)两个宽度之间切换。 x:Name 供代码里读取/修改宽度。 -->
+            <ColumnDefinition x:Name="SidebarColumn" Width="180"/>
             <ColumnDefinition Width="*"/>
         </Grid.ColumnDefinitions>
 
         <!-- 左侧导航栏 -->
         <Border Grid.Column="0" Background="{DynamicResource SideBrush}" BorderBrush="{DynamicResource DividerBrush}" BorderThickness="0,0,1,0">
-            <DockPanel Margin="12">
-                <StackPanel DockPanel.Dock="Top">
-                    <TextBlock Text="XCL2" FontSize="22" FontWeight="Bold" Foreground="{DynamicResource AccentBrush}" Margin="6,10,0,20"/>
-                    <Button Style="{StaticResource SideNavButton}" Click="NavHome_Click">
-                        <TextBlock><Run Text="🏠 "/><Run Text="{DynamicResource Str_Nav_Home}"/></TextBlock>
+            <DockPanel x:Name="SidebarPanel" Margin="12">
+
+                <!-- 顶部：Logo + 收起/展开切换按钮。收起后 Logo 隐藏，只留三横杠/圆点按钮，
+                     跟图2/图6里"点了变成一个点"的交互一致。 -->
+                <Grid DockPanel.Dock="Top" Margin="0,0,0,16">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    <TextBlock x:Name="LogoText" Grid.Column="0" Text="XCL2" FontSize="22" FontWeight="Bold"
+                               Foreground="{DynamicResource AccentBrush}" Margin="6,10,0,0" VerticalAlignment="Center"/>
+                    <Button x:Name="SidebarCollapseToggle" Grid.Column="1" Style="{StaticResource SideNavButton}"
+                            Padding="8,8" Click="SidebarCollapseToggle_Click" ToolTip="收起/展开侧边栏"
+                            HorizontalContentAlignment="Center">
+                        <!-- 展开态显示"三横杠"，收起态（触发器）切换成"一个点"，跟需求描述一致。 -->
+                        <TextBlock x:Name="SidebarToggleIcon" Text="☰" FontSize="16"/>
                     </Button>
-                    <Button Style="{StaticResource SideNavButton}" Click="NavVersions_Click" Margin="0,4,0,0">
-                        <TextBlock><Run Text="📁 "/><Run Text="{DynamicResource Str_Nav_Versions}"/></TextBlock>
-                    </Button>
-                    <Button Style="{StaticResource SideNavButton}" Click="NavDownload_Click" Margin="0,4,0,0">
-                        <TextBlock><Run Text="⬇️ "/><Run Text="{DynamicResource Str_Nav_Download}"/></TextBlock>
-                    </Button>
-                    <Button Style="{StaticResource SideNavButton}" Click="NavMultiplayer_Click" Margin="0,4,0,0">
-                        <TextBlock><Run Text="🌐 "/><Run Text="{DynamicResource Str_Nav_Multiplayer}"/></TextBlock>
-                    </Button>
-                    <Button Style="{StaticResource SideNavButton}" Click="NavModManager_Click" Margin="0,4,0,0">
-                        <TextBlock><Run Text="🧩 "/><Run Text="{DynamicResource Str_Nav_ModManager}"/></TextBlock>
-                    </Button>
-                    <Button Style="{StaticResource SideNavButton}" Click="NavServerManager_Click" Margin="0,4,0,0">
-                        <TextBlock><Run Text="🖥 "/><Run Text="{DynamicResource Str_Nav_ServerManager}"/></TextBlock>
-                    </Button>
-                    <Button Style="{StaticResource SideNavButton}" Click="NavAccounts_Click" Margin="0,4,0,0">
-                        <TextBlock><Run Text="👤 "/><Run Text="{DynamicResource Str_Nav_Accounts}"/></TextBlock>
-                    </Button>
-                    <Button Style="{StaticResource SideNavButton}" Click="NavSettings_Click" Margin="0,4,0,0">
-                        <TextBlock><Run Text="⚙ "/><Run Text="{DynamicResource Str_Nav_Settings}"/></TextBlock>
-                    </Button>
-                    <Button Style="{StaticResource SideNavButton}" Click="NavLogs_Click" Margin="0,4,0,0">
-                        <TextBlock><Run Text="📜 "/><Run Text="{DynamicResource Str_Nav_Logs}"/></TextBlock>
-                    </Button>
-                    <!-- 实验性功能导航按钮：仅当启动器界面语言是简体中文时显示（见
-                         LocalizationService.ExperimentalFeaturesLanguageGate 的注释——这批功能
-                         还没有多语言界面，贸然对其它语言用户展示未翻译的中文体验更差）。
-                         x:Name 供 MainWindow.xaml.cs 在语言切换时动态控制 Visibility。 -->
-                    <Button x:Name="NavExperimentalButton" Style="{StaticResource SideNavButton}" Click="NavExperimental_Click" Margin="0,4,0,0">
-                        <TextBlock><Run Text="🧪 "/><Run Text="{DynamicResource Str_Nav_Experimental}"/></TextBlock>
-                    </Button>
-                </StackPanel>
-                <StackPanel DockPanel.Dock="Bottom">
+                </Grid>
+
+                <!-- 底部：账户/版本信息 + 进程控制 + 启动游戏。这一组明确不参与鼠标滚轮滑动
+                     （需求原话："并不支持鼠标滚轮滑动"），所以放在 DockPanel.Dock="Bottom"，
+                     不包在下面那个 ScrollViewer 里面。 -->
+                <StackPanel x:Name="SidebarBottomPanel" DockPanel.Dock="Bottom">
                     <TextBlock x:Name="CurrentAccountText" Text="未选择账户" FontSize="12"
                                Foreground="{DynamicResource TextSecondaryBrush}" Margin="6,0,0,6" TextWrapping="Wrap"/>
                     <TextBlock x:Name="CurrentVersionText" Text="未选择版本" FontSize="12"
                                Foreground="{DynamicResource TextSecondaryBrush}" Margin="6,0,0,10" TextWrapping="Wrap"/>
 
-                    <!-- 游戏进程控制按钮组：一键关闭 / 关闭所选 / 关闭未响应 -->
-                    <UniformGrid Columns="3" Margin="0,0,0,8">
+                    <!-- 展开态：一键关闭 / 关闭所选 / 关闭未响应 三个按钮都在（ProcessControlExpanded）。
+                         收起态：按需求只保留"关闭所选"，文字缩成一个"关"字（CloseSelectedBtnCollapsed），
+                         两组按钮做 Visibility 二选一联动，而不是在同一个按钮上动态换 Content，
+                         这样两种状态各自的宽度/字号可以分别用最合适的写死值，不用在代码里拼字符串。 -->
+                    <UniformGrid x:Name="ProcessControlExpanded" Columns="3" Margin="0,0,0,8">
                         <Button Content="一键关闭" FontSize="10" Padding="2,6" Margin="0,0,2,0"
                                 Style="{StaticResource SideNavButton}" Click="CloseAllGames_Click"
                                 ToolTip="一键关闭游戏：结束所有正在运行的游戏进程"/>
@@ -69,11 +60,132 @@
                                 Style="{StaticResource SideNavButton}" Click="CloseUnresponsiveGame_Click"
                                 ToolTip="关闭未响应的游戏：需要先手动勾选确认无响应，再强制结束，避免误杀"/>
                     </UniformGrid>
+                    <Button x:Name="CloseSelectedBtnCollapsed" Content="关" FontSize="12" Padding="0,6" Margin="0,0,0,8"
+                            Visibility="Collapsed" Style="{StaticResource SideNavButton}"
+                            HorizontalContentAlignment="Center" Click="CloseSelectedGame_Click"
+                            ToolTip="关闭所选的游戏：从列表中选择一个正在运行的游戏并关闭"/>
 
+                    <!-- 展开态：跟原来一样的长条"启动游戏"按钮。
+                         收起态：改成一个圆形的、里面是圆形图案的按钮（▶ 播放符号），
+                         Visibility 二选一联动，两者共享同一个 Launch_Click 处理器。 -->
                     <Button x:Name="LaunchGameBtn" Content="启动游戏" Style="{StaticResource PrimaryButton}" FontSize="16" Padding="0,12"
                             Click="Launch_Click"/>
+                    <Button x:Name="LaunchGameBtnCollapsed" Width="40" Height="40" Margin="0,0,0,0"
+                            HorizontalAlignment="Center" Visibility="Collapsed" Click="Launch_Click"
+                            Background="{DynamicResource AccentBrush}" BorderThickness="0"
+                            Foreground="{DynamicResource ButtonForegroundBrush}"
+                            ToolTip="启动游戏" Cursor="Hand">
+                        <!-- 不能直接复用 PrimaryButton 样式：那个模板把 CornerRadius 写死成 4，
+                             不是通过 TemplateBinding 暴露出来的属性，没法在这里用 Setter 覆盖成
+                             圆形。改成给这一个按钮单独写一个"圆形"的 ControlTemplate——
+                             Border 用 CornerRadius="20"（等于按钮宽高的一半，正好是正圆），
+                             里面放一个▶播放符号，对应需求里"里面图案是圆形的按钮"的收起态
+                             启动游戏入口。 -->
+                        <Button.Template>
+                            <ControlTemplate TargetType="Button">
+                                <Border x:Name="bd" Background="{TemplateBinding Background}" CornerRadius="20">
+                                    <TextBlock Text="▶" FontSize="14" HorizontalAlignment="Center" VerticalAlignment="Center"
+                                               Foreground="{TemplateBinding Foreground}"/>
+                                </Border>
+                                <ControlTemplate.Triggers>
+                                    <Trigger Property="IsMouseOver" Value="True">
+                                        <Setter TargetName="bd" Property="Effect" Value="{StaticResource GlowEffect}"/>
+                                    </Trigger>
+                                </ControlTemplate.Triggers>
+                            </ControlTemplate>
+                        </Button.Template>
+                    </Button>
                 </StackPanel>
-                <Grid/>
+
+                <!-- 中间：可滚动的导航按钮列表。用 ScrollViewer 包起来 + 附加属性开启
+                     "鼠标滚轮滑动"（复用 ScrollWheelBehavior，跟设置页等长页面用的是同一套
+                     快速滚轮逻辑，不用重新实现一遍）。仅限窗口模式（DockPanel 剩余空间自适应，
+                     窗口够矮时才会真正出现滚动条，够高时跟原来一样不会有任何视觉变化）。 -->
+                <ScrollViewer VerticalScrollBarVisibility="Hidden" HorizontalScrollBarVisibility="Disabled"
+                              services:ScrollWheelBehavior.EnableFastWheel="True">
+                    <StackPanel x:Name="NavButtonsPanel">
+                        <!-- 每个导航按钮内部改成 StackPanel(横排) + 独立的图标 TextBlock / 文字 TextBlock，
+                             而不是原来单个 TextBlock 里塞两个 Run——收起侧边栏时只需要把"文字那一块"
+                             Visibility=Collapsed，图标 TextBlock 保持不动即可，文字 TextBlock 上的
+                             {DynamicResource Str_Nav_Xxx} 绑定全程不受影响，展开时自动恢复显示，
+                             不需要在代码里手动缓存/还原文案字符串（避免和多语言切换出现绑定冲突）。 -->
+                        <Button x:Name="NavHomeButton" Style="{StaticResource SideNavButton}" Click="NavHome_Click" ToolTip="{DynamicResource Str_Nav_Home}">
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock x:Name="NavHomeIcon" Text="🏠" Margin="0,0,8,0"/>
+                                <TextBlock x:Name="NavHomeLabel" Text="{DynamicResource Str_Nav_Home}" TextTrimming="CharacterEllipsis"/>
+                            </StackPanel>
+                        </Button>
+                        <Button x:Name="NavVersionsButton" Style="{StaticResource SideNavButton}" Click="NavVersions_Click" Margin="0,4,0,0" ToolTip="{DynamicResource Str_Nav_Versions}">
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock x:Name="NavVersionsIcon" Text="📁" Margin="0,0,8,0"/>
+                                <TextBlock x:Name="NavVersionsLabel" Text="{DynamicResource Str_Nav_Versions}" TextTrimming="CharacterEllipsis"/>
+                            </StackPanel>
+                        </Button>
+                        <!-- 下载图标：原来是 "⬇️"（箭头 + U+FE0F 变体选择符，强制彩色渲染），
+                             在不完整支持该字体特性的环境下会被渲染得比其它图标明显小一圈甚至
+                             缩成一条线——跟 ServerManagerPage 里同一个图标遇到的问题一样，
+                             改成不带变体选择符的纯符号写法，大小才能跟其它导航图标保持一致。 -->
+                        <Button x:Name="NavDownloadButton" Style="{StaticResource SideNavButton}" Click="NavDownload_Click" Margin="0,4,0,0" ToolTip="{DynamicResource Str_Nav_Download}">
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock x:Name="NavDownloadIcon" Text="⬇" Margin="0,0,8,0"/>
+                                <TextBlock x:Name="NavDownloadLabel" Text="{DynamicResource Str_Nav_Download}" TextTrimming="CharacterEllipsis"/>
+                            </StackPanel>
+                        </Button>
+                        <Button x:Name="NavMultiplayerButton" Style="{StaticResource SideNavButton}" Click="NavMultiplayer_Click" Margin="0,4,0,0" ToolTip="{DynamicResource Str_Nav_Multiplayer}">
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock x:Name="NavMultiplayerIcon" Text="🌐" Margin="0,0,8,0"/>
+                                <TextBlock x:Name="NavMultiplayerLabel" Text="{DynamicResource Str_Nav_Multiplayer}" TextTrimming="CharacterEllipsis"/>
+                            </StackPanel>
+                        </Button>
+                        <Button x:Name="NavModManagerButton" Style="{StaticResource SideNavButton}" Click="NavModManager_Click" Margin="0,4,0,0" ToolTip="{DynamicResource Str_Nav_ModManager}">
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock x:Name="NavModManagerIcon" Text="🧩" Margin="0,0,8,0"/>
+                                <TextBlock x:Name="NavModManagerLabel" Text="{DynamicResource Str_Nav_ModManager}" TextTrimming="CharacterEllipsis"/>
+                            </StackPanel>
+                        </Button>
+                        <Button x:Name="NavServerManagerButton" Style="{StaticResource SideNavButton}" Click="NavServerManager_Click" Margin="0,4,0,0" ToolTip="{DynamicResource Str_Nav_ServerManager}">
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock x:Name="NavServerManagerIcon" Text="🖥" Margin="0,0,8,0"/>
+                                <TextBlock x:Name="NavServerManagerLabel" Text="{DynamicResource Str_Nav_ServerManager}" TextTrimming="CharacterEllipsis"/>
+                            </StackPanel>
+                        </Button>
+                        <!-- 新增「百宝箱」导航入口，跳到 ToolboxPage。 -->
+                        <Button x:Name="NavToolboxButton" Style="{StaticResource SideNavButton}" Click="NavToolbox_Click" Margin="0,4,0,0" ToolTip="{DynamicResource Str_Nav_Toolbox}">
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock x:Name="NavToolboxIcon" Text="🧰" Margin="0,0,8,0"/>
+                                <TextBlock x:Name="NavToolboxLabel" Text="{DynamicResource Str_Nav_Toolbox}" TextTrimming="CharacterEllipsis"/>
+                            </StackPanel>
+                        </Button>
+                        <Button x:Name="NavAccountsButton" Style="{StaticResource SideNavButton}" Click="NavAccounts_Click" Margin="0,4,0,0" ToolTip="{DynamicResource Str_Nav_Accounts}">
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock x:Name="NavAccountsIcon" Text="👤" Margin="0,0,8,0"/>
+                                <TextBlock x:Name="NavAccountsLabel" Text="{DynamicResource Str_Nav_Accounts}" TextTrimming="CharacterEllipsis"/>
+                            </StackPanel>
+                        </Button>
+                        <Button x:Name="NavSettingsButton" Style="{StaticResource SideNavButton}" Click="NavSettings_Click" Margin="0,4,0,0" ToolTip="{DynamicResource Str_Nav_Settings}">
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock x:Name="NavSettingsIcon" Text="⚙" Margin="0,0,8,0"/>
+                                <TextBlock x:Name="NavSettingsLabel" Text="{DynamicResource Str_Nav_Settings}" TextTrimming="CharacterEllipsis"/>
+                            </StackPanel>
+                        </Button>
+                        <Button x:Name="NavLogsButton" Style="{StaticResource SideNavButton}" Click="NavLogs_Click" Margin="0,4,0,0" ToolTip="{DynamicResource Str_Nav_Logs}">
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock x:Name="NavLogsIcon" Text="📜" Margin="0,0,8,0"/>
+                                <TextBlock x:Name="NavLogsLabel" Text="{DynamicResource Str_Nav_Logs}" TextTrimming="CharacterEllipsis"/>
+                            </StackPanel>
+                        </Button>
+                        <!-- 实验性功能导航按钮：仅当启动器界面语言是简体中文时显示（见
+                             LocalizationService.ExperimentalFeaturesLanguageGate 的注释——这批功能
+                             还没有多语言界面，贸然对其它语言用户展示未翻译的中文体验更差）。
+                             x:Name 供 MainWindow.xaml.cs 在语言切换时动态控制 Visibility。 -->
+                        <Button x:Name="NavExperimentalButton" Style="{StaticResource SideNavButton}" Click="NavExperimental_Click" Margin="0,4,0,0" ToolTip="{DynamicResource Str_Nav_Experimental}">
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock x:Name="NavExperimentalIcon" Text="🧪" Margin="0,0,8,0"/>
+                                <TextBlock x:Name="NavExperimentalLabel" Text="{DynamicResource Str_Nav_Experimental}" TextTrimming="CharacterEllipsis"/>
+                            </StackPanel>
+                        </Button>
+                    </StackPanel>
+                </ScrollViewer>
             </DockPanel>
         </Border>
 

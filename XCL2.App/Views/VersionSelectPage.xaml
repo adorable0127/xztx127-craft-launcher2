@@ -55,7 +55,14 @@
                 </Grid>
 
                 <TextBlock DockPanel.Dock="Top" Text="本机已安装版本" FontWeight="Bold" Margin="0,0,0,6" Foreground="{DynamicResource TextPrimaryBrush}"/>
-                <ListBox x:Name="InstalledListBox" DockPanel.Dock="Top" MaxHeight="160" BorderThickness="0,0,0,1" BorderBrush="{DynamicResource DividerBrush}"
+                <!-- 原来这里是 MaxHeight="160"，只能露出两三行就要滚动，版本选择区域显得非常局促。
+                     改成 MinHeight（而不是固定死 Height）：平时至少占这么高，内容更多时靠外层
+                     ScrollViewer 继续往下滚动，不会顶到看不见"保存这个版本的设置"按钮；
+                     内容较少时也不会被压扁，视觉上这块版本列表才是整个页面右侧真正的主角。 -->
+                <!-- MinHeight 从最初的 160（太矮，只能看两三行）调到 360 又发现太满（几乎顶满
+                     整个页面），现在改成 240：比原来宽松不少，但不会把下面"当前选中版本的
+                     单独设置"整块内容挤到需要大幅滚动才能看到。 -->
+                <ListBox x:Name="InstalledListBox" DockPanel.Dock="Top" MinHeight="240" BorderThickness="0,0,0,1" BorderBrush="{DynamicResource DividerBrush}"
                          SelectionChanged="InstalledListBox_SelectionChanged" Margin="0,0,0,12">
                     <ListBox.ItemTemplate>
                         <DataTemplate>

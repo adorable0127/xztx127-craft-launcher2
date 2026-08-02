@@ -51,6 +51,17 @@ public partial class ModDetailPage : UserControl
     private readonly object _sourceItem;
     public object SourceItem => _sourceItem;
     private readonly bool _isDataPack;
+
+    /// <summary>是否是"模组管理"场景（下载中心的 Mod 分类，见 DownloadCenterPage.OpenModDetailAsync）。
+    /// "显示/隐藏预览版"按钮只在这个场景下出现——资源包/数据包/光影包/地图详情页复用同一个
+    /// ModDetailPage，但按需求只给模组管理加这个按钮，其余场景保持之前"去掉这些按钮"的状态不变。</summary>
+    private readonly bool _isMod;
+
+    /// <summary>"显示/隐藏预览版"按钮当前状态：true=预览版(beta/alpha)也显示在分组列表里，
+    /// false=只显示正式版。默认 false（跟历史上"预览版默认隐藏"的设计一致），只有 _isMod 时
+    /// 才会被按钮切换和 RebuildModGroups 用到，非 Mod 场景下这个字段不产生任何效果。</summary>
+    private bool _showPreview;
+
     private readonly Action<bool>? _onFavoriteToggle;
     private bool _isFavorite;
 
@@ -75,13 +86,15 @@ public partial class ModDetailPage : UserControl
         Func<InlineVersionEntry, Task>? onDownload = null,
         Action<InlineVersionEntry, string?>? onAddToList = null,
         bool isDataPack = false,
-        IEnumerable<string>? saveNames = null)
+        IEnumerable<string>? saveNames = null,
+        bool isMod = false)
     {
         InitializeComponent();
         _mode = mode;
         EntryActionLabel = mode == DetailMode.AddToWizardList ? "加入清单" : "下载";
         _sourceItem = sourceItem;
         _isDataPack = isDataPack;
+        _isMod = isMod;
         _onBack = onBack;
         _onDownload = onDownload;
         _onAddToList = onAddToList;
@@ -107,41 +120,154 @@ public partial class ModDetailPage : UserControl
 
     private readonly string? _sourceUrl;
 
-    /// <summary>保存最近一次拉到的扁平版本列表，供"显示预览版"按钮切换时本地重新分组用，
-    /// 不需要重新发网络请求——预览版本来就在这批数据里，只是 ModVersionGrouping.Group
-    /// 默认把它们过滤掉了。</summary>
+    /// <summary>保存最近一次拉到的扁平版本列表。Mod 场景（_isMod=true）下这份数据是
+    /// "显示/隐藏预览版"按钮的数据来源——RebuildModGroups 按 _showPreview 状态从这里重新分组；
+    /// 非 Mod 场景（资源包/数据包/光影包/地图）目前只是保留供以后可能的场景复用，不参与展示，
+    /// 这些场景下按钮一直保持之前"去掉"的状态，见 ModVersionGrouping.Group 的注释。</summary>
     private List<InlineVersionEntry> _flatEntries = new();
-    private bool _includePreview;
+
+    /// <summary>最近一次 ShowGroups 传入的完整分组列表（未按版本筛选），供 Tab 切换时本地
+    /// 重新筛选用，不需要重新分组/重新请求网络。</summary>
+    private List<VersionGroup> _allGroups = new();
 
     /// <summary>展开状态：调用方在拿到分组数据后调用这个方法一次性填充展示。
     /// 跟旧版 ToggleModExpandAsync/ToggleResourceExpandAsync 里"填充 Groups"是同一批数据，
     /// 只是现在不需要"展开/收起"这一层，页面本身就是详情页，进来就直接显示。</summary>
     public void ShowGroups(IEnumerable<VersionGroup> groups)
     {
-        var list = groups.ToList();
-        GroupsList.ItemsSource = list;
-        NoResultText.Visibility = list.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+        _allGroups = groups.ToList();
+        // Mod 场景下不直接用调用方传入的分组（那份是按 ModVersionGrouping 默认 includePreview:true
+        // 算出来的，跟"预览版默认隐藏"的按钮初始状态对不上），改成用 SetFlatEntries 存下来的扁平列表
+        // 按当前 _showPreview 状态本地重新分组，这样按钮切换时不用再向 Modrinth/CurseForge 重新请求。
+        if (_isMod) RebuildModGroups();
+        BuildVersionFilterTabs();
+        ApplyVersionFilter(_selectedVersionTag);
         LoadingText.Visibility = Visibility.Collapsed;
+        UpdatePreviewToggleVisibility();
     }
 
-    /// <summary>跟 ShowGroups 配套：额外传入这批版本对应的扁平列表，好让"显示预览版"
-    /// 按钮之后能本地重新分组。调用方（DownloadCenterPage）在 LoadModVersionsAsync/
-    /// LoadResourceVersionsAsync 里 item.Versions 填充完成后一并传进来。不强制要求调用——
-    /// 不传时 _flatEntries 保持为空，"显示预览版"点了也只是空列表，不会报错。</summary>
-    public void SetFlatEntries(IEnumerable<InlineVersionEntry> entries)
+    /// <summary>Mod 场景专用：按 _showPreview 状态从 _flatEntries 重新分组，覆盖 _allGroups。
+    /// _flatEntries 为空（还没调用过 SetFlatEntries，或这个 mod 本来就没有任何版本）时不做任何事，
+    /// 保留 ShowGroups 一开始赋的值，避免误把"还没数据"当成"筛选后没数据"。</summary>
+    private void RebuildModGroups()
     {
-        _flatEntries = entries.ToList();
-        _includePreview = false;
-        TogglePreviewButton.Content = "显示预览版";
+        if (_flatEntries.Count == 0) return;
+
+        var filtered = ModVersionGrouping.Group(_flatEntries, _showPreview);
+
+        // 兜底：某个 mod 的版本类型标注本身不规范，导致"只显示正式版"把全部版本都过滤掉时，
+        // 直接显示会变成详情页"没有找到匹配的版本"，比预览版本身更容易误导用户以为这个 mod
+        // 根本没有能装的版本——这正是 ModVersionGrouping.Group 类注释里提到的"全军覆没"场景。
+        // 与其让用户看着空列表去猜"是不是要点一下显示预览版"，不如这种情况下直接退回显示全部。
+        if (filtered.Count == 0) filtered = ModVersionGrouping.Group(_flatEntries, includePreview: true);
+
+        if (filtered.Count > 0) filtered[0].IsExpanded = true;
+        _allGroups = filtered;
+    }
+
+    /// <summary>按钮文案在"显示预览版"/"隐藏预览版"之间切换，只在 _isMod 且这批版本里确实存在
+    /// 预览版时才显示按钮——没有预览版的 mod 显示这个按钮也没有意义，还会让人以为点了会有效果。</summary>
+    private void UpdatePreviewToggleVisibility()
+    {
+        var hasPreview = _isMod && _flatEntries.Any(e => e.IsPreview);
+        PreviewToggleButton.Visibility = hasPreview ? Visibility.Visible : Visibility.Collapsed;
+        PreviewToggleButton.Content = _showPreview ? "隐藏预览版" : "显示预览版";
     }
 
     private void TogglePreview_Click(object sender, RoutedEventArgs e)
     {
-        _includePreview = !_includePreview;
-        TogglePreviewButton.Content = _includePreview ? "隐藏预览版" : "显示预览版";
-        var groups = ModVersionGrouping.Group(_flatEntries, _includePreview);
-        if (groups.Count > 0) groups[0].IsExpanded = true;
-        ShowGroups(groups);
+        _showPreview = !_showPreview;
+        RebuildModGroups();
+        BuildVersionFilterTabs();
+        ApplyVersionFilter(_selectedVersionTag);
+        UpdatePreviewToggleVisibility();
+    }
+
+    private string? _selectedVersionTag;
+
+    /// <summary>从分组标题（形如 "NeoForge 1.21.11"、"Fabric 26.2"）里提取出跟截图一致的
+    /// 版本筛选 Tab 文案：取标题里的游戏版本号部分，保留前两段（"1.21.11" → "1.21"，
+    /// "26.2" 已经只有两段就原样保留），这样同一个大版本下的补丁号(1.21.10/1.21.11...)
+    /// 会归到同一个 Tab 下，跟截图里 Tab 数量精简、不会每个补丁版本单独占一个 Tab 一致。</summary>
+    private static string ExtractVersionTag(VersionGroup group)
+    {
+        var lastSpace = group.GroupTitle.LastIndexOf(' ');
+        var gameVersion = lastSpace >= 0 ? group.GroupTitle[(lastSpace + 1)..] : group.GroupTitle;
+        var parts = gameVersion.Split('.');
+        return parts.Length <= 2 ? gameVersion : $"{parts[0]}.{parts[1]}";
+    }
+
+    /// <summary>按 _allGroups 里实际出现过的版本动态生成筛选 Tab（"全部" + 各版本，按
+    /// 首次出现顺序排列，与 ModVersionGrouping 输出的组顺序一致，即新版本在前）。
+    /// 只有一个版本（或没有分组）时整条筛选栏隐藏——只有一个选项的筛选没有意义，
+    /// 还会白占一行空间。</summary>
+    private void BuildVersionFilterTabs()
+    {
+        var tags = _allGroups.Select(ExtractVersionTag).Distinct().ToList();
+
+        VersionFilterPanel.Children.Clear();
+
+        if (tags.Count <= 1)
+        {
+            VersionFilterPanel.Visibility = Visibility.Collapsed;
+            _selectedVersionTag = null;
+            return;
+        }
+
+        VersionFilterPanel.Visibility = Visibility.Visible;
+
+        // 之前选中的版本如果在新数据里已经不存在了（比如切换到另一个 mod 详情页），
+        // 回退到"全部"，避免筛选栏看起来选中了一个但实际没有对应内容。
+        if (_selectedVersionTag != null && !tags.Contains(_selectedVersionTag))
+            _selectedVersionTag = null;
+
+        var allTab = new RadioButton
+        {
+            Content = "全部",
+            GroupName = "ModDetailVersionFilter",
+            Style = (Style)FindResource("GameVersionTabRadioButton"),
+            IsChecked = _selectedVersionTag == null,
+        };
+        allTab.Checked += VersionFilterTab_Checked;
+        VersionFilterPanel.Children.Add(allTab);
+
+        foreach (var tag in tags)
+        {
+            var tab = new RadioButton
+            {
+                Content = tag,
+                Tag = tag,
+                GroupName = "ModDetailVersionFilter",
+                Style = (Style)FindResource("GameVersionTabRadioButton"),
+                IsChecked = tag == _selectedVersionTag,
+            };
+            tab.Checked += VersionFilterTab_Checked;
+            VersionFilterPanel.Children.Add(tab);
+        }
+    }
+
+    private void VersionFilterTab_Checked(object sender, RoutedEventArgs e)
+    {
+        if (sender is not RadioButton rb) return;
+        _selectedVersionTag = rb.Tag as string; // "全部" 没设 Tag，取出来是 null
+        ApplyVersionFilter(_selectedVersionTag);
+    }
+
+    /// <summary>按选中的版本 Tag 筛选 _allGroups 后展示；tag 为 null 时展示全部分组
+    /// （对应"全部" Tab）。</summary>
+    private void ApplyVersionFilter(string? tag)
+    {
+        var filtered = tag == null ? _allGroups : _allGroups.Where(g => ExtractVersionTag(g) == tag).ToList();
+        GroupsList.ItemsSource = filtered;
+        NoResultText.Visibility = filtered.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    /// <summary>跟 ShowGroups 配套：额外传入这批版本对应的扁平列表。调用方（DownloadCenterPage）
+    /// 在 LoadModVersionsAsync/LoadResourceVersionsAsync 里 item.Versions 填充完成后一并传进来。
+    /// 不强制要求调用——不传时 _flatEntries 保持为空。</summary>
+    public void SetFlatEntries(IEnumerable<InlineVersionEntry> entries)
+    {
+        _flatEntries = entries.ToList();
     }
 
     public void ShowLoading()

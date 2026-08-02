@@ -44,6 +44,7 @@
     <system:String x:Key="Str_Nav_Settings">Settings</system:String>
     <system:String x:Key="Str_Nav_Logs">Logs</system:String>
     <system:String x:Key="Str_Nav_Experimental">Experimental Features</system:String>
+    <system:String x:Key="Str_Nav_Toolbox">Toolbox</system:String>
 
     <system:String x:Key="Str_Settings_LanguageSection_Title">Launcher UI Language</system:String>
     <system:String x:Key="Str_Settings_LanguageSection_Hint">Takes effect immediately, no restart needed. This sets the language of the launcher UI itself — it's separate from the "in-game language" setting below.</system:String>

@@ -1,0 +1,207 @@
+<UserControl x:Class="XCL2.App.Views.ToolboxPage"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:services="clr-namespace:XCL2.App.Services">
+    <Border Background="{DynamicResource PanelBrush}" CornerRadius="10" Padding="20">
+        <Grid>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="*"/>
+            </Grid.RowDefinitions>
+
+            <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="0,0,0,12">
+                <TextBlock Text="🧰 百宝箱" FontSize="20" FontWeight="Bold" Foreground="{DynamicResource TextPrimaryBrush}" VerticalAlignment="Center"/>
+                <TextBlock Text="一些正式功能范围内的小工具集合，不属于实验性功能。" FontSize="12" Margin="16,0,0,0"
+                           Foreground="{DynamicResource TextSecondaryBrush}" VerticalAlignment="Center"/>
+            </StackPanel>
+
+            <TabControl Grid.Row="1">
+
+                <!-- ===== Tab 1：成就图片生成器 ===== -->
+                <TabItem Header="🏆 成就图片">
+                    <ScrollViewer VerticalScrollBarVisibility="Auto" services:ScrollWheelBehavior.EnableFastWheel="True">
+                        <StackPanel Margin="4,12,4,4" MaxWidth="640" HorizontalAlignment="Left">
+                            <TextBlock Text="自定义成就图片生成器（仅支持英文）" FontWeight="Bold" Margin="0,0,0,10"/>
+
+                            <TextBlock Text="物品名（ID）" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4"/>
+                            <TextBox x:Name="AchItemIdBox" Margin="0,0,0,10" Padding="6,5" Text="minecraft:diamond"/>
+
+                            <TextBlock Text="成就名" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4"/>
+                            <TextBox x:Name="AchNameBox" Margin="0,0,0,10" Padding="6,5" Text="Achievement Get!"/>
+
+                            <TextBlock Text="第一行" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4"/>
+                            <TextBox x:Name="AchLine1Box" Margin="0,0,0,10" Padding="6,5" Text="Diamonds!"/>
+
+                            <TextBlock Text="第二行（可选）" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4"/>
+                            <TextBox x:Name="AchLine2Box" Margin="0,0,0,14" Padding="6,5"/>
+
+                            <Border Background="{DynamicResource SideBrush}" CornerRadius="6" Padding="12" Margin="0,0,0,14"
+                                    HorizontalAlignment="Left">
+                                <Image x:Name="AchPreviewImage" Width="520" Height="80" Stretch="None"/>
+                            </Border>
+
+                            <StackPanel Orientation="Horizontal">
+                                <Button Content="预览成就图像" Padding="14,7" Margin="0,0,10,0" Click="AchPreview_Click"/>
+                                <Button Content="保存图片" Style="{StaticResource PrimaryButton}" Padding="14,7" Click="AchSave_Click"/>
+                            </StackPanel>
+                        </StackPanel>
+                    </ScrollViewer>
+                </TabItem>
+
+                <!-- ===== Tab 2：皮肤头像生成器 ===== -->
+                <TabItem Header="🙂 皮肤头像">
+                    <ScrollViewer VerticalScrollBarVisibility="Auto" services:ScrollWheelBehavior.EnableFastWheel="True">
+                        <StackPanel Margin="4,12,4,4" MaxWidth="640" HorizontalAlignment="Left">
+                            <TextBlock Text="皮肤头像生成器" FontWeight="Bold" Margin="0,0,0,10"/>
+
+                            <TextBlock Text="头像大小：" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4"/>
+                            <ComboBox x:Name="AvatarSizeCombo" Width="160" HorizontalAlignment="Left" Margin="0,0,0,14" SelectedIndex="1" SelectionChanged="AvatarSizeCombo_SelectionChanged">
+                                <ComboBoxItem Content="32x32"/>
+                                <ComboBoxItem Content="64x64"/>
+                                <ComboBoxItem Content="128x128"/>
+                                <ComboBoxItem Content="256x256"/>
+                            </ComboBox>
+
+                            <StackPanel Orientation="Horizontal" Margin="0,0,0,14">
+                                <Border Background="{DynamicResource SideBrush}" CornerRadius="6" Padding="12" Width="140" Height="140">
+                                    <Image x:Name="AvatarPreviewImage" Stretch="Uniform"/>
+                                </Border>
+                                <StackPanel Margin="16,0,0,0" VerticalAlignment="Center">
+                                    <TextBlock x:Name="AvatarSourceText" Text="尚未选择皮肤文件" TextWrapping="Wrap" MaxWidth="300"
+                                               Foreground="{DynamicResource TextSecondaryBrush}" FontSize="12"/>
+                                </StackPanel>
+                            </StackPanel>
+
+                            <StackPanel Orientation="Horizontal">
+                                <Button Content="选择皮肤" Padding="14,7" Margin="0,0,10,0" Click="AvatarSelectSkin_Click"/>
+                                <Button Content="保存头像" Style="{StaticResource PrimaryButton}" Padding="14,7" Click="AvatarSave_Click"/>
+                            </StackPanel>
+                        </StackPanel>
+                    </ScrollViewer>
+                </TabItem>
+
+                <!-- ===== Tab 3：下载自定义文件 / 正版皮肤下载 ===== -->
+                <TabItem Header="⬇ 文件下载">
+                    <ScrollViewer VerticalScrollBarVisibility="Auto" services:ScrollWheelBehavior.EnableFastWheel="True">
+                        <StackPanel Margin="4,12,4,4" MaxWidth="680" HorizontalAlignment="Left">
+
+                            <TextBlock Text="下载自定义文件" FontWeight="Bold" Margin="0,0,0,4"/>
+                            <TextBlock Text="下载任意直链文件。请注意，部分网站（例如百度网盘）可能会报错 (403) 已禁止，无法正常下载。"
+                                       TextWrapping="Wrap" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,10"/>
+
+                            <TextBlock Text="下载地址" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4"/>
+                            <TextBox x:Name="DlUrlBox" Margin="0,0,0,10" Padding="6,5"/>
+
+                            <TextBlock Text="User-Agent（可选）" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4"/>
+                            <TextBox x:Name="DlUserAgentBox" Margin="0,0,0,10" Padding="6,5"/>
+
+                            <TextBlock Text="保存到" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4"/>
+                            <Grid Margin="0,0,0,10">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBox x:Name="DlSaveDirBox" Grid.Column="0" Padding="6,5" Margin="0,0,8,0"/>
+                                <Button Grid.Column="1" Content="选择" Padding="12,5" Click="DlBrowseDir_Click"/>
+                            </Grid>
+
+                            <TextBlock Text="文件名（留空则自动识别）" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4"/>
+                            <TextBox x:Name="DlFileNameBox" Margin="0,0,0,10" Padding="6,5"/>
+
+                            <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                                <Button x:Name="DlStartBtn" Content="开始下载" Style="{StaticResource PrimaryButton}" Padding="14,7" Margin="0,0,10,0" Click="DlStart_Click"/>
+                                <Button Content="打开文件夹" Padding="14,7" Click="DlOpenFolder_Click"/>
+                            </StackPanel>
+                            <TextBlock x:Name="DlStatusText" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,20" TextWrapping="Wrap"/>
+
+                            <Border BorderBrush="{DynamicResource DividerBrush}" BorderThickness="0,1,0,0" Margin="0,0,0,16"/>
+
+                            <TextBlock Text="下载正版玩家的皮肤" FontWeight="Bold" Margin="0,0,0,10"/>
+                            <TextBlock Text="正版玩家名" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4"/>
+                            <TextBox x:Name="OfficialPlayerNameBox" Margin="0,0,0,10" Padding="6,5"/>
+                            <Button Content="保存皮肤" Padding="14,7" HorizontalAlignment="Left" Click="OfficialSkinSave_Click"/>
+                            <TextBlock x:Name="OfficialSkinStatusText" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,8,0,0" TextWrapping="Wrap"/>
+                        </StackPanel>
+                    </ScrollViewer>
+                </TabItem>
+
+                <!-- ===== Tab 4：加载器 Jar 单独下载 ===== -->
+                <TabItem Header="🧩 加载器下载">
+                    <Grid Margin="4,12,4,4">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="180"/>
+                            <ColumnDefinition Width="16"/>
+                            <ColumnDefinition Width="*"/>
+                        </Grid.ColumnDefinitions>
+
+                        <Border Grid.Column="0" Background="{DynamicResource SideBrush}" CornerRadius="6" Padding="6">
+                            <ListBox x:Name="LoaderListBox" BorderThickness="0" Background="Transparent"
+                                     SelectionChanged="LoaderListBox_SelectionChanged">
+                                <ListBoxItem Content="Minecraft" IsEnabled="False" FontWeight="Bold"/>
+                                <ListBoxItem Content="OptiFine" IsEnabled="False" Foreground="{DynamicResource TextSecondaryBrush}" ToolTip="OptiFine 官网未提供公开直链 API，暂不支持单独下载"/>
+                                <ListBoxItem Content="Forge" Tag="Forge"/>
+                                <ListBoxItem Content="NeoForge" Tag="NeoForge"/>
+                                <ListBoxItem Content="Cleanroom" IsEnabled="False" Foreground="{DynamicResource TextSecondaryBrush}" ToolTip="Cleanroom 暂不支持单独下载"/>
+                                <ListBoxItem Content="Fabric" Tag="Fabric"/>
+                                <ListBoxItem Content="Legacy Fabric" IsEnabled="False" Foreground="{DynamicResource TextSecondaryBrush}" ToolTip="Legacy Fabric 暂不支持单独下载"/>
+                                <ListBoxItem Content="Quilt" Tag="Quilt"/>
+                                <ListBoxItem Content="LabyMod" IsEnabled="False" Foreground="{DynamicResource TextSecondaryBrush}" ToolTip="LabyMod 暂不支持单独下载"/>
+                                <ListBoxItem Content="LiteLoader" IsEnabled="False" Foreground="{DynamicResource TextSecondaryBrush}" ToolTip="LiteLoader 暂不支持单独下载"/>
+                            </ListBox>
+                        </Border>
+
+                        <StackPanel Grid.Column="2" MaxWidth="520" HorizontalAlignment="Left">
+                            <TextBlock x:Name="LoaderTitleText" Text="请从左侧选择一个加载器" FontWeight="Bold" FontSize="16" Margin="0,0,0,14"/>
+
+                            <TextBlock Text="Minecraft 版本" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4"/>
+                            <ComboBox x:Name="LoaderMcVersionCombo" Margin="0,0,0,10" SelectionChanged="LoaderMcVersionCombo_SelectionChanged"/>
+
+                            <TextBlock Text="加载器 / 安装器版本" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4"/>
+                            <ComboBox x:Name="LoaderVersionCombo" Margin="0,0,0,14" SelectionChanged="LoaderVersionCombo_SelectionChanged"/>
+
+                            <StackPanel Orientation="Horizontal">
+                                <Button x:Name="LoaderDownloadBtn" Content="下载 Jar" Style="{StaticResource PrimaryButton}" Padding="14,7" Margin="0,0,10,0" Click="LoaderDownload_Click" IsEnabled="False"/>
+                                <Button Content="打开文件夹" Padding="14,7" Click="LoaderOpenFolder_Click"/>
+                            </StackPanel>
+                            <TextBlock x:Name="LoaderStatusText" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,10,0,0" TextWrapping="Wrap"/>
+                        </StackPanel>
+                    </Grid>
+                </TabItem>
+
+                <!-- ===== Tab 5：清理 / 快捷方式 / 启动计数 / 内存优化 ===== -->
+                <TabItem Header="🧹 系统工具">
+                    <ScrollViewer VerticalScrollBarVisibility="Auto" services:ScrollWheelBehavior.EnableFastWheel="True">
+                        <StackPanel Margin="4,12,4,4" MaxWidth="680" HorizontalAlignment="Left">
+
+                            <TextBlock Text="清理游戏垃圾" FontWeight="Bold" Margin="0,0,0,8"/>
+                            <TextBlock Text="清理当前 .minecraft 文件夹里的历史日志压缩包、旧崩溃报告、网页缓存、Mixin调试输出、JVM崩溃转储等确定安全删除的临时文件，不会动存档/Mod/资源包/设置。"
+                                       TextWrapping="Wrap" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,10"/>
+                            <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                                <Button Content="扫描垃圾" Padding="14,7" Margin="0,0,10,0" Click="JunkScan_Click"/>
+                                <Button x:Name="JunkCleanBtn" Content="清理游戏垃圾" Style="{StaticResource PrimaryButton}" Padding="14,7" Click="JunkClean_Click" IsEnabled="False"/>
+                            </StackPanel>
+                            <TextBlock x:Name="JunkStatusText" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,20" TextWrapping="Wrap"/>
+
+                            <Border BorderBrush="{DynamicResource DividerBrush}" BorderThickness="0,1,0,0" Margin="0,0,0,16"/>
+
+                            <StackPanel Orientation="Horizontal" Margin="0,0,0,20">
+                                <Button Content="创建快捷方式" Padding="14,7" Margin="0,0,10,0" Click="CreateShortcut_Click"/>
+                                <Button Content="查看启动计数" Padding="14,7" Click="ShowLaunchCount_Click"/>
+                            </StackPanel>
+
+                            <Border BorderBrush="{DynamicResource DividerBrush}" BorderThickness="0,1,0,0" Margin="0,0,0,16"/>
+
+                            <TextBlock Text="内存优化" FontWeight="Bold" Margin="0,0,0,8"/>
+                            <TextBlock Text="开启后，每次启动游戏前会按系统当前实际可用内存自动重新计算 -Xms/-Xmx，覆盖设置页里手动填写的固定内存数值。"
+                                       TextWrapping="Wrap" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,10"/>
+                            <CheckBox x:Name="MemOptCheck" Content="启动前自动优化内存分配" Checked="MemOptCheck_Changed" Unchecked="MemOptCheck_Changed" Margin="0,0,0,10"/>
+                            <Button Content="立即预览推荐值" Padding="14,7" HorizontalAlignment="Left" Click="MemOptPreview_Click"/>
+                            <TextBlock x:Name="MemOptStatusText" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,10,0,0" TextWrapping="Wrap"/>
+                        </StackPanel>
+                    </ScrollViewer>
+                </TabItem>
+
+            </TabControl>
+        </Grid>
+    </Border>
+</UserControl>

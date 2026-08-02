@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using System.Threading.Tasks;
 using System.Windows;
+using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
@@ -82,6 +83,7 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
+        ApplyFeatureVisibility();
 
         // 标题栏跟随深浅色模式（修复"顶部白条"）现在由 App.xaml.cs 里注册的
         // EventManager.RegisterClassHandler 对所有 Window 统一处理，MainWindow 不需要
@@ -110,6 +112,19 @@ public partial class MainWindow : Window
             e.Handled = true;
         };
 
+        // F12：临时显示被"功能隐藏"设置隐藏起来的功能项，方便用户手滑隐藏了什么之后
+        // 还能找回入口去设置页取消勾选。这是"按下就切换一次状态"，不是"按住才显示"——
+        // 再按一次 F12 变回正常隐藏状态。只在这里改内存里的标记 + 立即重新应用一次
+        // 导航栏可见性，不碰 HiddenFeatureKeys 配置本身，松开也不会自动还原。
+        PreviewKeyDown += (_, e) =>
+        {
+            var key = e.Key == Key.System ? e.SystemKey : e.Key;
+            if (key != Key.F12) return;
+            FeatureVisibilityService.TemporaryRevealActive = !FeatureVisibilityService.TemporaryRevealActive;
+            ApplyFeatureVisibility();
+            e.Handled = true;
+        };
+
         // 注册为 Overlay 弹窗宿主：进程内只有一个 MainWindow 实例，全部 24 个原独立
         // Window 弹窗迁移后都通过 OverlayDialogService 挂载到这里的 OverlayRoot。
         // 见 OverlayDialogService.cs 顶部的整体设计注释。
@@ -127,6 +142,11 @@ public partial class MainWindow : Window
         RefreshExperimentalNavVisibility();
         LocalizationService.LanguageChanged += RefreshExperimentalNavVisibility;
         Closed += (_, _) => LocalizationService.LanguageChanged -= RefreshExperimentalNavVisibility;
+
+        // 侧边栏"收起/展开"初始状态：默认展开（跟原来的固定 180 宽行为一致），
+        // 不做持久化——每次启动都是展开态，避免"上次不小心点收起了，下次开机
+        // 一脸懵不知道导航栏去哪了"这种体验问题。
+        ApplySidebarCollapsedState(collapsed: false);
 
         ConfigService.Load();
         ServerInstanceService.Load();
@@ -161,6 +181,13 @@ public partial class MainWindow : Window
         // 扫描结果通过 Dispatcher 切回 UI 线程再保存配置 + 弹提示，避免跨线程直接改
         // ConfigService.Config 或者操作 UI 控件。
         Loaded += (_, _) => _ = ScanMinecraftFoldersInBackgroundAsync();
+
+        // 需求："在启动的时候，像检测mc的目录一样检测 Javaw.exe，无需用户手动打开设置，
+        // 就可以生成 java 列表。"——跟上面 MC 文件夹扫描完全同一套模式：Loaded 后台线程跑，
+        // 静默登记，不打断/不阻塞主窗口显示。之前只有打开「设置」页时才会触发
+        // AutoDetectJavaOnLoadAsync（见 SettingsPage.xaml.cs），用户不点进设置页永远不会
+        // 自动发现新装的 Java，这里补上真正"程序启动时"这一级的自动探测。
+        Loaded += (_, _) => _ = ScanJavaInBackgroundAsync();
 
         // 定时清理已退出的进程记录，保持"进程管理"列表/按钮的可用性状态是最新的
         _pruneTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
@@ -278,6 +305,58 @@ public partial class MainWindow : Window
             CurrentAccountText.Text = "未选择账户";
             CurrentVersionText.Text = "未选择版本";
         }
+
+        // 收起态下横向空间极窄，"当前账户: xxx"这种完整文案必然放不下，需要再跑一遍
+        // 收起态专用的缩写逻辑。放在 try/catch 外面：上面已经把 CurrentAccountText/
+        // CurrentVersionText.Text 兜底成了确定的字符串，这里只是在此基础上做展示层的截断，
+        // 不会再抛异常。
+        RefreshAccountVersionSidebarText();
+    }
+
+    /// <summary>
+    /// 收起态下（图2示例："pl..." / "1.0"）把账户名/版本号从完整文案缩写成极简形式：
+    /// - 账户：只取账户名前 2 个字符 + "..."（如"Player"→"pl..."，跟需求截图给的示例一致，
+    ///   用小写是因为图2示例本身就是小写"pl..."）；
+    /// - 版本：只保留版本号数字部分（如"1.0"），去掉"当前版本: "这个前缀。
+    /// 展开态则完全不动，用回 RefreshSidebar() 里已经设置好的完整文案
+    /// （这里不重新赋值 CurrentAccountText.Text 本身，而是在收起时套一层显示层缩写、
+    /// 展开时换回来，避免破坏 RefreshSidebar 里已经算好的完整文案，导致下次直接调用
+    /// RefreshSidebar 时还要重新拼一遍"完整"文案）。
+    /// </summary>
+    private void RefreshAccountVersionSidebarText()
+    {
+        if (!_sidebarCollapsed)
+        {
+            // 展开态：RefreshSidebar 已经把完整文案写进去了，这里不用做任何事。
+            return;
+        }
+
+        try
+        {
+            var acc = ConfigService.GetSelectedAccount();
+            if (acc == null)
+            {
+                CurrentAccountText.Text = "-";
+            }
+            else
+            {
+                var name = acc.DisplayLabel ?? "";
+                CurrentAccountText.Text = name.Length <= 2 ? name : name[..2].ToLowerInvariant() + "...";
+            }
+
+            var versionId = ConfigService.Config.SelectedVersionId;
+            CurrentVersionText.Text = string.IsNullOrEmpty(versionId) ? "-" : versionId;
+        }
+        catch
+        {
+            CurrentAccountText.Text = "-";
+            CurrentVersionText.Text = "-";
+        }
+
+        // 收起态下这两行也应该居中显示（跟图标居中的导航按钮保持一致的视觉重心），
+        // 而不是继续贴在左边。
+        CurrentAccountText.TextAlignment = TextAlignment.Center;
+        CurrentVersionText.TextAlignment = TextAlignment.Center;
     }
 
     /// <summary>
@@ -308,6 +387,70 @@ public partial class MainWindow : Window
         {
             try { File.AppendAllText(Path.Combine(App.DataDir, "logs", "crash.log"),
                 $"[{DateTime.Now}] [自动扫描.minecraft文件夹失败] {ex}\n\n"); }
+            catch { /* 连日志都写不进去就彻底放弃，不影响启动器正常使用 */ }
+        }
+    }
+
+    /// <summary>
+    /// 启动时静默自动探测 Java：跟 ScanMinecraftFoldersInBackgroundAsync 同一套模式——
+    /// Loaded 之后台线程跑，找到的新 Java 直接登记进"Java 列表"（cfg.InstalledJavas），
+    /// 不需要用户手动打开「设置」页去点"刷新（自动探测）"按钮才能发现新装的 Java。
+    ///
+    /// 合并两路来源：
+    /// 1. JavaService.QuickDetectJavaAsync——已知产品固定路径（JAVA_HOME/注册表/PATH/
+    ///    .minecraft/runtime/.hmcl/java 等），秒回。
+    /// 2. JavaService.ScanCommonJavaLocationsAsync——AppData、Program Files、JAVA_HOME
+    ///    上级目录下的有限深度扫描（4 级找疑似 JDK 文件夹，命中后 6 级内找 javaw.exe），
+    ///    覆盖前者没有硬编码到的自定义/小众发行版安装路径。
+    /// 两路结果按 javaw 路径去重后一起登记，找到就静默加入列表刷新状态栏提示（如果当前正显示
+    /// 「设置」页），找不到/扫描失败都完全静默，不弹窗打扰用户——这只是启动时的锦上添花，
+    /// 用户仍然可以在「设置」页手动点"刷新（自动探测）"或"全盘扫描"兜底。
+    /// </summary>
+    private async Task ScanJavaInBackgroundAsync()
+    {
+        try
+        {
+            var javaService = new JavaService();
+            var quick = await javaService.QuickDetectJavaAsync();
+            var common = await javaService.ScanCommonJavaLocationsAsync();
+
+            var merged = quick.Concat(common)
+                .GroupBy(c => c.JavawPath, StringComparer.OrdinalIgnoreCase)
+                .Select(g => g.First())
+                .ToList();
+            if (merged.Count == 0) return;
+
+            var cfg = ConfigService.Config;
+            var existingPaths = new HashSet<string>(
+                cfg.InstalledJavas.Select(j => j.JavawPath), StringComparer.OrdinalIgnoreCase);
+
+            var added = 0;
+            foreach (var candidate in merged)
+            {
+                if (existingPaths.Contains(candidate.JavawPath)) continue;
+
+                int? major = candidate.Version != null
+                    ? JavaService.ParseJavaMajorVersion($"\"{candidate.Version}\"")
+                    : null;
+                ConfigService.RegisterJava(candidate.JavawPath, major, "Detected");
+                existingPaths.Add(candidate.JavawPath);
+                added++;
+            }
+
+            if (added == 0) return;
+
+            ConfigService.Save();
+
+            // 如果当前正好显示着「设置」页，顺手刷新一下它的 Java 列表框，让用户立刻看到
+            // 新登记的条目，而不用切出去再切回来才发现列表更新了。不是「设置」页时什么都不做——
+            // 静默登记本身已经完成，下次用户打开「设置」页自然会看到最新列表。
+            if (MainContent.Content is SettingsPage settingsPage)
+                settingsPage.RefreshJavaListPublic();
+        }
+        catch (Exception ex)
+        {
+            try { File.AppendAllText(Path.Combine(App.DataDir, "logs", "crash.log"),
+                $"[{DateTime.Now}] [自动扫描Java失败] {ex}\n\n"); }
             catch { /* 连日志都写不进去就彻底放弃，不影响启动器正常使用 */ }
         }
     }
@@ -522,6 +665,121 @@ public partial class MainWindow : Window
         OpenExperimentalFeatures();
     }
 
+    private void NavToolbox_Click(object sender, RoutedEventArgs e)
+    {
+        SetMainContent(new ToolboxPage(this));
+    }
+
+    /// <summary>供其他页面/窗口调用的公开导航方法，跳转到「百宝箱」页。</summary>
+    public void NavigateToToolbox() => SetMainContent(new ToolboxPage(this));
+
+    /// <summary>侧边栏当前是否处于"收起"状态。</summary>
+    private bool _sidebarCollapsed;
+
+    private const double SidebarExpandedWidth = 180;
+    private const double SidebarCollapsedWidth = 56;
+
+    private void SidebarCollapseToggle_Click(object sender, RoutedEventArgs e)
+    {
+        ApplySidebarCollapsedState(!_sidebarCollapsed);
+    }
+
+    /// <summary>
+    /// 应用"功能隐藏"设置：目前只覆盖主导航栏的下载/设置/工具三个入口（跟设置页
+    /// FeatureVisibilityService.Groups 里"主页面"这一组对应）——子页面/特定功能那些
+    /// 更细粒度的隐藏项，各自的宿主页面（SettingsPage/ToolboxPage 等）在自己
+    /// 加载时各自读取判断，不需要 MainWindow 统一处理。每次进入/离开设置页保存、
+    /// 或按 F12 切换临时显示时都要重新调用一次这个方法，确保导航栏立即反映最新状态。
+    /// </summary>
+    public void ApplyFeatureVisibility()
+    {
+        var cfg = ConfigService.Config;
+        NavDownloadButton.Visibility = FeatureVisibilityService.IsVisible(cfg, FeatureVisibilityService.NavDownload) ? Visibility.Visible : Visibility.Collapsed;
+        NavSettingsButton.Visibility = FeatureVisibilityService.IsVisible(cfg, FeatureVisibilityService.NavSettings) ? Visibility.Visible : Visibility.Collapsed;
+        NavToolboxButton.Visibility = FeatureVisibilityService.IsVisible(cfg, FeatureVisibilityService.NavToolbox) ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    /// <summary>
+    /// 侧边栏收起/展开的统一应用逻辑：宽度、Logo、每个导航按钮的文字部分、
+    /// 底部进程控制按钮组、启动游戏按钮，全部按同一个 collapsed 状态联动切换，
+    /// 避免"点了收起，某几个地方没跟着变"这种不一致。
+    ///
+    /// 收起态设计（对应需求描述）：
+    /// - 三横杠(☰)按钮变成一个点(●)；
+    /// - 导航按钮只剩图标（文字 TextBlock 部分 Collapsed，图标 TextBlock 单独放在同一个
+    ///   StackPanel 里，收起时直接把文字那块 TextBlock 隐藏，图标 TextBlock 不受影响）；
+    /// - 进程控制三按钮只保留"关闭所选"，文案缩成"关"字（用 CloseSelectedBtnCollapsed 这个
+    ///   独立按钮，跟展开态的 UniformGrid 三件套做 Visibility 二选一）；
+    /// - "启动游戏"长条按钮换成一个圆形图标按钮；
+    /// - 账户/版本信息缩短显示（比如账户名太长时省略号截断，版本号只留主版本号）。
+    /// </summary>
+    private void ApplySidebarCollapsedState(bool collapsed)
+    {
+        _sidebarCollapsed = collapsed;
+
+        SidebarColumn.Width = new GridLength(collapsed ? SidebarCollapsedWidth : SidebarExpandedWidth);
+        SidebarToggleIcon.Text = collapsed ? "●" : "☰";
+        LogoText.Visibility = collapsed ? Visibility.Collapsed : Visibility.Visible;
+
+        // 导航按钮：文字 TextBlock 隐藏/显示（{DynamicResource Str_Nav_Xxx} 绑定保持不变，
+        // 收起态只是不显示，不是清空文案，展开时立即恢复，不需要手动缓存/还原字符串），
+        // 按钮内容居中对齐（收起时）或靠左对齐（展开时），这样收起态下只剩 emoji 图标会
+        // 自然居中，不会贴在按钮左边显得很怪。
+        foreach (var (button, icon, label) in new (Button, TextBlock, TextBlock)[]
+                 {
+                     (NavHomeButton, NavHomeIcon, NavHomeLabel),
+                     (NavVersionsButton, NavVersionsIcon, NavVersionsLabel),
+                     (NavDownloadButton, NavDownloadIcon, NavDownloadLabel),
+                     (NavMultiplayerButton, NavMultiplayerIcon, NavMultiplayerLabel),
+                     (NavModManagerButton, NavModManagerIcon, NavModManagerLabel),
+                     (NavServerManagerButton, NavServerManagerIcon, NavServerManagerLabel),
+                     (NavToolboxButton, NavToolboxIcon, NavToolboxLabel),
+                     (NavAccountsButton, NavAccountsIcon, NavAccountsLabel),
+                     (NavSettingsButton, NavSettingsIcon, NavSettingsLabel),
+                     (NavLogsButton, NavLogsIcon, NavLogsLabel),
+                     (NavExperimentalButton, NavExperimentalIcon, NavExperimentalLabel),
+                 })
+        {
+            label.Visibility = collapsed ? Visibility.Collapsed : Visibility.Visible;
+            button.HorizontalContentAlignment = collapsed ? HorizontalAlignment.Center : HorizontalAlignment.Left;
+
+            // 收起态：图标原来的右侧 8px margin 是留给旁边文字的间距，文字隐藏后这块空白
+            // 还留着，会把图标"挤"得偏左、看起来跟按钮之间的间距不均匀；这里清零。
+            // 同时把按钮之间的垂直间距从展开态的 4px 加大到 10px，避免只剩一排图标时
+            // 显得又挤又密（截图1反映的问题）。展开态改回原来的 8px/4px，保持不变。
+            icon.Margin = collapsed ? new Thickness(0) : new Thickness(0, 0, 8, 0);
+            button.Margin = collapsed ? new Thickness(0, 10, 0, 0) : new Thickness(0, 4, 0, 0);
+        }
+
+        // 进程控制按钮组：收起态只留"关闭所选"缩写成"关"。
+        ProcessControlExpanded.Visibility = collapsed ? Visibility.Collapsed : Visibility.Visible;
+        CloseSelectedBtnCollapsed.Visibility = collapsed ? Visibility.Visible : Visibility.Collapsed;
+
+        // 启动游戏按钮：展开态长条 / 收起态圆形图标二选一。
+        LaunchGameBtn.Visibility = collapsed ? Visibility.Collapsed : Visibility.Visible;
+        LaunchGameBtnCollapsed.Visibility = collapsed ? Visibility.Visible : Visibility.Collapsed;
+
+        // 账户/版本信息：收起态下横向空间只剩图标那么宽，长文字必然放不下，
+        // 索性直接换成极简缩写（如图2示例：账户名只显示前几个字符+省略号，版本号只留数字），
+        // 而不是让 WPF 自动换行把这一小块区域撑得很高、把下面的按钮全部往下挤。
+        if (!collapsed)
+        {
+            // 展开态：换回左对齐 + 完整文案（RefreshSidebar 里已经算好的），
+            // 不依赖 RefreshAccountVersionSidebarText 的 early-return（那里只在 _sidebarCollapsed
+            // 为 true 时才会真正改写文案，为 false 时直接跳过——所以这里展开时要主动重新调用
+            // 一次 RefreshSidebar 让完整文案生效，同时把对齐方式改回左边）。
+            CurrentAccountText.TextAlignment = TextAlignment.Left;
+            CurrentVersionText.TextAlignment = TextAlignment.Left;
+            RefreshSidebar();
+        }
+        else
+        {
+            RefreshAccountVersionSidebarText();
+        }
+    }
+
+
+
     /// <summary>
     /// 根据当前启动器界面语言控制侧边栏"实验性功能"按钮的显隐（见
     /// LocalizationService.ExperimentalFeaturesLanguageGate 注释：这批功能还没有多语言界面，
@@ -561,6 +819,14 @@ public partial class MainWindow : Window
 
         var window = new ExperimentalFeaturesWindow(this) { Owner = this };
         window.ShowDialog();
+
+        // 修复"关闭实验性功能窗口时启动器主窗口会自动最小化"：ExperimentalFeaturesWindow
+        // 内部还会再弹出 MultiLoaderInstallWindow 等子窗口，多层 ShowDialog() 关闭之后，
+        // Windows 有时不会把前台焦点正确交还给 Owner（尤其是子窗口本身也丢了焦点、或者
+        // 用户在等待期间切到了其它程序），观感上就是"关掉这个窗口，主窗口自己缩没了"。
+        // 复用 EnsureVisibleForDialog()：如果这期间被最小化了就恢复到之前的真实状态
+        // (Normal/Maximized) 并 Activate() 抢回前台，不最小化则什么都不做。
+        EnsureVisibleForDialog();
     }
 
     /// <summary>
@@ -569,7 +835,19 @@ public partial class MainWindow : Window
     /// 两处共享同一套防手滑冷却状态（_lastLaunchClickAtUtc/LaunchGameBtn），不会出现
     /// "首页点了启动、左下角按钮的冷却状态却没跟着更新"这种不一致。
     /// </summary>
-    public async void Launch_Click(object sender, RoutedEventArgs e)
+    public void Launch_Click(object sender, RoutedEventArgs e) => Launch_Click(sender, e, skipAccountConfirm: false);
+
+    /// <summary>
+    /// 修复"傻瓜式启动/一键开始游戏完成后，还会再弹一次「选择要用来启动游戏的账户」"：
+    /// QuickStartWizardWindow 步骤 1 已经让用户显式选过/登录过账户（不确认好账户不能进下一步），
+    /// 走到最后一步调用这里启动游戏时，账户早就是用户当场确认过的，没有必要在同一次操作里
+    /// 再弹一遍一模一样的选择框——对用户来说这不是"多一次确认机会"，而是"同一件事问了两遍"，
+    /// 显得启动器没记住自己刚刚做过的选择。skipAccountConfirm=true 时跳过下面的账户确认弹窗，
+    /// 直接使用 ConfigService.GetSelectedAccount()（此时必定是向导里选定的那个账户）。
+    /// 普通入口（左下角"启动游戏"按钮/首页磁贴）不知道用户是否刚确认过账户，继续走原来的
+    /// public 无参重载，默认不跳过。
+    /// </summary>
+    public async void Launch_Click(object sender, RoutedEventArgs e, bool skipAccountConfirm)
     {
         // 防手滑冷却：必须放在方法最开头、任何 await 之前的同步代码里判断，
         // 否则连续点击会在第一次点击的 await 还没跑完时就又进来一次，冷却形同虚设。
@@ -593,7 +871,7 @@ public partial class MainWindow : Window
         LaunchGameBtn.IsEnabled = false;
         try
         {
-            await LaunchInternalAsync(sender, e);
+            await LaunchInternalAsync(sender, e, skipAccountConfirm);
         }
         finally
         {
@@ -615,7 +893,7 @@ public partial class MainWindow : Window
     /// try/finally 包裹，避免把冷却相关代码和原有的一大段启动流程混在一起、
     /// 显得臃肿难读。
     /// </summary>
-    private async Task LaunchInternalAsync(object sender, RoutedEventArgs e)
+    private async Task LaunchInternalAsync(object sender, RoutedEventArgs e, bool skipAccountConfirm = false)
     {
         var cfg = ConfigService.Config;
         var account = ConfigService.GetSelectedAccount();
@@ -625,11 +903,21 @@ public partial class MainWindow : Window
         // GetSelectedAccount()，只会自动选中"上次选中/第一个"账户，用户没有机会在这个时间点
         // 选别的账户，只能先跳去"账户管理"页手动切换、再跳回来点启动，多绕一层。
         // 现在改为：有多个账户时（且不是访客模式——访客模式下账户始终是本次会话的临时账户，
-        // 不应该被这个选择框打断），弹出账户选择框让用户当场选。只有一个账户/没有账户时
-        // 保持原来的行为不变，不会为"没有可选"这种情况也多此一举地弹一次框。
-        if (!cfg.GuestModeEnabled && ConfigService.Accounts.Count > 1)
+        // 不应该被这个选择框打断），弹出账户选择框让用户当场选。
+        //
+        // 触发条件在原来"账户数量 > 1"的基础上再加一种情况：账户数量 == 1 但这个账户从来没有
+        // 被显式选中过（LastSelectedAccountId 为空，即新建/登录账户后不再自动选中——见
+        // LoginPage/FirstRunWizardWindow/QuickStartWizardWindow/AccountPickerDialog 的改动），
+        // 这种情况下也应该让用户在启动这一刻明确确认一下"就用这个账户"，而不是端起来直接静默
+        // 用 FirstOrDefault() 兜底的那个账户启动——那样等于替用户做了选择，且用户完全无感知。
+        // 只有真正"没有任何账户"或"唯一账户已经被显式选过"这两种情况才不弹框，跟其它任何
+        // 导航/切换页面的场景一样，这个选择框现在只在真正点击"启动游戏"这个动作时才会出现。
+        var needsAccountConfirm = !skipAccountConfirm &&
+            (ConfigService.Accounts.Count > 1
+            || (ConfigService.Accounts.Count == 1 && string.IsNullOrEmpty(cfg.LastSelectedAccountId)));
+        if (!cfg.GuestModeEnabled && needsAccountConfirm)
         {
-            var picker = new AccountPickerDialog(ConfigService.Accounts, cfg.LastSelectedAccountId);
+            var picker = new AccountPickerDialog(this, ConfigService.Accounts, cfg.LastSelectedAccountId);
             if (OverlayDialogService.ShowModal(picker) != true)
             {
                 // Round16 反馈：之前这里直接静默 return，用户点"取消"后界面毫无反应，
@@ -902,6 +1190,21 @@ public partial class MainWindow : Window
                 autoJoinServer = configuredServer.Trim();
             }
 
+            // 「百宝箱」-「内存优化」：开关开启时，启动前用 MemoryOptimizerService 按当前
+            // 系统实际可用内存重新计算一遍 -Xms/-Xmx，覆盖设置页里用户手动填写的固定值。
+            // 计算失败（非 Windows/API 异常等）时静默回退到用户原有配置，不阻断启动流程。
+            var effectiveMinMemoryMb = cfg.MinMemoryMb;
+            var effectiveMaxMemoryMb = cfg.MaxMemoryMb;
+            if (cfg.EnableMemoryOptimization)
+            {
+                var recommendation = MemoryOptimizerService.Calculate(cfg.MemoryOptimizationReserveMb);
+                if (recommendation != null)
+                {
+                    effectiveMinMemoryMb = recommendation.RecommendedMinMemoryMb;
+                    effectiveMaxMemoryMb = recommendation.RecommendedMaxMemoryMb;
+                }
+            }
+
             var launcher = new LauncherService();
             var options = new LauncherService.LaunchOptions
             {
@@ -909,8 +1212,8 @@ public partial class MainWindow : Window
                 VersionId = cfg.SelectedVersionId,
                 JavaPath = javaPath,
                 Account = account,
-                MinMemoryMb = cfg.MinMemoryMb,
-                MaxMemoryMb = cfg.MaxMemoryMb,
+                MinMemoryMb = effectiveMinMemoryMb,
+                MaxMemoryMb = effectiveMaxMemoryMb,
                 WindowWidth = cfg.WindowWidth,
                 WindowHeight = cfg.WindowHeight,
                 ShowConsoleWindow = cfg.EnableGameConsoleWindow,
@@ -1078,6 +1381,11 @@ public partial class MainWindow : Window
             }
             else
             {
+                // 「百宝箱」-「查看启动计数」：只在真正判定为启动成功（没有提前退出）时计数，
+                // 累计值持久化进 config.json，跟版本/账户切换无关。
+                cfg.GameLaunchSuccessCount++;
+                ConfigService.Save();
+
                 MessageBoxDialog.ShowSuccess($"游戏已启动：{account.DisplayLabel} - {cfg.SelectedVersionId}", "启动成功");
             }
         }

@@ -116,7 +116,14 @@
                         <Button Grid.Column="1" Content="创建离线账户" Margin="8,0,0,0" Padding="12,8" Click="CreateOffline_Click"/>
                     </Grid>
 
-                    <Button Content="改用微软账户登录（前往账户管理页）" HorizontalAlignment="Left" Padding="10,6" Click="GotoMicrosoftLogin_Click"/>
+                    <!-- 需求变更：微软登录不再强制跳转到账户管理页，直接在向导内完成
+                         （照抄 QuickStartWizardWindow/LoginPage 的登录逻辑），减少"半路跳出向导"
+                         打断新手引导流程的情况；仍然保留跳转按钮作为不想在弹窗里登录的备选项。 -->
+                    <StackPanel Orientation="Horizontal">
+                        <Button Content="添加微软账户（浏览器登录）" Padding="10,6" Click="MicrosoftLoginBrowser_Click"/>
+                        <Button Content="添加微软账户（内嵌登录）" Margin="8,0,0,0" Padding="10,6" Click="MicrosoftLoginEmbedded_Click"/>
+                    </StackPanel>
+                    <Button Content="改用前往账户管理页登录" HorizontalAlignment="Left" Padding="10,6" Margin="0,8,0,0" Click="GotoMicrosoftLogin_Click"/>
                 </StackPanel>
 
                 <!-- 步骤 4：完成 -->

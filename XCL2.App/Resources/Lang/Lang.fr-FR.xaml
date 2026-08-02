@@ -44,6 +44,7 @@
     <system:String x:Key="Str_Nav_Settings">Paramètres</system:String>
     <system:String x:Key="Str_Nav_Logs">Journaux</system:String>
     <system:String x:Key="Str_Nav_Experimental">Fonctionnalités expérimentales</system:String>
+    <system:String x:Key="Str_Nav_Toolbox">Boîte à outils</system:String>
 
     <system:String x:Key="Str_Settings_LanguageSection_Title">Langue de l'interface du lanceur</system:String>
     <system:String x:Key="Str_Settings_LanguageSection_Hint">Prend effet immédiatement, aucun redémarrage requis. Ceci définit la langue de l'interface du lanceur — indépendant de la « langue du jeu » ci-dessous.</system:String>

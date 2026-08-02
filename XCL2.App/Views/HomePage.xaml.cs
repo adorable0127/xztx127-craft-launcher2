@@ -48,6 +48,55 @@ public partial class HomePage : UserControl
         ModeToggle.IsChecked = _owner.ConfigService.Config.AdvancedMode;
         UpdateModeToggleText();
         _modeToggleInitializing = false;
+        RefreshTileOrder();
+    }
+
+    /// <summary>
+    /// 需求：普通模式下把"启动游戏"和"一键开始游戏"这两个磁贴的位置互换（专家模式不用管，
+    /// 保持原来的顺序）——普通模式的用户大多是新手，更需要"一键开始游戏"这种全自动向导，
+    /// 换到磁贴总控台第一格（左上角，最先看到、最方便点到的位置）；专家模式用户通常已经
+    /// 自己配置好版本/账户，"启动游戏"这个直接启动的磁贴放在第一格更符合专家模式的使用习惯，
+    /// 所以专家模式下维持 XAML 里写死的原始顺序不动。
+    ///
+    /// UniformGrid 按 Children 集合顺序自动填格子，交换顺序只需要把这两个 Button 在
+    /// Children 里的索引对调；但两者的 Margin 是跟\"当前所在格子的行列位置\"绑定的
+    /// （比如第一格是 Margin="0,0,10,10"，第四格是 Margin="0,0,10,0"，右边距/下边距取决于
+    /// 是不是最后一列/最后一行），所以调整索引的同时必须把 Margin 也交换一次，否则两个磁贴
+    /// 会带着"错的格子"该有的间距挪到"对的格子"里，视觉上出现多余/缺失的间隙。
+    /// 这个方法是幂等的：可以在同一个 HomePage 实例上被多次调用（比如反复来回切模式），
+    /// 每次都先用 IndexOf 现查两者当前的实际索引，不依赖"只能交换一次"的假设。
+    /// </summary>
+    private void RefreshTileOrder()
+    {
+        var advanced = _owner.ConfigService.Config.AdvancedMode;
+
+        var launchIndex = TileGrid.Children.IndexOf(LaunchTile);
+        var quickStartIndex = TileGrid.Children.IndexOf(QuickStartTile);
+        if (launchIndex < 0 || quickStartIndex < 0) return;
+
+        // 普通模式：一键开始游戏在前（索引更小）；专家模式：启动游戏在前。
+        // 如果当前顺序已经符合目标模式的要求，不用再交换（避免同一模式下重复调用时
+        // 把已经交换好的顺序又换回去）。
+        var alreadyCorrectOrder = advanced ? launchIndex < quickStartIndex : quickStartIndex < launchIndex;
+        if (alreadyCorrectOrder) return;
+
+        var launchMargin = LaunchTile.Margin;
+        var quickStartMargin = QuickStartTile.Margin;
+
+        TileGrid.Children.RemoveAt(Math.Max(launchIndex, quickStartIndex));
+        TileGrid.Children.RemoveAt(Math.Min(launchIndex, quickStartIndex));
+
+        var firstSlotIndex = Math.Min(launchIndex, quickStartIndex);
+        var (first, second) = advanced ? (LaunchTile, QuickStartTile) : (QuickStartTile, LaunchTile);
+        TileGrid.Children.Insert(firstSlotIndex, first);
+        TileGrid.Children.Insert(firstSlotIndex + 1, second);
+
+        // Margin 跟着各自新占的格子走：原来在前一格的 Margin 现在给挪到前面的那个磁贴用，
+        // 原来在后一格的 Margin 给挪到后面的那个磁贴用。
+        var frontMargin = launchIndex < quickStartIndex ? launchMargin : quickStartMargin;
+        var backMargin = launchIndex < quickStartIndex ? quickStartMargin : launchMargin;
+        first.Margin = frontMargin;
+        second.Margin = backMargin;
     }
 
     /// <summary>

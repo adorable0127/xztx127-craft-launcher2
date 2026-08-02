@@ -1,4 +1,5 @@
 using System.Windows;
+using XCL2.App.Services;
 
 namespace XCL2.App.Views;
 
@@ -27,6 +28,27 @@ public partial class ExperimentalFeaturesWindow : Window
     private void Close_Click(object sender, RoutedEventArgs e)
     {
         Close();
+    }
+
+    /// <summary>
+    /// "启动基岩版"：检测系统是否已安装 Minecraft for Windows，已安装就直接唤起；
+    /// 没检测到就提示用户去应用商店安装，不在这里帮用户跳转商店页面——商店页面链接/商品 ID
+    /// 这类信息比包名本身更容易过时（商店链接、商品上下架都由 Microsoft/Mojang 单方面控制），
+    /// 写死一个链接反而可能几个月后失效，不如让用户自己在开始菜单/商店里搜"Minecraft"。
+    /// </summary>
+    private async void LaunchBedrockFeature_Click(object sender, RoutedEventArgs e)
+    {
+        var installed = await BedrockLaunchService.IsInstalledAsync();
+        if (!installed)
+        {
+            MessageBoxDialog.ShowInfo(
+                "没有检测到已安装的「Minecraft for Windows」（基岩版）。\n\n" +
+                "这是完全独立于 Java 版的另一个游戏（不同引擎、不同 Mod 生态），需要先在 Microsoft Store 里搜索" +
+                "「Minecraft」单独安装，本启动器不提供下载。", "未检测到基岩版");
+            return;
+        }
+
+        BedrockLaunchService.Launch();
     }
 
     /// <summary>

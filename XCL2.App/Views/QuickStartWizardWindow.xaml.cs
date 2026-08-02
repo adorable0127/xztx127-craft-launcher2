@@ -278,9 +278,10 @@ public partial class QuickStartWizardWindow : Window
         var name = string.IsNullOrWhiteSpace(OfflineNameBox.Text) ? "Player" : OfflineNameBox.Text.Trim();
         var account = OfflineAuthService.CreateOfflineAccount(name);
         _owner.ConfigService.AddOrUpdateAccount(account);
-        _owner.ConfigService.SelectAccount(account.Id);
+        // 需求变更：创建账户之后不再自动选中，需要用户自己在"已保存的账户"下拉框/账户管理页里选用。
+        RefreshExistingAccountCombo();
         UpdateAccountStatusText();
-        MessageBox.Show($"离线账户「{name}」创建成功，已自动选中。", "完成", MessageBoxButton.OK, MessageBoxImage.Information);
+        MessageBox.Show($"离线账户「{name}」创建成功，请在上方选择要使用的账户。", "完成", MessageBoxButton.OK, MessageBoxImage.Information);
     }
 
     /// <summary>
@@ -329,7 +330,8 @@ public partial class QuickStartWizardWindow : Window
                 return;
             }
             _owner.ConfigService.AddOrUpdateAccount(account);
-            _owner.ConfigService.SelectAccount(account.Id);
+            // 需求变更：登录成功之后不再自动选中，需要用户自己选用。
+            RefreshExistingAccountCombo();
             UpdateAccountStatusText();
         }
         catch (OperationCanceledException)
@@ -1073,9 +1075,21 @@ public partial class QuickStartWizardWindow : Window
             await Task.Delay(400);
 
             // 7) 启动游戏：MainWindow.Launch_Click 是 public，专门为跨窗口复用改过。
+            // 修复"选择账户"弹窗点不了的问题：Launch_Click 内部在需要用户选择账户时会
+            // 弹出 AccountPickerDialog，这个弹窗是挂在 MainWindow 里的 Overlay，而不是独立
+            // Window——如果这里先调用 Launch_Click 再 Close() 向导，向导这个独立 Window 此时
+            // 仍然在最上层、仍然是模态/置顶状态，MainWindow 里刚弹出的 Overlay 会被向导窗口
+            // 整个盖住，用户能看见（透过向导半透明遮罩背景）却怎么点都点不到。必须先关闭向导
+            // 窗口，让 MainWindow 重新成为最上层活动窗口，Overlay 才能真正接收到鼠标点击。
+            //
+            // 修复"傻瓜式启动/一键开始游戏走完之后，还会再弹一次「选择要用来启动游戏的账户」"：
+            // 本向导步骤 1 已经强制要求用户显式选中/登录/创建了一个账户才能进入下一步，这里
+            // 调用 Launch_Click 时账户已经是用户刚刚确认过的，不需要 Launch_Click 内部再重复
+            // 弹一次一模一样的账户选择框——传 skipAccountConfirm: true 跳过那一步，直接用
+            // 当前已选中的账户启动。
             _owner.RefreshSidebar();
-            _owner.Launch_Click(this, new RoutedEventArgs());
             Close();
+            _owner.Launch_Click(this, new RoutedEventArgs(), skipAccountConfirm: true);
         }
         catch (CriticalStepFailedException ex)
         {

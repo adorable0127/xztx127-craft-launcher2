@@ -351,4 +351,35 @@ public class AppConfig
     /// 留空(默认)则始终使用内置版本。
     /// </summary>
     public string? TerracottaExecutablePath { get; set; }
+
+    // ===== 百宝箱（工具箱）相关配置 =====
+
+    /// <summary>累计"启动游戏"成功的次数（不含启动失败/提前退出的情况），用于「百宝箱」
+    /// 的「查看启动计数」功能。每次 MainWindow 里真正弹出"启动成功"提示时自增 1，
+    /// 是一个只增不减的历史累计值，不随删除版本/切换文件夹而重置。</summary>
+    public long GameLaunchSuccessCount { get; set; } = 0;
+
+    /// <summary>
+    /// 内存优化功能总开关：开启后，启动游戏前会按 <see cref="Services.MemoryOptimizerService"/>
+    /// 的推荐算法，结合当前系统可用内存 + 已选版本的加载器类型，自动把 MinMemoryMb/MaxMemoryMb
+    /// 校正到一个更合理的区间（避免用户手动设置的 -Xmx 远超过系统实际可用内存，导致
+    /// 启动巨卡/系统濒临爆内存）。默认关闭：尊重用户在设置页手动填写的内存数值，
+    /// 只有主动打开这个开关才会介入自动调整。
+    /// </summary>
+    public bool EnableMemoryOptimization { get; set; } = false;
+
+    /// <summary>内存优化时，给系统自身/其它程序预留的内存(MB)，不会被分配给 Java 堆。
+    /// 默认 1536MB，兼顾"尽量把内存让给游戏"和"不能让系统本身卡死"两个目标。</summary>
+    public int MemoryOptimizationReserveMb { get; set; } = 1536;
+
+    // ===== 功能隐藏 =====
+
+    /// <summary>
+    /// 被隐藏的功能项集合，存的是 <see cref="Services.FeatureVisibilityService"/> 里定义的
+    /// 固定 key（如 "Nav.Download"、"Settings.Java"、"Tool.Toolbox" 等），不是显示文案——
+    /// 文案会跟着界面语言切换，key 不会，这样切语言不会导致隐藏设置全部失效。
+    /// 命中这个集合的功能项，正常情况下不在界面上出现；按 F12 可以临时（不改这个配置，
+    /// 只影响当前这一次显示）把它们都显示出来，方便用户自己手滑隐藏后还能找回来改设置。
+    /// </summary>
+    public List<string> HiddenFeatureKeys { get; set; } = new();
 }

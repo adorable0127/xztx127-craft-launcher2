@@ -45,6 +45,24 @@
                     </StackPanel>
                 </Button>
 
+                <!-- 需求："能不能让我的启动器启动基岩版" —— 基岩版是完全不同的引擎/分发方式
+                     （C++ 原生 + Microsoft Store 打包，跟这个启动器整套 Java 版逻辑不兼容），
+                     这里只做"轻量跳转"：检测系统是否已安装 Minecraft for Windows，已安装就
+                     唤起它，不下载/不管理版本/不接管 mod，见 BedrockLaunchService 类注释。
+                     放进"实验性功能"而不是首页/正式导航栏，是因为这只是一个跳转快捷方式，
+                     不是这个启动器的核心能力，跟"安装多个加载器"一样归为初步测试性质的附加功能。 -->
+                <Button HorizontalContentAlignment="Left" Padding="12,10" Margin="0,0,0,8"
+                        Click="LaunchBedrockFeature_Click">
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Text="🧱" FontSize="16" Margin="0,0,8,0" VerticalAlignment="Center"/>
+                        <StackPanel>
+                            <TextBlock Text="实验性内容2：启动基岩版" FontWeight="Bold"/>
+                            <TextBlock Text="唤起已安装的 Minecraft for Windows（基岩版），仅跳转打开，不下载/不管理版本"
+                                       FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}"/>
+                        </StackPanel>
+                    </StackPanel>
+                </Button>
+
             </StackPanel>
         </ScrollViewer>
 

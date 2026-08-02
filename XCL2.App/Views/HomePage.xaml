@@ -228,8 +228,16 @@
             <!-- 磁贴总控台：首页不再放"普通模式/高手模式"这种设置项(已经搬到「设置」页，
                  见 SettingsPage.xaml 的 AdvancedModeCheck)，改成一排功能磁贴，点哪个就直接
                  去做哪件事，首页只承担"入口枢纽"这一个角色，不再展示任何需要用户"配置"的内容。 -->
-            <UniformGrid Columns="3" Rows="2" Margin="0,0,0,4">
-                <Button Style="{StaticResource TileButton}" Margin="0,0,10,10" Click="TileLaunch_Click">
+            <!-- 修复：原来每个磁贴的 Margin 各不相同（有的 "0,0,10,10"，有的 "0,0,0,10"，
+                 最后一个"设置"磁贴甚至完全没有 Margin）。UniformGrid 会把每个单元格强制拉成
+                 完全一样的大小，但格子里 Button 各自的 Margin 不同，导致 Button 实际可见的
+                 大小不一样——少了右/下 Margin 的那几块（"下载中心""设置"）看起来比别的磁贴小，
+                 而且和右边/下边的磁贴之间几乎没有留白，贴在一起。现在统一每个磁贴都用同一个
+                 Margin="0,0,10,10"，最右列/最下行多出来的这一圈间距，通过给 UniformGrid 本身
+                 加一个负的右/下 Margin 抵消掉，这样六个磁贴大小、间距完全一致，右边界和下边界
+                 也不会比左边界/上边界宽。 -->
+            <UniformGrid x:Name="TileGrid" Columns="3" Rows="2" Margin="0,0,-10,-6">
+                <Button x:Name="LaunchTile" Style="{StaticResource TileButton}" Margin="0,0,10,10" Click="TileLaunch_Click">
                     <StackPanel>
                         <Border Style="{StaticResource TileIconBadge}" Background="{DynamicResource TileBadgeBlueBrush}">
                             <TextBlock Text="&#9654;" Style="{StaticResource TileIconText}" Foreground="{DynamicResource AccentBrush}"/>
@@ -249,17 +257,17 @@
                     </StackPanel>
                 </Button>
 
-                <Button Style="{StaticResource TileButton}" Margin="0,0,0,10" Click="TileDownload_Click">
+                <Button Style="{StaticResource TileButton}" Margin="0,0,10,10" Click="TileDownload_Click">
                     <StackPanel>
                         <Border Style="{StaticResource TileIconBadge}" Background="{DynamicResource TileBadgeGreenBrush}">
                             <TextBlock Text="&#8681;" Style="{StaticResource TileIconText}" Foreground="{DynamicResource SuccessTextBrush}"/>
                         </Border>
                         <TextBlock Text="下载中心" Style="{StaticResource TileTitleText}"/>
-                        <TextBlock Text="下载游戏核心、Mod、地图、资源包" Style="{StaticResource TileDescText}"/>
+                        <TextBlock Text="下载游戏核心、Mod、地图、资源包、整合包" Style="{StaticResource TileDescText}"/>
                     </StackPanel>
                 </Button>
 
-                <Button Style="{StaticResource TileButton}" Margin="0,0,10,0" Click="TileQuickStart_Click">
+                <Button x:Name="QuickStartTile" Style="{StaticResource TileButton}" Margin="0,0,10,10" Click="TileQuickStart_Click">
                     <StackPanel>
                         <Border Style="{StaticResource TileIconBadge}" Background="{DynamicResource TileBadgeOrangeBrush}">
                             <TextBlock Text="&#128640;" Style="{StaticResource TileIconText}"/>
@@ -269,7 +277,7 @@
                     </StackPanel>
                 </Button>
 
-                <Button Style="{StaticResource TileButton}" Margin="0,0,10,0" Click="TileServerManager_Click">
+                <Button Style="{StaticResource TileButton}" Margin="0,0,10,10" Click="TileServerManager_Click">
                     <StackPanel>
                         <Border Style="{StaticResource TileIconBadge}" Background="{DynamicResource TileBadgePurpleBrush}">
                             <TextBlock Text="&#128423;" Style="{StaticResource TileIconText}"/>
@@ -279,7 +287,7 @@
                     </StackPanel>
                 </Button>
 
-                <Button Style="{StaticResource TileButton}" Click="TileSettings_Click">
+                <Button Style="{StaticResource TileButton}" Margin="0,0,10,10" Click="TileSettings_Click">
                     <StackPanel>
                         <Border Style="{StaticResource TileIconBadge}" Background="{DynamicResource SideBrush}">
                             <TextBlock Text="&#9881;" Style="{StaticResource TileIconText}" Foreground="{DynamicResource TextSecondaryBrush}"/>

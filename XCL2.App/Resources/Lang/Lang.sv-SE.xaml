@@ -44,6 +44,7 @@
     <system:String x:Key="Str_Nav_Settings">Inställningar</system:String>
     <system:String x:Key="Str_Nav_Logs">Loggar</system:String>
     <system:String x:Key="Str_Nav_Experimental">Experimentella funktioner</system:String>
+    <system:String x:Key="Str_Nav_Toolbox">Verktygslåda</system:String>
 
     <system:String x:Key="Str_Settings_LanguageSection_Title">Språk för launcherns gränssnitt</system:String>
     <system:String x:Key="Str_Settings_LanguageSection_Hint">Träder i kraft omedelbart, ingen omstart krävs. Detta ställer in språket för launcherns gränssnitt — separat från "språk i spelet" nedan.</system:String>

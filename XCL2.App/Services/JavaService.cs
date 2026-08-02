@@ -378,6 +378,157 @@ public class JavaService
     }
 
     /// <summary>
+    /// 启动时静默自动探测专用：比 QuickDetectJavaAsync（只认几个"已知产品"的固定路径，比如
+    /// .minecraft/runtime、.hmcl/java 这种写死的具体目录名）更进一步，在 AppData、常见 Java
+    /// 安装根目录下做一次"有限深度"的通用扫描，尽量覆盖没有预料到的发行版/自定义安装路径，
+    /// 同时不做 ScanWholeDiskForJavaAsync 那种整盘无限递归（那个是分钟级、需要用户手动触发的
+    /// 重量级操作，不适合放进启动流程）。
+    ///
+    /// 扫描规则（用户明确指定）：
+    /// 1. 根目录：AppData（%AppData%，即 Roaming）+ 几个常见的 Java 安装根目录
+    ///    （C:\Program Files、C:\Program Files (x86)、系统盘根 C:\，以及 JAVA_HOME 如果设置了
+    ///    的话取它的上一级目录，覆盖"手动装在自定义位置但和其他 Java 装在同一个上级目录"的情况）。
+    /// 2. 在每个根目录下，先只下钻最多 4 级，找"疑似 JDK/JRE 的文件夹"——判定标准：目录名包含
+    ///    jdk/jre/java（大小写不敏感），或者目录下直接有 bin 子目录（不少发行版解压出来的顶层
+    ///    目录名跟 Java 完全不沾边，比如版本号数字或者用户自己重命名过，只能看有没有 bin 佐证）。
+    /// 3. 命中一个疑似目录后，从它开始再往下最多 6 级找 javaw.exe（很多发行版在"版本目录"和
+    ///    "bin"之间还嵌套了 jdk-21.0.1+12、jre 等 1~2 层子目录，6 层给足冗余空间，同时依然
+    ///    远小于无限递归的开销）。
+    ///
+    /// 返回的候选会跟 QuickDetectJavaAsync 的结果合并去重，调用方（MainWindow 启动扫描）负责
+    /// 静默登记，不弹确认框。
+    /// </summary>
+    public async Task<List<JavaCandidate>> ScanCommonJavaLocationsAsync(CancellationToken ct = default)
+    {
+        const int maxDirDepth = 4;   // 找"疑似 JDK 文件夹"最多下钻层数
+        const int maxJavawDepth = 6; // 命中疑似目录后，找 javaw.exe 最多再下钻层数
+
+        var roots = new List<string>();
+
+        try
+        {
+            var appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+            if (!string.IsNullOrEmpty(appData)) roots.Add(appData);
+        }
+        catch { /* 忽略路径解析异常 */ }
+
+        var programFilesRoots = new[]
+        {
+            Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),
+            Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86),
+        };
+        roots.AddRange(programFilesRoots.Where(p => !string.IsNullOrEmpty(p)));
+
+        try
+        {
+            var javaHome = Environment.GetEnvironmentVariable("JAVA_HOME");
+            if (!string.IsNullOrEmpty(javaHome))
+            {
+                var parent = Path.GetDirectoryName(javaHome.TrimEnd('\\', '/'));
+                if (!string.IsNullOrEmpty(parent)) roots.Add(parent);
+            }
+        }
+        catch { /* 忽略 JAVA_HOME 解析异常 */ }
+
+        roots = roots.Distinct(StringComparer.OrdinalIgnoreCase).Where(Directory.Exists).ToList();
+
+        var javawPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var root in roots)
+        {
+            ct.ThrowIfCancellationRequested();
+            foreach (var candidateDir in FindLikelyJdkFolders(root, maxDirDepth, ct))
+            {
+                ct.ThrowIfCancellationRequested();
+                foreach (var javawPath in FindJavawUnder(candidateDir, maxJavawDepth, ct))
+                    javawPaths.Add(javawPath);
+            }
+        }
+
+        var results = new List<JavaCandidate>();
+        foreach (var path in javawPaths)
+        {
+            ct.ThrowIfCancellationRequested();
+            var version = await TryGetJavaVersionAsync(path, ct);
+            results.Add(new JavaCandidate(path, version));
+        }
+        return results;
+    }
+
+    /// <summary>在 root 下最多 maxDepth 级里查找"疑似 JDK/JRE 文件夹"：目录名带 jdk/jre/java
+    /// 关键字，或者自身直接有 bin 子目录。命中即返回（不再往这个分支更深处找疑似目录——
+    /// 找到的这个目录本身就交给 FindJavawUnder 去查 javaw.exe，避免同一棵子树被重复扫描）。</summary>
+    private static IEnumerable<string> FindLikelyJdkFolders(string root, int maxDepth, CancellationToken ct)
+    {
+        var queue = new Queue<(string Dir, int Depth)>();
+        queue.Enqueue((root, 0));
+
+        while (queue.Count > 0)
+        {
+            ct.ThrowIfCancellationRequested();
+            var (dir, depth) = queue.Dequeue();
+
+            bool looksLikeJdk;
+            try
+            {
+                var name = Path.GetFileName(dir.TrimEnd('\\', '/'));
+                looksLikeJdk = name.Contains("jdk", StringComparison.OrdinalIgnoreCase)
+                    || name.Contains("jre", StringComparison.OrdinalIgnoreCase)
+                    || name.Contains("java", StringComparison.OrdinalIgnoreCase)
+                    || Directory.Exists(Path.Combine(dir, "bin"));
+            }
+            catch { continue; }
+
+            if (looksLikeJdk && depth > 0) // 根目录自己（如 AppData）不算"疑似 JDK 文件夹"，避免把整个根目录都当成候选去扫
+            {
+                yield return dir;
+                continue; // 命中就不再往这个分支更深处找，交给 FindJavawUnder 继续
+            }
+
+            if (depth >= maxDepth) continue;
+
+            string[] subDirs;
+            try { subDirs = Directory.GetDirectories(dir); }
+            catch { continue; }
+
+            foreach (var sub in subDirs)
+            {
+                var subName = Path.GetFileName(sub);
+                if (subName.Equals("$Recycle.Bin", StringComparison.OrdinalIgnoreCase) ||
+                    subName.Equals("System Volume Information", StringComparison.OrdinalIgnoreCase))
+                    continue;
+                queue.Enqueue((sub, depth + 1));
+            }
+        }
+    }
+
+    /// <summary>在 root 下最多 maxDepth 级里查找 javaw.exe。</summary>
+    private static IEnumerable<string> FindJavawUnder(string root, int maxDepth, CancellationToken ct)
+    {
+        var queue = new Queue<(string Dir, int Depth)>();
+        queue.Enqueue((root, 0));
+
+        while (queue.Count > 0)
+        {
+            ct.ThrowIfCancellationRequested();
+            var (dir, depth) = queue.Dequeue();
+
+            string[] files;
+            try { files = Directory.GetFiles(dir, "javaw.exe"); }
+            catch { continue; }
+            foreach (var f in files) yield return f;
+
+            if (depth >= maxDepth) continue;
+
+            string[] subDirs;
+            try { subDirs = Directory.GetDirectories(dir); }
+            catch { continue; }
+            foreach (var sub in subDirs)
+                queue.Enqueue((sub, depth + 1));
+        }
+    }
+
+    /// <summary>
     /// 全盘扫描找 Java（全新的可选功能）：
     /// - 默认不会调用这个方法。只有用户在设置里手动打开"全盘扫描"开关、并在弹窗里明确点了"同意"，
     ///   UI 层才会调这个方法；FindJava() 本身完全不受影响，永远只看默认路径

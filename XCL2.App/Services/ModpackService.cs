@@ -1,5 +1,6 @@
 using System.IO;
 using System.IO.Compression;
+using System.Linq;
 using System.Net.Http;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -25,6 +26,16 @@ public class ModpackService
     /// </summary>
     public void Export(string versionDir, string destZipPath, ModpackManifest manifest,
         IProgress<string>? progress = null)
+        => Export(versionDir, destZipPath, manifest, progress == null ? null : new Progress<ProgressInfo>(p => progress.Report(p.Stage)));
+
+    /// <summary>
+    /// 导出（带真正的文件级进度）：IProgress&lt;ProgressInfo&gt; 版本，Done/Total 是已复制/总计
+    /// 的文件数，CurrentFile 是正在复制的文件名——配合 ProgressDialog 可以显示真实的进度条和
+    /// "当前正在导出哪个文件"，而不是旧版 IProgress&lt;string&gt; 那种只有几句阶段性文字、
+    /// 复制大量文件时进度条长时间不动、看起来像卡死的问题。
+    /// </summary>
+    public void Export(string versionDir, string destZipPath, ModpackManifest manifest,
+        IProgress<ProgressInfo>? progress)
     {
         if (File.Exists(destZipPath)) File.Delete(destZipPath);
 
@@ -36,23 +47,32 @@ public class ModpackService
             File.WriteAllText(Path.Combine(tmpDir, ManifestFileName),
                 JsonSerializer.Serialize(manifest, new JsonSerializerOptions { WriteIndented = true }));
 
-            var foldersFound = 0;
+            // 先扫一遍算总文件数，才能算出真实的 Done/Total 百分比——只扫存在的文件夹，
+            // 跟下面实际复制时的过滤条件一致，避免总数和实际复制数对不上。
+            var sourceFolders = IncludedFolders
+                .Select(f => Path.Combine(versionDir, f))
+                .Where(Directory.Exists)
+                .ToList();
+            var totalFiles = sourceFolders.Sum(CountFiles);
+            var doneFiles = 0;
+
+            if (sourceFolders.Count == 0)
+                throw new InvalidOperationException("这个版本下没有找到 mods/config/resourcepacks/shaderpacks 中任何一个文件夹，没有可打包的内容。");
+
             foreach (var folder in IncludedFolders)
             {
                 var src = Path.Combine(versionDir, folder);
                 if (!Directory.Exists(src)) continue;
-
-                progress?.Report($"打包 {folder} ...");
-                CopyDirectory(src, Path.Combine(tmpDir, folder));
-                foldersFound++;
+                CopyDirectory(src, Path.Combine(tmpDir, folder), (file, name) =>
+                {
+                    doneFiles++;
+                    progress?.Report(new ProgressInfo("打包文件", doneFiles, totalFiles, name));
+                });
             }
 
-            if (foldersFound == 0)
-                throw new InvalidOperationException("这个版本下没有找到 mods/config/resourcepacks/shaderpacks 中任何一个文件夹，没有可打包的内容。");
-
-            progress?.Report("生成压缩包 ...");
+            progress?.Report(new ProgressInfo("生成压缩包", totalFiles, totalFiles, Path.GetFileName(destZipPath)));
             ZipFile.CreateFromDirectory(tmpDir, destZipPath, CompressionLevel.Optimal, includeBaseDirectory: false);
-            progress?.Report("导出完成");
+            progress?.Report(new ProgressInfo("导出完成", totalFiles, totalFiles, ""));
         }
         finally
         {
@@ -250,6 +270,11 @@ public class ModpackService
     /// </summary>
     public void ExportMrpack(string versionDir, string destMrpackPath, ModpackManifest manifest,
         IProgress<string>? progress = null)
+        => ExportMrpack(versionDir, destMrpackPath, manifest, progress == null ? null : new Progress<ProgressInfo>(p => progress.Report(p.Stage)));
+
+    /// <summary>ExportMrpack 的文件级进度版本，见 Export(...IProgress&lt;ProgressInfo&gt;) 的注释。</summary>
+    public void ExportMrpack(string versionDir, string destMrpackPath, ModpackManifest manifest,
+        IProgress<ProgressInfo>? progress)
     {
         if (File.Exists(destMrpackPath)) File.Delete(destMrpackPath);
 
@@ -275,7 +300,7 @@ public class ModpackService
                 Files = new List<MrpackFile>(),
             };
 
-            progress?.Report("生成 modrinth.index.json ...");
+            progress?.Report(new ProgressInfo("生成索引文件", 0, 1, "modrinth.index.json"));
             var indexJson = JsonSerializer.Serialize(index, new JsonSerializerOptions
             {
                 WriteIndented = true,
@@ -296,23 +321,30 @@ public class ModpackService
                 JsonSerializer.Serialize(withHeader, new JsonSerializerOptions { WriteIndented = true }));
 
             var overridesDir = Path.Combine(tmpDir, "overrides");
-            var foldersFound = 0;
+            var sourceFolders = IncludedFolders
+                .Select(f => Path.Combine(versionDir, f))
+                .Where(Directory.Exists)
+                .ToList();
+            var totalFiles = sourceFolders.Sum(CountFiles);
+            var doneFiles = 0;
+
+            if (sourceFolders.Count == 0)
+                throw new InvalidOperationException("这个版本下没有找到 mods/config/resourcepacks/shaderpacks 中任何一个文件夹，没有可打包的内容。");
+
             foreach (var folder in IncludedFolders)
             {
                 var src = Path.Combine(versionDir, folder);
                 if (!Directory.Exists(src)) continue;
-
-                progress?.Report($"打包 {folder} ...");
-                CopyDirectory(src, Path.Combine(overridesDir, folder));
-                foldersFound++;
+                CopyDirectory(src, Path.Combine(overridesDir, folder), (file, name) =>
+                {
+                    doneFiles++;
+                    progress?.Report(new ProgressInfo("打包文件", doneFiles, totalFiles, name));
+                });
             }
 
-            if (foldersFound == 0)
-                throw new InvalidOperationException("这个版本下没有找到 mods/config/resourcepacks/shaderpacks 中任何一个文件夹，没有可打包的内容。");
-
-            progress?.Report("生成压缩包 ...");
+            progress?.Report(new ProgressInfo("生成压缩包", totalFiles, totalFiles, Path.GetFileName(destMrpackPath)));
             ZipFile.CreateFromDirectory(tmpDir, destMrpackPath, CompressionLevel.Optimal, includeBaseDirectory: false);
-            progress?.Report("导出完成");
+            progress?.Report(new ProgressInfo("导出完成", totalFiles, totalFiles, ""));
         }
         finally
         {
@@ -320,13 +352,28 @@ public class ModpackService
         }
     }
 
-    private static void CopyDirectory(string sourceDir, string destDir)
+    private static int CountFiles(string dir)
+    {
+        var count = Directory.GetFiles(dir).Length;
+        foreach (var sub in Directory.GetDirectories(dir))
+            count += CountFiles(sub);
+        return count;
+    }
+
+    /// <summary>onFile 在每复制完一个文件后回调一次(源文件全路径, 用于展示的文件名)，
+    /// 供导出流程汇报真实的"已复制/总数 + 当前文件名"进度；不传则跟原来行为一致，
+    /// 只是纯复制不汇报。</summary>
+    private static void CopyDirectory(string sourceDir, string destDir, Action<string, string>? onFile = null)
     {
         Directory.CreateDirectory(destDir);
         foreach (var file in Directory.GetFiles(sourceDir))
-            File.Copy(file, Path.Combine(destDir, Path.GetFileName(file)), overwrite: true);
+        {
+            var destFile = Path.Combine(destDir, Path.GetFileName(file));
+            File.Copy(file, destFile, overwrite: true);
+            onFile?.Invoke(file, Path.GetFileName(file));
+        }
         foreach (var subDir in Directory.GetDirectories(sourceDir))
-            CopyDirectory(subDir, Path.Combine(destDir, Path.GetFileName(subDir)));
+            CopyDirectory(subDir, Path.Combine(destDir, Path.GetFileName(subDir)), onFile);
     }
 }
 

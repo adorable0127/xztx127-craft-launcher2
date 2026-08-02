@@ -44,6 +44,7 @@
     <system:String x:Key="Str_Nav_Settings">設定</system:String>
     <system:String x:Key="Str_Nav_Logs">日誌</system:String>
     <system:String x:Key="Str_Nav_Experimental">實驗性功能</system:String>
+    <system:String x:Key="Str_Nav_Toolbox">百寶箱</system:String>
 
     <system:String x:Key="Str_Settings_LanguageSection_Title">啟動器介面語言</system:String>
     <system:String x:Key="Str_Settings_LanguageSection_Hint">切換後立即生效，不需要重新啟動啟動器；這裡選的是「啟動器介面」使用的語言，跟下面「遊戲內語言」是兩回事。</system:String>

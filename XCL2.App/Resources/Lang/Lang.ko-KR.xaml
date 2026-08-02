@@ -44,6 +44,7 @@
     <system:String x:Key="Str_Nav_Settings">설정</system:String>
     <system:String x:Key="Str_Nav_Logs">로그</system:String>
     <system:String x:Key="Str_Nav_Experimental">실험적 기능</system:String>
+    <system:String x:Key="Str_Nav_Toolbox">도구 상자</system:String>
 
     <system:String x:Key="Str_Settings_LanguageSection_Title">런처 UI 언어</system:String>
     <system:String x:Key="Str_Settings_LanguageSection_Hint">즉시 적용되며 재시작이 필요 없습니다. 여기서 선택하는 것은 "런처 UI" 언어이며, 아래의 "게임 내 언어"와는 별개입니다.</system:String>

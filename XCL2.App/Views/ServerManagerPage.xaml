@@ -107,7 +107,13 @@
                 <RadioButton x:Name="CatCoreDownload" Style="{StaticResource DownloadCategoryButton}"
                              Checked="Category_Checked" Tag="core">
                     <StackPanel Orientation="Horizontal">
-                        <TextBlock Text="⬇" FontFamily="Segoe UI Emoji" VerticalAlignment="Center"/>
+                        <!-- 修复"下载图标与同一栏其它图标大小不一致"：⬇ 本身是 Unicode
+                             "文本样式(text-presentation)"默认呈现的符号，跟 🏠/🖥/🧩 这些天生
+                             就是"emoji样式(emoji-presentation)"的字符不一样——同一个 FontFamily
+                             下裸的 ⬇ 会被渲染成比 emoji 版本小一圈的纯符号字形。加上 U+FE0F
+                             (VARIATION SELECTOR-16) 强制它按 emoji 呈现方式渲染，跟其它几个
+                             图标使用同一套字形来源，视觉大小才会一致。 -->
+                        <TextBlock Text="&#x2B07;&#xFE0F;" FontFamily="Segoe UI Emoji" VerticalAlignment="Center"/>
                         <TextBlock Text="核心下载" Margin="8,0,0,0" VerticalAlignment="Center"/>
                     </StackPanel>
                 </RadioButton>
@@ -410,6 +416,7 @@
                                 <RowDefinition Height="Auto"/>
                                 <RowDefinition Height="Auto"/>
                                 <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
                             </Grid.RowDefinitions>
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="*"/>
@@ -439,6 +446,20 @@
                                          TextChanged="ServerResourceFilter_Changed"
                                          ToolTip="限定游戏版本，例如 1.20.1；留空不限定"/>
                             </StackPanel>
+                            <!-- 版本快捷选择条：跟 DownloadCenterPage 的 Mod/资源面板同一套结构
+                                 （ResourceVersionChipPanel/ModVersionChipPanel），点一下直接把常用
+                                 版本号填进上面的"版本"输入框，不用自己手打。 -->
+                            <StackPanel Grid.Row="2" Grid.Column="0" Grid.ColumnSpan="3" Margin="0,8,0,0">
+                                <WrapPanel x:Name="ServerResourceVersionChipPanel">
+                                    <Button Content="全部" Style="{StaticResource VersionChipButton}" Tag="" Click="ServerResourceVersionChip_Click"/>
+                                    <Button Content="1.21" Style="{StaticResource VersionChipButton}" Tag="1.21" Click="ServerResourceVersionChip_Click"/>
+                                    <Button Content="1.20" Style="{StaticResource VersionChipButton}" Tag="1.20" Click="ServerResourceVersionChip_Click"/>
+                                    <Button Content="1.19" Style="{StaticResource VersionChipButton}" Tag="1.19" Click="ServerResourceVersionChip_Click"/>
+                                    <Button Content="1.18" Style="{StaticResource VersionChipButton}" Tag="1.18" Click="ServerResourceVersionChip_Click"/>
+                                    <Button Content="1.17" Style="{StaticResource VersionChipButton}" Tag="1.17" Click="ServerResourceVersionChip_Click"/>
+                                    <Button Content="1.16" Style="{StaticResource VersionChipButton}" Tag="1.16" Click="ServerResourceVersionChip_Click"/>
+                                </WrapPanel>
+                            </StackPanel>
                             <!-- 数据包必须落在具体存档下(world/datapacks/)，跟客户端"数据包必须选存档"是
                                  同一个道理；服务端一般只有一个 world，这里默认给出该服务器实例目录下的
                                  world 文件夹名，理论上支持多世界(Bukkit/Paper 的 world_nether 等)时用户
@@ -452,7 +473,7 @@
                                          ToolTip="服务端存档目录名，默认 world；如果服主自定义了 level-name，请改成对应名称"/>
                             </StackPanel>
 
-                            <StackPanel Grid.Row="2" Grid.Column="0" Grid.ColumnSpan="3" Orientation="Horizontal" Margin="0,14,0,0">
+                            <StackPanel Grid.Row="3" Grid.Column="0" Grid.ColumnSpan="3" Orientation="Horizontal" Margin="0,14,0,0">
                                 <Button Content="搜索" Style="{StaticResource PrimaryButton}" Padding="20,8" Click="ServerResourceSearch_Click"
                                         ToolTip="列表已自动刷新；网络失败或想立即按当前条件重新搜索时可点这里"/>
                                 <Button Content="重置条件" Style="{StaticResource SecondaryButton}" Padding="20,8" Margin="10,0,0,0"

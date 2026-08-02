@@ -3,7 +3,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:services="clr-namespace:XCL2.App.Services"
         Title="进入实验性功能前的提醒"
-        Width="520" Height="440"
+        Width="580" Height="480" MinWidth="580" MinHeight="480"
         WindowStartupLocation="CenterOwner"
         ResizeMode="NoResize"
         Background="{DynamicResource PanelBrush}">
@@ -32,9 +32,13 @@
                         <Run Text="甚至偶尔崩溃这类不稳定情况。"/>
                     </TextBlock>
                     <TextBlock TextWrapping="Wrap" Margin="0,0,0,10" FontSize="13" LineHeight="20"
-                               Text="目前实验性功能包含：额外的界面换肤方案（蓝色系、黄色系、紫色系、粉色系等）。这些配色本身不会影响游戏存档、Mod、服务器数据等任何实际内容，最坏情况也只是&quot;界面变得难看/某处显示错位&quot;，随时可以在这里改回默认配色，不会造成数据损失。"/>
+                               Text="目前实验性功能包含：多加载器合装（同一个版本一次性装 Fabric/Forge/NeoForge 中的多个加载器）等更底层的高级功能，操作不当可能导致这个版本装坏、需要重新下载，请务必先了解清楚再使用。"/>
                     <TextBlock TextWrapping="Wrap" Margin="0,0,0,10" FontSize="13" LineHeight="20"
-                               Text="如果你只是想正常启动游戏、正常开服，不需要打开这里任何东西——启动器默认的白色/黑色配色已经是最稳定、最经过测试的状态。"/>
+                               Text="实验性功能里还可能包含一些搞笑整活、开发过程中的半成品、或者尚未经过充分验证的内容，这些跟「稳不稳定」无关，纯粹是还没决定要不要做成正式功能，随时可能被砍掉或大改，用之前请有心理准备。"/>
+                    <TextBlock TextWrapping="Wrap" Margin="0,0,0,10" FontSize="13" LineHeight="20"
+                               Text="界面换肤（蓝色系、黄色系、紫色系、粉色系等配色皮肤）已经是正式功能，不再属于实验性范围，可以直接在「设置」页放心使用，不需要经过这里。"/>
+                    <TextBlock TextWrapping="Wrap" FontSize="13" LineHeight="20" Foreground="{DynamicResource TextSecondaryBrush}"
+                               Text="「百宝箱」（成就图片生成、皮肤头像生成、自定义文件下载、正版皮肤下载、清理游戏垃圾、创建快捷方式、启动计数、加载器 Jar 单独下载、内存优化等工具集合）不属于实验性功能，是正式功能，可以在左侧导航「工具」中随时使用。"/>
                     <TextBlock TextWrapping="Wrap" FontSize="13" LineHeight="20" Foreground="{DynamicResource TextSecondaryBrush}"
                                Text="不建议普通用户尝试实验性功能。如果你不确定自己是否需要它，答案通常是不需要。"/>
                 </StackPanel>

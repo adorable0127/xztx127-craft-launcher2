@@ -103,6 +103,13 @@ public class ModrinthService
         var file = version.Files.FirstOrDefault(f => f.Primary) ?? version.Files.FirstOrDefault();
         if (file == null) throw new InvalidOperationException("这个版本没有可下载的文件。");
 
+        // 整合包不走这条"下载单文件丢进固定目录"的通用路径：.mrpack 本身只是一份清单
+        // （modrinth.index.json + overrides/），不是能直接使用的单个文件，必须解析清单、
+        // 逐个下载里面列出的 mod、再展开 overrides——这条逻辑已经在 ModpackService.ImportMrpackAsync
+        // 里实现，调用方（DownloadCenterPage 整合包下载按钮）应该直接调那个方法，不应该走到这里。
+        if (type == ModrinthResourceType.Modpack)
+            throw new InvalidOperationException("整合包不支持这种下载方式，请使用整合包专用的安装流程。");
+
         string destDir;
         if (type == ModrinthResourceType.DataPack)
         {
@@ -172,6 +179,7 @@ public class ModrinthService
         ModrinthResourceType.DataPack => "mod",
         ModrinthResourceType.Mod => "mod",
         ModrinthResourceType.Plugin => "plugin",
+        ModrinthResourceType.Modpack => "modpack",
         _ => throw new ArgumentOutOfRangeException(nameof(type))
     };
 

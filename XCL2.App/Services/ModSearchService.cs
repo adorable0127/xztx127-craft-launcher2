@@ -207,7 +207,12 @@ public class ModSearchService
         // Mod 在 CurseForge 侧走的是独立的 SearchModsAsync/classId=6 通道(见 SearchCurseForgeSafe)，
         // 跟这里 SearchResourcesAsync 用的资源型 classId 不是同一套；这个统一资源面板遇到 Mod 类型时
         // 直接跳过 CurseForge（不算错误，只是这个来源对这个类型没有对应实现），只展示 Modrinth 结果。
-        if (type == ModrinthResourceType.Mod)
+        //
+        // 整合包同理跳过 CurseForge：CurseForge 整合包用自己的 manifest.json 清单格式，
+        // ModpackService 目前只实现了 Modrinth .mrpack(modrinth.index.json) 的解析安装，
+        // 见 CurseForgeConstants.ModpacksClassId 注释——避免用户搜到 CurseForge 整合包点了下载
+        // 却装不上。
+        if (type == ModrinthResourceType.Mod || type == ModrinthResourceType.Modpack)
             return (new List<UnifiedResourceItem>(), null, null, 0);
 
         try

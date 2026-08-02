@@ -48,11 +48,14 @@ public static class ModVersionGrouping
     /// 返回后调用方需要自行决定要不要把第一个分组设为默认展开(截图2里"Fabric 26.2"默认展开)。
     /// </summary>
     /// <summary>
-    /// includePreview=false（默认）时过滤掉预览版(beta/alpha)条目，只保留正式版——大多数用户
-    /// 只想装稳定版，混进预览版容易被误装。调用方在版本列表面板放一个默认收起的
-    /// "显示预览版"隐藏按钮，点开后带 includePreview=true 重新分组即可看到全部版本。
+    /// includePreview 默认改成 true：之前默认 false（只显示正式版）在部分 mod 上会把全部
+    /// 版本都判断成"预览版"过滤掉，导致详情页显示"没有找到匹配的版本"（IsPreview 的判断
+    /// 依赖 Modrinth version_type / CurseForge releaseType 字段，遇到数据不规范的项目就会
+    /// 全军覆没）。与其继续在这个不可靠的字段上做隐藏，不如干脆全部显示，用户自己看版本号
+    /// 判断要不要装——对应"去掉这些按钮"的需求，见 ModDetailPage 里移除的"显示/隐藏预览版"
+    /// 按钮。
     /// </summary>
-    public static List<VersionGroup> Group(IEnumerable<InlineVersionEntry> flatEntries, bool includePreview = false)
+    public static List<VersionGroup> Group(IEnumerable<InlineVersionEntry> flatEntries, bool includePreview = true)
     {
         // key: (加载器原始小写名, 游戏版本号字符串) -> 这一组包含的条目
         var buckets = new Dictionary<(string loader, string gameVersion), List<InlineVersionEntry>>();
