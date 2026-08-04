@@ -41,7 +41,18 @@ public partial class ExperimentalFeaturesWindow : OverlayDialogControl
         var installed = await BedrockLaunchService.IsInstalledAsync();
         if (!installed)
         {
-            MessageBoxDialog.ShowInfo(
+            // 修复"第二次点击'启动基岩版'导致整页按钮点不动"：这个按钮所在的
+            // ExperimentalFeaturesWindow 本身已经是通过 ShowDialog()（也就是
+            // OverlayDialogService.ShowModal，内部手动 PushFrame）弹出的模态弹窗；
+            // 这里在 await BedrockLaunchService.IsInstalledAsync() 之后的异步延续里
+            // 又调用 MessageBoxDialog.ShowInfo，等于在"外层弹窗自己的 PushFrame 消息泵
+            // 内部"再嵌套起第二个 PushFrame——第一次点击时消息队列/调度状态凑巧没有
+            // 冲突所以看起来正常，第二次点击时前一次遗留的调度状态（比如上一层
+            // TaskScheduler.FromCurrentSynchronizationContext() 延续还没完全清空）
+            // 更容易和这次新的嵌套泵挤到一起，导致提示框关闭后 Overlay 没能正常收起，
+            // 卡在原地吃掉全部点击。换成 ShowInfoAsync + await，不再手动起消息泵，
+            // 无论点第几次都只是一次普通的 await 恢复，没有嵌套 PushFrame 的隐患。
+            await MessageBoxDialog.ShowInfoAsync(
                 "没有检测到已安装的「Minecraft for Windows」（基岩版）。\n\n" +
                 "这是完全独立于 Java 版的另一个游戏（不同引擎、不同 Mod 生态），需要先在 Microsoft Store 里搜索" +
                 "「Minecraft」单独安装，本启动器不提供下载。", Loc.T("Str_Cs_Bedrock_Edition_Not_Detected", "未检测到基岩版"));

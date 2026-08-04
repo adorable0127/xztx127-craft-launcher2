@@ -453,7 +453,20 @@ public partial class MainWindow : Window
             RefreshSidebar();
 
             var names = string.Join("\n", newlyAdded.Select(f => $"• {f.Name}  ({f.Path})"));
-            MessageBoxDialog.ShowInfo(
+
+            // 修复"关掉检测到 Minecraft 文件夹的提示框，整页按钮全部点不动"：
+            // 根因是这里以前调用的 MessageBoxDialog.ShowInfo → OverlayDialogService.ShowModal
+            // 走的是"手动 PushFrame 局部消息泵、同步阻塞等结果"这条路径，而这个调用点本身
+            // 又是在 await Task.Run(...) 之后的异步延续里执行的——也就是"在一个已经通过
+            // SynchronizationContext 延续机制排队等 UI 线程执行的回调内部，再手动 PushFrame
+            // 一次、并且用同一个 TaskScheduler.FromCurrentSynchronizationContext() 来在
+            // 弹窗关闭时把消息泵跳出来"。两层调度互相嵌套，在某些时序下（尤其是启动阶段
+            // UI 线程本身还比较繁忙、消息队列里排了不少待处理项）会导致"弹窗按钮点击触发
+            // 的 CloseTop → OverlayHideRoot 广播"迟迟排不到、或者跟外层 PushFrame 的退出
+            // 条件产生竞争，表现为 Overlay 遮罩没能正常收起、卡在原地吃掉后续所有点击。
+            // 改成 ShowInfoAsync + await：不再需要手动起第二个消息泵，弹窗关闭只是让
+            // 这里的 await 自然恢复，没有嵌套 PushFrame，从根上避免这类竞争。
+            await MessageBoxDialog.ShowInfoAsync(
                 $"启动时自动发现了 {newlyAdded.Count} 个新的 .minecraft 文件夹，已加入「版本选择」页的文件夹列表：\n\n{names}",
                 "自动发现新文件夹");
         }
@@ -1607,6 +1620,26 @@ public partial class MainWindow : Window
         OverlayRoot.Visibility = Visibility.Visible;
         OverlayContentHost.Content = content;
 
+        // 修复"关掉某个提示框/弹窗后，整页所有按钮都点不动"系列问题的根因：
+        // OverlayDismissEntry 淡出时是用 BeginAnimation 在 OverlayScrim/OverlayCard/
+        // OverlayCardScale 这几个属性上挂了动画时钟；WPF 里"动画时钟"的优先级高于
+        // "直接赋值的本地值"——只要那个时钟还挂在属性上没有被显式清除，即使外面
+        // 简单地写 OverlayScrim.Opacity = 1，实际生效的值仍然由那个（可能还没走完，
+        // 或者已经走完但没有被清除）的动画时钟决定，赋值会被静默忽略。
+        // 如果上一次 OverlayDismissEntry 的淡出动画/兜底延时判定跟这一次
+        // "恢复显示上一层"(animateIn=false，比如从一个子弹窗如 MessageBoxDialog
+        // 返回到它上面的 ExperimentalFeaturesWindow) 前后脚发生，遗留的旧时钟就可能
+        // 让 OverlayScrim 视觉上停留在透明（Opacity 实际还是 0）却仍然
+        // Visibility=Visible 且占据命中测试，表现就是"看不见任何弹窗了，但整个界面
+        // 点哪里都没反应"——不是没收起遮罩，而是遮罩收起了"看起来"，命中测试没收起。
+        // 这里在每次重新渲染 Overlay 内容之前，先显式清空这几个属性上可能残留的动画
+        // 时钟（BeginAnimation(prop, null)），保证接下来的赋值/新动画一定是从干净状态
+        // 开始生效，不会被过期的旧时钟顶掉。
+        OverlayScrim.BeginAnimation(OpacityProperty, null);
+        OverlayCard.BeginAnimation(OpacityProperty, null);
+        OverlayCardScale.BeginAnimation(ScaleTransform.ScaleXProperty, null);
+        OverlayCardScale.BeginAnimation(ScaleTransform.ScaleYProperty, null);
+
         // 每次都重新测量一次内容尺寸：不同弹窗大小不同，OverlayCard 靠
         // HorizontalAlignment/VerticalAlignment=Center 自动居中，不需要手动算坐标。
         if (!animateIn)
@@ -1641,23 +1674,57 @@ public partial class MainWindow : Window
         var duration = TimeSpan.FromMilliseconds(110);
         var ease = new QuadraticEase { EasingMode = EasingMode.EaseIn };
 
-        var cardFade = new DoubleAnimation(1, 0, duration) { EasingFunction = ease };
-        cardFade.Completed += (_, _) =>
+        // 修复："实验性功能"关掉之后整页按钮全部点不动"：根因是这里以前只靠
+        // cardFade.Completed 事件来触发 onComplete()（进而触发 OverlayHideRoot()
+        // 把 OverlayRoot 收起来）。但 OverlayRenderEntry 在恢复上一层弹窗时
+        // （CloseTop 里 _stack.Count > 0 的分支）会立刻对同一个 OverlayCard.Opacity
+        // 再调一次 BeginAnimation——WPF 里对同一个依赖属性重新 BeginAnimation 会
+        // 直接替换掉前一个动画时钟，被替换掉的动画的 Completed 事件不保证触发。
+        // 一旦这次 Completed 没触发，onComplete()/OverlayHideRoot() 就永远不会被
+        // 调用，OverlayRoot 卡在 Visibility=Visible（即便看起来透明），继续占据
+        // 全屏命中测试，导致底下所有按钮的点击全部被这个隐形遮罩吃掉。
+        // 用一个一次性标记 + Dispatcher 兜底延时代替"只信任动画事件"，保证无论
+        // Completed 是否触发，onComplete 都会且只会被调用一次。
+        var completedOnce = false;
+        void RunOnce()
         {
+            if (completedOnce) return;
+            completedOnce = true;
             if (ReferenceEquals(OverlayContentHost.Content, content)) OverlayContentHost.Content = null;
             onComplete();
-        };
+        }
+
+        var cardFade = new DoubleAnimation(1, 0, duration) { EasingFunction = ease };
+        cardFade.Completed += (_, _) => RunOnce();
 
         OverlayCard.BeginAnimation(OpacityProperty, cardFade);
         OverlayScrim.BeginAnimation(OpacityProperty, new DoubleAnimation(1, 0, duration) { EasingFunction = ease });
         OverlayCardScale.BeginAnimation(ScaleTransform.ScaleXProperty, new DoubleAnimation(1, 0.96, duration) { EasingFunction = ease });
         OverlayCardScale.BeginAnimation(ScaleTransform.ScaleYProperty, new DoubleAnimation(1, 0.96, duration) { EasingFunction = ease });
+
+        // 兜底：动画本该在 duration 之后完成，多给 150ms 余量；如果 Completed 因为
+        // 上面说的替换问题没能触发，这里保证 onComplete 依然会被调用一次，
+        // OverlayRoot 不会永久卡住。
+        // 注意：Dispatcher.InvokeAsync 没有直接接受延时的重载（那是 DispatcherTimer 的
+        // 职责，上一版写成 InvokeAsync(..., TimeSpan) 导致编译错误 CS1503），
+        // 这里改用一次性 DispatcherTimer 来做延时兜底。
+        var fallbackTimer = new DispatcherTimer { Interval = duration + TimeSpan.FromMilliseconds(150) };
+        fallbackTimer.Tick += (_, _) =>
+        {
+            fallbackTimer.Stop();
+            RunOnce();
+        };
+        fallbackTimer.Start();
     }
 
     /// <summary>整个弹窗栈都关闭完了，彻底收起 OverlayRoot（Visibility=Collapsed，
     /// 恢复"不占用命中测试"的状态，见 MainWindow.xaml 对 OverlayRoot 的注释）。</summary>
     internal void OverlayHideRoot()
     {
+        // 加一层判断：只有当前确实没有内容挂在 OverlayContentHost 上时才收起 OverlayRoot。
+        // 上面 OverlayDismissEntry 的兜底延时回调有极小概率跟"栈里又压入了新弹窗"的时序
+        // 撞在一起，这里避免误把刚显示出来的新弹窗所在的 OverlayRoot 又给 Collapsed 掉。
+        if (OverlayContentHost.Content != null) return;
         OverlayRoot.Visibility = Visibility.Collapsed;
     }
 

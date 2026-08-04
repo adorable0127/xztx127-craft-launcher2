@@ -177,16 +177,37 @@ public partial class MessageBoxDialog : OverlayDialogControl
     /// <summary>等价于 MessageBox.Show(message, title, MessageBoxButton.OK, MessageBoxImage.Information)。</summary>
     public static void ShowInfo(string message, string title = "提示") => Show(message, title, XclMessageKind.Info, XclMessageButtons.OK);
 
+    /// <summary>ShowInfo 的 async/await 版本。专供已经身处 async 方法（尤其是
+    /// await Task.Run(...) 之后的延续里）的调用点使用——见 MainWindow.
+    /// ScanMinecraftFoldersInBackgroundAsync 上的注释：在异步延续内部调用
+    /// ShowModal（内部手动 PushFrame 起一个局部消息泵）容易跟外层已经在排队的
+    /// SynchronizationContext 延续相互竞争，导致弹窗关闭后 Overlay 没能正常收起、
+    /// 卡住吃掉后续所有点击。这个方法改用 ShowModalAsync + await，不再嵌套消息泵。</summary>
+    public static Task ShowInfoAsync(string message, string title = "提示")
+        => ShowAsync(message, title, XclMessageKind.Info, XclMessageButtons.OK);
+
     /// <summary>等价于 MessageBox.Show(message, title, MessageBoxButton.OK, MessageBoxImage.Information)，
     /// 专用于"操作成功完成"类通知（游戏启动成功、下载完成等），图标用 ✔ 而不是 ℹ，
     /// 视觉上更明确地传达"这是好消息"。</summary>
     public static void ShowSuccess(string message, string title = "成功") => Show(message, title, XclMessageKind.Success, XclMessageButtons.OK);
 
+    /// <summary>ShowSuccess 的 async/await 版本，同 ShowInfoAsync 的适用场景。</summary>
+    public static Task ShowSuccessAsync(string message, string title = "成功")
+        => ShowAsync(message, title, XclMessageKind.Success, XclMessageButtons.OK);
+
     /// <summary>等价于 MessageBox.Show(message, title, MessageBoxButton.OK, MessageBoxImage.Warning)。</summary>
     public static void ShowWarning(string message, string title = "提示") => Show(message, title, XclMessageKind.Warning, XclMessageButtons.OK);
 
+    /// <summary>ShowWarning 的 async/await 版本，同 ShowInfoAsync 的适用场景。</summary>
+    public static Task ShowWarningAsync(string message, string title = "提示")
+        => ShowAsync(message, title, XclMessageKind.Warning, XclMessageButtons.OK);
+
     /// <summary>等价于 MessageBox.Show(message, title, MessageBoxButton.OK, MessageBoxImage.Error)。</summary>
     public static void ShowError(string message, string title = "出了点问题") => Show(message, title, XclMessageKind.Error, XclMessageButtons.OK);
+
+    /// <summary>ShowError 的 async/await 版本，同 ShowInfoAsync 的适用场景。</summary>
+    public static Task ShowErrorAsync(string message, string title = "出了点问题")
+        => ShowAsync(message, title, XclMessageKind.Error, XclMessageButtons.OK);
 
     /// <summary>等价于 MessageBox.Show(message, title, MessageBoxButton.YesNo, MessageBoxImage.Question)，
     /// 返回 true 表示用户点了"是"。</summary>
@@ -208,5 +229,14 @@ public partial class MessageBoxDialog : OverlayDialogControl
     {
         var dlg = new MessageBoxDialog(message, title, kind, buttons);
         return OverlayDialogService.ShowModal(dlg);
+    }
+
+    /// <summary>Show 的 async/await 版本，其它 ShowXxxAsync 静态方法都是对这个的语义化包装。
+    /// 见 ShowInfoAsync 上的注释：专供调用点自己已经身处 async 延续（比如
+    /// await Task.Run(...) 之后）时使用，避免嵌套 PushFrame 消息泵。</summary>
+    public static Task ShowAsync(string message, string title, XclMessageKind kind, XclMessageButtons buttons)
+    {
+        var dlg = new MessageBoxDialog(message, title, kind, buttons);
+        return OverlayDialogService.ShowModalAsync(dlg);
     }
 }
