@@ -6,14 +6,14 @@
     <!-- 迁移自原 ClearServerDataWindow（独立 Window），改造成进程内 Overlay 弹窗，
          见 IOverlayDialog.cs / OverlayDialogService.cs 顶部注释。 -->
     <StackPanel Margin="20">
-        <TextBlock Text="⚠ 清除服务器数据" FontSize="16" FontWeight="Bold"
+        <TextBlock Text="{DynamicResource Str_Ui_Clear_Server_Data}" FontSize="16" FontWeight="Bold"
                    Foreground="{DynamicResource DangerBrush}" Margin="0,0,0,10"/>
 
         <Border Background="{DynamicResource WarningBannerBrush}" CornerRadius="8" Padding="12" Margin="0,0,0,14">
             <TextBlock x:Name="WarningText" TextWrapping="Wrap" FontSize="12" LineHeight="18"/>
         </Border>
 
-        <TextBlock Text="请输入服务器名称以确认："
+        <TextBlock Text="{DynamicResource Str_Ui_Type_The_Server_Name_To_Confirm}"
                    FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,6"/>
         <TextBox x:Name="ConfirmNameBox" Height="30" VerticalContentAlignment="Center"
                  TextChanged="ConfirmNameBox_TextChanged"/>
@@ -21,8 +21,8 @@
                    Margin="0,6,0,0" Visibility="Collapsed" TextWrapping="Wrap"/>
 
         <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,20,0,0">
-            <Button x:Name="CancelBtn" Content="取消" Width="80" Margin="0,0,8,0" Click="Cancel_Click"/>
-            <Button x:Name="ConfirmBtn" Content="永久删除" Width="100" Style="{DynamicResource PrimaryButton}"
+            <Button x:Name="CancelBtn" Content="{DynamicResource Str_Common_Cancel}" Width="80" Margin="0,0,8,0" Click="Cancel_Click"/>
+            <Button x:Name="ConfirmBtn" Content="{DynamicResource Str_Ui_Delete_Permanently}" Width="100" Style="{DynamicResource PrimaryButton}"
                     IsEnabled="False" Click="Confirm_Click"/>
         </StackPanel>
     </StackPanel>

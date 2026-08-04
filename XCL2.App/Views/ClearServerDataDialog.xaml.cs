@@ -1,4 +1,5 @@
 using System.Windows;
+using XCL2.App.Services;   // Loc.T（代码内文案本地化，见 Services/Loc.cs）
 
 namespace XCL2.App.Views;
 
@@ -46,7 +47,7 @@ public partial class ClearServerDataDialog : OverlayDialogControl
         // 双重保险：即便 IsEnabled 状态被绕过，这里再校验一次，不匹配就拒绝执行。
         if (ConfirmNameBox.Text != _expectedName)
         {
-            ErrorText.Text = "输入的名称和服务器名称不一致，请仔细核对后重新输入。";
+            ErrorText.Text = Loc.T("Str_Cs_The_Name_You_Typed_Doesn_T_Match_The_Ser", "输入的名称和服务器名称不一致，请仔细核对后重新输入。");
             ErrorText.Visibility = Visibility.Visible;
             return;
         }

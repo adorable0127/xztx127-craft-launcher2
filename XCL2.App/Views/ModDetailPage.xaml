@@ -29,8 +29,8 @@
                 </Grid.ColumnDefinitions>
                 <Button Grid.Column="0" Content="←" FontSize="16" Padding="10,4" Margin="0,0,10,0"
                         Background="Transparent" BorderThickness="0" Foreground="White" Cursor="Hand"
-                        Click="Back_Click" ToolTip="返回列表"/>
-                <TextBlock Grid.Column="1" x:Name="TitleText" Text="详情" FontSize="16" FontWeight="Bold"
+                        Click="Back_Click" ToolTip="{DynamicResource Str_Ui_Back_To_List}"/>
+                <TextBlock Grid.Column="1" x:Name="TitleText" Text="{DynamicResource Str_Ui_Details}" FontSize="16" FontWeight="Bold"
                            Foreground="White" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
             </Grid>
         </Border>
@@ -63,11 +63,11 @@
                         </Grid>
 
                         <StackPanel Orientation="Horizontal" Margin="0,14,0,0">
-                            <Button x:Name="OpenSourceButton" Content="转到来源页" Style="{StaticResource SecondaryButton}"
+                            <Button x:Name="OpenSourceButton" Content="{DynamicResource Str_Ui_Open_Source_Page}" Style="{StaticResource SecondaryButton}"
                                     Padding="14,7" Margin="0,0,8,0" Click="OpenSource_Click"/>
-                            <Button x:Name="CopyNameButton" Content="复制名称" Style="{StaticResource SecondaryButton}"
+                            <Button x:Name="CopyNameButton" Content="{DynamicResource Str_Ui_Copy_Name}" Style="{StaticResource SecondaryButton}"
                                     Padding="14,7" Margin="0,0,8,0" Click="CopyName_Click"/>
-                            <Button x:Name="FavoriteButton" Content="☆ 收藏" Style="{StaticResource SecondaryButton}"
+                            <Button x:Name="FavoriteButton" Content="{DynamicResource Str_Ui_Favorite}" Style="{StaticResource SecondaryButton}"
                                     Padding="14,7" Click="Favorite_Click"/>
                         </StackPanel>
                     </StackPanel>
@@ -78,14 +78,14 @@
                 <Border x:Name="SaveNamePanel" Background="{DynamicResource SideBrush}" CornerRadius="8"
                         Padding="14" Margin="0,0,0,10" Visibility="Collapsed">
                     <StackPanel Orientation="Horizontal">
-                        <TextBlock Text="安装到存档：" FontSize="13" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                        <TextBlock Text="{DynamicResource Str_Ui_Install_To_World}" FontSize="13" VerticalAlignment="Center" Margin="0,0,8,0"/>
                         <ComboBox x:Name="SaveNameCombo" Width="220" SelectionChanged="SaveNameCombo_SelectionChanged"/>
                     </StackPanel>
                 </Border>
 
-                <TextBlock x:Name="LoadingText" Text="正在获取版本列表..." FontSize="13" Margin="4,10"
+                <TextBlock x:Name="LoadingText" Text="{DynamicResource Str_Ui_Fetching_Versions}" FontSize="13" Margin="4,10"
                            Foreground="{DynamicResource TextSecondaryBrush}" Visibility="Collapsed"/>
-                <TextBlock x:Name="NoResultText" Text="没有找到匹配的版本（可能是筛选的游戏版本不匹配）。"
+                <TextBlock x:Name="NoResultText" Text="{DynamicResource Str_Ui_No_Matching_Versions_Found_The_Game_Vers}"
                            FontSize="13" Margin="4,10" Foreground="{DynamicResource TextSecondaryBrush}" Visibility="Collapsed"/>
 
                 <!-- 游戏版本筛选 Tab 条 + "显示/隐藏预览版"按钮，同一行左右分布。
@@ -103,7 +103,7 @@
                         <ColumnDefinition Width="Auto"/>
                     </Grid.ColumnDefinitions>
                     <WrapPanel x:Name="VersionFilterPanel" Grid.Column="0" Visibility="Collapsed"/>
-                    <Button x:Name="PreviewToggleButton" Grid.Column="1" Content="显示预览版"
+                    <Button x:Name="PreviewToggleButton" Grid.Column="1" Content="{DynamicResource Str_Ui_Show_Pre_Releases}"
                             Style="{StaticResource SecondaryButton}" Padding="12,5" FontSize="12"
                             Margin="8,0,0,0" VerticalAlignment="Top" Click="TogglePreview_Click"
                             Visibility="Collapsed"/>
@@ -144,15 +144,15 @@
                                                 Margin="12,0,12,12">
                                         <StackPanel Visibility="{Binding HasRequiredDependencies, Converter={StaticResource BoolToVis}}"
                                                     Margin="0,8,0,4">
-                                            <TextBlock Text="前置资源" FontSize="12" FontWeight="SemiBold"
+                                            <TextBlock Text="{DynamicResource Str_Ui_Dependencies}" FontSize="12" FontWeight="SemiBold"
                                                        Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4"/>
                                             <ItemsControl ItemsSource="{Binding RequiredDependencies}">
                                                 <ItemsControl.ItemTemplate>
                                                     <DataTemplate DataType="{x:Type models:ModrinthDependency}">
                                                         <Border Background="{DynamicResource PanelBrush}" CornerRadius="4" Margin="0,2" Padding="8,6">
                                                             <TextBlock FontSize="12" Foreground="{DynamicResource TextPrimaryBrush}" TextWrapping="Wrap">
-                                                                <Run Text="项目 ID: "/><Run Text="{Binding ProjectId, Mode=OneWay}"/>
-                                                                <Run Text="  文件名: "/><Run Text="{Binding FileName, Mode=OneWay}"/>
+                                                                <Run Text="{DynamicResource Str_Ui_Project_Id}"/><Run Text="{Binding ProjectId, Mode=OneWay}"/>
+                                                                <Run Text="{DynamicResource Str_Ui_File}"/><Run Text="{Binding FileName, Mode=OneWay}"/>
                                                             </TextBlock>
                                                         </Border>
                                                     </DataTemplate>
@@ -160,7 +160,7 @@
                                             </ItemsControl>
                                         </StackPanel>
 
-                                        <TextBlock Text="版本列表" FontSize="12" FontWeight="SemiBold"
+                                        <TextBlock Text="{DynamicResource Str_Ui_Versions}" FontSize="12" FontWeight="SemiBold"
                                                    Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,4,0,4"/>
                                         <ItemsControl ItemsSource="{Binding Entries}">
                                             <ItemsControl.ItemTemplate>
@@ -175,7 +175,7 @@
                                                                 <TextBlock Text="{Binding Name}" FontSize="13"/>
                                                                 <TextBlock FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}">
                                                                     <Run Text="{Binding VersionNumber, Mode=OneWay}"/>
-                                                                    <Run Text=" · 支持: "/><Run Text="{Binding GameVersionsText, Mode=OneWay}"/>
+                                                                    <Run Text="{DynamicResource Str_Ui_Supports}"/><Run Text="{Binding GameVersionsText, Mode=OneWay}"/>
                                                                 </TextBlock>
                                                             </StackPanel>
                                                             <!-- 按钮文案跟随宿主详情页的模式（下载中心=直接下载 / 一键开服=加入清单），

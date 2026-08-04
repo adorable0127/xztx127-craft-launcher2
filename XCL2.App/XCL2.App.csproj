@@ -49,6 +49,13 @@
          （ApplicationIcon 只决定编译出的 .exe 文件本身的图标，不会让 Window.Icon 这种
          运行时资源引用生效，两者要分开配置）。 -->
     <Resource Include="Resources\app.ico" />
+    <!-- 深色模式窗口图标。把你为深色模式做的那张 1.ico 改名成 app-dark.ico 放到
+         Resources/ 下即可，代码会自动在深浅色切换时挑对应那张（见
+         Services/AppIconService.cs）。这个文件**可以先不放**：找不到时会自动
+         回退用 app.ico，不会编译失败也不会运行时报错。
+         注意 exe 本身的文件图标（上面的 ApplicationIcon）依然只能是一张，
+         那是编译期烧进二进制的，Windows 不会随主题变化。 -->
+    <Resource Include="Resources\app-dark.ico" Condition="Exists('Resources\app-dark.ico')" />
   </ItemGroup>
 
   <ItemGroup>

@@ -22,7 +22,7 @@ public class ProcessRow
     }
 }
 
-public partial class ProcessManagerWindow : Window
+public partial class ProcessManagerWindow : OverlayDialogControl
 {
     public enum Mode { SelectToClose, MarkUnresponsive }
 
@@ -65,7 +65,7 @@ public partial class ProcessManagerWindow : Window
         {
             if (ProcessListBox.SelectedItem is not ProcessRow row)
             {
-                MessageBox.Show("请先在列表中选择一个游戏。", "提示", MessageBoxButton.OK, MessageBoxImage.Information);
+                MessageBoxDialog.ShowInfo("请先在列表中选择一个游戏。", Loc.T("Str_Status_Tip", "提示"));
                 return;
             }
             _manager.CloseSelected(row.Info);
@@ -76,14 +76,13 @@ public partial class ProcessManagerWindow : Window
             var anyMarked = rows?.Any(r => r.Info.ManuallyMarkedUnresponsive) == true;
             if (!anyMarked)
             {
-                MessageBox.Show("请先勾选至少一个确认无响应的游戏，再执行强制结束。", "提示",
-                    MessageBoxButton.OK, MessageBoxImage.Information);
+                MessageBoxDialog.ShowInfo("请先勾选至少一个确认无响应的游戏，再执行强制结束。", Loc.T("Str_Status_Tip", "提示"));
                 return;
             }
             _manager.CloseUnresponsiveMarked();
         }
-        Close();
+        CloseWith(null);
     }
 
-    private void Cancel_Click(object sender, RoutedEventArgs e) => Close();
+    private void Cancel_Click(object sender, RoutedEventArgs e) => CloseWith(null);
 }

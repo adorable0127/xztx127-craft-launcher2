@@ -1,20 +1,28 @@
-<Window x:Class="XCL2.App.Views.InstallClientLoaderWindow"
-        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        xmlns:services="clr-namespace:XCL2.App.Services"
-        Title="安装新版本" Height="560" Width="520"
-        WindowStartupLocation="CenterOwner" ResizeMode="NoResize"
-        Background="{DynamicResource PanelBrush}">
+<local:OverlayDialogControl x:Class="XCL2.App.Views.InstallClientLoaderWindow"
+                            xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                            xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                            xmlns:local="clr-namespace:XCL2.App.Views"
+                            xmlns:services="clr-namespace:XCL2.App.Services"
+                            MinWidth="520"
+                            MaxWidth="520"
+                            MinHeight="560"
+                            MaxHeight="560">
+    <!-- 由独立 Window 迁移为进程内 Overlay 弹窗（见 IOverlayDialog.cs /
+         OverlayDialogService.cs 顶部注释）。Title/WindowStartupLocation/ResizeMode/
+         Background 这些"窗口级"属性已全部移除——居中、圆角卡片背景、阴影都由
+         MainWindow.xaml 里的 OverlayCard 统一提供，弹窗自己只关心内部布局。
+         原来的 Width/Height 转成了 MinWidth/MaxWidth/MaxHeight：Overlay 是按内容
+         自适应的，写死 Height 会把内容截断。 -->
     <ScrollViewer VerticalScrollBarVisibility="Auto" services:ScrollWheelBehavior.EnableFastWheel="True" Padding="28,24">
         <StackPanel>
-            <TextBlock Text="安装新版本" FontSize="20" FontWeight="Bold" Margin="0,0,0,4"/>
-            <TextBlock Text="安装原版或 Fabric / Forge / NeoForge 客户端加载器，装好后会自动出现在「已安装版本」列表里。"
+            <TextBlock Text="{DynamicResource Str_Ui_Install_New_Version_2}" FontSize="20" FontWeight="Bold" Margin="0,0,0,4"/>
+            <TextBlock Text="{DynamicResource Str_Ui_Install_Vanilla_Or_The_Fabric_Forge_Neof}"
                        Foreground="{DynamicResource TextSecondaryBrush}" FontSize="12" Margin="0,0,0,18" TextWrapping="Wrap"/>
 
-            <TextBlock Text="加载器" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4"/>
+            <TextBlock Text="{DynamicResource Str_Ui_Loader}" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4"/>
             <StackPanel Orientation="Horizontal" Margin="0,0,0,14">
                 <RadioButton x:Name="LoaderVanilla" Style="{StaticResource DownloadCategoryButton}" IsChecked="True"
-                             Content="原版" Checked="LoaderType_Checked" Tag="Vanilla" Margin="0,0,6,0"/>
+                             Content="{DynamicResource Str_Ui_Vanilla_3}" Checked="LoaderType_Checked" Tag="Vanilla" Margin="0,0,6,0"/>
                 <RadioButton x:Name="LoaderFabric" Style="{StaticResource DownloadCategoryButton}"
                              Content="Fabric" Checked="LoaderType_Checked" Tag="Fabric" Margin="0,0,6,0"/>
                 <RadioButton x:Name="LoaderForge" Style="{StaticResource DownloadCategoryButton}"
@@ -32,12 +40,12 @@
                     <ColumnDefinition Width="*"/>
                 </Grid.ColumnDefinitions>
                 <StackPanel Grid.Column="0">
-                    <TextBlock Text="Minecraft 版本" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4"/>
+                    <TextBlock Text="{DynamicResource Str_Ui_Minecraft_Version}" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4"/>
                     <ComboBox x:Name="McVersionCombo" Style="{StaticResource FilterComboBox}" Height="34"
                               SelectionChanged="McVersionCombo_SelectionChanged"/>
                 </StackPanel>
                 <StackPanel Grid.Column="2" x:Name="BuildVersionPanel">
-                    <TextBlock x:Name="BuildVersionLabel" Text="加载器版本" FontSize="12"
+                    <TextBlock x:Name="BuildVersionLabel" Text="{DynamicResource Str_Ui_Loader_Version}" FontSize="12"
                                Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4"/>
                     <ComboBox x:Name="BuildVersionCombo" Style="{StaticResource FilterComboBox}" Height="34"/>
                 </StackPanel>
@@ -46,26 +54,26 @@
             <!-- NeoForge 没有独立的 MC 版本列表，选中项本身就是完整版本号，不需要第二级下拉框 -->
 
             <StackPanel x:Name="JavaPathPanel">
-                <TextBlock Text="Java 路径" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4"/>
+                <TextBlock Text="{DynamicResource Str_Ui_Java_Path}" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4"/>
                 <Grid Margin="0,0,0,14">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="*"/>
                         <ColumnDefinition Width="Auto"/>
                     </Grid.ColumnDefinitions>
                     <TextBox x:Name="JavaPathBox" Grid.Column="0" Style="{StaticResource SearchTextBox}" Height="34" Margin="0,0,8,0"/>
-                    <Button Grid.Column="1" Content="自动检测" Style="{StaticResource PrimaryButton}" Click="AutoDetectJava_Click"/>
+                    <Button Grid.Column="1" Content="{DynamicResource Str_Ui_Auto_Detect}" Style="{StaticResource PrimaryButton}" Click="AutoDetectJava_Click"/>
                 </Grid>
             </StackPanel>
             <TextBlock x:Name="JavaRequirementHintText" FontSize="12" Margin="0,-10,0,14" TextWrapping="Wrap"
                        Foreground="{DynamicResource AccentBrush}" Visibility="Collapsed"/>
             <TextBlock x:Name="FabricNoJavaHintText" FontSize="11" Margin="0,-10,0,14" TextWrapping="Wrap"
                        Foreground="{DynamicResource TextSecondaryBrush}" Visibility="Collapsed"
-                       Text="Fabric 客户端安装本身不需要本地运行安装器，不填 Java 也可以安装；启动这个版本时仍会照常自动匹配/下载所需 Java。"/>
+                       Text="{DynamicResource Str_Ui_Installing_The_Fabric_Client_Doesn_T_Run}"/>
 
-            <CheckBox x:Name="InstallFabricApiCheck" Content="同时安装 Fabric API（很多 Fabric 模组依赖它，建议勾选）"
+            <CheckBox x:Name="InstallFabricApiCheck" Content="{DynamicResource Str_Ui_Also_Install_Fabric_Api_Many_Fabric_Mods}"
                       IsChecked="True" Margin="0,-6,0,14" Visibility="Collapsed"/>
 
-            <CheckBox x:Name="InstallQslCheck" Content="同时安装 QSL（Quilt Standard Libraries，很多 Quilt 模组依赖它，建议勾选）"
+            <CheckBox x:Name="InstallQslCheck" Content="{DynamicResource Str_Ui_Also_Install_Qsl_Quilt_Standard_Librarie}"
                       IsChecked="True" Margin="0,-6,0,14" Visibility="Collapsed"/>
 
             <!-- 进度展示 -->
@@ -75,8 +83,8 @@
                 <ProgressBar x:Name="ProgressBarCtl" Height="8" Minimum="0" Maximum="1"/>
             </StackPanel>
 
-            <Button x:Name="InstallBtn" Content="安装" Style="{StaticResource PrimaryButton}"
+            <Button x:Name="InstallBtn" Content="{DynamicResource Str_Common_Install}" Style="{StaticResource PrimaryButton}"
                     HorizontalAlignment="Stretch" Padding="0,12" Click="Install_Click"/>
         </StackPanel>
     </ScrollViewer>
-</Window>
+</local:OverlayDialogControl>

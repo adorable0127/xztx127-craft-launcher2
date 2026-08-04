@@ -22,9 +22,33 @@
 ## 支持的语言列表
 
 见 `Services/LocalizationService.cs` 里的 `SupportedLanguages`。目前包括：
-简体中文(zh-Hans，默认)、繁体中文(zh-Hant)、英语-美国(en-US)、德语(de-DE)、
-法语(fr-FR)、意大利语(it-IT)、瑞典语(sv-SE)、日语(ja-JP)、韩语(ko-KR)、
+简体中文(zh-Hans，默认)、繁体中文(zh-Hant)、英语-美国(en-US)、英语-英国(en-GB)、
+德语(de-DE)、法语(fr-FR)、意大利语(it-IT)、瑞典语(sv-SE)、日语(ja-JP)、韩语(ko-KR)、
 粤语(yue-Hant，用繁体字书写，这是目前 Windows/主流系统对粤语书面语的通行处理方式)。
+
+### en-US 和 en-GB 是两份独立文件，不要合并
+
+英式和美式英语在拼写上有系统性差异（color/colour、center/centre、
+optimize/optimise、favorite/favourite 等），所以特意拆成两份独立的
+`Lang.en-US.xaml` / `Lang.en-GB.xaml`，而不是共用一份英文资源。
+
+`Lang.en-GB.xaml` 是从 `Lang.en-US.xaml` 派生的：key 集合完全一致，
+大多数简短 UI 词汇（Close/Save/Cancel 这类）两种英语拼写相同，保持不变；
+只有存在拼写差异的词才改写成英式拼写。**新增英文文案时，请先加进
+`Lang.en-US.xaml`，再同步加进 `Lang.en-GB.xaml`，如果这条文案里包含
+美式/英式有拼写差异的单词（可以参考下面的常见对照），要相应改成英式拼写，
+其余原样照抄即可**，不需要整条重新翻译。
+
+常见美式→英式拼写对照（远不止这些，遇到不确定的词可以查 Oxford
+English Dictionary 或者搜索"British spelling of X"）：
+color→colour, favorite→favourite, center→centre, behavior→behaviour,
+organize→organise, customize→customise, optimize→optimise,
+realize→realise, analyze→analyse, gray→grey, defense→defence,
+license(名词)→licence, catalog→catalogue, traveling→travelling,
+canceled→cancelled, fulfill→fulfil, judgment→judgement。
+注意"program"（计算机程序）在英式英语里也写 program，不是 programme
+（programme 只用于"节目/计划"这类含义），这条项目里目前没有用到，
+但以后遇到类似"美式英式其实同形"的词，不要无脑替换，需要按语境判断。
 
 语言选择弹窗（`LanguageSelectWindow`）里每种语言都用"该语言自己的名字"显示
 （比如英语显示 "English (United States)" 而不是"英语"），这是国际惯例，

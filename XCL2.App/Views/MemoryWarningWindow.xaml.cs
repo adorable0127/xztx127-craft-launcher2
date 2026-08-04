@@ -47,7 +47,7 @@ public class MemoryWarningProcessRow
 /// 玩家可能只是想赶紧保存一下再退出，直接自动 Kill 反而可能造成存档损坏/进度丢失。
 /// 这里的职责只是"尽早、显眼地提醒用户"，具体关不关、关哪个，由用户自己决定。
 /// </summary>
-public partial class MemoryWarningWindow : Window
+public partial class MemoryWarningWindow : OverlayDialogControl
 {
     private readonly GameProcessManager _processManager;
     private readonly MemoryWatchdogService _watchdog;
@@ -84,7 +84,7 @@ public partial class MemoryWarningWindow : Window
 
         if (_processManager.Running.Count == 0)
         {
-            Close();
+            CloseWith(null);
         }
         else
         {
@@ -95,7 +95,7 @@ public partial class MemoryWarningWindow : Window
     private void CloseAll_Click(object sender, RoutedEventArgs e)
     {
         _processManager.CloseAll();
-        Close();
+        CloseWith(null);
     }
 
     private void Ignore_Click(object sender, RoutedEventArgs e)
@@ -103,6 +103,6 @@ public partial class MemoryWarningWindow : Window
         // 本次先不处理，但不永久关闭监控——内存回升到安全水位之前不会重复打扰用户，
         // 一旦又跌下去（说明问题没解决/继续恶化）会照常重新弹出。
         _watchdog.SuppressUntilRecovered();
-        Close();
+        CloseWith(null);
     }
 }

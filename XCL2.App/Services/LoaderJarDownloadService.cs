@@ -143,7 +143,7 @@ public class LoaderJarDownloadService : IDisposable
         // Fabric/Quilt 的"loader jar"实际上是一份 JSON profile（真正的可执行 jar 由客户端启动时
         // 按 profile 里 libraries 列表从 Maven 逐个拉取，没有一个单独打包好的"loader.jar"文件）。
         // 这里如实按各家生态的真实产物类型下载并保存，不假装 Fabric/Quilt 也有一个单体 jar。
-        progress?.Report(new ProgressInfo("下载加载器文件", 0, 1, fileName));
+        progress?.Report(new ProgressInfo(Loc.T("Str_Cs_Downloading_Loader_Files", "下载加载器文件"), 0, 1, fileName));
 
         using var resp = await _http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, ct);
         if (!resp.IsSuccessStatusCode)
@@ -158,7 +158,7 @@ public class LoaderJarDownloadService : IDisposable
         }
         File.Move(tempPath, destPath, overwrite: true);
 
-        progress?.Report(new ProgressInfo("下载加载器文件", 1, 1, fileName));
+        progress?.Report(new ProgressInfo(Loc.T("Str_Cs_Downloading_Loader_Files", "下载加载器文件"), 1, 1, fileName));
         return destPath;
     }
 }

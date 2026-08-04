@@ -8,13 +8,13 @@
          WindowStartupLocation/ResizeMode/Background 这些"窗口级"属性全部不需要了——
          尺寸由内容自然撑开，居中/圆角卡片背景/阴影都是 OverlayCard 统一提供的。 -->
     <StackPanel Margin="20">
-        <TextBlock Text="从 Java 列表里选择要使用的 Java：" Margin="0,0,0,8" TextWrapping="Wrap"/>
+        <TextBlock Text="{DynamicResource Str_Ui_Pick_A_Java_Runtime_From_Your_Java_List}" Margin="0,0,0,8" TextWrapping="Wrap"/>
         <ListBox x:Name="JavaListBox" Height="140" DisplayMemberPath="DisplayText"/>
-        <TextBlock Text="没有想要的选项？先去「设置」页的 Java 列表里添加。" FontSize="11"
+        <TextBlock Text="{DynamicResource Str_Ui_Not_Seeing_The_One_You_Want_Add_It_To_Th}" FontSize="11"
                    Foreground="Gray" Margin="0,6,0,0" TextWrapping="Wrap"/>
         <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,16,0,0">
-            <Button x:Name="CancelBtn" Content="取消" Width="80" Margin="0,0,8,0" Click="Cancel_Click"/>
-            <Button x:Name="OkBtn" Content="确定" Width="80" Style="{DynamicResource PrimaryButton}" Click="Ok_Click" IsDefault="True"/>
+            <Button x:Name="CancelBtn" Content="{DynamicResource Str_Common_Cancel}" Width="80" Margin="0,0,8,0" Click="Cancel_Click"/>
+            <Button x:Name="OkBtn" Content="{DynamicResource Str_Common_Ok}" Width="80" Style="{DynamicResource PrimaryButton}" Click="Ok_Click" IsDefault="True"/>
         </StackPanel>
     </StackPanel>
 </local:OverlayDialogControl>

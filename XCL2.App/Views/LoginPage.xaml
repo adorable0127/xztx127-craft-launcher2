@@ -8,35 +8,35 @@
     </UserControl.Resources>
     <Border Background="{DynamicResource PanelBrush}" CornerRadius="10" Padding="24">
         <DockPanel>
-            <TextBlock DockPanel.Dock="Top" Text="账户管理" FontSize="20" FontWeight="Bold" Margin="0,0,0,16"/>
+            <TextBlock DockPanel.Dock="Top" Text="{DynamicResource Str_Nav_Accounts}" FontSize="20" FontWeight="Bold" Margin="0,0,0,16"/>
 
             <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,16">
                 <TextBox x:Name="OfflineNameBox" Width="200" Padding="8" VerticalContentAlignment="Center" Text="Player"/>
-                <Button Content="添加离线账户" Style="{StaticResource PrimaryButton}" Margin="10,0,0,0" Click="AddOffline_Click"/>
-                <Button Content="添加微软账户 (浏览器登录)" Style="{StaticResource PrimaryButton}" Margin="10,0,0,0" Click="AddMicrosoft_Click"/>
-                <Button Content="添加微软账户 (内嵌登录，免复制验证码)" Style="{StaticResource PrimaryButton}" Margin="10,0,0,0" Click="AddMicrosoftEmbedded_Click"/>
+                <Button Content="{DynamicResource Str_Ui_Add_Offline_Account}" Style="{StaticResource PrimaryButton}" Margin="10,0,0,0" Click="AddOffline_Click"/>
+                <Button Content="{DynamicResource Str_Ui_Add_Microsoft_Account_Browser_Sign_In_2}" Style="{StaticResource PrimaryButton}" Margin="10,0,0,0" Click="AddMicrosoft_Click"/>
+                <Button Content="{DynamicResource Str_Ui_Add_Microsoft_Account_Embedded_Sign_In_N}" Style="{StaticResource PrimaryButton}" Margin="10,0,0,0" Click="AddMicrosoftEmbedded_Click"/>
             </StackPanel>
 
             <!-- 认证服务器（皮肤站）登录：跟上面离线/微软账户完全独立的一套输入框，
                  不影响上面两种账户类型任何已有的按钮/事件。 -->
             <Border DockPanel.Dock="Top" Background="{DynamicResource SideBrush}" CornerRadius="6" Padding="12" Margin="0,0,0,16">
                 <StackPanel>
-                    <TextBlock Text="认证服务器（皮肤站）登录" FontWeight="Bold" Margin="0,0,0,8"/>
-                    <TextBlock Text="用第三方认证服务器（统一通行证/blessing-skin 等，需支持 Yggdrasil 协议）账号登录，登录后会自动使用该服务器上的皮肤。"
+                    <TextBlock Text="{DynamicResource Str_Ui_Authlib_Skin_Server_Sign_In}" FontWeight="Bold" Margin="0,0,0,8"/>
+                    <TextBlock Text="{DynamicResource Str_Ui_Sign_In_With_A_Third_Party_Auth_Server_A}"
                                FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,10" TextWrapping="Wrap"/>
                     <Grid Margin="0,0,0,6">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*"/>
                         </Grid.ColumnDefinitions>
                         <TextBox x:Name="AuthServerRootBox" Padding="8" VerticalContentAlignment="Center"
-                                 ToolTip="认证服务器 API 根地址，例如 https://example.com/api/yggdrasil"/>
+                                 ToolTip="{DynamicResource Str_Ui_Auth_Server_Api_Root_E_G_Https_Example_C}"/>
                     </Grid>
-                    <TextBlock Text="认证服务器地址（API 根地址）" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,8"/>
+                    <TextBlock Text="{DynamicResource Str_Ui_Auth_Server_Address_Api_Root}" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,8"/>
                     <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
                         <TextBox x:Name="AuthServerUsernameBox" Width="200" Padding="8" VerticalContentAlignment="Center"
-                                 ToolTip="皮肤站账号的邮箱/用户名"/>
+                                 ToolTip="{DynamicResource Str_Ui_Skin_Server_Email_Or_Username}"/>
                         <PasswordBox x:Name="AuthServerPasswordBox" Width="200" Padding="8" VerticalContentAlignment="Center" Margin="10,0,0,0"/>
-                        <Button Content="登录" Style="{StaticResource PrimaryButton}" Margin="10,0,0,0" Click="AddAuthServer_Click"/>
+                        <Button Content="{DynamicResource Str_Ui_Sign_In}" Style="{StaticResource PrimaryButton}" Margin="10,0,0,0" Click="AddAuthServer_Click"/>
                     </StackPanel>
                 </StackPanel>
             </Border>
@@ -44,7 +44,7 @@
             <TextBlock DockPanel.Dock="Top" x:Name="StatusText" Foreground="{DynamicResource AccentBrush}"
                        Margin="0,0,0,10" TextWrapping="Wrap"/>
 
-            <TextBlock DockPanel.Dock="Top" Text="已保存的账户（离线与微软账户可共存，随时切换）" FontWeight="Bold" Margin="0,0,0,8"/>
+            <TextBlock DockPanel.Dock="Top" Text="{DynamicResource Str_Ui_Saved_Accounts_Offline_And_Microsoft_Acc}" FontWeight="Bold" Margin="0,0,0,8"/>
             <ListBox x:Name="AccountListBox" BorderThickness="0">
                 <ListBox.ItemTemplate>
                     <DataTemplate>
@@ -60,12 +60,12 @@
                                 <TextBlock Text="{Binding Uuid}" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}"/>
                             </StackPanel>
                             <!-- 皮肤按钮只对离线账户显示：微软账户的皮肤由 Mojang 托管，启动器不应该干预。 -->
-                            <Button Grid.Column="1" Content="皮肤" Tag="{Binding}" Click="Skin_Click"
+                            <Button Grid.Column="1" Content="{DynamicResource Str_Ui_Skin}" Tag="{Binding}" Click="Skin_Click"
                                     Margin="0,0,8,0"
                                     Visibility="{Binding Type, Converter={StaticResource AccountTypeToOfflineVisibilityConverter}}"/>
-                            <Button Grid.Column="2" Content="选用" Style="{StaticResource PrimaryButton}" Margin="0,0,8,0"
+                            <Button Grid.Column="2" Content="{DynamicResource Str_Ui_Use}" Style="{StaticResource PrimaryButton}" Margin="0,0,8,0"
                                     Tag="{Binding}" Click="SelectAccount_Click"/>
-                            <Button Grid.Column="3" Content="删除" Tag="{Binding}" Click="RemoveAccount_Click"/>
+                            <Button Grid.Column="3" Content="{DynamicResource Str_Common_Delete}" Tag="{Binding}" Click="RemoveAccount_Click"/>
                         </Grid>
                     </DataTemplate>
                 </ListBox.ItemTemplate>

@@ -20,7 +20,7 @@ namespace XCL2.App.Views;
 /// FolderService.ScanVersions 是直接扫描 .minecraft/versions/ 目录的，装完的版本文件夹
 /// 天然就会被扫描到，这里只需要在关闭时通知 VersionSelectPage 刷新一次列表。
 /// </summary>
-public partial class InstallClientLoaderWindow : Window
+public partial class InstallClientLoaderWindow : OverlayDialogControl
 {
     private readonly MainWindow _owner;
     private readonly ClientLoaderInstallService _loaderService;
@@ -63,7 +63,9 @@ public partial class InstallClientLoaderWindow : Window
         // 窗口关闭时释放 _loaderService/_vanillaDownloader（进而释放它们内部可能持有的智能限速
         // 后台采样任务）。不释放不会导致下载出错，但会让那个采样循环一直跑到进程退出，
         // 每次打开又关闭这个窗口就多留一个永不退出的后台任务，属于资源泄漏，顺手修掉。
-        Closed += (_, _) => { _loaderService.Dispose(); _vanillaDownloader.Dispose(); };
+        // UserControl 没有 Window.Closed 事件；Overlay 弹窗用 IOverlayDialog.RequestClose
+        // 表示"我要关了"，语义等价，用它做资源释放。
+        RequestClose += (_, _) => { _loaderService.Dispose(); _vanillaDownloader.Dispose(); };
 
         McVersionCombo.ItemsSource = _mcVersions;
         BuildVersionCombo.ItemsSource = _buildVersions;
@@ -186,7 +188,7 @@ public partial class InstallClientLoaderWindow : Window
         }
         catch (Exception ex)
         {
-            ErrorPresenter.ShowFriendlyError("获取版本列表失败，可能是网络连接问题或下载源暂时不可用，请检查网络后重试。", $"[获取版本列表失败] {ex}", "获取版本列表失败");
+            ErrorPresenter.ShowFriendlyError(Loc.T("Str_Cs_Couldn_T_Fetch_The_Version_List_This_Is_", "获取版本列表失败，可能是网络连接问题或下载源暂时不可用，请检查网络后重试。"), $"[获取版本列表失败] {ex}", "获取版本列表失败");
         }
         finally
         {
@@ -206,17 +208,29 @@ public partial class InstallClientLoaderWindow : Window
         {
             List<ServerCoreBuild> builds = _selectedLoaderType switch
             {
-                ServerCoreType.Fabric => await _loaderService.GetFabricLoaderVersionsAsync(),
+                // 修复安装 Fabric/Quilt 报 404：必须把当前选中的 MC 版本传下去，
+                // 让 Meta API 只返回"确实支持这个 MC 版本"的 Loader 交集列表。
+                // 过去这里不传版本，拿到的是全量 Loader 列表，选中项跟 MC 版本对不上时
+                // 后续 profile/json 必然 404（详见 ClientLoaderInstallService
+                // .GetFabricLoaderVersionsAsync 的注释）。
+                ServerCoreType.Fabric => await _loaderService.GetFabricLoaderVersionsAsync(mcVersion),
                 ServerCoreType.Forge => await _loaderService.GetForgeInstallerVersionsAsync(mcVersion),
-                ServerCoreType.Quilt => await _loaderService.GetQuiltLoaderVersionsAsync(),
+                ServerCoreType.Quilt => await _loaderService.GetQuiltLoaderVersionsAsync(mcVersion),
                 _ => new List<ServerCoreBuild>()
             };
             foreach (var b in builds) _buildVersions.Add(b);
             BuildVersionCombo.SelectedItem = builds.FirstOrDefault(b => b.IsRecommended) ?? builds.FirstOrDefault();
         }
+        catch (InvalidOperationException ex)
+        {
+            // 这一类是我们自己在 ClientLoaderInstallService 里抛出的"人话"异常
+            // （比如"Fabric 还没有为 MC xxx 发布 Loader"），直接把原文给用户，
+            // 不要再套一层笼统的"可能是网络连接问题"，那会把真正的原因盖掉。
+            ErrorPresenter.ShowFriendlyError(ex.Message, $"[获取构建版本列表失败] {ex}", "获取构建版本列表失败");
+        }
         catch (Exception ex)
         {
-            ErrorPresenter.ShowFriendlyError("获取构建版本列表失败，可能是网络连接问题或下载源暂时不可用，请检查网络后重试。", $"[获取构建版本列表失败] {ex}", "获取构建版本列表失败");
+            ErrorPresenter.ShowFriendlyError(Loc.T("Str_Cs_Couldn_T_Fetch_The_Build_List_This_Is_Us", "获取构建版本列表失败，可能是网络连接问题或下载源暂时不可用，请检查网络后重试。"), $"[获取构建版本列表失败] {ex}", "获取构建版本列表失败");
         }
     }
 
@@ -253,8 +267,7 @@ public partial class InstallClientLoaderWindow : Window
         var found = _javaService.FindJava(null, preferMajor, _owner.ConfigService);
         if (found == null)
         {
-            MessageBox.Show("没有检测到可用的 Java。请在「设置」页先下载/配置 Java，或者手动填写路径。",
-                "未找到 Java", MessageBoxButton.OK, MessageBoxImage.Warning);
+            MessageBoxDialog.ShowWarning(Loc.T("Str_Cs_No_Usable_Java_Was_Found_Download_Or_Con", "没有检测到可用的 Java。请在「设置」页先下载/配置 Java，或者手动填写路径。"), Loc.T("Str_Cs_Java_Not_Found", "未找到 Java"));
             return;
         }
         JavaPathBox.Text = found;
@@ -264,14 +277,14 @@ public partial class InstallClientLoaderWindow : Window
     {
         if (McVersionCombo.SelectedItem is not string mcVersion)
         {
-            MessageBox.Show("请选择 Minecraft 版本。", "提示", MessageBoxButton.OK, MessageBoxImage.Information);
+            MessageBoxDialog.ShowInfo(Loc.T("Str_Cs_Please_Choose_A_Minecraft_Version", "请选择 Minecraft 版本。"), Loc.T("Str_Status_Tip", "提示"));
             return;
         }
 
         var buildVersion = (BuildVersionCombo.SelectedItem as ServerCoreBuild)?.DisplayVersion;
         if (_selectedLoaderType is not (ServerCoreType.NeoForge or ServerCoreType.Vanilla) && string.IsNullOrEmpty(buildVersion))
         {
-            MessageBox.Show("请选择构建/加载器版本。", "提示", MessageBoxButton.OK, MessageBoxImage.Information);
+            MessageBoxDialog.ShowInfo(Loc.T("Str_Cs_Please_Choose_A_Build_Or_Loader_Version", "请选择构建/加载器版本。"), Loc.T("Str_Status_Tip", "提示"));
             return;
         }
 
@@ -281,8 +294,7 @@ public partial class InstallClientLoaderWindow : Window
         if (_selectedLoaderType is not (ServerCoreType.Fabric or ServerCoreType.Quilt or ServerCoreType.Vanilla) &&
             (string.IsNullOrWhiteSpace(JavaPathBox.Text) || !File.Exists(JavaPathBox.Text)))
         {
-            MessageBox.Show("请提供一个有效的 Java 路径（点击「自动检测」或手动填写），Forge/NeoForge 安装器需要本地 Java 才能运行。",
-                "提示", MessageBoxButton.OK, MessageBoxImage.Information);
+            MessageBoxDialog.ShowInfo("请提供一个有效的 Java 路径（点击「自动检测」或手动填写），Forge/NeoForge 安装器需要本地 Java 才能运行。", Loc.T("Str_Status_Tip", "提示"));
             return;
         }
 
@@ -290,8 +302,7 @@ public partial class InstallClientLoaderWindow : Window
             .FirstOrDefault(f => f.Path == _owner.ConfigService.Config.SelectedFolderPath)?.Path;
         if (string.IsNullOrEmpty(minecraftDir))
         {
-            MessageBox.Show("没有找到当前选中的 .minecraft 文件夹，请先在「版本管理」页选择/添加一个文件夹。",
-                "提示", MessageBoxButton.OK, MessageBoxImage.Warning);
+            MessageBoxDialog.ShowWarning("没有找到当前选中的 .minecraft 文件夹，请先在「版本管理」页选择/添加一个文件夹。", Loc.T("Str_Status_Tip", "提示"));
             return;
         }
 
@@ -317,8 +328,7 @@ public partial class InstallClientLoaderWindow : Window
                 var entry = _versionManifest?.Versions.FirstOrDefault(v => v.Id == mcVersion);
                 if (entry == null)
                 {
-                    MessageBox.Show("找不到该版本的清单信息，请重新打开这个窗口再试一次。",
-                        "错误", MessageBoxButton.OK, MessageBoxImage.Error);
+                    MessageBoxDialog.ShowError("找不到该版本的清单信息，请重新打开这个窗口再试一次。", Loc.T("Str_Cs_Error", "错误"));
                     return;
                 }
                 await _vanillaDownloader.InstallVersionAsync(minecraftDir, entry, progress);
@@ -347,14 +357,12 @@ public partial class InstallClientLoaderWindow : Window
             }
 
             InstalledVersionId = versionId;
-            MessageBox.Show($"版本「{versionId}」安装完成！\n可以在「已安装版本」列表里选中它。",
-                "成功", MessageBoxButton.OK, MessageBoxImage.Information);
-            DialogResult = true;
-            Close();
+            MessageBoxDialog.ShowInfo($"版本「{versionId}」安装完成！\n可以在「已安装版本」列表里选中它。", "成功");
+            CloseWith(true);
         }
         catch (Exception ex)
         {
-            ErrorPresenter.ShowFriendlyError("安装失败，可能是网络连接问题、下载源暂时不可用，或安装文件已损坏，请检查网络后重试。", $"[安装失败] {ex}", "安装失败");
+            ErrorPresenter.ShowFriendlyError(Loc.T("Str_Cs_Installation_Failed_This_Could_Be_A_Netw", "安装失败，可能是网络连接问题、下载源暂时不可用，或安装文件已损坏，请检查网络后重试。"), $"[安装失败] {ex}", "安装失败");
         }
         finally
         {

@@ -15,7 +15,7 @@ namespace XCL2.App.Views;
 /// 只用于"用户第一次解锁实验性功能"这一次性流程；解锁之后由 SettingsPage 直接打开
 /// ExperimentalFeaturesWindow，不会再经过这里。
 /// </summary>
-public partial class ExperimentalGateWindow : Window
+public partial class ExperimentalGateWindow : OverlayDialogControl
 {
     private const int CountdownSeconds = 10;
     private int _remaining = CountdownSeconds;
@@ -32,6 +32,7 @@ public partial class ExperimentalGateWindow : Window
         _timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
         _timer.Tick += Timer_Tick;
         _timer.Start();
+        RequestClose += OnRequestClose;
 
         UpdateCountdownText();
     }
@@ -65,19 +66,21 @@ public partial class ExperimentalGateWindow : Window
 
         Confirmed = true;
         _timer.Stop();
-        Close();
+        CloseWith(null);
     }
 
     private void Cancel_Click(object sender, RoutedEventArgs e)
     {
         Confirmed = false;
         _timer.Stop();
-        Close();
+        CloseWith(null);
     }
 
-    protected override void OnClosed(EventArgs e)
+    // 同 MicrosoftLoginWindow：OverlayDialogControl 继承 UserControl，没有 Window.OnClosed
+    // 可以重写。改用 IOverlayDialog.RequestClose，逻辑跟原来完全一致——弹窗关闭时把倒计时
+    // 计时器停掉，避免它在弹窗已经摘除之后还继续触发 Tick。
+    private void OnRequestClose(object? sender, bool? result)
     {
         _timer.Stop();
-        base.OnClosed(e);
     }
 }

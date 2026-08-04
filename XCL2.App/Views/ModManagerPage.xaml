@@ -14,12 +14,12 @@
                     <ColumnDefinition Width="*"/>
                     <ColumnDefinition Width="Auto"/>
                 </Grid.ColumnDefinitions>
-                <TextBlock Text="Mod 管理" FontSize="18" FontWeight="Bold" VerticalAlignment="Center"/>
+                <TextBlock Text="{DynamicResource Str_Nav_ModManager}" FontSize="18" FontWeight="Bold" VerticalAlignment="Center"/>
                 <StackPanel Grid.Column="1" Orientation="Horizontal">
-                    <Button Content="导出整合包" Style="{StaticResource SideNavButton}" Margin="0,0,8,0" Click="ExportModpack_Click"/>
-                    <Button Content="导入整合包" Style="{StaticResource SideNavButton}" Margin="0,0,8,0" Click="ImportModpack_Click"/>
-                    <Button Content="检查前置模组" Style="{StaticResource SideNavButton}" Margin="0,0,8,0" Click="AnalyzeDependencies_Click"/>
-                    <Button Content="刷新" Style="{StaticResource PrimaryButton}" Click="Refresh_Click"/>
+                    <Button Content="{DynamicResource Str_Ui_Export_Modpack}" Style="{StaticResource SideNavButton}" Margin="0,0,8,0" Click="ExportModpack_Click"/>
+                    <Button Content="{DynamicResource Str_Ui_Import_Modpack}" Style="{StaticResource SideNavButton}" Margin="0,0,8,0" Click="ImportModpack_Click"/>
+                    <Button Content="{DynamicResource Str_Ui_Check_Dependencies}" Style="{StaticResource SideNavButton}" Margin="0,0,8,0" Click="AnalyzeDependencies_Click"/>
+                    <Button Content="{DynamicResource Str_Common_Refresh}" Style="{StaticResource PrimaryButton}" Click="Refresh_Click"/>
                 </StackPanel>
             </Grid>
 
@@ -51,20 +51,20 @@
                                     <Run Text="  ·  "/><Run Text="{Binding StatusLabel, Mode=OneWay}"/>
                                 </TextBlock>
                             </StackPanel>
-                            <Button Grid.Column="1" Content="启用" Margin="0,0,8,0" Padding="10,6"
+                            <Button Grid.Column="1" Content="{DynamicResource Str_Ui_Enable}" Margin="0,0,8,0" Padding="10,6"
                                     Style="{StaticResource SideNavButton}" Tag="{Binding}"
                                     Click="EnableMod_Click" Visibility="{Binding EnableButtonVisibility}"/>
-                            <Button Grid.Column="2" Content="禁用" Margin="0,0,8,0" Padding="10,6"
+                            <Button Grid.Column="2" Content="{DynamicResource Str_Ui_Disable}" Margin="0,0,8,0" Padding="10,6"
                                     Style="{StaticResource SideNavButton}" Tag="{Binding}"
                                     Click="DisableMod_Click" Visibility="{Binding DisableButtonVisibility}"/>
-                            <Button Grid.Column="3" Content="删除" Padding="10,6"
+                            <Button Grid.Column="3" Content="{DynamicResource Str_Common_Delete}" Padding="10,6"
                                     Style="{StaticResource SideNavButton}" Tag="{Binding}" Click="DeleteMod_Click"/>
                         </Grid>
                     </DataTemplate>
                 </ListBox.ItemTemplate>
             </ListBox>
 
-            <TextBlock x:Name="EmptyHint" Grid.Row="2" Text="这个版本还没有安装任何 Mod，去「下载」页的 Mod 分类搜索安装吧。"
+            <TextBlock x:Name="EmptyHint" Grid.Row="2" Text="{DynamicResource Str_Ui_No_Mods_Installed_For_This_Version_Yet_H}"
                        FontSize="13" Foreground="{DynamicResource TextSecondaryBrush}"
                        HorizontalAlignment="Center" VerticalAlignment="Center" Visibility="Collapsed"/>
         </Grid>

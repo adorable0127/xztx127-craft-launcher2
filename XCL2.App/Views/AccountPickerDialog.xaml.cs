@@ -66,7 +66,7 @@ public partial class AccountPickerDialog : OverlayDialogControl
     {
         if (AccountListBox.SelectedItem is not Account acc)
         {
-            MessageBox.Show("请先选中一个账户。", "提示", MessageBoxButton.OK, MessageBoxImage.Information);
+            MessageBoxDialog.ShowInfo("请先选中一个账户。", Loc.T("Str_Status_Tip", "提示"));
             return;
         }
         SelectedAccount = acc;
@@ -95,7 +95,7 @@ public partial class AccountPickerDialog : OverlayDialogControl
 
     private async void AddMicrosoft_Click(object sender, RoutedEventArgs e)
     {
-        AddAccountStatusText.Text = "正在准备登录，请稍候...";
+        AddAccountStatusText.Text = Loc.T("Str_Cs_Preparing_To_Sign_In_Please_Wait", "正在准备登录，请稍候...");
 
         MicrosoftAuthService auth;
         try
@@ -115,7 +115,7 @@ public partial class AccountPickerDialog : OverlayDialogControl
         {
             Dispatcher.Invoke(() =>
             {
-                popup = new DeviceCodeWindow(uri, code, cts) { Owner = Window.GetWindow(this) };
+                popup = new DeviceCodeWindow(uri, code, cts);
                 popup.Show();
             });
         };
@@ -128,7 +128,7 @@ public partial class AccountPickerDialog : OverlayDialogControl
 
             if (account == null)
             {
-                AddAccountStatusText.Text = "微软账户登录失败或已取消，请重试。";
+                AddAccountStatusText.Text = Loc.T("Str_Cs_Microsoft_Sign_In_Failed_Or_Was_Cancelle", "微软账户登录失败或已取消，请重试。");
                 return;
             }
             _configService.AddOrUpdateAccount(account);
@@ -138,7 +138,7 @@ public partial class AccountPickerDialog : OverlayDialogControl
         catch (OperationCanceledException)
         {
             popup?.Dispatcher.Invoke(() => popup.Close());
-            AddAccountStatusText.Text = "登录已取消。";
+            AddAccountStatusText.Text = Loc.T("Str_Cs_Sign_In_Cancelled", "登录已取消。");
         }
         catch (AuthStepException ex)
         {
@@ -149,7 +149,7 @@ public partial class AccountPickerDialog : OverlayDialogControl
         {
             popup?.Dispatcher.Invoke(() => popup.Close());
             ErrorPresenter.LogTechnicalDetail($"微软账户登录(浏览器，账户选择弹窗内)出错: {ex}");
-            AddAccountStatusText.Text = "登录出错，请检查网络连接后重试。";
+            AddAccountStatusText.Text = Loc.T("Str_Cs_Sign_In_Failed_Check_Your_Connection_And", "登录出错，请检查网络连接后重试。");
         }
     }
 
@@ -177,12 +177,12 @@ public partial class AccountPickerDialog : OverlayDialogControl
             }
             else
             {
-                AddAccountStatusText.Text = "已取消内嵌登录，可以点击「浏览器登录」改用系统浏览器完成登录。";
+                AddAccountStatusText.Text = Loc.T("Str_Cs_Embedded_Sign_In_Cancelled_You_Can_Use_B", "已取消内嵌登录，可以点击「浏览器登录」改用系统浏览器完成登录。");
             }
             return;
         }
 
-        AddAccountStatusText.Text = "正在打开内嵌登录窗口...";
+        AddAccountStatusText.Text = Loc.T("Str_Cs_Opening_The_Embedded_Sign_In_Window", "正在打开内嵌登录窗口...");
 
         MicrosoftAuthService auth;
         string url, verifier;
@@ -191,7 +191,7 @@ public partial class AccountPickerDialog : OverlayDialogControl
         {
             auth = new MicrosoftAuthService();
             (url, verifier) = auth.BuildInteractiveAuthorizeUrl();
-            popup = new MicrosoftLoginWindow(url) { Owner = Window.GetWindow(this) };
+            popup = new MicrosoftLoginWindow(url);
         }
         catch (AuthStepException ex)
         {
@@ -207,7 +207,7 @@ public partial class AccountPickerDialog : OverlayDialogControl
         }
         catch (OperationCanceledException)
         {
-            AddAccountStatusText.Text = "登录已取消。";
+            AddAccountStatusText.Text = Loc.T("Str_Cs_Sign_In_Cancelled", "登录已取消。");
             return;
         }
         catch (AuthStepException ex)
@@ -221,7 +221,7 @@ public partial class AccountPickerDialog : OverlayDialogControl
             var account = await auth.LoginWithAuthorizationCodeAsync(code, verifier);
             if (account == null)
             {
-                AddAccountStatusText.Text = "微软账户登录失败，请重试。";
+                AddAccountStatusText.Text = Loc.T("Str_Cs_Microsoft_Sign_In_Failed_Please_Try_Agai", "微软账户登录失败，请重试。");
                 return;
             }
             _configService.AddOrUpdateAccount(account);
@@ -235,7 +235,7 @@ public partial class AccountPickerDialog : OverlayDialogControl
         catch (Exception ex)
         {
             ErrorPresenter.LogTechnicalDetail($"微软账户登录(内嵌，账户选择弹窗内)出错: {ex}");
-            AddAccountStatusText.Text = "登录出错，请检查网络连接后重试。";
+            AddAccountStatusText.Text = Loc.T("Str_Cs_Sign_In_Failed_Check_Your_Connection_And", "登录出错，请检查网络连接后重试。");
         }
     }
 }

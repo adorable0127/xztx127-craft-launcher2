@@ -14,7 +14,7 @@ namespace XCL2.App.Views;
 /// 用户可以直接关掉不影响正常使用），是否弹出受 AppConfig.ShowServerNetworkGuideOnStart
 /// 控制，窗口内有"不再提示"勾选框直接写回这个配置。
 /// </summary>
-public partial class ServerNetworkGuideWindow : Window
+public partial class ServerNetworkGuideWindow : OverlayDialogControl
 {
     /// <summary>关闭窗口时是否勾选了"不再提示"，调用方据此更新 AppConfig 并保存。</summary>
     public bool DontShowAgain { get; private set; }
@@ -41,6 +41,6 @@ public partial class ServerNetworkGuideWindow : Window
     private void Close_Click(object sender, RoutedEventArgs e)
     {
         DontShowAgain = DontShowAgainCheck.IsChecked == true;
-        Close();
+        CloseWith(null);
     }
 }

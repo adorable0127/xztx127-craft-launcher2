@@ -9,7 +9,13 @@ namespace XCL2.App.Views;
 /// 用户单击选中一项再点"使用这个"确认，避免用容易输错的"输入序号"交互。
 /// 纯代码构建 UI（这个窗口足够简单，不需要单独的 .xaml 文件）。
 /// </summary>
-public class JavaCandidatePickerWindow : Window
+/// <remarks>
+/// 已从独立 Window 迁移为进程内 Overlay 弹窗（继承 OverlayDialogControl）。
+/// 尺寸/居中/圆角卡片背景都由 MainWindow 的 OverlayCard 统一提供，
+/// 所以原来的 Title/Width/Height/WindowStartupLocation 全部去掉，
+/// 只保留一个 MaxHeight 防止候选项特别多时把弹窗顶到屏幕外。
+/// </remarks>
+public class JavaCandidatePickerWindow : OverlayDialogControl
 {
     private readonly ListBox _list = new() { Margin = new Thickness(12) };
 
@@ -17,10 +23,9 @@ public class JavaCandidatePickerWindow : Window
 
     public JavaCandidatePickerWindow(List<JavaCandidate> candidates)
     {
-        Title = "选择要使用的 Java";
-        Width = 640;
-        Height = 420;
-        WindowStartupLocation = WindowStartupLocation.CenterOwner;
+        MinWidth = 560;
+        MaxWidth = 640;
+        MaxHeight = 420;
 
         foreach (var c in candidates)
         {
@@ -38,19 +43,30 @@ public class JavaCandidatePickerWindow : Window
             if (_list.SelectedItem is ListBoxItem item && item.Tag is string path)
             {
                 SelectedPath = path;
-                DialogResult = true;
+                CloseWith(true);
             }
         };
 
         var cancelButton = new Button { Content = "取消", Padding = new Thickness(16, 6, 16, 6), Margin = new Thickness(0, 0, 12, 12), HorizontalAlignment = HorizontalAlignment.Right };
-        cancelButton.Click += (_, _) => { DialogResult = false; };
+        cancelButton.Click += (_, _) => CloseWith(false);
 
         var buttonRow = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right };
         buttonRow.Children.Add(cancelButton);
         buttonRow.Children.Add(okButton);
 
+        // Overlay 没有标题栏，原来写在 Window.Title 里的文字改成内容顶部的一行标题。
+        var title = new TextBlock
+        {
+            Text = "选择要使用的 Java",
+            FontSize = 16,
+            FontWeight = FontWeights.Bold,
+            Margin = new Thickness(12, 12, 12, 0),
+        };
+
         var root = new DockPanel();
+        DockPanel.SetDock(title, Dock.Top);
         DockPanel.SetDock(buttonRow, Dock.Bottom);
+        root.Children.Add(title);
         root.Children.Add(buttonRow);
         root.Children.Add(_list);
 

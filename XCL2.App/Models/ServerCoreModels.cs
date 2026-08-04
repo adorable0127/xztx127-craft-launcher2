@@ -124,6 +124,12 @@ public static class ServerJavaRequirement
         if (parsed == null) return 21;
 
         var (major, minor, patch) = parsed.Value;
+
+        // 年份制版本号（26.x 及以后，Minecraft 从 26 起换了命名方案）。
+        // 旧代码这里一律 return 21，等于把所有新版本都当成"要 Java 21"——
+        // 而 1.26.1+ 在旧命名下本来就要求 Java 25，年份制的 26.x 是同一批版本的新写法，
+        // 要求不会比它更低。按 25 处理，跟下面 `minor >= 26 && patch >= 1` 那条规则保持一致。
+        if (major >= 26) return 25;
         if (major != 1) return 21;
 
         // 1.26.1 及以上（含未来 1.27+）固定要求 Java 25，必须最先判断，

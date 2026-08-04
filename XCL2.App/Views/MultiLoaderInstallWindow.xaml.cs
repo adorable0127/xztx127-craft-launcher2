@@ -25,7 +25,7 @@ namespace XCL2.App.Views;
 /// 需要先输入正确的 token（TokenGateService 校验）才能看到下面的安装配置区域，
 /// 校验通过前 InstallPanel 保持 Collapsed。
 /// </summary>
-public partial class MultiLoaderInstallWindow : Window
+public partial class MultiLoaderInstallWindow : OverlayDialogControl
 {
     private readonly MainWindow _owner;
     private readonly ClientLoaderInstallService _loaderService;
@@ -47,7 +47,8 @@ public partial class MultiLoaderInstallWindow : Window
         _loaderService = new ClientLoaderInstallService(owner.ConfigService.Config);
         InitializeComponent();
 
-        Closed += (_, _) => _loaderService.Dispose();
+        // 同上：Window.Closed → IOverlayDialog.RequestClose
+        RequestClose += (_, _) => _loaderService.Dispose();
 
         RiskText.Text = BuildRiskWarningText();
 
@@ -86,14 +87,14 @@ public partial class MultiLoaderInstallWindow : Window
         if (TokenGateService.ValidateMultiLoaderToken(TokenBox.Text))
         {
             _tokenUnlocked = true;
-            TokenStatusText.Text = "✅ Token 校验通过，欢迎来到还没写完的角落。下面可以开始配置了。";
+            TokenStatusText.Text = Loc.T("Str_Cs_Token_Accepted_Welcome_To_The_Unfinished", "✅ Token 校验通过，欢迎来到还没写完的角落。下面可以开始配置了。");
             TokenStatusText.Foreground = (System.Windows.Media.Brush)FindResource("SuccessTextBrush");
             TokenPanel.Visibility = Visibility.Collapsed;
             InstallPanel.Visibility = Visibility.Visible;
         }
         else
         {
-            TokenStatusText.Text = "❌ Token 不对。这不是彩蛋提示——这里是真的需要正确的 token 才能继续，请检查有没有多打/漏打空格或符号。";
+            TokenStatusText.Text = Loc.T("Str_Cs_Wrong_Token_This_Isn_T_A_Hint_Towards_An", "❌ Token 不对。这不是彩蛋提示——这里是真的需要正确的 token 才能继续，请检查有没有多打/漏打空格或符号。");
             TokenStatusText.Foreground = (System.Windows.Media.Brush)FindResource("DangerBrush");
         }
     }
@@ -121,8 +122,7 @@ public partial class MultiLoaderInstallWindow : Window
         var found = _javaService.FindJava(null, configService: _owner.ConfigService);
         if (found == null)
         {
-            MessageBox.Show("没有检测到可用的 Java。请在「设置」页先下载/配置 Java，或者手动填写路径。",
-                "未找到 Java", MessageBoxButton.OK, MessageBoxImage.Warning);
+            MessageBoxDialog.ShowWarning(Loc.T("Str_Cs_No_Usable_Java_Was_Found_Download_Or_Con", "没有检测到可用的 Java。请在「设置」页先下载/配置 Java，或者手动填写路径。"), Loc.T("Str_Cs_Java_Not_Found", "未找到 Java"));
             return;
         }
         JavaPathBox.Text = found;
@@ -166,22 +166,21 @@ public partial class MultiLoaderInstallWindow : Window
         var mcVersion = McVersionBox.Text?.Trim();
         if (string.IsNullOrEmpty(mcVersion))
         {
-            MessageBox.Show("请填写 Minecraft 版本号，例如 1.20.1。", "提示", MessageBoxButton.OK, MessageBoxImage.Information);
+            MessageBoxDialog.ShowInfo(Loc.T("Str_Cs_Please_Enter_A_Minecraft_Version_E_G_1_2", "请填写 Minecraft 版本号，例如 1.20.1。"), Loc.T("Str_Status_Tip", "提示"));
             return;
         }
 
         var loaders = SelectedLoaders();
         if (loaders.Count == 0)
         {
-            MessageBox.Show("请至少勾选一个加载器。", "提示", MessageBoxButton.OK, MessageBoxImage.Information);
+            MessageBoxDialog.ShowInfo(Loc.T("Str_Cs_Please_Select_At_Least_One_Loader", "请至少勾选一个加载器。"), Loc.T("Str_Status_Tip", "提示"));
             return;
         }
 
         var needsJava = loaders.Contains(ServerCoreType.Forge) || loaders.Contains(ServerCoreType.NeoForge);
         if (needsJava && (string.IsNullOrWhiteSpace(JavaPathBox.Text) || !File.Exists(JavaPathBox.Text)))
         {
-            MessageBox.Show("勾选了 Forge/NeoForge，需要一个有效的本地 Java 路径（点「自动检测」或手动填写）。",
-                "提示", MessageBoxButton.OK, MessageBoxImage.Information);
+            MessageBoxDialog.ShowInfo(Loc.T("Str_Cs_Forge_Or_Neoforge_Is_Selected_Which_Need", "勾选了 Forge/NeoForge，需要一个有效的本地 Java 路径（点「自动检测」或手动填写）。"), Loc.T("Str_Status_Tip", "提示"));
             return;
         }
 
@@ -189,8 +188,7 @@ public partial class MultiLoaderInstallWindow : Window
             .FirstOrDefault(f => f.Path == _owner.ConfigService.Config.SelectedFolderPath)?.Path;
         if (string.IsNullOrEmpty(minecraftDir))
         {
-            MessageBox.Show("没有找到当前选中的 .minecraft 文件夹，请先在「版本选择」页选择/添加一个文件夹。",
-                "提示", MessageBoxButton.OK, MessageBoxImage.Warning);
+            MessageBoxDialog.ShowWarning(Loc.T("Str_Cs_The_Selected_Minecraft_Folder_Couldn_T_B", "没有找到当前选中的 .minecraft 文件夹，请先在「版本选择」页选择/添加一个文件夹。"), Loc.T("Str_Status_Tip", "提示"));
             return;
         }
 
@@ -266,8 +264,7 @@ public partial class MultiLoaderInstallWindow : Window
                 "版本文件格式本身的限制，不是没拼好。纯粹图一乐，能不能进游戏随缘。";
         }
         summary += summary_MergeFailureNote;
-        MessageBox.Show(summary, installedIds.Count > 0 ? "完成" : "全部失败",
-            MessageBoxButton.OK, failed.Count > 0 ? MessageBoxImage.Warning : MessageBoxImage.Information);
+        MessageBoxDialog.ShowWarning(summary, installedIds.Count > 0 ? Loc.T("Str_Common_Finish", "完成") : Loc.T("Str_Cs_All_Failed", "全部失败"));
 
         // 修复核心：只要成功装上了至少一个加载器，就把 DialogResult 设为 true。
         // 之前这里从不设置 DialogResult，ShowDialog() 调用方拿到的永远是 null/false，
@@ -276,7 +273,7 @@ public partial class MultiLoaderInstallWindow : Window
         // 全部失败时不设置，让调用方保持"什么都没变"的语义，用户也可以继续留在这个窗口重试。
         if (installedIds.Count > 0)
         {
-            DialogResult = true;
+            CloseWith(true);
         }
     }
 
@@ -284,7 +281,7 @@ public partial class MultiLoaderInstallWindow : Window
     /// 合装功能不想再让用户对着每个加载器各选一次构建版本，直接用官方推荐版本。</summary>
     private async Task<string> InstallFabricLatestAsync(string minecraftDir, string mcVersion, IProgress<ProgressInfo> progress)
     {
-        var builds = await _loaderService.GetFabricLoaderVersionsAsync();
+        var builds = await _loaderService.GetFabricLoaderVersionsAsync(mcVersion);
         var loaderVersion = builds.FirstOrDefault(b => b.IsRecommended)?.DisplayVersion ?? builds.FirstOrDefault()?.DisplayVersion
             ?? throw new InvalidOperationException("没有可用的 Fabric Loader 版本。");
         return await _loaderService.InstallFabricClientAsync(minecraftDir, mcVersion, loaderVersion, progress);
@@ -292,7 +289,7 @@ public partial class MultiLoaderInstallWindow : Window
 
     private async Task<string> InstallQuiltLatestAsync(string minecraftDir, string mcVersion, IProgress<ProgressInfo> progress)
     {
-        var builds = await _loaderService.GetQuiltLoaderVersionsAsync();
+        var builds = await _loaderService.GetQuiltLoaderVersionsAsync(mcVersion);
         var loaderVersion = builds.FirstOrDefault(b => b.IsRecommended)?.DisplayVersion ?? builds.FirstOrDefault()?.DisplayVersion
             ?? throw new InvalidOperationException("没有可用的 Quilt Loader 版本。");
         return await _loaderService.InstallQuiltClientAsync(minecraftDir, mcVersion, loaderVersion, progress);
@@ -339,7 +336,7 @@ public partial class MultiLoaderInstallWindow : Window
 
     private void Close_Click(object sender, RoutedEventArgs e)
     {
-        Close();
+        CloseWith(null);
     }
 
     /// <summary>

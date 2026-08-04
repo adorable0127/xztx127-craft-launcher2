@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Net.Http;
@@ -51,6 +52,9 @@ public partial class ToolboxPage : UserControl
         _dlHttp.DefaultRequestHeaders.UserAgent.ParseAdd("XCL2-Launcher-Toolbox/1.0");
 
         MemOptCheck.IsChecked = _owner.ConfigService.Config.EnableMemoryOptimization;
+
+        // 基岩版检测是异步的（要跑一次 PowerShell），不阻塞页面构造。
+        RefreshBedrockStatusAsync();
     }
 
     // ============================================================
@@ -61,7 +65,15 @@ public partial class ToolboxPage : UserControl
     {
         try
         {
-            var itemId = string.IsNullOrWhiteSpace(AchItemIdBox.Text) ? "minecraft:diamond" : AchItemIdBox.Text.Trim();
+            var rawItemId = string.IsNullOrWhiteSpace(AchItemIdBox.Text) ? "minecraft:diamond" : AchItemIdBox.Text.Trim();
+
+            // 物品 ID 归一化：把 "Diamond Sword" 这种写法规整成合法的 minecraft:diamond_sword，
+            // 并把更正后的结果回填到输入框，让用户看到实际用的是什么
+            // （旧版完全不校验格式，还会在 ID 以冒号结尾时画出一个 NUL 字符，
+            //  详见 AchievementImageService 类头注释里对这个 bug 的说明）。
+            var normalized = AchievementImageService.NormalizeItemId(rawItemId);
+            if (normalized.WasChanged) AchItemIdBox.Text = normalized.FullId;
+            var itemId = normalized.FullId;
             var achName = string.IsNullOrWhiteSpace(AchNameBox.Text) ? "Achievement Get!" : AchNameBox.Text.Trim();
             var line1 = AchLine1Box.Text?.Trim() ?? "";
             var line2 = string.IsNullOrWhiteSpace(AchLine2Box.Text) ? null : AchLine2Box.Text.Trim();
@@ -322,7 +334,7 @@ public partial class ToolboxPage : UserControl
         LoaderDownloadBtn.IsEnabled = false;
         LoaderMcVersionCombo.ItemsSource = null;
         LoaderVersionCombo.ItemsSource = null;
-        LoaderStatusText.Text = "正在获取版本列表...";
+        LoaderStatusText.Text = Loc.T("Str_Ui_Fetching_Versions", "正在获取版本列表...");
 
         try
         {
@@ -352,7 +364,7 @@ public partial class ToolboxPage : UserControl
                     break;
             }
 
-            LoaderStatusText.Text = tag == "NeoForge" ? "请选择加载器版本。" : "请选择 Minecraft 版本。";
+            LoaderStatusText.Text = tag == "NeoForge" ? "请选择加载器版本。" : Loc.T("Str_Cs_Please_Choose_A_Minecraft_Version", "请选择 Minecraft 版本。");
         }
         catch (Exception ex)
         {
@@ -378,12 +390,12 @@ public partial class ToolboxPage : UserControl
                     LoaderVersionCombo.DisplayMemberPath = nameof(ServerCoreBuild.DisplayVersion);
                     break;
                 case "Fabric":
-                    var fabricLoaders = await LoaderService.GetFabricLoaderVersionsAsync();
+                    var fabricLoaders = await LoaderService.GetFabricLoaderVersionsAsync(mcVersion);
                     LoaderVersionCombo.ItemsSource = fabricLoaders;
                     LoaderVersionCombo.DisplayMemberPath = nameof(ServerCoreBuild.DisplayVersion);
                     break;
                 case "Quilt":
-                    var quiltLoaders = await LoaderService.GetQuiltLoaderVersionsAsync();
+                    var quiltLoaders = await LoaderService.GetQuiltLoaderVersionsAsync(mcVersion);
                     LoaderVersionCombo.ItemsSource = quiltLoaders;
                     LoaderVersionCombo.DisplayMemberPath = nameof(ServerCoreBuild.DisplayVersion);
                     break;
@@ -615,6 +627,128 @@ public partial class ToolboxPage : UserControl
         image.Freeze();
         return image;
     }
+
+    // ============================================================
+    // Tab：基岩版
+    // ============================================================
+
+    private readonly BedrockContentService _bedrockService = new();
+
+    /// <summary>检测基岩版是否已安装并更新界面状态。构造时和用户点"重新检测"时都会调。</summary>
+    private async void RefreshBedrockStatusAsync()
+    {
+        try
+        {
+            BedrockStatusText.Text = "正在检测...";
+            var installed = await BedrockLaunchService.IsInstalledAsync();
+            BedrockLaunchBtn.IsEnabled = installed;
+            BedrockStatusText.Text = installed
+                ? "已检测到 Minecraft for Windows（基岩版）。"
+                : "没有检测到基岩版。请从 Microsoft Store 安装并至少启动一次，之后再回来这里。";
+        }
+        catch
+        {
+            BedrockStatusText.Text = "检测失败（可能是 PowerShell 被禁用）。可以直接点「启动基岩版」试试。";
+            BedrockLaunchBtn.IsEnabled = true;
+        }
+    }
+
+    private void BedrockDetect_Click(object sender, RoutedEventArgs e) => RefreshBedrockStatusAsync();
+
+    private void BedrockLaunch_Click(object sender, RoutedEventArgs e)
+    {
+        try { BedrockLaunchService.Launch(); }
+        catch (Exception ex)
+        {
+            ErrorPresenter.ShowFriendlyError("唤起基岩版失败，可能它没有正确安装。",
+                ex.ToString(), Loc.T("Str_Cs_Couldn_T_Start_Bedrock_Edition", "启动基岩版失败"));
+        }
+    }
+
+    private void BedrockOpenDataDir_Click(object sender, RoutedEventArgs e)
+    {
+        var dir = BedrockContentService.ComMojangDir;
+        if (!Directory.Exists(dir))
+        {
+            MessageBoxDialog.ShowInfo(
+                "基岩版的数据目录还不存在。基岩版**首次启动之后**才会创建这个目录，" +
+                "请先启动一次基岩版再来。", Loc.T("Str_Cs_No_Data_Folder_Yet", "还没有数据目录"));
+            return;
+        }
+        try { Process.Start(new ProcessStartInfo("explorer.exe", dir) { UseShellExecute = true }); }
+        catch (Exception ex) { MessageBoxDialog.ShowError($"打开文件夹失败：{ex.Message}"); }
+    }
+
+    private async void BedrockImport_Click(object sender, RoutedEventArgs e)
+    {
+        var dlg = new OpenFileDialog
+        {
+            Title = "选择要导入的基岩版内容",
+            Filter = "基岩版内容|*.mcworld;*.mcpack;*.mcaddon;*.mctemplate|所有文件|*.*",
+            Multiselect = true,
+        };
+        if (dlg.ShowDialog() != true) return;
+
+        if (!BedrockContentService.IsBedrockDataPresent)
+        {
+            MessageBoxDialog.ShowInfo(
+                "这台电脑上还没有安装基岩版，或者基岩版从未启动过（首次启动才会创建数据目录），无法导入。",
+                Loc.T("Str_Cs_Bedrock_Edition_Isn_T_Installed", "还没有安装基岩版"));
+            return;
+        }
+
+        var pd = new ProgressDialog("正在导入基岩版内容 ...");
+        pd.Show();
+        try
+        {
+            var files = dlg.FileNames.ToList();
+            var r = await Task.Run(() => _bedrockService.ImportMany(files,
+                new Progress<string>(msg => pd.Progress.Report(new ProgressInfo(msg, 0, 1, "")))));
+
+            var lines = new List<string>();
+            if (r.Installed.Count > 0) lines.Add($"成功导入 {r.Installed.Count} 项：\n" + string.Join("\n", r.Installed));
+            if (r.Failed.Count > 0) lines.Add($"\n未能导入 {r.Failed.Count} 项：\n" + string.Join("\n", r.Failed));
+            MessageBoxDialog.ShowInfo(string.Join("\n", lines) + "\n\n重启基岩版后生效。", Loc.T("Str_Cs_Import_Complete_2", Loc.T("Str_Cs_Import_Complete_2", "导入完成")));
+        }
+        catch (Exception ex)
+        {
+            ErrorPresenter.ShowFriendlyError(
+                ex is InvalidOperationException ? ex.Message : Loc.T("Str_Cs_Couldn_T_Import_The_Bedrock_Content", "导入基岩版内容失败。"),
+                ex.ToString(), Loc.T("Str_Cs_Import_Failed", "导入失败"));
+        }
+        finally { pd.Close(); }
+    }
+
+    private async void BedrockServerDownload_Click(object sender, RoutedEventArgs e)
+    {
+        var picker = new OpenFolderDialog { Title = "选择基岩版服务端的安装位置" };
+        if (picker.ShowDialog() != true) return;
+
+        BedrockServerDownloadBtn.IsEnabled = false;
+        var pd = new ProgressDialog("正在下载基岩版服务端 ...");
+        pd.Show();
+        try
+        {
+            var version = await _bedrockService.DownloadDedicatedServerAsync(picker.FolderName, pd.Progress);
+            BedrockServerStatusText.Text = $"已安装基岩版服务端 {version} 到：{picker.FolderName}";
+            MessageBoxDialog.ShowSuccess(
+                $"基岩版服务端 {version} 已下载并解压到：\n{picker.FolderName}\n\n" +
+                "运行里面的 bedrock_server.exe 即可开服。首次运行会生成 server.properties，" +
+                "改完记得重启服务端。",
+                Loc.T("Str_Cs_Download_Complete", "下载完成"));
+        }
+        catch (Exception ex)
+        {
+            ErrorPresenter.ShowFriendlyError(
+                ex is InvalidOperationException ? ex.Message : "下载基岩版服务端失败，可能是网络问题。",
+                ex.ToString(), Loc.T("Str_Cs_Download_Failed", "下载失败"));
+        }
+        finally
+        {
+            pd.Close();
+            BedrockServerDownloadBtn.IsEnabled = true;
+        }
+    }
 }
 
 /// <summary>用 Windows 资源管理器打开一个文件夹，多处 Tab（文件下载/加载器下载）
@@ -637,4 +771,5 @@ internal static class FolderOpenHelper
             // 静默失败即可——用户能直接看到状态文字里已经显示的完整路径，自己手动导航过去。
         }
     }
+
 }

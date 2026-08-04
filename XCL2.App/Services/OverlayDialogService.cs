@@ -80,11 +80,22 @@ public static class OverlayDialogService
 
     /// <summary>
     /// 显示一个进程内弹窗并同步阻塞等待结果（兼容原 Window.ShowDialog() 的调用习惯）。
-    /// dismissOnBackgroundClick：点击遮罩（弹窗卡片以外区域）是否等价于取消关闭，
-    /// 默认 true（多数确认框/选择框允许点外面取消）；少数"必须显式选择一项"的弹窗
-    /// （比如首次启动向导）应传 false，避免用户误点背景导致流程被打断。
+    /// dismissOnBackgroundClick：点击遮罩（弹窗卡片以外区域）是否等价于取消关闭。
+    ///
+    /// 需求："能不能让所有弹窗都不可以点击灰色区域退出？"——默认值从 true 改成 false。
+    /// 原来的设计意图是"多数确认框/选择框允许点外面取消，少数必须显式选择的弹窗
+    /// （比如首次启动向导）单独传 false"，但这类小尺寸弹窗在桌面端很容易被"点到卡片
+    /// 外面一点点"误触，跟原生 Window 的独立弹窗（点外面完全无效，只能点按钮/Alt+F4）
+    /// 体验不一致，容易造成用户没注意到就把弹窗关掉、丢失已经填好的内容。统一改成默认
+    /// 不允许点遮罩关闭，弹窗只能通过"点弹窗自己的按钮"或者 Esc 键关闭（Esc 关闭走的是
+    /// MainWindow.PreviewKeyDown 里对 OverlayDialogService.RequestDismissTopByEscape
+    /// 的调用，跟这里的 dismissOnBackgroundClick 是两套独立开关，不受这次改动影响，
+    /// 仍然保留"按 Esc 可以关闭"这个符合系统对话框习惯的退出路径）。
+    /// 参数仍然保留（没有直接删掉“背景点击可关闭”这条能力）：以后如果某个具体弹窗
+    /// 确实需要"点外面 = 取消"这种体验（比如某个纯展示性的气泡提示），调用方可以在
+    /// 各自的调用点显式传 true 单独开启，不需要再改这个服务本身。
     /// </summary>
-    public static bool? ShowModal(IOverlayDialog dialog, bool dismissOnBackgroundClick = true)
+    public static bool? ShowModal(IOverlayDialog dialog, bool dismissOnBackgroundClick = false)
     {
         if (_host is null)
             throw new InvalidOperationException("OverlayDialogService 尚未 Register 宿主 MainWindow。");
@@ -107,8 +118,9 @@ public static class OverlayDialogService
         return tcs.Task.Result;
     }
 
-    /// <summary>ShowModal 的 async/await 版本，供不需要兼容旧同步调用写法的新代码使用。</summary>
-    public static Task<bool?> ShowModalAsync(IOverlayDialog dialog, bool dismissOnBackgroundClick = true)
+    /// <summary>ShowModal 的 async/await 版本，供不需要兼容旧同步调用写法的新代码使用。
+    /// dismissOnBackgroundClick 默认值同 ShowModal，见该方法上的注释。</summary>
+    public static Task<bool?> ShowModalAsync(IOverlayDialog dialog, bool dismissOnBackgroundClick = false)
     {
         if (_host is null)
             throw new InvalidOperationException("OverlayDialogService 尚未 Register 宿主 MainWindow。");
@@ -125,9 +137,10 @@ public static class OverlayDialogService
     }
 
     /// <summary>非模态、无返回值的纯展示型 Overlay（极少数场景，比如设备码登录窗口那种
-    /// "只是展示信息，用户自己去外部完成操作后再手动关闭"的情况）。仍然支持点遮罩/Esc
-    /// 关闭，只是不强制调用方等待结果。</summary>
-    public static void ShowNonModal(IOverlayDialog dialog, bool dismissOnBackgroundClick = true)
+    /// "只是展示信息，用户自己去外部完成操作后再手动关闭"的情况）。dismissOnBackgroundClick
+    /// 默认值同 ShowModal（默认 false，不允许点遮罩关闭），仍然支持 Esc 关闭，只是不强制
+    /// 调用方等待结果。</summary>
+    public static void ShowNonModal(IOverlayDialog dialog, bool dismissOnBackgroundClick = false)
     {
         _ = ShowModalAsync(dialog, dismissOnBackgroundClick);
     }

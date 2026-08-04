@@ -11,7 +11,7 @@ namespace XCL2.App.Views;
 /// SkinType；自定义皮肤才需要真正拷贝文件（通过 SkinService.SaveCustomSkin），
 /// 并要求用户在这一步就勾选清楚是否为纤细手臂(Alex)骨架。
 /// </summary>
-public partial class SkinSelectWindow : Window
+public partial class SkinSelectWindow : OverlayDialogControl
 {
     private readonly Account _account;
     private readonly SkinService _skinService;
@@ -105,14 +105,12 @@ public partial class SkinSelectWindow : Window
             _account.CustomSkinSlim = SlimArmCheck.IsChecked == true;
         }
 
-        DialogResult = true;
-        Close();
+        CloseWith(true);
     }
 
     private void Cancel_Click(object sender, RoutedEventArgs e)
     {
-        DialogResult = false;
-        Close();
+        CloseWith(false);
     }
 
     private void ShowError(string message)

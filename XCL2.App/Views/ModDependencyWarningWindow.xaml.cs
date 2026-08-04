@@ -16,7 +16,7 @@ namespace XCL2.App.Views;
 /// (ModDependencyAnalysisService)本来就是通用扫描 fabric.mod.json depends 字段，
 /// Sodium 缺 Fabric API 只是最常见的一个例子，不代表只处理这一种情况。
 /// </summary>
-public partial class ModDependencyWarningWindow : Window
+public partial class ModDependencyWarningWindow : OverlayDialogControl
 {
     private readonly string _gameDir;
     private readonly LocalModService _localModService;
@@ -51,7 +51,7 @@ public partial class ModDependencyWarningWindow : Window
         }
         catch (Exception ex)
         {
-            ErrorPresenter.ShowFriendlyError("打不开日志文件夹，可以手动在游戏目录里找 xcl2/logs。",
+            ErrorPresenter.ShowFriendlyError(Loc.T("Str_Cs_Couldn_T_Open_The_Log_Folder_You_Can_Fin", "打不开日志文件夹，可以手动在游戏目录里找 xcl2/logs。"),
                 ex.ToString(), "打开日志失败");
         }
     }
@@ -72,8 +72,7 @@ public partial class ModDependencyWarningWindow : Window
     private void Continue_Click(object sender, RoutedEventArgs e)
     {
         UserChoseToContinue = true;
-        DialogResult = true;
-        Close();
+        CloseWith(true);
     }
 
     private async void DownloadDependency_Click(object sender, RoutedEventArgs e)
@@ -94,17 +93,15 @@ public partial class ModDependencyWarningWindow : Window
             if (version == null)
             {
                 progressWin.Close();
-                MessageBox.Show($"没有在 Modrinth 上找到 {item.DisplayName} 的可用版本，请手动搜索安装。",
-                    "提示", MessageBoxButton.OK, MessageBoxImage.Warning);
+                MessageBoxDialog.ShowWarning($"没有在 Modrinth 上找到 {item.DisplayName} 的可用版本，请手动搜索安装。", "提示");
                 return;
             }
 
             var progress = new Progress<string>(msg =>
-                progressWin.Progress.Report(new ProgressInfo("下载前置模组", 0, 1, msg)));
+                progressWin.Progress.Report(new ProgressInfo(Loc.T("Str_Cs_Downloading_Dependencies", "下载前置模组"), 0, 1, msg)));
             await modrinth.DownloadResourceAsync(_gameDir, Models.ModrinthResourceType.Mod, version, progress);
             progressWin.Close();
-            MessageBox.Show($"{item.DisplayName} 已下载安装完成，重新扫描一次 Mod 列表就能看到。",
-                "完成", MessageBoxButton.OK, MessageBoxImage.Information);
+            MessageBoxDialog.ShowInfo($"{item.DisplayName} 已下载安装完成，重新扫描一次 Mod 列表就能看到。", "完成");
         }
         catch (Exception ex)
         {
@@ -122,9 +119,8 @@ public partial class ModDependencyWarningWindow : Window
         if (targets.Count == 0) return;
 
         var names = string.Join("、", targets.Select(t => t.DisplayName));
-        var confirm = MessageBox.Show($"确定要删除以下 {targets.Count} 个 Mod 吗？此操作无法撤销。\n\n{names}",
-            "确认删除", MessageBoxButton.YesNo, MessageBoxImage.Warning);
-        if (confirm != MessageBoxResult.Yes) return;
+        var confirm = MessageBoxDialog.ShowConfirm($"确定要删除以下 {targets.Count} 个 Mod 吗？此操作无法撤销。\n\n{names}", "确认删除");
+        if (!confirm) return;   // ShowConfirm 返回 bool（true=用户点了"是"），不再是 MessageBoxResult
 
         var failed = new List<string>();
         foreach (var t in targets)
@@ -134,11 +130,10 @@ public partial class ModDependencyWarningWindow : Window
         }
 
         if (failed.Count > 0)
-            MessageBox.Show($"以下 Mod 删除失败：{string.Join("、", failed)}", "部分失败",
-                MessageBoxButton.OK, MessageBoxImage.Warning);
+            MessageBoxDialog.ShowWarning($"以下 Mod 删除失败：{string.Join("、", failed)}", "部分失败");
 
-        DialogResult = true; // 让调用方知道列表状态变了，需要刷新
-        Close();
+        CloseWith(true); // 让调用方知道列表状态变了，需要刷新
+        CloseWith(null);
     }
 }
 

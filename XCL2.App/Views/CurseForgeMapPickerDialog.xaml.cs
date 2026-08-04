@@ -33,14 +33,13 @@ public partial class CurseForgeMapPickerDialog : OverlayDialogControl
         progressWin.Show();
         try
         {
-            var progress = new Progress<string>(msg => progressWin.Progress.Report(new ProgressInfo("下载中", 0, 1, msg)));
+            var progress = new Progress<string>(msg => progressWin.Progress.Report(new ProgressInfo(Loc.T("Str_Cs_Downloading", "下载中"), 0, 1, msg)));
             var path = await _svc.DownloadMapAsync(_minecraftDir, item.File, progress);
-            MessageBox.Show($"地图已安装到：\n{path}\n\n启动游戏后应该能在存档列表看到。", "成功",
-                MessageBoxButton.OK, MessageBoxImage.Information);
+            MessageBoxDialog.ShowInfo($"地图已安装到：\n{path}\n\n启动游戏后应该能在存档列表看到。", "成功");
         }
         catch (Exception ex)
         {
-            ErrorPresenter.ShowFriendlyError("下载失败，可能是网络连接问题或下载源暂时不可用，请检查网络后重试。", $"[下载失败] {ex}", "下载失败");
+            ErrorPresenter.ShowFriendlyError(Loc.T("Str_Cs_Download_Failed_This_Is_Usually_A_Networ", "下载失败，可能是网络连接问题或下载源暂时不可用，请检查网络后重试。"), $"[下载失败] {ex}", "下载失败");
         }
         finally
         {

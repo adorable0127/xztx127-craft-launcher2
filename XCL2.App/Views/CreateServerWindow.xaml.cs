@@ -14,7 +14,7 @@ namespace XCL2.App.Views;
 /// 真正的"开服"启动动作由服务器列表页的"启动"按钮触发，创建和启动分成两步，
 /// 避免用户还没检查完内存/CPU设置就已经跑起来了）。
 /// </summary>
-public partial class CreateServerWindow : Window
+public partial class CreateServerWindow : OverlayDialogControl
 {
     private readonly MainWindow _owner;
     private readonly ServerCoreDownloadService _coreService = new();
@@ -72,7 +72,14 @@ public partial class CreateServerWindow : Window
 
         if (reinstallTarget != null)
         {
-            Title = $"重新覆盖安装核心 - {reinstallTarget.DisplayName}";
+            // 修复编译错误 CS0103："当前上下文中不存在名称 Title"。
+            // OverlayDialogControl 继承自 UserControl，没有 Window.Title 这个属性——
+            // 这是上一轮批量迁移脚本的又一处漏网：脚本只清理了 XAML 里声明式的
+            // Title="..." 属性，没有处理构造函数里这种运行时的 Title 赋值。
+            // Overlay 弹窗没有系统标题栏，原来 Window.Title 显示的内容改成弹窗内容
+            // 顶部那行大字标题（XAML 里现在叫 HeaderTitleText），效果是一样的——
+            // "重新覆盖安装核心 - xxx" 依然会显示给用户看，只是从标题栏搬到了正文顶部。
+            HeaderTitleText.Text = $"重新覆盖安装核心 - {reinstallTarget.DisplayName}";
             NameBox.Text = reinstallTarget.DisplayName;
             NameBox.IsEnabled = false; // 覆盖安装模式下名称/目录锁定，见上面 _reinstallTarget 注释
             TargetDirBox.Text = reinstallTarget.Directory;
@@ -89,12 +96,12 @@ public partial class CreateServerWindow : Window
             MaxMemoryBox.Text = reinstallTarget.MaxMemoryMb.ToString();
             CpuLimitBox.Text = reinstallTarget.CpuLimitPercent?.ToString() ?? "";
             DiskLimitBox.Text = reinstallTarget.DiskLimitMb?.ToString() ?? "";
-            CreateBtn.Content = "开始覆盖安装";
+            CreateBtn.Content = Loc.T("Str_Cs_Starting_Overwrite_Install", "开始覆盖安装");
         }
         else
         {
             TargetDirBox.Text = Path.Combine(App.DataDir, "servers", "new-server");
-            NameBox.Text = "我的服务器";
+            NameBox.Text = Loc.T("Str_Cs_My_Server", "我的服务器");
 
             // 重要修复：这里之前固定用客户端全局的 PreferredJavaMajorVersion 去找 Java，
             // 跟服务器实际要装的 MC 版本/核心完全没关系——用户还没选版本，这个"预填"本来就
@@ -170,7 +177,7 @@ public partial class CreateServerWindow : Window
         }
         catch (Exception ex)
         {
-            ErrorPresenter.ShowFriendlyError("获取版本列表失败，可能是网络连接问题或下载源暂时不可用，请检查网络后重试。", $"[获取版本列表失败] {ex}", "获取版本列表失败");
+            ErrorPresenter.ShowFriendlyError(Loc.T("Str_Cs_Couldn_T_Fetch_The_Version_List_This_Is_", "获取版本列表失败，可能是网络连接问题或下载源暂时不可用，请检查网络后重试。"), $"[获取版本列表失败] {ex}", "获取版本列表失败");
         }
         finally
         {
@@ -204,7 +211,7 @@ public partial class CreateServerWindow : Window
         }
         catch (Exception ex)
         {
-            ErrorPresenter.ShowFriendlyError("获取构建版本列表失败，可能是网络连接问题或下载源暂时不可用，请检查网络后重试。", $"[获取构建版本列表失败] {ex}", "获取构建版本列表失败");
+            ErrorPresenter.ShowFriendlyError(Loc.T("Str_Cs_Couldn_T_Fetch_The_Build_List_This_Is_Us", "获取构建版本列表失败，可能是网络连接问题或下载源暂时不可用，请检查网络后重试。"), $"[获取构建版本列表失败] {ex}", "获取构建版本列表失败");
         }
     }
 
@@ -255,7 +262,16 @@ public partial class CreateServerWindow : Window
     {
         var dialog = new OpenFolderDialog { Title = "选择服务器安装位置" };
         if (Directory.Exists(TargetDirBox.Text)) dialog.InitialDirectory = TargetDirBox.Text;
-        if (dialog.ShowDialog(this) == true) TargetDirBox.Text = dialog.FolderName;
+
+        // 修复编译错误 CS1503：OpenFolderDialog/OpenFileDialog.ShowDialog(Window? owner)
+        // 要的是一个真正的 Window，而这个类现在继承 OverlayDialogControl（UserControl），
+        // this 不再能隐式转成 Window——这是上一轮批量迁移脚本的又一处漏网：脚本只处理了
+        // "new XxxWindow(...) { Owner = ... }" 这一种写法，没处理
+        // "原生文件/文件夹选择框.ShowDialog(this)" 这种把 this 当 owner 传的用法。
+        // 改用 Window.GetWindow(this)：顺着可视化树往上找，找到的正是承载这个 Overlay
+        // 弹窗的 MainWindow，效果跟以前"以自己为 owner"是一致的（原生对话框弹出时
+        // 仍然正确地叠在主窗口之上、随主窗口一起最小化）。
+        if (dialog.ShowDialog(Window.GetWindow(this)) == true) TargetDirBox.Text = dialog.FolderName;
     }
 
     private void AutoDetectJava_Click(object sender, RoutedEventArgs e)
@@ -263,8 +279,7 @@ public partial class CreateServerWindow : Window
         var found = _javaService.FindJava(null, configService: _owner.ConfigService);
         if (found == null)
         {
-            MessageBox.Show("没有检测到可用的 Java。请在「设置」页先下载/配置 Java，或者手动填写路径。",
-                "未找到 Java", MessageBoxButton.OK, MessageBoxImage.Warning);
+            MessageBoxDialog.ShowWarning(Loc.T("Str_Cs_No_Usable_Java_Was_Found_Download_Or_Con", "没有检测到可用的 Java。请在「设置」页先下载/配置 Java，或者手动填写路径。"), Loc.T("Str_Cs_Java_Not_Found", "未找到 Java"));
             return;
         }
         JavaPathBox.Text = found;
@@ -306,7 +321,7 @@ public partial class CreateServerWindow : Window
             return found;
         }
 
-        progress?.Report(new ProgressInfo("下载匹配的 Java 运行时", 0, 1, $"Java {requiredMajor}"));
+        progress?.Report(new ProgressInfo(Loc.T("Str_Cs_Downloading_A_Matching_Java_Runtime", "下载匹配的 Java 运行时"), 0, 1, $"Java {requiredMajor}"));
         var arch = Environment.Is64BitOperatingSystem ? "x64" : "x86";
         var downloaded = await _javaService.DownloadJavaAsync(
             new JavaDownloadRequest(requiredMajor, arch, JavaInstallMode.Portable), progress);
@@ -324,31 +339,30 @@ public partial class CreateServerWindow : Window
         var name = NameBox.Text.Trim();
         if (string.IsNullOrEmpty(name))
         {
-            MessageBox.Show("请填写服务器名称。", "提示", MessageBoxButton.OK, MessageBoxImage.Information);
+            MessageBoxDialog.ShowInfo(Loc.T("Str_Cs_Please_Enter_A_Server_Name", "请填写服务器名称。"), Loc.T("Str_Status_Tip", "提示"));
             return;
         }
         // 重装模式下名称就是目标实例自身的名称，必然会命中同名检查，跳过；
         // 新建模式下才需要防止用户新建一个和现有实例撞名的服务器。
         if (_reinstallTarget == null && _owner.ServerInstanceService.Instances.Any(i => i.DisplayName == name))
         {
-            MessageBox.Show("已经有一个同名的服务器了，请换一个名称。", "提示", MessageBoxButton.OK, MessageBoxImage.Information);
+            MessageBoxDialog.ShowInfo(Loc.T("Str_Cs_A_Server_With_That_Name_Already_Exists_P", "已经有一个同名的服务器了，请换一个名称。"), Loc.T("Str_Status_Tip", "提示"));
             return;
         }
         if (McVersionCombo.SelectedItem is not string mcVersion)
         {
-            MessageBox.Show("请选择 Minecraft 版本。", "提示", MessageBoxButton.OK, MessageBoxImage.Information);
+            MessageBoxDialog.ShowInfo(Loc.T("Str_Cs_Please_Choose_A_Minecraft_Version", "请选择 Minecraft 版本。"), Loc.T("Str_Status_Tip", "提示"));
             return;
         }
         if (string.IsNullOrWhiteSpace(TargetDirBox.Text))
         {
-            MessageBox.Show("请选择安装位置。", "提示", MessageBoxButton.OK, MessageBoxImage.Information);
+            MessageBoxDialog.ShowInfo(Loc.T("Str_Cs_Please_Choose_An_Install_Location", "请选择安装位置。"), Loc.T("Str_Status_Tip", "提示"));
             return;
         }
         if (!int.TryParse(MinMemoryBox.Text, out var minMem) || minMem <= 0 ||
             !int.TryParse(MaxMemoryBox.Text, out var maxMem) || maxMem <= 0 || maxMem < minMem)
         {
-            MessageBox.Show("内存设置不合法：请确认最小/最大内存都是正整数，且最大不小于最小。",
-                "提示", MessageBoxButton.OK, MessageBoxImage.Information);
+            MessageBoxDialog.ShowInfo(Loc.T("Str_Cs_Invalid_Memory_Settings_Minimum_And_Maxi", "内存设置不合法：请确认最小/最大内存都是正整数，且最大不小于最小。"), Loc.T("Str_Status_Tip", "提示"));
             return;
         }
 
@@ -357,8 +371,7 @@ public partial class CreateServerWindow : Window
         {
             if (!int.TryParse(CpuLimitBox.Text, out var cpu) || cpu is < 1 or > 100)
             {
-                MessageBox.Show("CPU 上限必须是 1-100 之间的整数，或留空表示不限制。",
-                    "提示", MessageBoxButton.OK, MessageBoxImage.Information);
+                MessageBoxDialog.ShowInfo(Loc.T("Str_Cs_The_Cpu_Limit_Must_Be_A_Whole_Number_Bet", "CPU 上限必须是 1-100 之间的整数，或留空表示不限制。"), Loc.T("Str_Status_Tip", "提示"));
                 return;
             }
             cpuLimit = cpu;
@@ -369,8 +382,7 @@ public partial class CreateServerWindow : Window
         {
             if (!int.TryParse(DiskLimitBox.Text, out var disk) || disk <= 0)
             {
-                MessageBox.Show("磁盘上限必须是正整数（单位 MB），或留空表示不限制。",
-                    "提示", MessageBoxButton.OK, MessageBoxImage.Information);
+                MessageBoxDialog.ShowInfo(Loc.T("Str_Cs_The_Disk_Limit_Must_Be_A_Positive_Whole_", "磁盘上限必须是正整数（单位 MB），或留空表示不限制。"), Loc.T("Str_Status_Tip", "提示"));
                 return;
             }
             diskLimit = disk;
@@ -379,8 +391,7 @@ public partial class CreateServerWindow : Window
         // Vanilla/Paper/Fabric 必须要有 Java 才能后续启动；Forge/NeoForge 安装阶段同样需要 Java 跑安装器。
         if (string.IsNullOrWhiteSpace(JavaPathBox.Text) || !File.Exists(JavaPathBox.Text))
         {
-            MessageBox.Show("请提供一个有效的 Java 路径（点击「自动检测」或手动填写）。",
-                "提示", MessageBoxButton.OK, MessageBoxImage.Information);
+            MessageBoxDialog.ShowInfo(Loc.T("Str_Cs_Please_Provide_A_Valid_Java_Path_Use_Aut", "请提供一个有效的 Java 路径（点击「自动检测」或手动填写）。"), Loc.T("Str_Status_Tip", "提示"));
             return;
         }
 
@@ -424,8 +435,8 @@ public partial class CreateServerWindow : Window
             {
                 // Spigot：result.DownloadedFilePath 此时是 BuildTools.jar 本体，还没编译。
                 // 编译耗时数分钟，展示和"跑 Forge 安装器"不同的提示文案，避免用户以为卡住了。
-                ProgressStageText.Text = "正在用 BuildTools 编译 Spigot";
-                ProgressDetailText.Text = "首次编译需要联网拉取源码并本地反编译/打补丁，可能需要几分钟，请耐心等待...";
+                ProgressStageText.Text = Loc.T("Str_Cs_Building_Spigot_With_Buildtools", "正在用 BuildTools 编译 Spigot");
+                ProgressDetailText.Text = Loc.T("Str_Cs_The_First_Build_Downloads_The_Source_And", "首次编译需要联网拉取源码并本地反编译/打补丁，可能需要几分钟，请耐心等待...");
                 ProgressBarCtl.IsIndeterminate = true;
 
                 var buildProgress = new Progress<string>(line => ProgressDetailText.Text = line);
@@ -450,8 +461,8 @@ public partial class CreateServerWindow : Window
             }
             else if (result.RequiresInstall)
             {
-                ProgressStageText.Text = "正在运行安装器";
-                ProgressDetailText.Text = "首次安装可能需要下载额外库文件，请耐心等待...";
+                ProgressStageText.Text = Loc.T("Str_Cs_Running_The_Installer", "正在运行安装器");
+                ProgressDetailText.Text = Loc.T("Str_Cs_The_First_Install_May_Need_To_Download_E", "首次安装可能需要下载额外库文件，请耐心等待...");
                 ProgressBarCtl.IsIndeterminate = true;
 
                 var installProgress = new Progress<string>(line => ProgressDetailText.Text = line);
@@ -502,10 +513,8 @@ public partial class CreateServerWindow : Window
                 _owner.ServerInstanceService.Update(_reinstallTarget);
                 CreatedInstance = _reinstallTarget;
 
-                MessageBox.Show($"服务器「{name}」的核心已重新安装完成！",
-                    "成功", MessageBoxButton.OK, MessageBoxImage.Information);
-                DialogResult = true;
-                Close();
+                MessageBoxDialog.ShowInfo($"服务器「{name}」的核心已重新安装完成！", "成功");
+                CloseWith(true);
                 return;
             }
 
@@ -529,14 +538,12 @@ public partial class CreateServerWindow : Window
             _owner.ServerInstanceService.Add(instance);
             CreatedInstance = instance;
 
-            MessageBox.Show($"服务器「{name}」创建完成！\n可以在服务器列表里启动它。",
-                "成功", MessageBoxButton.OK, MessageBoxImage.Information);
-            DialogResult = true;
-            Close();
+            MessageBoxDialog.ShowInfo($"服务器「{name}」创建完成！\n可以在服务器列表里启动它。", "成功");
+            CloseWith(true);
         }
         catch (Exception ex)
         {
-            MessageBox.Show($"创建失败：\n{ex.Message}", "错误", MessageBoxButton.OK, MessageBoxImage.Error);
+            MessageBoxDialog.ShowError($"创建失败：\n{ex.Message}", "错误");
         }
         finally
         {

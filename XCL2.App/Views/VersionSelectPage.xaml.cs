@@ -47,7 +47,7 @@ public partial class VersionSelectPage : UserControl
         }
         catch (Exception ex)
         {
-            MessageBoxDialog.ShowWarning("扫描已安装版本失败：\n" + ex.Message, "错误");
+            MessageBoxDialog.ShowWarning("扫描已安装版本失败：\n" + ex.Message, Loc.T("Str_Cs_Error", "错误"));
         }
     }
 
@@ -88,7 +88,7 @@ public partial class VersionSelectPage : UserControl
             return;
         }
 
-        var window = new InstallClientLoaderWindow(_owner) { Owner = Window.GetWindow(this) };
+        var window = new InstallClientLoaderWindow(_owner);
         if (window.ShowDialog() == true)
         {
             RefreshInstalledVersions();
@@ -124,7 +124,7 @@ public partial class VersionSelectPage : UserControl
         }
         catch (Exception ex)
         {
-            MessageBoxDialog.ShowWarning("打开浏览器失败：\n" + ex.Message, "错误");
+            MessageBoxDialog.ShowWarning("打开浏览器失败：\n" + ex.Message, Loc.T("Str_Cs_Error", "错误"));
         }
     }
 
@@ -235,7 +235,7 @@ public partial class VersionSelectPage : UserControl
         else
         {
             MessageBoxDialog.ShowWarning("Java 版本请填一个数字(如 8、17、21、25)，或留空使用自动匹配。",
-                "输入有误");
+                Loc.T("Str_Cs_Invalid_Input", "输入有误"));
             return;
         }
 
@@ -248,7 +248,7 @@ public partial class VersionSelectPage : UserControl
             if (addr.Length == 0)
             {
                 MessageBoxDialog.ShowWarning("已勾选「开启后进入某某某服务器」，请填写服务器地址（例如 play.example.com），或取消勾选。",
-                    "输入有误");
+                    Loc.T("Str_Cs_Invalid_Input", "输入有误"));
                 return;
             }
             cfg.VersionAutoJoinServer[v.Id] = addr;

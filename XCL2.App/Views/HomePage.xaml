@@ -165,7 +165,7 @@
                 <Button x:Name="LanguageEntryButton" Margin="0,0,10,0"
                         Style="{StaticResource LanguageEntryButtonStyle}"
                         Click="LanguageEntryButton_Click"
-                        ToolTip="切换启动器界面显示的语言（不影响游戏内语言，游戏内语言在「设置」页单独设置）">
+                        ToolTip="{DynamicResource Str_Ui_Changes_The_Launcher_S_Language_Only_The}">
                     <StackPanel Orientation="Horizontal">
                         <TextBlock Text="&#127760;" FontSize="13" Margin="0,0,6,0"/>
                         <TextBlock Text="{DynamicResource Str_Lang_EntryButton}" FontSize="13"/>
@@ -181,10 +181,10 @@
                 <ToggleButton x:Name="DarkModeToggle" Margin="0,0,10,0"
                               Style="{StaticResource GuestModeToggleStyle}"
                               Checked="DarkModeToggle_Changed" Unchecked="DarkModeToggle_Changed"
-                              ToolTip="切换深色/浅色模式，只影响明暗，不影响「配色皮肤」选的色系。开启「自动循环」时，这里的选择只是临时覆盖，到下一个自动切换时间点会被自动循环重新接管。">
+                              ToolTip="{DynamicResource Str_Ui_Switches_Between_Dark_And_Light_It_Only_}">
                     <StackPanel Orientation="Horizontal">
                         <TextBlock x:Name="DarkModeToggleIcon" Text="&#9728;" FontSize="13" Margin="0,0,6,0"/>
-                        <TextBlock x:Name="DarkModeToggleText" Text="浅色模式" FontSize="13"/>
+                        <TextBlock x:Name="DarkModeToggleText" Text="{DynamicResource Str_Home_Toggle_LightMode}" FontSize="13"/>
                     </StackPanel>
                 </ToggleButton>
 
@@ -193,30 +193,30 @@
                 <ToggleButton x:Name="AutoThemeCycleToggle" Margin="0,0,10,0"
                               Style="{StaticResource GuestModeToggleStyle}"
                               Checked="AutoThemeCycleToggle_Changed" Unchecked="AutoThemeCycleToggle_Changed"
-                              ToolTip="开启后按系统时间自动切换深浅色模式（默认早 8:00 到晚 19:00 为浅色，其余为深色），切换时间点可在「设置」页自行调整。">
+                              ToolTip="{DynamicResource Str_Ui_Switches_Between_Light_And_Dark_Automati}">
                     <StackPanel Orientation="Horizontal">
                         <TextBlock Text="&#128260;" FontSize="13" Margin="0,0,6,0"/>
-                        <TextBlock x:Name="AutoThemeCycleToggleText" Text="自动循环" FontSize="13"/>
+                        <TextBlock x:Name="AutoThemeCycleToggleText" Text="{DynamicResource Str_Home_Toggle_AutoCycle}" FontSize="13"/>
                     </StackPanel>
                 </ToggleButton>
 
                 <ToggleButton x:Name="ModeToggle" Margin="0,0,10,0"
                               Style="{StaticResource GuestModeToggleStyle}"
                               Checked="ModeToggle_Changed" Unchecked="ModeToggle_Changed"
-                              ToolTip="普通模式：只展示必要选项，Java 自动探测/下载，无需手动配置；专家模式：可调试 Java 版本/架构/安装方式、自定义启动参数等高级选项">
+                              ToolTip="{DynamicResource Str_Ui_Normal_Mode_Shows_Only_The_Essentials_An}">
                     <StackPanel Orientation="Horizontal">
                         <TextBlock Text="&#9881;" FontSize="13" Margin="0,0,6,0"/>
-                        <TextBlock x:Name="ModeToggleText" Text="普通模式" FontSize="13"/>
+                        <TextBlock x:Name="ModeToggleText" Text="{DynamicResource Str_Home_Toggle_NormalMode}" FontSize="13"/>
                     </StackPanel>
                 </ToggleButton>
 
                 <ToggleButton x:Name="GuestModeToggle"
                               Style="{StaticResource GuestModeToggleStyle}"
                               Checked="GuestModeToggle_Changed" Unchecked="GuestModeToggle_Changed"
-                              ToolTip="开启后启动游戏使用一个只存在于本次运行的临时账户，不使用已保存的账户；关闭时清理本次会话产生的日志/临时下载文件">
+                              ToolTip="{DynamicResource Str_Ui_When_On_The_Game_Launches_With_A_Tempora}">
                     <StackPanel Orientation="Horizontal">
                         <TextBlock Text="&#128100;" FontSize="13" Margin="0,0,6,0"/>
-                        <TextBlock x:Name="GuestModeToggleText" Text="访客模式" FontSize="13"/>
+                        <TextBlock x:Name="GuestModeToggleText" Text="{DynamicResource Str_Home_Toggle_GuestMode}" FontSize="13"/>
                     </StackPanel>
                 </ToggleButton>
             </StackPanel>
@@ -262,8 +262,8 @@
                         <Border Style="{StaticResource TileIconBadge}" Background="{DynamicResource TileBadgeGreenBrush}">
                             <TextBlock Text="&#8681;" Style="{StaticResource TileIconText}" Foreground="{DynamicResource SuccessTextBrush}"/>
                         </Border>
-                        <TextBlock Text="下载中心" Style="{StaticResource TileTitleText}"/>
-                        <TextBlock Text="下载游戏核心、Mod、地图、资源包、整合包" Style="{StaticResource TileDescText}"/>
+                        <TextBlock Text="{DynamicResource Str_Home_Tile_Download_Title}" Style="{StaticResource TileTitleText}"/>
+                        <TextBlock Text="{DynamicResource Str_Ui_Download_Game_Versions_Mods_Maps_Resourc}" Style="{StaticResource TileDescText}"/>
                     </StackPanel>
                 </Button>
 
@@ -272,8 +272,8 @@
                         <Border Style="{StaticResource TileIconBadge}" Background="{DynamicResource TileBadgeOrangeBrush}">
                             <TextBlock Text="&#128640;" Style="{StaticResource TileIconText}"/>
                         </Border>
-                        <TextBlock Text="一键开始游戏" Style="{StaticResource TileTitleText}"/>
-                        <TextBlock Text="账户、版本、加载器、Mod 一步到位" Style="{StaticResource TileDescText}"/>
+                        <TextBlock Text="{DynamicResource Str_Home_Tile_QuickStart_Title}" Style="{StaticResource TileTitleText}"/>
+                        <TextBlock Text="{DynamicResource Str_Ui_Account_Version_Loader_And_Mods_In_One_P}" Style="{StaticResource TileDescText}"/>
                     </StackPanel>
                 </Button>
 
@@ -282,8 +282,8 @@
                         <Border Style="{StaticResource TileIconBadge}" Background="{DynamicResource TileBadgePurpleBrush}">
                             <TextBlock Text="&#128423;" Style="{StaticResource TileIconText}"/>
                         </Border>
-                        <TextBlock Text="服务器管理" Style="{StaticResource TileTitleText}"/>
-                        <TextBlock Text="创建/启动本地服务器，内含联机/内网穿透教程" Style="{StaticResource TileDescText}"/>
+                        <TextBlock Text="{DynamicResource Str_Home_Tile_ServerManager_Title}" Style="{StaticResource TileTitleText}"/>
+                        <TextBlock Text="{DynamicResource Str_Home_Tile_ServerManager_Desc}" Style="{StaticResource TileDescText}"/>
                     </StackPanel>
                 </Button>
 
@@ -292,8 +292,8 @@
                         <Border Style="{StaticResource TileIconBadge}" Background="{DynamicResource SideBrush}">
                             <TextBlock Text="&#9881;" Style="{StaticResource TileIconText}" Foreground="{DynamicResource TextSecondaryBrush}"/>
                         </Border>
-                        <TextBlock Text="设置" Style="{StaticResource TileTitleText}"/>
-                        <TextBlock Text="Java、模式切换、窗口大小等" Style="{StaticResource TileDescText}"/>
+                        <TextBlock Text="{DynamicResource Str_Settings_Title}" Style="{StaticResource TileTitleText}"/>
+                        <TextBlock Text="{DynamicResource Str_Home_Tile_Settings_Desc}" Style="{StaticResource TileDescText}"/>
                     </StackPanel>
                 </Button>
             </UniformGrid>

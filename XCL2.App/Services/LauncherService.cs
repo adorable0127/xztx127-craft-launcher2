@@ -222,8 +222,18 @@ public class LauncherService
     internal static string? ExtractBaseMinecraftVersion(string versionId)
     {
         if (string.IsNullOrWhiteSpace(versionId)) return null;
-        var match = System.Text.RegularExpressions.Regex.Match(versionId, @"1\.\d{1,2}(?:\.\d{1,2})?");
-        return match.Success ? match.Value : null;
+
+        // 修复：原来的正则写死成 `1\.\d{1,2}`，只认 1.x 这一种命名。
+        // Minecraft 从 26 起改成了年份制版本号（26.1 / 26.2，见下载中心和资源详情页的版本列表），
+        // 这类版本 ID 在旧正则下一个都匹配不到 → ExtractBaseMinecraftVersion 返回 null
+        // → GetRequiredJavaMajorVersion 直接 return null → 上层完全不限定 Java 版本，
+        // 随手抓到系统里第一个 Java 就去启动。这正是"Java 自动匹配对新版本失效"的根因。
+        //
+        // 改用 VersionInfoResolver.ExtractAnyVersion：它同时认三种命名——
+        // 传统 1.16.5 / 年份制 26.2 / 快照 24w14a / 预发布 1.21-pre1，
+        // 且优先匹配带后缀的形态，避免 "1.21-pre1" 被截成 "1.21"。
+        // 这样版本号解析在全项目只有一套口径（导出整合包那边用的也是它）。
+        return VersionInfoResolver.ExtractAnyVersion(versionId);
     }
 
     /// <summary>从单个 mod jar 里读取 fabric.mod.json 的 depends.java (或 requires.java) 字段，

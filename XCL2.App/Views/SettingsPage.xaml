@@ -5,14 +5,14 @@
     <Border Background="{DynamicResource PanelBrush}" CornerRadius="10" Padding="24">
         <ScrollViewer VerticalScrollBarVisibility="Auto" services:ScrollWheelBehavior.EnableFastWheel="True">
         <StackPanel>
-            <TextBlock Text="设置" FontSize="20" FontWeight="Bold" Margin="0,0,0,16"/>
+            <TextBlock Text="{DynamicResource Str_Settings_Title}" FontSize="20" FontWeight="Bold" Margin="0,0,0,16"/>
 
             <!-- 普通/高手模式：原来这个开关只影响本页"Java 版本/架构/安装方式"等控件的显隐，
                  选中状态要等用户点最下面"保存设置"才会真正写回 cfg.AdvancedMode。现在这个开关
                  是全局唯一的模式切换入口（原来首页也有一份，已经搬过来合并成这一处），
                  所以改成跟原首页版本一样的行为：勾选/取消勾选立即写回配置并保存，不用等
                  "保存设置"按钮，避免用户切换模式后又在别的地方看到旧状态的不一致体验。 -->
-            <CheckBox x:Name="AdvancedModeCheck" Content="高手模式（可调试 Java 版本 / 架构 / 安装方式、自定义启动参数等）"
+            <CheckBox x:Name="AdvancedModeCheck" Content="{DynamicResource Str_Ui_Expert_Mode_Tweak_The_Java_Version_Archi}"
                       Margin="0,0,0,4" Checked="AdvancedModeCheck_Changed" Unchecked="AdvancedModeCheck_Changed"/>
             <TextBlock x:Name="AdvancedModeHintText" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}"
                        Margin="0,0,0,16" TextWrapping="Wrap"/>
@@ -27,7 +27,7 @@
                     Style="{StaticResource SecondaryButton}" HorizontalAlignment="Left" Padding="14,8"
                     Margin="0,0,0,20" Click="OpenLanguagePicker_Click"/>
 
-            <Button Content="🧭 重新打开新手引导" HorizontalAlignment="Left" Padding="10,6" Margin="0,0,0,16"
+            <Button Content="{DynamicResource Str_Ui_Reopen_Setup_Wizard}" HorizontalAlignment="Left" Padding="10,6" Margin="0,0,0,16"
                     Click="ReopenWizard_Click"/>
 
             <!-- 普通模式下才显示：简化版 Java 版本选择，只给 Java 8 / 17 / 21 / 25 四个选项，
@@ -36,14 +36,14 @@
                  这两项在普通模式下走固定的推荐值（当前系统架构 + 便携安装），
                  Java 8 除外——它默认使用 32 位，其余版本默认使用 64 位（见下方架构提示）。 -->
             <StackPanel x:Name="SimpleJavaPanel" Margin="0,0,0,10">
-                <TextBlock Text="Java 版本（普通）" Margin="0,0,0,4" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="12"/>
+                <TextBlock Text="{DynamicResource Str_Ui_Java_Version}" Margin="0,0,0,4" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="12"/>
                 <ComboBox x:Name="SimpleJavaVersionCombo" Width="260" HorizontalAlignment="Left">
-                    <ComboBoxItem Content="Java 8（适用于 1.16 以前的版本）" Tag="8"/>
-                    <ComboBoxItem Content="Java 17（适用于 1.20.5 以前的版本）" Tag="17"/>
-                    <ComboBoxItem Content="Java 21（适用于 1.21.11 以前的版本）" Tag="21"/>
-                    <ComboBoxItem Content="Java 25（适用于 26.1 及以后的版本）" Tag="25"/>
+                    <ComboBoxItem Content="{DynamicResource Str_Ui_Java_8_For_Versions_Before_1_16}" Tag="8"/>
+                    <ComboBoxItem Content="{DynamicResource Str_Ui_Java_17_For_Versions_Before_1_20_5}" Tag="17"/>
+                    <ComboBoxItem Content="{DynamicResource Str_Ui_Java_21_For_Versions_Before_1_21_11}" Tag="21"/>
+                    <ComboBoxItem Content="{DynamicResource Str_Ui_Java_25_For_26_1_And_Later}" Tag="25"/>
                 </ComboBox>
-                <TextBlock Text="提示：Java 8 默认使用 32 位，其余版本默认使用 64 位。不确定该选哪个可以直接用推荐设置。"
+                <TextBlock Text="{DynamicResource Str_Ui_Note_Java_8_Defaults_To_32_Bit_And_Every}"
                            Margin="0,6,0,0" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap"/>
             </StackPanel>
 
@@ -52,7 +52,7 @@
                  安装方式，选择应该在动作之前，原来的顺序是反的（选项在下载按钮下面），容易让人先
                  点了下载才看到还有版本可选，现在调整成先选、后点下载，符合从上到下的操作顺序。 -->
             <StackPanel x:Name="AdvancedJavaPanel" Margin="0,0,0,10" Visibility="Collapsed">
-                <TextBlock Text="Java 版本 / 架构 / 安装方式（高级）" Margin="0,0,0,4" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="12"/>
+                <TextBlock Text="{DynamicResource Str_Ui_Java_Version_Architecture_Install_Type_A}" Margin="0,0,0,4" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="12"/>
                 <StackPanel Orientation="Horizontal">
                     <ComboBox x:Name="JavaVersionCombo" Width="110" Margin="0,0,8,0"/>
                     <ComboBox x:Name="JavaArchCombo" Width="90" Margin="0,0,8,0">
@@ -60,21 +60,21 @@
                         <ComboBoxItem Content="x86" Tag="x86"/>
                     </ComboBox>
                     <ComboBox x:Name="JavaInstallModeCombo" Width="160">
-                        <ComboBoxItem Content="便携版 (zip，免安装)" Tag="Portable"/>
-                        <ComboBoxItem Content="安装到系统目录 (msi)" Tag="System"/>
+                        <ComboBoxItem Content="{DynamicResource Str_Ui_Portable_Zip_No_Installer}" Tag="Portable"/>
+                        <ComboBoxItem Content="{DynamicResource Str_Ui_Install_System_Wide_Msi}" Tag="System"/>
                     </ComboBox>
                 </StackPanel>
-                <TextBlock Text="提示：官方稳定发布的版本主要是 8 / 11 / 17 / 21 / 25 / 26，其余版本号可能没有正式构建。"
+                <TextBlock Text="{DynamicResource Str_Ui_Note_The_Officially_Released_Versions_Ar}"
                            Margin="0,6,0,0" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap"/>
                 <!-- 需求 5：高手模式下不做任何自动选择/校验，只把版本-游戏版本区间的对应关系
                      提示出来，由用户自己判断该给哪个游戏版本配哪个 Java（跟普通模式的四选一
                      不同，高手模式可以选 8~26 之间任意版本号，所以这里只是提示，不是选项）。 -->
-                <TextBlock Text="参考：Java 8 对应 1.16 以前的版本；Java 17 对应 1.20.5 以前的版本；Java 21 对应 1.21.11 以前的版本；Java 25 对应 26.1 及以后的版本。Java 8 默认 32 位，其余默认 64 位，具体请自行判断。"
+                <TextBlock Text="{DynamicResource Str_Ui_For_Reference_Java_8_Covers_Versions_Bef}"
                            Margin="0,4,0,0" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap"/>
                 <!-- 强制使用匹配 Java：默认关闭，只是"建议"（弹窗可以选择仍然使用）。打开后启动前
                      检测到 Java 版本不匹配会直接自动切换，不再提供"仍然使用"的选项。
                      见 MainWindow.xaml.cs LaunchInternalAsync 里的版本匹配检查。 -->
-                <CheckBox x:Name="EnforceJavaVersionMatchCheck" Content="强制使用匹配 Java（检测到版本不匹配时直接自动切换，不再询问）"
+                <CheckBox x:Name="EnforceJavaVersionMatchCheck" Content="{DynamicResource Str_Ui_Always_Use_The_Matching_Java_Switch_Auto}"
                           Margin="0,10,0,0"/>
             </StackPanel>
 
@@ -89,21 +89,21 @@
                     <ColumnDefinition Width="*"/>
                     <ColumnDefinition Width="Auto"/>
                 </Grid.ColumnDefinitions>
-                <TextBlock Text="下载完成的 Java 会自动加入下方「Java 列表」，无需手动填路径。"
+                <TextBlock Text="{DynamicResource Str_Ui_Downloaded_Java_Runtimes_Are_Added_To_Th}"
                            VerticalAlignment="Center" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap"/>
-                <Button Grid.Column="1" x:Name="DownloadJavaBtn" Content="下载 Java" Style="{StaticResource PrimaryButton}" Margin="8,0,0,0" Padding="12,8" Click="DownloadJava_Click"/>
+                <Button Grid.Column="1" x:Name="DownloadJavaBtn" Content="{DynamicResource Str_Ui_Download_Java}" Style="{StaticResource PrimaryButton}" Margin="8,0,0,0" Padding="12,8" Click="DownloadJava_Click"/>
             </Grid>
 
             <!-- 全盘扫描默认不开启：只在用户主动点击后才弹二次确认，说明扫描范围，
                  同意后才会真正开始遍历磁盘；默认行为(FindJava)完全不受影响，只看默认路径。 -->
-            <Button x:Name="ScanDiskForJavaBtn" Content="全盘扫描查找 Java（可选，默认不启用，需二次确认）"
+            <Button x:Name="ScanDiskForJavaBtn" Content="{DynamicResource Str_Ui_Scan_The_Whole_Disk_For_Java_Optional_Of}"
                     HorizontalAlignment="Left" Padding="10,6" Margin="0,4,0,16"
                     Click="ScanDiskForJava_Click"/>
 
             <!-- Java 列表：多个 Java 运行时可以同时登记在案（多 Java 共存），
                  客户端每个版本、服务器每个实例都能各自从这个列表里选择要用哪一个。 -->
-            <TextBlock Text="Java 列表（多 Java 共存）" FontSize="14" FontWeight="Bold" Margin="0,4,0,4"/>
-            <TextBlock Text="登记多个 Java 运行时后，可以在「版本选择」页为每个客户端版本、以及在「服务器」的创建/编辑里为每个服务器实例，分别选择使用列表里的哪一个 Java。"
+            <TextBlock Text="{DynamicResource Str_Ui_Java_List_Multiple_Java_Runtimes}" FontSize="14" FontWeight="Bold" Margin="0,4,0,4"/>
+            <TextBlock Text="{DynamicResource Str_Ui_Once_Several_Java_Runtimes_Are_Registere}"
                        FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,8" TextWrapping="Wrap"/>
 
             <ListBox x:Name="JavaListBox" Height="120" Margin="0,0,0,8"
@@ -115,55 +115,55 @@
                  Java 21 的新版本和需要 Java 8 的老 mod)；现在维护一份优先级列表，不同版本各自
                  匹配到列表里排最靠前、又满足版本要求的那个，不需要来回手动切换。 -->
             <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
-                <Button Content="↑ 提高优先级" Padding="10,6" Margin="0,0,8,0" Click="MoveJavaUp_Click"
-                        ToolTip="把选中的 Java 往列表前面移一位；自动匹配时会优先尝试排在前面的条目"/>
-                <Button Content="↓ 降低优先级" Padding="10,6" Click="MoveJavaDown_Click"
-                        ToolTip="把选中的 Java 往列表后面移一位"/>
+                <Button Content="{DynamicResource Str_Ui_Move_Up}" Padding="10,6" Margin="0,0,8,0" Click="MoveJavaUp_Click"
+                        ToolTip="{DynamicResource Str_Ui_Move_The_Selected_Java_One_Place_Up_Auto}"/>
+                <Button Content="{DynamicResource Str_Ui_Move_Down}" Padding="10,6" Click="MoveJavaDown_Click"
+                        ToolTip="{DynamicResource Str_Ui_Move_The_Selected_Java_One_Place_Down}"/>
             </StackPanel>
 
             <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
-                <Button Content="🔄 刷新（自动探测）" Padding="10,6" Margin="0,0,8,0" Click="RefreshDetectJava_Click"
-                        ToolTip="快速查找本机常见位置(便携版目录/JAVA_HOME/注册表/PATH)已装的 Java，一键批量加入下面的列表；不会遍历整个磁盘，几秒内完成"/>
-                <Button Content="添加：浏览选择" Padding="10,6" Margin="0,0,8,0" Click="AddJavaByBrowse_Click"/>
-                <Button Content="重命名" Padding="10,6" Margin="0,0,8,0" Click="RenameJava_Click"/>
-                <Button Content="移除" Padding="10,6" Click="RemoveJava_Click"/>
+                <Button Content="{DynamicResource Str_Ui_Refresh_Auto_Detect}" Padding="10,6" Margin="0,0,8,0" Click="RefreshDetectJava_Click"
+                        ToolTip="{DynamicResource Str_Ui_Quickly_Checks_The_Usual_Places_For_Inst}"/>
+                <Button Content="{DynamicResource Str_Ui_Add_Browse}" Padding="10,6" Margin="0,0,8,0" Click="AddJavaByBrowse_Click"/>
+                <Button Content="{DynamicResource Str_Ui_Rename}" Padding="10,6" Margin="0,0,8,0" Click="RenameJava_Click"/>
+                <Button Content="{DynamicResource Str_Ui_Remove}" Padding="10,6" Click="RemoveJava_Click"/>
             </StackPanel>
 
-            <TextBlock Text="全局默认 Java（未单独指定版本/服务器 Java 时使用）" Margin="0,0,0,4"/>
+            <TextBlock Text="{DynamicResource Str_Ui_Global_Default_Java_Used_When_A_Version_}" Margin="0,0,0,4"/>
             <ComboBox x:Name="DefaultJavaCombo" Margin="0,0,0,16" Padding="8"
                       DisplayMemberPath="DisplayText"
-                      ToolTip="从上面的 Java 列表里选一个作为全局默认；选「（不指定，使用自动探测）」则保持原来的自动探测/下载逻辑"/>
+                      ToolTip="{DynamicResource Str_Ui_Pick_One_From_The_Java_List_Above_As_The}"/>
 
 
             <!-- 高手模式下才显示：自定义 JVM 启动参数。全局一份，跟 AdvancedJavaPanel 共享同一个
                  AdvancedModeCheck 显隐开关，但单独成一个 StackPanel，因为这是不同的关注点
                  （Java 版本/架构/安装方式 vs 启动参数本身），拆开更清晰。 -->
             <StackPanel x:Name="CustomJvmArgsPanel" Margin="0,0,0,16" Visibility="Collapsed">
-                <TextBlock Text="自定义 Java 启动参数（高手）" Margin="0,0,0,4" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="12"/>
+                <TextBlock Text="{DynamicResource Str_Ui_Custom_Java_Arguments_Advanced}" Margin="0,0,0,4" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="12"/>
                 <TextBox x:Name="CustomJvmArgsBox" Padding="8" Height="60" TextWrapping="Wrap" AcceptsReturn="True"
                          VerticalScrollBarVisibility="Auto"
-                         ToolTip="例如：-XX:+UseG1GC -Dsomething=&quot;value with spaces&quot;"/>
-                <TextBlock Text="用空格分隔多个参数；带空格的值请用双引号包裹。这些参数会加在启动器内置参数之后、classpath 之前，如果和内置参数冲突，以你填的为准。留空则不生效。"
+                         ToolTip="{DynamicResource Str_Ui_E_G_Xx_Useg1gc_Dsomething_Quot_Value_Wit}"/>
+                <TextBlock Text="{DynamicResource Str_Ui_Separate_Arguments_With_Spaces_And_Wrap_}"
                            Margin="0,6,0,0" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap"/>
             </StackPanel>
 
-            <TextBlock Text="最小内存 (MB)" Margin="0,0,0,4"/>
+            <TextBlock Text="{DynamicResource Str_Ui_Min_Memory_Mb}" Margin="0,0,0,4"/>
             <TextBox x:Name="MinMemBox" Padding="8" Margin="0,0,0,16"/>
 
-            <TextBlock Text="最大内存 (MB)" Margin="0,0,0,4"/>
+            <TextBlock Text="{DynamicResource Str_Ui_Max_Memory_Mb}" Margin="0,0,0,4"/>
             <TextBox x:Name="MaxMemBox" Padding="8" Margin="0,0,0,16"/>
 
-            <TextBlock Text="游戏窗口大小" Margin="0,0,0,4"/>
+            <TextBlock Text="{DynamicResource Str_Ui_Game_Window_Size}" Margin="0,0,0,4"/>
             <StackPanel Orientation="Horizontal" Margin="0,0,0,16">
                 <TextBox x:Name="WidthBox" Width="90" Padding="8"/>
                 <TextBlock Text=" x " VerticalAlignment="Center" Margin="6,0"/>
                 <TextBox x:Name="HeightBox" Width="90" Padding="8"/>
             </StackPanel>
 
-            <TextBlock Text="下载源" Margin="0,0,0,4"/>
+            <TextBlock Text="{DynamicResource Str_Ui_Download_Source}" Margin="0,0,0,4"/>
             <ComboBox x:Name="SourceCombo" Width="220" Margin="0,0,0,20">
-                <ComboBoxItem Content="BMCLAPI 镜像源 (推荐，国内更快)"/>
-                <ComboBoxItem Content="官方源 (Mojang)"/>
+                <ComboBoxItem Content="{DynamicResource Str_Ui_Bmclapi_Mirror_Recommended_Faster_In_Mai}"/>
+                <ComboBoxItem Content="{DynamicResource Str_Ui_Official_Mojang}"/>
             </ComboBox>
 
             <!-- CurseForge 地图下载功能使用内置 API Key（见 CurseForgeKeyService.BuiltInKey），
@@ -178,81 +178,121 @@
             <!-- 游戏内语言：控制 Minecraft 客户端本体的显示语言（写入 options.txt 的 lang 字段），
                  跟启动器界面本身的语言无关。之前版本完全没有这个选项，导致游戏语言只能依赖
                  Minecraft 自己的系统语言探测，中文 Windows 上偶尔仍会回退成英文且用户无法手动纠正。 -->
-            <TextBlock Text="游戏内语言" Margin="0,0,0,4"/>
+            <TextBlock Text="{DynamicResource Str_Ui_In_Game_Language}" Margin="0,0,0,4"/>
             <ComboBox x:Name="GameLanguageCombo" Width="220" Margin="0,0,0,20">
-                <ComboBoxItem Content="简体中文" Tag="zh_cn"/>
-                <ComboBoxItem Content="繁體中文（台灣）" Tag="zh_tw"/>
+                <ComboBoxItem Content="{DynamicResource Str_Ui_Label_2}" Tag="zh_cn"/>
+                <ComboBoxItem Content="{DynamicResource Str_Ui_Label_3}" Tag="zh_tw"/>
                 <ComboBoxItem Content="English (US)" Tag="en_us"/>
-                <ComboBoxItem Content="日本語" Tag="ja_jp"/>
+                <ComboBoxItem Content="{DynamicResource Str_Ui_Label}" Tag="ja_jp"/>
                 <ComboBoxItem Content="한국어" Tag="ko_kr"/>
             </ComboBox>
 
             <!-- 游戏内左下角"版本类型"水印文字：对应启动参数 versionType（Minecraft 客户端
                  原生会把这个值渲染在主菜单/游戏内左下角），见 AppConfig.GameVersionTypeLabel 注释。
                  默认 "XCL2"，用户可以改成任意文字，留空则退回官方原始的 "release"。 -->
-            <TextBlock Text="游戏内水印文字（左下角显示，如 &quot;XCL2&quot;；留空则显示官方原始的 &quot;release&quot;）" Margin="0,0,0,4"/>
+            <TextBlock Text="{DynamicResource Str_Ui_In_Game_Watermark_Text_Shown_In_The_Bott}" Margin="0,0,0,4"/>
             <TextBox x:Name="GameVersionTypeLabelBox" Width="220" HorizontalAlignment="Left" Margin="0,0,0,20"/>
 
             <!-- 界面切换动画开关：控制左侧导航栏切页时右侧内容区的淡入过渡效果。
                  默认开启；觉得切页慢/动画多余的用户可以关掉，关闭后切页恢复瞬间直接替换，
                  不跑任何动画。见 MainWindow.SetMainContent。 -->
-            <CheckBox x:Name="PageAnimationsCheck" Content="界面切换动画（左侧导航栏切页时的淡入过渡效果，关闭后切页瞬间完成）"
+            <CheckBox x:Name="PageAnimationsCheck" Content="{DynamicResource Str_Ui_Page_Transition_Animation_The_Fade_When_}"
                       Margin="0,0,0,8"/>
 
-            <CheckBox x:Name="InjectionScanCheck" Content="启用注入检测（游戏启动后自动扫描是否有可疑模块/外挂）"
+            <CheckBox x:Name="InjectionScanCheck" Content="{DynamicResource Str_Ui_Enable_Injection_Scanning_Checks_For_Sus}"
                       Margin="0,0,0,8"/>
 
-            <CheckBox x:Name="GameConsoleWindowCheck" Content="启动游戏时额外弹出独立 CMD 窗口，实时显示游戏日志（方便在命令行里直接查看）"
+            <CheckBox x:Name="GameConsoleWindowCheck" Content="{DynamicResource Str_Ui_Open_A_Separate_Console_Window_On_Launch}"
                       Margin="0,0,0,8"/>
 
             <!-- 下载中心 Mod 搜索结果的图标显示开关：图标从 Modrinth/CurseForge 抓取，
                  默认显示；网络较差或者不喜欢列表里混图片的用户可以关掉，只影响图标渲染，
                  不影响搜索/下载本身。 -->
-            <CheckBox x:Name="ShowModIconsCheck" Content="下载中心 Mod 搜索结果显示模组图标（从 Modrinth/CurseForge 抓取，默认开启）"
+            <CheckBox x:Name="ShowModIconsCheck" Content="{DynamicResource Str_Ui_Show_Mod_Icons_In_Search_Results_Fetched}"
                       Margin="0,0,0,8"/>
 
             <!-- 服务器启动后的外网访问教程弹窗开关：介绍内网穿透/路由器端口映射/云服务器中转，
                  帮不熟悉这些操作的用户开服后知道下一步该做什么，默认开启，用户可以在这里关掉，
                  也可以在教程弹窗里直接勾选"不再提示"（效果和这里是同一个开关）。 -->
-            <CheckBox x:Name="ShowServerNetworkGuideCheck" Content="服务器启动成功后自动弹出「如何开放外网访问」教程（默认开启）"
+            <CheckBox x:Name="ShowServerNetworkGuideCheck" Content="{DynamicResource Str_Ui_Show_The_Opening_Your_Server_To_The_Inte}"
                       Margin="0,0,0,8"/>
 
-            <CheckBox x:Name="IsolateVersionsCheck" Content="默认按版本隔离 mods / 资源包 / 数据包 / 存档等（推荐开启，与官方启动器行为一致；可在「版本选择」页为单个版本单独覆盖）"
+            <CheckBox x:Name="IsolateVersionsCheck" Content="{DynamicResource Str_Ui_Keep_Mods_Resource_Packs_Data_Packs_And_}"
                       Margin="0,0,0,8"/>
+
+            <!-- ===================== 拖拽安装 =====================
+                 对应需求："均可以在设置项里调整默认值"。
+                 这四项决定把文件拖进启动器窗口时默认怎么处理；
+                 拖拽本身的识别逻辑见 Services/DragDropInstallService.cs。 -->
+            <TextBlock Text="{DynamicResource Str_Drop_SectionTitle}" FontWeight="Bold" FontSize="14" Margin="0,18,0,4"/>
+            <TextBlock FontSize="11" Margin="0,0,0,10" TextWrapping="Wrap"
+                       Foreground="{DynamicResource TextSecondaryBrush}"
+                       Text="{DynamicResource Str_Ui_Drag_Mods_Resource_Packs_Shaders_Worlds_}"/>
+
+            <CheckBox x:Name="ModpackDropNewInstanceCheck" Margin="0,0,0,10"
+                      Content="{DynamicResource Str_Ui_Create_A_Separate_Instance_When_A_Modpac}"
+                      ToolTip="{DynamicResource Str_Ui_Turning_This_Off_Restores_The_Old_Behavi}"/>
+
+            <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
+                <TextBlock Text="{DynamicResource Str_Ui_When_A_Dropped_Zip_Can_T_Be_Identified}" VerticalAlignment="Center" Width="200"/>
+                <ComboBox x:Name="ZipDropDefaultCombo" Width="220" SelectionChanged="DragDropSetting_Changed">
+                    <ComboBoxItem Content="{DynamicResource Str_Ui_Ask_Every_Time_Recommended}" Tag="Ask" IsSelected="True"/>
+                    <ComboBoxItem Content="{DynamicResource Str_Ui_Always_Treat_As_Modpack}" Tag="Modpack"/>
+                    <ComboBoxItem Content="{DynamicResource Str_Ui_Always_Treat_As_Resource_Pack}" Tag="ResourcePack"/>
+                </ComboBox>
+            </StackPanel>
+
+            <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
+                <TextBlock Text="{DynamicResource Str_Ui_Dropping_Jar_On_The_Server_Management_Pa}" VerticalAlignment="Center" Width="200"/>
+                <ComboBox x:Name="ServerJarDropCombo" Width="220" SelectionChanged="DragDropSetting_Changed">
+                    <ComboBoxItem Content="{DynamicResource Str_Ui_Install_To_Server_Recommended}" Tag="Server" IsSelected="True"/>
+                    <ComboBoxItem Content="{DynamicResource Str_Ui_Install_To_Current_Instance}" Tag="CurrentInstanceMods"/>
+                    <ComboBoxItem Content="{DynamicResource Str_Ui_Ask_Every_Time}" Tag="Ask"/>
+                </ComboBox>
+            </StackPanel>
+
+            <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
+                <TextBlock Text="{DynamicResource Str_Ui_Dropping_Jar_On_Other_Pages}" VerticalAlignment="Center" Width="200"/>
+                <ComboBox x:Name="DefaultJarDropCombo" Width="220" SelectionChanged="DragDropSetting_Changed">
+                    <ComboBoxItem Content="{DynamicResource Str_Ui_Install_To_Current_Instance_Recomm}" Tag="CurrentInstanceMods" IsSelected="True"/>
+                    <ComboBoxItem Content="{DynamicResource Str_Ui_Install_To_Server}" Tag="Server"/>
+                    <ComboBoxItem Content="{DynamicResource Str_Ui_Ask_Every_Time}" Tag="Ask"/>
+                </ComboBox>
+            </StackPanel>
 
             <!-- 资源包下载作用域：独立于上面的"版本隔离"总开关。默认勾选(材质包/数据包/光影包都
                  按版本隔离，装进各自版本目录下，互不共用)；取消勾选后改为全局共用一份，装进
                  .minecraft 根目录的 resourcepacks/shaderpacks，不用每个版本各下一次。
                  数据包不受这个开关影响，数据包本来就必须挂在具体存档下才生效。
                  可在「版本选择」页为单个版本单独覆盖，跟上面"版本隔离"覆盖是同一个模式。 -->
-            <CheckBox x:Name="IsolateResourcePacksCheck" Content="资源包/数据包/光影包按版本隔离，互不共用（默认开启；取消勾选=全局共用一份，避免重复下载；可在「版本选择」页为单个版本单独覆盖）"
+            <CheckBox x:Name="IsolateResourcePacksCheck" Content="{DynamicResource Str_Ui_Keep_Resource_Data_And_Shader_Packs_Sepa}"
                       Margin="0,0,0,20"/>
 
             <!-- 访客模式：开启后主页/启动游戏永远使用一个只存在于本次运行的临时离线账户，
                  不使用、也不暴露账户管理页里保存的任何真实账户；关闭启动器时会清理本次会话
                  新产生的游戏日志/临时下载文件（不影响已安装的游戏本体、mods、存档等）。
                  适合在别人电脑上临时借用的场景。需要点下面的"保存设置"才会生效。 -->
-            <TextBlock Text="隐私" FontSize="14" FontWeight="Bold" Margin="0,0,0,4"/>
-            <CheckBox x:Name="GuestModeCheck" Content="访客模式（启动游戏使用临时账户，不使用已保存的账户；关闭时清理本次会话产生的日志/临时下载文件）"
-                      ToolTip="开启后：主页「启动游戏」永远用一个仅本次运行有效的临时离线账户，不会读取/写入账户管理页里保存的真实账户；关闭启动器时自动清理这次运行产生的游戏日志和临时下载文件，不影响已安装的游戏本体、Mod、存档。"
+            <TextBlock Text="{DynamicResource Str_Ui_Privacy}" FontSize="14" FontWeight="Bold" Margin="0,0,0,4"/>
+            <CheckBox x:Name="GuestModeCheck" Content="{DynamicResource Str_Ui_Guest_Mode_Launches_With_A_Temporary_Acc}"
+                      ToolTip="{DynamicResource Str_Ui_When_On_The_Launch_Button_Always_Uses_A_}"
                       Margin="0,0,0,4"/>
-            <TextBlock Text="访客模式只影响临时账户和会话清理，不会改变界面配色；配色始终以「配色皮肤」+「模式设置」的当前选择为准。"
+            <TextBlock Text="{DynamicResource Str_Ui_Guest_Mode_Only_Affects_Temporary_Accoun}"
                        FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,20" TextWrapping="Wrap"/>
 
             <!-- 配色皮肤：色系(White/Blue/Yellow/Purple/Pink)，跟明暗是两个独立维度。
                  具体显示成浅色版还是深色版由 IsDarkMode 决定——见首页/主界面的「模式设置」
                  按钮，或者下面的自动循环。这里选的只是色相，不管深浅。 -->
-            <TextBlock Text="配色皮肤（色系）" FontSize="14" FontWeight="Bold" Margin="0,0,0,4"/>
+            <TextBlock Text="{DynamicResource Str_Ui_Colour_Theme}" FontSize="14" FontWeight="Bold" Margin="0,0,0,4"/>
             <ComboBox x:Name="UiSkinCombo" Style="{StaticResource TallPopupComboBox}" Padding="8" Margin="0,0,0,4" HorizontalAlignment="Left" MinWidth="160"
-                      ToolTip="切换启动器的配色色相；每个色系都各自有浅色版和深色版，具体显示深色还是浅色由首页「模式设置」按钮或下面的自动循环决定。"/>
-            <TextBlock Text="需要点下面的「保存设置」才会生效；预览效果会在保存后立即应用，不需要重启启动器。"
+                      ToolTip="{DynamicResource Str_Ui_Changes_The_Launcher_S_Colour_Family_Eac}"/>
+            <TextBlock Text="{DynamicResource Str_Ui_Press_Save_Settings_Below_To_Apply_The_R}"
                        FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,20" TextWrapping="Wrap"/>
 
             <!-- 自动循环：开启后由系统时间自动决定深浅色模式，不需要手动点主界面的
                  「模式设置」按钮。这两个小时数只在这里设置，主界面按钮只负责开关这个功能
                  本身和临时手动覆盖。 -->
-            <TextBlock Text="深浅色自动循环" FontSize="14" FontWeight="Bold" Margin="0,0,0,4"/>
-            <TextBlock Text="开启后，主界面「自动循环」按钮生效：到达下面设置的时间点会自动切换深浅色模式。用户仍可随时点「模式设置」按钮临时手动切换，但到下一个时间点会被自动循环重新接管。"
+            <TextBlock Text="{DynamicResource Str_Ui_Auto_Light_Dark_Cycle}" FontSize="14" FontWeight="Bold" Margin="0,0,0,4"/>
+            <TextBlock Text="{DynamicResource Str_Ui_Enables_The_Auto_Cycle_Button_On_The_Mai}"
                        FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,8" TextWrapping="Wrap"/>
             <Grid Margin="0,0,0,4" HorizontalAlignment="Left">
                 <Grid.ColumnDefinitions>
@@ -262,23 +302,23 @@
                     <ColumnDefinition Width="Auto"/>
                     <ColumnDefinition Width="Auto"/>
                 </Grid.ColumnDefinitions>
-                <TextBlock Grid.Column="0" Text="浅色模式开始于" VerticalAlignment="Center" Margin="0,0,6,0"/>
+                <TextBlock Grid.Column="0" Text="{DynamicResource Str_Ui_Light_Mode_Starts_At}" VerticalAlignment="Center" Margin="0,0,6,0"/>
                 <ComboBox x:Name="AutoThemeLightStartHourCombo" Grid.Column="1" Padding="8" MinWidth="70"
-                          ToolTip="每天到达这个小时（0~23）自动切换为浅色模式，直到「深色模式开始于」设置的时间点为止。"/>
-                <TextBlock Grid.Column="3" Text="深色模式开始于" VerticalAlignment="Center" Margin="0,0,6,0"/>
+                          ToolTip="{DynamicResource Str_Ui_Switch_To_Light_Mode_At_This_Hour_Each_D}"/>
+                <TextBlock Grid.Column="3" Text="{DynamicResource Str_Ui_Dark_Mode_Starts_At}" VerticalAlignment="Center" Margin="0,0,6,0"/>
                 <ComboBox x:Name="AutoThemeDarkStartHourCombo" Grid.Column="4" Padding="8" MinWidth="70"
-                          ToolTip="每天到达这个小时（0~23）自动切换为深色模式，直到「浅色模式开始于」设置的时间点为止（跨过午夜也会正确处理）。"/>
+                          ToolTip="{DynamicResource Str_Ui_Switch_To_Dark_Mode_At_This_Hour_Each_Da}"/>
             </Grid>
-            <TextBlock Text="默认：早上 8:00 到下午 19:00 为浅色模式，其余时间为深色模式。需要点「保存设置」才会生效。"
+            <TextBlock Text="{DynamicResource Str_Ui_Default_Light_Mode_From_08_00_To_19_00_A}"
                        FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,20" TextWrapping="Wrap"/>
 
             <!-- 万能皮肤补丁(authlib-injector) 使用的皮肤服务地址：默认使用内置公共服务，
                  有自己皮肤站的用户可以在这里替换成自己的 API Root。只影响"离线账户选择了
                  自定义皮肤"这一种场景，史蒂夫/艾利克斯默认皮肤不受影响。 -->
-            <TextBlock Text="离线皮肤服务地址（万能皮肤补丁 API Root）" Margin="0,0,0,4"/>
+            <TextBlock Text="{DynamicResource Str_Ui_Offline_Skin_Service_Url_Customskinloade}" Margin="0,0,0,4"/>
             <TextBox x:Name="SkinApiRootBox" Padding="8" Margin="0,0,0,4"
-                     ToolTip="账户管理里选择「自定义皮肤」的离线账户会通过这个地址的皮肤服务显示皮肤。默认使用内置公共服务，留空会自动恢复默认值。"/>
-            <TextBlock Text="只影响离线账户里选择了「自定义皮肤」的账户；史蒂夫/艾利克斯默认皮肤、微软账户皮肤不受此项影响。"
+                     ToolTip="{DynamicResource Str_Ui_Offline_Accounts_Set_To_Use_A_Custom_Ski}"/>
+            <TextBlock Text="{DynamicResource Str_Ui_Only_Affects_Offline_Accounts_Set_To_Use}"
                        FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,20" TextWrapping="Wrap"/>
 
             <!-- 实验性功能入口：第一次点击会先弹一个不能跳过、强制等待 10 秒的确认窗口
@@ -286,10 +326,10 @@
                  之后再点直接打开实验性功能面板，不需要每次都重新等待。
                  换肤功能已经全部做完，不再放在这里面（见上面「配色皮肤」区块），
                  这里现在只剩"初步测试版"这一层更不成熟的功能（比如多加载器合装）。 -->
-            <TextBlock Text="实验性功能" FontSize="14" FontWeight="Bold" Foreground="{DynamicResource WarningTextBrush}" Margin="0,0,0,4"/>
-            <TextBlock Text="包含仍处于开发/想法阶段的功能，可能不稳定，不建议普通用户尝试。首次进入需要强制阅读 10 秒警示说明。"
+            <TextBlock Text="{DynamicResource Str_Nav_Experimental}" FontSize="14" FontWeight="Bold" Foreground="{DynamicResource WarningTextBrush}" Margin="0,0,0,4"/>
+            <TextBlock Text="{DynamicResource Str_Ui_Contains_Features_Still_In_Development_O}"
                        Foreground="{DynamicResource TextSecondaryBrush}" FontSize="11" Margin="0,0,0,8" TextWrapping="Wrap"/>
-            <Button x:Name="ExperimentalFeaturesBtn" Content="🧪 进入实验性功能" Style="{StaticResource SecondaryButton}"
+            <Button x:Name="ExperimentalFeaturesBtn" Content="{DynamicResource Str_Ui_Experimental_Features}" Style="{StaticResource SecondaryButton}"
                     HorizontalAlignment="Left" Padding="14,8" Click="ExperimentalFeatures_Click" Margin="0,0,0,20"/>
 
 
@@ -297,23 +337,23 @@
                  只有网络环境特殊（比如共享宽带、怕抢占其他人/其他程序带宽）的用户才需要调整。
                  三项是独立开关：可以只开多线程不限速，也可以关掉多线程但仍然手动限速（限速对
                  单线程场景同样生效，只是此时"总速度"等于"这一个连接的速度"）。 -->
-            <TextBlock Text="下载性能" FontSize="14" FontWeight="Bold" Margin="0,0,0,4"/>
-            <CheckBox x:Name="MultiThreadDownloadCheck" Content="启用多线程下载（并发下载多个文件，显著加快下载速度）"
+            <TextBlock Text="{DynamicResource Str_Ui_Download_Performance}" FontSize="14" FontWeight="Bold" Margin="0,0,0,4"/>
+            <CheckBox x:Name="MultiThreadDownloadCheck" Content="{DynamicResource Str_Ui_Enable_Multi_Threaded_Downloads_Fetches_}"
                       Margin="0,0,0,8" Checked="MultiThreadDownloadCheck_Changed" Unchecked="MultiThreadDownloadCheck_Changed"/>
             <StackPanel x:Name="ThreadCountPanel" Orientation="Horizontal" Margin="20,0,0,8">
-                <TextBlock Text="并发线程数：" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                <TextBlock Text="{DynamicResource Str_Ui_Threads}" VerticalAlignment="Center" Margin="0,0,8,0"/>
                 <TextBox x:Name="ThreadCountBox" Width="60" Padding="6"/>
-                <TextBlock Text="（建议 1~32，默认 8）" VerticalAlignment="Center" Margin="8,0,0,0"
+                <TextBlock Text="{DynamicResource Str_Ui_1_32_Recommended_Default_8}" VerticalAlignment="Center" Margin="8,0,0,0"
                            FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}"/>
             </StackPanel>
 
-            <TextBlock Text="下载限速 (KB/s，0 表示不限速)" Margin="0,0,0,4"/>
+            <TextBlock Text="{DynamicResource Str_Ui_Download_Limit_Kb_S_0_Unlimited}" Margin="0,0,0,4"/>
             <TextBox x:Name="SpeedLimitBox" Width="120" Padding="8" Margin="0,0,0,4" HorizontalAlignment="Left"/>
-            <TextBlock Text="限速是所有并发连接加总的总速度，不是单个连接各自的速度。"
+            <TextBlock Text="{DynamicResource Str_Ui_The_Limit_Applies_To_All_Connections_Com}"
                        FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,10" TextWrapping="Wrap"/>
 
             <CheckBox x:Name="SmartThrottleCheck"
-                      Content="智能限速（自动检测其他程序的网络占用，避免抢占带宽；可与上面的限速同时开启，取两者中更保守的一个）"
+                      Content="{DynamicResource Str_Ui_Smart_Throttling_Watches_What_Other_Prog}"
                       Margin="0,0,0,20"/>
 
             <!-- 功能隐藏：勾选的功能项在界面上不再显示（导航按钮/子页面按钮/特定功能入口）。
@@ -321,8 +361,8 @@
                  动态渲染，不用为每个功能手写一个 CheckBox——新增/删减功能项时只改那边的 C# 数组，
                  这里的 XAML 不用跟着改。按 F12 可以在任意界面临时把隐藏的功能全部显示出来
                  （不影响这里的勾选状态，只是"临时看得见"，见 MainWindow 的全局按键处理）。 -->
-            <TextBlock Text="功能隐藏" FontSize="14" FontWeight="Bold" Margin="0,0,0,4"/>
-            <TextBlock Text="你可以隐藏不需要的页面或关闭特定功能。在任意界面按 F12 可以暂时显示被隐藏的功能。"
+            <TextBlock Text="{DynamicResource Str_Ui_Hide_Features}" FontSize="14" FontWeight="Bold" Margin="0,0,0,4"/>
+            <TextBlock Text="{DynamicResource Str_Ui_You_Can_Hide_Pages_You_Don_T_Need_Or_Swi}"
                        FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,10" TextWrapping="Wrap"/>
             <ItemsControl x:Name="FeatureHideList" Margin="0,0,0,20">
                 <ItemsControl.ItemTemplate>
@@ -348,7 +388,7 @@
                 </ItemsControl.ItemTemplate>
             </ItemsControl>
 
-            <Button Content="保存设置" Style="{StaticResource PrimaryButton}" Width="140" HorizontalAlignment="Left" Click="Save_Click"/>
+            <Button Content="{DynamicResource Str_Ui_Save_Settings}" Style="{StaticResource PrimaryButton}" Width="140" HorizontalAlignment="Left" Click="Save_Click"/>
             <TextBlock x:Name="StatusText" Foreground="{DynamicResource AccentBrush}" Margin="0,12,0,0"/>
         </StackPanel>
         </ScrollViewer>

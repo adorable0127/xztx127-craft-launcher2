@@ -27,7 +27,13 @@ public class FolderService
                 var detail = JsonSerializer.Deserialize<VersionDetail>(File.ReadAllText(jsonPath));
                 if (detail == null) continue;
 
-                var (mcVersion, loader, loaderVersion) = GuessLoaderInfo(id, detail);
+                // 修复"导出的整合包没有版本信息"：改用 VersionInfoResolver 做真正的解析，
+                // 不再用原来那个 `InheritsFrom ?? Id` + 空字符串的假实现（见 VersionInfoResolver
+                // 类头注释里对这个 bug 完整成因的说明）。
+                var info = VersionInfoResolver.Resolve(dir, id, detail);
+                var mcVersion = info.McVersion;
+                var loader = info.ModLoader;
+                var loaderVersion = info.ModLoaderVersion;
 
                 // jar 文件名以 json 内部自带的 "id" 字段为准，而不是文件夹名：
                 // 用户把版本文件夹改名后，文件夹里的 json/jar 文件名本身不会跟着变，
@@ -62,19 +68,6 @@ public class FolderService
 
         var jsonFiles = Directory.GetFiles(dir, "*.json");
         return jsonFiles.Length == 1 ? jsonFiles[0] : null;
-    }
-
-    private static (string mcVersion, string? loader, string? loaderVersion) GuessLoaderInfo(string id, VersionDetail detail)
-    {
-        var lowerId = id.ToLowerInvariant();
-        string? loader = null;
-        if (lowerId.Contains("fabric")) loader = "Fabric";
-        else if (lowerId.Contains("neoforge")) loader = "NeoForge";
-        else if (lowerId.Contains("forge")) loader = "Forge";
-        else if (lowerId.Contains("quilt")) loader = "Quilt";
-
-        var mcVersion = detail.InheritsFrom ?? detail.Id;
-        return (mcVersion, loader, loader != null ? "" : null);
     }
 
     /// <summary>扫描 &lt;minecraftDir&gt;/saves/ 下的存档名（用于数据包安装时选择目标存档）。</summary>

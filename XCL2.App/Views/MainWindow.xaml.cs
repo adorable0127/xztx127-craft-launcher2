@@ -129,6 +129,8 @@ public partial class MainWindow : Window
         // Window 弹窗迁移后都通过 OverlayDialogService 挂载到这里的 OverlayRoot。
         // 见 OverlayDialogService.cs 顶部的整体设计注释。
         OverlayDialogService.Register(this);
+        // Toast 通知层宿主（右下角自动消失的轻提示，见 ToastService 类头注释）。
+        ToastService.Register(this);
 
         StateChanged += (_, _) =>
         {
@@ -176,18 +178,33 @@ public partial class MainWindow : Window
 
         // 启动时自动扫描本机的 .minecraft 文件夹（AppData + 每个磁盘 1/2/3 级目录），
         // 找到新的就自动加入"版本选择"页的文件夹列表，不需要用户手动一个个"添加文件夹"。
-        // 放到 Loaded 之后用后台线程跑：扫描要枚举磁盘目录，慢盘/大量文件的机器上可能要
-        // 几秒甚至更久，不能放在构造函数里同步跑（会让主窗口卡在黑屏/白屏好几秒才显示出来）。
-        // 扫描结果通过 Dispatcher 切回 UI 线程再保存配置 + 弹提示，避免跨线程直接改
-        // ConfigService.Config 或者操作 UI 控件。
-        Loaded += (_, _) => _ = ScanMinecraftFoldersInBackgroundAsync();
+        // 放到窗口真正显示出来之后用后台线程跑：扫描要枚举磁盘目录，慢盘/大量文件的机器上
+        // 可能要几秒甚至更久，不能放在构造函数里同步跑（会让主窗口卡在黑屏/白屏好几秒才
+        // 显示出来）。扫描结果通过 Dispatcher 切回 UI 线程再保存配置 + 弹提示，避免跨线程
+        // 直接改 ConfigService.Config 或者操作 UI 控件。
+        //
+        // 修复"首次打开白屏，要手动拖动/全屏窗口才会渲染出内容"：这里以及下面 Java 扫描/
+        // 新手向导三处，原来都是挂在 Loaded 事件上。Loaded 只代表"可视化树已经连接完毕"，
+        // WPF 并不保证这时候已经真正走完一次 Measure/Arrange/Render 把内容画到屏幕上——
+        // 如果 Loaded 的回调本身还在做事(哪怕只是启动一个 Task.Run、注册几个事件)，
+        // 就会继续占着 UI 线程，把"排队中但还没真正执行"的首帧渲染往后推，表现就是
+        // "看起来是白屏，直到用户做了一次窗口大小变化才强制触发一次布局/渲染"。
+        // 改成挂在 ContentRendered 上：这是 WPF 专门用来表示"第一帧（以及此后每一次
+        // 内容变化触发的重新渲染）已经真正合成绘制完毕"的事件，在它触发之前，
+        // WPF 内部会保证先完整走完一遍 Layout+Render，不会被同一批 Loaded 回调抢占——
+        // 从根上避免"渲染工作还没来得及执行就被其它逻辑挤到后面"这个不确定性，
+        // 不需要再靠 Dispatcher.Invoke(..., Render) 这种猜时序的占位技巧。
+        if (ConfigService.Config.FirstRunWizardCompleted)
+        {
+            ContentRendered += (_, _) => _ = ScanMinecraftFoldersInBackgroundAsync();
+        }
 
         // 需求："在启动的时候，像检测mc的目录一样检测 Javaw.exe，无需用户手动打开设置，
-        // 就可以生成 java 列表。"——跟上面 MC 文件夹扫描完全同一套模式：Loaded 后台线程跑，
-        // 静默登记，不打断/不阻塞主窗口显示。之前只有打开「设置」页时才会触发
-        // AutoDetectJavaOnLoadAsync（见 SettingsPage.xaml.cs），用户不点进设置页永远不会
-        // 自动发现新装的 Java，这里补上真正"程序启动时"这一级的自动探测。
-        Loaded += (_, _) => _ = ScanJavaInBackgroundAsync();
+        // 就可以生成 java 列表。"——跟上面 MC 文件夹扫描完全同一套模式：主窗口真正显示
+        // 出来之后台线程跑，静默登记，不打断/不阻塞主窗口显示。之前只有打开「设置」页时
+        // 才会触发 AutoDetectJavaOnLoadAsync（见 SettingsPage.xaml.cs），用户不点进设置页
+        // 永远不会自动发现新装的 Java，这里补上真正"程序启动时"这一级的自动探测。
+        ContentRendered += (_, _) => _ = ScanJavaInBackgroundAsync();
 
         // 定时清理已退出的进程记录，保持"进程管理"列表/按钮的可用性状态是最新的
         _pruneTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
@@ -220,6 +237,13 @@ public partial class MainWindow : Window
 
         Closed += (_, _) => _memoryWatchdog.Dispose();
 
+        // 需求："启动器每次关闭时会自动生成会话日志"。写在访客模式清理**之前**：
+        // 访客模式清理会删掉本次会话新产生的日志文件（见 GuestModeService.CleanupNewLogFiles
+        // 注释——"不留下这次使用的痕迹"是访客模式的既定设计），如果反过来先清理再落盘，
+        // 访客模式下这个文件会残留下来，跟"访客模式不留痕迹"的承诺矛盾。非访客模式下
+        // 顺序无所谓，这里统一放前面简化逻辑。
+        Closed += (_, _) => LauncherLogService.EndSessionAndFlush();
+
         // 应用关闭时，如果访客模式是开启状态，清理本次会话产生的日志/临时下载文件，
         // 不留下这次使用的痕迹。放在 Closed 而不是 Closing，避免清理耗时(理论上很快，
         // 但保险起见)阻塞窗口关闭动画/响应。
@@ -232,15 +256,42 @@ public partial class MainWindow : Window
             }
         };
 
-        // 首次启动自动弹出新手引导：用 Loaded 事件延迟到主窗口真正显示之后再弹，
-        // 避免向导窗口在主窗口还没渲染完成时就抢先出现、体验突兀。
+        // 首次启动自动弹出新手引导：挂在 ContentRendered 而不是 Loaded 上（原因见上面
+        // MC 文件夹/Java 扫描两处的注释——Loaded 不保证首帧已经真正画出来，向导这种
+        // 立刻弹出的模态 Overlay 如果在 Loaded 里弹，很容易跟"主窗口自己的首帧渲染"抢
+        // UI 线程，表现就是主窗口白屏、向导也显示不全）。ContentRendered 在窗口每次
+        // 内容重新渲染完成后都会触发，这里用 EventHandler 局部变量 + 立即反订阅实现
+        // "只在首帧渲染完成后弹一次"，避免后续任何触发 ContentRendered 的操作
+        // （比如窗口尺寸变化、主题切换引起的视觉刷新）意外把向导再弹一次。
+        //
+        // 新手引导走完/关闭之后才补跑一次 .minecraft 文件夹自动扫描（原因见上面
+        // ScanMinecraftFoldersInBackgroundAsync 调用点的注释：避免扫描结果提示框
+        // 在向导进行到一半时插队压栈，把向导流程打断/挡住）。这里不区分用户是正常走完
+        // 向导还是中途关掉——不管哪种，向导这个 Overlay 已经让出了 OverlayContentHost，
+        // 此时再弹提示不会有任何抢占问题。
+        //
+        // 修复"点弹窗周围的空白处会把新手引导关掉"：wizard.ShowDialog() 走的是
+        // OverlayDialogControl 里给 30 多个弹窗共用的兼容层（见 IOverlayDialog.cs），
+        // 内部固定调用 OverlayDialogService.ShowModal(this)，也就是用
+        // dismissOnBackgroundClick 的默认值 true——这个默认值对"确认框/选择框"这些
+        // 一次性小弹窗是合理的（点旁边空白 = 取消），但新手引导是"必须显式选择/走完
+        // 才算数"的多步骤流程，被误触的空白区域一点就整个关掉、状态直接按当前进度标记
+        // 成\"已完成\"，不应该走这条默认放行的路径。这里不改 OverlayDialogControl 基类
+        // 的默认值（改了会连带影响其余 20 多个弹窗的点击外部关闭行为），而是绕开
+        // ShowDialog() 这层封装，直接调用 OverlayDialogService.ShowModal 并显式传
+        // dismissOnBackgroundClick: false，只让新手引导这一个弹窗变成"点空白处不生效，
+        // 必须点「跳过引导」或走完流程"。
         if (!ConfigService.Config.FirstRunWizardCompleted)
         {
-            Loaded += (_, _) =>
+            EventHandler? showWizardOnce = null;
+            showWizardOnce = (_, _) =>
             {
-                var wizard = new FirstRunWizardWindow(this) { Owner = this };
-                wizard.ShowDialog();
+                ContentRendered -= showWizardOnce;
+                var wizard = new FirstRunWizardWindow(this);
+                OverlayDialogService.ShowModal(wizard, dismissOnBackgroundClick: false);
+                _ = ScanMinecraftFoldersInBackgroundAsync();
             };
+            ContentRendered += showWizardOnce;
         }
     }
 
@@ -285,7 +336,9 @@ public partial class MainWindow : Window
         if (ProcessManager.Running.Count == 0) return;
 
         _activeMemoryWarningWindow = new MemoryWarningWindow(ProcessManager, _memoryWatchdog, args);
-        _activeMemoryWarningWindow.Closed += (_, _) => _activeMemoryWarningWindow = null;
+        // MemoryWarningWindow 已迁移成内嵌 Overlay，UserControl 没有 Window.Closed，
+        // 用等价的 IOverlayDialog.RequestClose 复位这个"同一时刻只留一个"的哨兵字段。
+        _activeMemoryWarningWindow.RequestClose += (_, _) => _activeMemoryWarningWindow = null;
         _activeMemoryWarningWindow.Show();
     }
 
@@ -294,7 +347,7 @@ public partial class MainWindow : Window
         try
         {
             var acc = ConfigService.GetSelectedAccount();
-            CurrentAccountText.Text = acc == null ? "未选择账户" : $"当前账户: {acc.DisplayLabel}";
+            CurrentAccountText.Text = acc == null ? Loc.T("Str_Launch_NoAccount", "未选择账户") : $"当前账户: {acc.DisplayLabel}";
             CurrentVersionText.Text = string.IsNullOrEmpty(ConfigService.Config.SelectedVersionId)
                 ? "未选择版本"
                 : $"当前版本: {ConfigService.Config.SelectedVersionId}";
@@ -302,8 +355,8 @@ public partial class MainWindow : Window
         catch
         {
             // 配置异常不应阻塞主页显示，回退为默认文案
-            CurrentAccountText.Text = "未选择账户";
-            CurrentVersionText.Text = "未选择版本";
+            CurrentAccountText.Text = Loc.T("Str_Launch_NoAccount", "未选择账户");
+            CurrentVersionText.Text = Loc.T("Str_Launch_NoVersion", "未选择版本");
         }
 
         // 收起态下横向空间极窄，"当前账户: xxx"这种完整文案必然放不下，需要再跑一遍
@@ -344,8 +397,22 @@ public partial class MainWindow : Window
                 CurrentAccountText.Text = name.Length <= 2 ? name : name[..2].ToLowerInvariant() + "...";
             }
 
+            // 修复截图2里"26.2 服务器"竖着一个字一行的问题：
+            // 这两个 TextBlock 在 XAML 里写了 TextWrapping="Wrap"，收起态列宽只有 ~46px，
+            // 任何超过两三个字的文案都会被逐字换行，把底部区域撑得很高、
+            // 还把启动按钮往下挤。收起态必须同时做两件事：截断 + 关掉换行。
             var versionId = ConfigService.Config.SelectedVersionId;
-            CurrentVersionText.Text = string.IsNullOrEmpty(versionId) ? "-" : versionId;
+            if (string.IsNullOrEmpty(versionId))
+            {
+                CurrentVersionText.Text = "-";
+            }
+            else
+            {
+                // 只保留能认出来的版本号部分（"26.2服务器" → "26.2"），认不出来就取前 4 个字符。
+                var shortVer = VersionInfoResolver.ExtractAnyVersion(versionId)
+                               ?? (versionId.Length <= 4 ? versionId : versionId[..4] + "…");
+                CurrentVersionText.Text = shortVer;
+            }
         }
         catch
         {
@@ -357,6 +424,13 @@ public partial class MainWindow : Window
         // 而不是继续贴在左边。
         CurrentAccountText.TextAlignment = TextAlignment.Center;
         CurrentVersionText.TextAlignment = TextAlignment.Center;
+
+        // 关掉自动换行 + 打开省略号截断，双保险：即使上面的缩写逻辑漏了某种情况，
+        // 也只会显示成"26.2…"，绝不会再出现逐字竖排。
+        CurrentAccountText.TextWrapping = TextWrapping.NoWrap;
+        CurrentVersionText.TextWrapping = TextWrapping.NoWrap;
+        CurrentAccountText.TextTrimming = TextTrimming.CharacterEllipsis;
+        CurrentVersionText.TextTrimming = TextTrimming.CharacterEllipsis;
     }
 
     /// <summary>
@@ -660,6 +734,9 @@ public partial class MainWindow : Window
         SetMainContent(new LogsPage(this));
     }
 
+    /// <summary>供其他页面/弹窗调用的公开导航方法，跳转到日志页（比如崩溃提示弹窗的"查看日志"按钮）。</summary>
+    public void NavigateToLogs() => SetMainContent(new LogsPage(this));
+
     private void NavExperimental_Click(object sender, RoutedEventArgs e)
     {
         OpenExperimentalFeatures();
@@ -672,6 +749,14 @@ public partial class MainWindow : Window
 
     /// <summary>供其他页面/窗口调用的公开导航方法，跳转到「百宝箱」页。</summary>
     public void NavigateToToolbox() => SetMainContent(new ToolboxPage(this));
+
+    private void NavAboutHelp_Click(object sender, RoutedEventArgs e)
+    {
+        SetMainContent(new AboutHelpPage(this));
+    }
+
+    /// <summary>供其他页面/窗口调用的公开导航方法，跳转到「鸣谢与帮助」页。</summary>
+    public void NavigateToAboutHelp() => SetMainContent(new AboutHelpPage(this));
 
     /// <summary>侧边栏当前是否处于"收起"状态。</summary>
     private bool _sidebarCollapsed;
@@ -718,14 +803,25 @@ public partial class MainWindow : Window
         _sidebarCollapsed = collapsed;
 
         SidebarColumn.Width = new GridLength(collapsed ? SidebarCollapsedWidth : SidebarExpandedWidth);
-        SidebarToggleIcon.Text = collapsed ? "●" : "☰";
+
+        // ===== 修复「收起后图标只剩 1 像素」=====
+        // 旧版只改了列宽，没有同步收掉内边距，于是留给图标的净宽被一路吃到只剩 10px：
+        //     56(列宽) − 24(SidebarPanel.Margin=12 左右) − 20(SideNavButton.Padding=10,10)
+        //     − 2(模板 BorderThickness="2,0,0,0") = 10px
+        // 而图标至少需要 20px（NavIconBox 固定尺寸）。收起态必须把 Margin/Padding 一起收掉，
+        // 否则不管图标换成 emoji 还是矢量，都一样会被裁掉。
+        //     56 − 8(Margin 左右各 4) − 0(Padding 归零) − 2(左描边) = 46px ≥ 20px，宽裕。
+        SidebarPanel.Margin = collapsed ? new Thickness(4, 12, 4, 12) : new Thickness(12);
+
+        // 折叠切换按钮的图标：三横杠 ↔ 一个圆点。现在是 Path 不是 TextBlock，改的是 Data。
+        SidebarToggleIcon.Data = (Geometry)FindResource(collapsed ? "IconDot" : "IconMenu");
         LogoText.Visibility = collapsed ? Visibility.Collapsed : Visibility.Visible;
 
         // 导航按钮：文字 TextBlock 隐藏/显示（{DynamicResource Str_Nav_Xxx} 绑定保持不变，
         // 收起态只是不显示，不是清空文案，展开时立即恢复，不需要手动缓存/还原字符串），
         // 按钮内容居中对齐（收起时）或靠左对齐（展开时），这样收起态下只剩 emoji 图标会
         // 自然居中，不会贴在按钮左边显得很怪。
-        foreach (var (button, icon, label) in new (Button, TextBlock, TextBlock)[]
+        foreach (var (button, icon, label) in new (Button, FrameworkElement, TextBlock)[]
                  {
                      (NavHomeButton, NavHomeIcon, NavHomeLabel),
                      (NavVersionsButton, NavVersionsIcon, NavVersionsLabel),
@@ -743,11 +839,16 @@ public partial class MainWindow : Window
             label.Visibility = collapsed ? Visibility.Collapsed : Visibility.Visible;
             button.HorizontalContentAlignment = collapsed ? HorizontalAlignment.Center : HorizontalAlignment.Left;
 
-            // 收起态：图标原来的右侧 8px margin 是留给旁边文字的间距，文字隐藏后这块空白
-            // 还留着，会把图标"挤"得偏左、看起来跟按钮之间的间距不均匀；这里清零。
-            // 同时把按钮之间的垂直间距从展开态的 4px 加大到 10px，避免只剩一排图标时
-            // 显得又挤又密（截图1反映的问题）。展开态改回原来的 8px/4px，保持不变。
-            icon.Margin = collapsed ? new Thickness(0) : new Thickness(0, 0, 8, 0);
+            // 图标本身是固定 20×20 的 NavIconBox，Margin 只影响它和文字之间的间距，
+            // 不再影响图标自身尺寸（这正是换成矢量+固定盒子之后最大的好处：
+            // 无论外面怎么调间距，图标都不会被压扁）。
+            icon.Margin = new Thickness(0);
+
+            // 关键：收起态把按钮左右内边距归零，把宽度全部让给图标；
+            // 上下保留 10px 保证点击热区够大。展开态恢复原来的 10,10。
+            button.Padding = collapsed ? new Thickness(0, 10, 0, 10) : new Thickness(10, 10, 10, 10);
+
+            // 按钮之间的垂直间距：收起态只剩一排图标，加大到 10px 免得又挤又密。
             button.Margin = collapsed ? new Thickness(0, 10, 0, 0) : new Thickness(0, 4, 0, 0);
         }
 
@@ -770,6 +871,12 @@ public partial class MainWindow : Window
             // 一次 RefreshSidebar 让完整文案生效，同时把对齐方式改回左边）。
             CurrentAccountText.TextAlignment = TextAlignment.Left;
             CurrentVersionText.TextAlignment = TextAlignment.Left;
+            // 展开态恢复换行（收起时被关掉了，见 RefreshAccountVersionSidebarText），
+            // 否则长账户名展开后也不换行、被直接截断。
+            CurrentAccountText.TextWrapping = TextWrapping.Wrap;
+            CurrentVersionText.TextWrapping = TextWrapping.Wrap;
+            CurrentAccountText.TextTrimming = TextTrimming.None;
+            CurrentVersionText.TextTrimming = TextTrimming.None;
             RefreshSidebar();
         }
         else
@@ -808,7 +915,14 @@ public partial class MainWindow : Window
 
         if (!cfg.ExperimentalFeaturesUnlocked)
         {
-            var gate = new ExperimentalGateWindow { Owner = this };
+            // 修复编译错误 CS0117："ExperimentalGateWindow 未包含 Owner 的定义"。
+            // ExperimentalGateWindow 已迁移成 Overlay 弹窗（继承 OverlayDialogControl，
+            // 一个 UserControl），本来就没有 Owner 这个属性——居中和层叠关系现在统一由
+            // MainWindow 的 OverlayCard 负责，不再需要每个弹窗各自指定 owner。
+            // 这是上一轮批量清理 Owner 初始化器时的漏网：清理用的正则要求
+            // "new Xxx(...) { Owner = ... }" 带括号的构造调用，而这里是
+            // "new Xxx { Owner = ... }" 省略括号的对象初始化器写法，没被正则命中。
+            var gate = new ExperimentalGateWindow();
             gate.ShowDialog();
 
             if (!gate.Confirmed) return; // 用户取消/关闭窗口：不解锁，不打开实验性功能面板
@@ -817,7 +931,7 @@ public partial class MainWindow : Window
             ConfigService.Save();
         }
 
-        var window = new ExperimentalFeaturesWindow(this) { Owner = this };
+        var window = new ExperimentalFeaturesWindow(this);
         window.ShowDialog();
 
         // 修复"关闭实验性功能窗口时启动器主窗口会自动最小化"：ExperimentalFeaturesWindow
@@ -923,7 +1037,7 @@ public partial class MainWindow : Window
                 // Round16 反馈：之前这里直接静默 return，用户点"取消"后界面毫无反应，
                 // 体验上跟"点了没反应/软件卡死"没区别。这里跟同一方法里其它分支
                 // （没账户/没选文件夹）一样用 MessageBox 给一句明确提示。
-                MessageBoxDialog.ShowInfo("已取消启动。", "提示");
+                MessageBoxDialog.ShowInfo(Loc.T("Str_Cs_Launch_Cancelled", "已取消启动。"), Loc.T("Str_Status_Tip", "提示"));
                 return;
             }
             account = picker.SelectedAccount;
@@ -941,13 +1055,13 @@ public partial class MainWindow : Window
 
         if (account == null)
         {
-            MessageBoxDialog.ShowInfo("请先在“账户管理”中登录或创建一个离线账户。", "提示");
+            MessageBoxDialog.ShowInfo(Loc.T("Str_Cs_Sign_In_Or_Create_An_Offline_Account_On_", "请先在“账户管理”中登录或创建一个离线账户。"), Loc.T("Str_Status_Tip", "提示"));
             NavAccounts_Click(sender, e);
             return;
         }
         if (folder == null || string.IsNullOrEmpty(cfg.SelectedVersionId))
         {
-            MessageBoxDialog.ShowInfo("请先在“版本选择”中选择 .minecraft 文件夹和游戏版本。");
+            MessageBoxDialog.ShowInfo(Loc.T("Str_Cs_Choose_A_Minecraft_Folder_And_A_Game_Ver", "请先在“版本选择”中选择 .minecraft 文件夹和游戏版本。"));
             NavVersions_Click(sender, e);
             return;
         }
@@ -987,7 +1101,7 @@ public partial class MainWindow : Window
                         $"账户「{account.Username}」的登录状态已过期，且自动刷新失败，请重新登录微软账户后再启动游戏。\n" +
                         "（如果直接用过期状态启动，Minecraft 会静默进入离线试玩(Demo)模式而不会报错，" +
                         "为避免这种情况这里主动拦截。）",
-                        "需要重新登录");
+                        Loc.T("Str_Cs_Sign_In_Required", "需要重新登录"));
                     NavAccounts_Click(sender, e);
                     return;
                 }
@@ -1173,7 +1287,7 @@ public partial class MainWindow : Window
                         var hint = account.Type == AccountType.AuthServer
                             ? "下载万能皮肤补丁失败，本次将无法通过认证服务器的皮肤/会话校验：\n"
                             : "下载万能皮肤补丁失败，本次将不会显示自定义皮肤：\n";
-                        MessageBoxDialog.ShowWarning(hint + skinEx.Message, "皮肤补丁下载失败");
+                        MessageBoxDialog.ShowWarning(hint + skinEx.Message, Loc.T("Str_Cs_Failed_To_Download_The_Skin_Patch", "皮肤补丁下载失败"));
                     }
                     finally { skinProgressWin.Close(); }
                 }
@@ -1240,6 +1354,8 @@ public partial class MainWindow : Window
                     $"[{DateTime.Now}] 导出启动脚本失败(不影响启动): {exportEx}\n\n");
             }
 
+            LauncherLogService.AppendLine($"[启动游戏] 账户={account.DisplayLabel} 版本={cfg.SelectedVersionId}");
+
             GameProcessInfo processInfo;
             try
             {
@@ -1254,7 +1370,7 @@ public partial class MainWindow : Window
                 // DownloadService.DownloadLibrariesOnlyAsync 补齐缺失库后原地重试启动。
                 var repair = MessageBoxDialog.ShowConfirm(
                     mle.Message + "\n\n是否现在自动下载补全这些缺失的库？",
-                    "缺少依赖库");
+                    Loc.T("Str_Cs_Missing_Library", "缺少依赖库"));
                 if (!repair) return;
 
                 var repairWin = new ProgressDialog("正在补全缺失的依赖库...");
@@ -1308,6 +1424,29 @@ public partial class MainWindow : Window
             ProcessManager.Register(processInfo);
             RefreshSidebar();
 
+            // 需求："游戏崩溃的时候，可以选择查看日志和导出完整日志"——这里覆盖的是"游戏已经
+            // 正常运行了一段时间之后才意外退出"的场景（跟下面 exitedEarly 覆盖的"刚启动就
+            // 退出"是两种不同的时机，两处都要接）。判定标准：
+            //   1. 不是用户自己点"关闭游戏"/"关闭未响应的游戏"（UserRequestedClose）；
+            //   2. 退出码不是 0（Minecraft 正常从游戏内菜单退出时退出码是 0）。
+            // 只有同时满足才弹崩溃提示，避免用户正常退出游戏时被无意义地打扰。
+            processInfo.Process.Exited += (_, _) =>
+            {
+                Dispatcher.Invoke(() =>
+                {
+                    if (processInfo.UserRequestedClose) return;
+                    var exitCode = -1;
+                    try { exitCode = processInfo.Process.ExitCode; } catch { /* 忽略 */ }
+                    if (exitCode == 0) return;
+
+                    LauncherLogService.AppendLine($"[游戏崩溃] {processInfo.AccountLabel} - {processInfo.VersionId}，退出码 {exitCode}");
+                    EnsureVisibleForDialog();
+                    CrashReportDialog.Show(this,
+                        $"游戏「{processInfo.VersionId}」意外退出了（退出码 {exitCode}），可能是崩溃了。",
+                        processInfo);
+                });
+            };
+
             // 独立 CMD 日志窗口：可选功能，弹出后实时镜像游戏控制台输出，方便命令行党直接查看。
             if (options.ShowConsoleWindow)
             {
@@ -1333,7 +1472,7 @@ public partial class MainWindow : Window
                             Dispatcher.Invoke(() => MessageBoxDialog.ShowWarning(
                                 "注入检测发现可疑模块，游戏进程中可能存在外挂或密码窃取风险：\n\n" + names +
                                 "\n\n建议：立即考虑关闭游戏并修改微软账户密码，同时检查这些文件的来源。",
-                                "⚠ 注入检测警告"));
+                                Loc.T("Str_Cs_Injection_Scan_Warning", "⚠ 注入检测警告")));
                         }
                     }
                     catch { /* 扫描失败不影响正常游戏 */ }
@@ -1373,11 +1512,16 @@ public partial class MainWindow : Window
                 var exitCode = -1;
                 try { exitCode = processInfo.Process.ExitCode; } catch { /* 忽略 */ }
 
-                MessageBoxDialog.ShowWarning(
+                LauncherLogService.AppendLine($"[游戏崩溃] {account.DisplayLabel} - {cfg.SelectedVersionId}，退出码 {exitCode}");
+
+                // 需求："游戏崩溃的时候，可以选择查看日志和导出完整日志"。这里用专门的
+                // CrashReportDialog 替代原来只读的 MessageBoxDialog.ShowWarning——多了
+                // "查看日志"（跳转日志页）和"导出完整日志"（合并启动器日志+崩溃前输出+
+                // 游戏日志文件另存为一份文本）两个动作，其余提示文案基本保持不变。
+                CrashReportDialog.Show(this,
                     $"游戏进程刚启动就退出了（退出码 {exitCode}），大概率没有正常运行起来。\n\n" +
-                    "最近的控制台输出：\n" + (string.IsNullOrWhiteSpace(tail) ? "(没有捕获到任何输出，可能是 Java 本身启动失败)" : tail) +
-                    "\n\n可以到「日志」页的「游戏日志」/「崩溃报告分析」标签查看更多细节。",
-                    "启动异常");
+                    Loc.T("Str_Cs_Recent_Console_Output_N", "最近的控制台输出：\n") + (string.IsNullOrWhiteSpace(tail) ? "(没有捕获到任何输出，可能是 Java 本身启动失败)" : tail),
+                    processInfo);
             }
             else
             {
@@ -1386,12 +1530,17 @@ public partial class MainWindow : Window
                 cfg.GameLaunchSuccessCount++;
                 ConfigService.Save();
 
-                MessageBoxDialog.ShowSuccess($"游戏已启动：{account.DisplayLabel} - {cfg.SelectedVersionId}", "启动成功");
+                // 需求："让所有弹窗提示均在窗口内内嵌，不弹出新窗口，就像 PCL 一样"。
+                // "游戏启动成功"是纯告知性提示，用户不需要做任何决定——做成必须点"确定"的
+                // 模态框，等于在游戏起来之后还要求用户回来点一下，是纯多余的一步。
+                // 改成右下角 Toast，几秒后自己消失，不阻塞任何操作（PCL 就是这个体验）。
+                // 判断标准见 ToastService 类头注释：需要决定的才用模态，只是告知的一律 Toast。
+                ToastService.ShowSuccess($"游戏已启动：{account.DisplayLabel} - {cfg.SelectedVersionId}");
             }
         }
         catch (Exception ex)
         {
-            ErrorPresenter.ShowFriendlyError("启动失败，请检查 Java、游戏文件是否完整，或查看「日志」页面获取更多信息。", $"[启动失败] {ex}", "启动失败");
+            ErrorPresenter.ShowFriendlyError(Loc.T("Str_Cs_Launch_Failed_Check_That_Java_And_The_Ga", "启动失败，请检查 Java、游戏文件是否完整，或查看「日志」页面获取更多信息。"), $"[启动失败] {ex}", "启动失败");
         }
     }
 
@@ -1400,7 +1549,7 @@ public partial class MainWindow : Window
     {
         if (ProcessManager.Running.Count == 0)
         {
-            MessageBoxDialog.ShowInfo("当前没有正在运行的游戏。");
+            MessageBoxDialog.ShowInfo(Loc.T("Str_Cs_No_Game_Is_Currently_Running", "当前没有正在运行的游戏。"));
             return;
         }
         var confirm = MessageBoxDialog.ShowConfirm($"确定要关闭全部 {ProcessManager.Running.Count} 个正在运行的游戏吗？",
@@ -1417,10 +1566,10 @@ public partial class MainWindow : Window
     {
         if (ProcessManager.Running.Count == 0)
         {
-            MessageBoxDialog.ShowInfo("当前没有正在运行的游戏。");
+            MessageBoxDialog.ShowInfo(Loc.T("Str_Cs_No_Game_Is_Currently_Running", "当前没有正在运行的游戏。"));
             return;
         }
-        var win = new ProcessManagerWindow(ProcessManager, ProcessManagerWindow.Mode.SelectToClose) { Owner = this };
+        var win = new ProcessManagerWindow(ProcessManager, ProcessManagerWindow.Mode.SelectToClose);
         win.ShowDialog();
         RefreshSidebar();
     }
@@ -1433,10 +1582,10 @@ public partial class MainWindow : Window
     {
         if (ProcessManager.Running.Count == 0)
         {
-            MessageBoxDialog.ShowInfo("当前没有正在运行的游戏。");
+            MessageBoxDialog.ShowInfo(Loc.T("Str_Cs_No_Game_Is_Currently_Running", "当前没有正在运行的游戏。"));
             return;
         }
-        var win = new ProcessManagerWindow(ProcessManager, ProcessManagerWindow.Mode.MarkUnresponsive) { Owner = this };
+        var win = new ProcessManagerWindow(ProcessManager, ProcessManagerWindow.Mode.MarkUnresponsive);
         win.ShowDialog();
         RefreshSidebar();
     }
@@ -1521,4 +1670,488 @@ public partial class MainWindow : Window
         if (!ReferenceEquals(e.OriginalSource, OverlayScrim)) return;
         OverlayDialogService.RequestDismissTopByBackgroundClick();
     }
+
+    // ==================== 拖拽安装 ====================
+    // 需求："加入拖动即可导入整合包功能"、"拖入 mod 资源包等会自动安装到所选的这个游戏实例中"。
+    //
+    // 挂在 Window 级别（MainWindow.xaml 里 AllowDrop="True" + 三个事件），而不是挂在某个页面上：
+    // 用户不会记得"要先切到 Mod 管理页才能拖"，在任何页面拖进来都应该接住。
+    // 具体装到哪由 ResolveDropTargetInstanceDir() 统一决定，跟启动游戏用的是同一个实例目录，
+    // 保证"装进去的东西游戏一定读得到"。
+
+    private readonly DragDropInstallService _dragDropService = new();
+
+    /// <summary>拖拽的目标实例目录：当前选中的版本 + 当前的版本隔离设置。
+    /// 跟 LauncherService 启动时算出来的游戏目录口径完全一致——隔离开启时是
+    /// versions/&lt;id&gt;，关闭时是 .minecraft 根目录。口径不一致的话会出现
+    /// "提示装好了但游戏里看不到"这种最难排查的问题。</summary>
+    private string? ResolveDropTargetInstanceDir()
+    {
+        try
+        {
+            var cfg = ConfigService.Config;
+            var versionId = cfg.SelectedVersionId;
+            if (string.IsNullOrEmpty(versionId)) return null;
+
+            // 跟 LaunchInternalAsync 里取当前文件夹的写法保持一致，别自造第二套口径。
+            var folder = cfg.Folders.FirstOrDefault(f => f.Path == cfg.SelectedFolderPath)
+                         ?? cfg.Folders.FirstOrDefault();
+            if (folder == null) return null;
+
+            var isolate = cfg.VersionIsolationOverrides.TryGetValue(versionId, out var ov)
+                ? ov
+                : cfg.IsolateVersionsByDefault;
+
+            return isolate ? Path.Combine(folder.Path, "versions", versionId) : folder.Path;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private void MainWindow_DragOver(object sender, DragEventArgs e)
+    {
+        if (!e.Data.GetDataPresent(DataFormats.FileDrop))
+        {
+            e.Effects = DragDropEffects.None;
+            e.Handled = true;
+            return;
+        }
+
+        var paths = (string[])e.Data.GetData(DataFormats.FileDrop)!;
+        e.Effects = DragDropEffects.Copy;
+        e.Handled = true;
+
+        // 悬停时就把"会发生什么"说清楚，而不是等松手才知道装到哪去了。
+        var target = ResolveDropTargetInstanceDir();
+        if (target == null)
+        {
+            DragHintTitle.Text = Loc.T("Str_Cs_No_Game_Instance_Selected", "还没有选择游戏实例");
+            DragHintDetail.Text = "请先在「版本选择」里选一个版本，再把文件拖进来。";
+        }
+        else
+        {
+            var kinds = paths.Select(_dragDropService.Classify).ToList();
+            DragHintTitle.Text = Loc.T("Str_Drop_Title", "松手即可安装");
+            DragHintDetail.Text = $"{DescribeKinds(kinds)}\n将安装到：{Path.GetFileName(target.TrimEnd(Path.DirectorySeparatorChar))}";
+        }
+
+        DragHintLayer.Visibility = Visibility.Visible;
+    }
+
+    private static string DescribeKinds(List<DragDropInstallService.DropKind> kinds)
+    {
+        var names = new List<string>();
+        void Add(DragDropInstallService.DropKind k, string label)
+        {
+            var n = kinds.Count(x => x == k);
+            if (n > 0) names.Add($"{n} 个{label}");
+        }
+        Add(DragDropInstallService.DropKind.Mod, "Mod");
+        Add(DragDropInstallService.DropKind.ResourcePack, "材质包");
+        Add(DragDropInstallService.DropKind.ShaderPack, "光影包");
+        Add(DragDropInstallService.DropKind.DataPack, "数据包");
+        Add(DragDropInstallService.DropKind.World, "存档");
+        Add(DragDropInstallService.DropKind.Modpack, "整合包");
+        Add(DragDropInstallService.DropKind.BedrockContent, "基岩版内容");
+        Add(DragDropInstallService.DropKind.Unknown, "无法识别的文件");
+        return names.Count == 0 ? "没有可安装的内容" : string.Join("、", names);
+    }
+
+    /// <summary>
+    /// 拖进来的整合包。
+    ///
+    /// 需求原文："拖入 modrinth 和 XCL 的整合包时从 0 下载一个版本实例去安装
+    /// （允许用户自定义新的实例名称），而不是只在当前文件夹里面覆盖安装"。
+    ///
+    /// 所以默认走 ModpackInstallService.InstallToNewInstanceAsync：
+    ///   读清单拿到 MC 版本 + 加载器 → 用用户起的名字新建实例目录 →
+    ///   下载原版本体 → 装加载器 → 最后才解整合包内容。
+    ///
+    /// 这跟旧行为有本质区别：旧的只是把 mods/config 解压覆盖进某个已有实例，
+    /// 整合包要 Fabric 1.20.1 而你当前实例是原版 1.21 的话，装完必崩且看不出原因。
+    ///
+    /// 想装进已有实例仍然可以——设置里把「拖入整合包时新建实例」关掉，
+    /// 就会退回原来的 ModpackTargetVersionDialog 让你选目标目录。
+    /// </summary>
+    private async Task ImportDroppedModpackAsync(string modpackPath)
+    {
+        var cfg = ConfigService.Config;
+        var folder = cfg.Folders.FirstOrDefault(f => f.Path == cfg.SelectedFolderPath)
+                     ?? cfg.Folders.FirstOrDefault();
+        if (folder == null)
+        {
+            ToastService.ShowWarning(Loc.T("Str_Cs_No_Minecraft_Folder_Is_Configured_So_The", "还没有配置 .minecraft 文件夹，无法导入整合包。"));
+            return;
+        }
+
+        var installer = new ModpackInstallService(cfg);
+        var req = installer.ReadRequirements(modpackPath);
+
+        // ---------- 走"从零新建实例"这条路 ----------
+        if (cfg.ModpackDropCreatesNewInstance)
+        {
+            var suggested = ModpackInstallService.MakeUniqueInstanceName(
+                folder.Path,
+                string.IsNullOrWhiteSpace(req.Name) ? Path.GetFileNameWithoutExtension(modpackPath) : req.Name!);
+
+            var nameDialog = new NewInstanceNameDialog(suggested, req.McVersion, req.Loader, req.LoaderVersion);
+            if (OverlayDialogService.ShowModal(nameDialog) != true) return;
+
+            var instanceName = nameDialog.InstanceName;
+
+            // Forge/NeoForge 的安装器必须用本地 Java 跑；Fabric/Quilt 不需要。
+            // 这里提前解析一次，解析不到就传 null，由 InstallToNewInstanceAsync 在
+            // 真正需要时抛一句人话出来（而不是跑到一半才失败）。
+            string? javaExe = null;
+            try { javaExe = new JavaService().FindJava(cfg.JavaPath, configService: ConfigService); }
+            catch { }
+
+            var progressDialog = new ProgressDialog($"正在从零安装整合包「{instanceName}」...");
+            progressDialog.Show();
+            try
+            {
+                var result = await installer.InstallToNewInstanceAsync(
+                    modpackPath, folder.Path, instanceName, javaExe, progressDialog.Progress);
+
+                // 装完直接把新实例设为当前选中，用户点启动就能玩，不用自己再去版本列表找一遍。
+                cfg.SelectedVersionId = result.InstanceId;
+                try { ConfigService.Save(); } catch { }
+                RefreshSidebar();
+
+                if (result.FailedFiles.Count > 0)
+                {
+                    // 有 mod 没下下来必须明说：静默失败会让用户拿到一个缺 mod 的实例，
+                    // 进游戏才崩，最难排查。这属于"必须让用户读完"，用模态框而不是 Toast。
+                    MessageBoxDialog.ShowInfo(
+                        $"整合包已装成新实例「{result.InstanceId}」（{result.McVersion} {result.Loader}），" +
+                        $"但有 {result.FailedFiles.Count} 个文件没能下载成功，需要手动补齐：\n\n" +
+                        string.Join("\n", result.FailedFiles.Take(10)),
+                        Loc.T("Str_Cs_Some_Modpack_Files_Failed_To_Download", "整合包部分文件未下载成功"));
+                }
+                else
+                {
+                    ToastService.ShowSuccess(
+                        $"已装成新实例「{result.InstanceId}」（{result.McVersion}{(string.IsNullOrEmpty(result.Loader) ? "" : " " + result.Loader)}），已切换为当前版本");
+                }
+            }
+            catch (Exception ex)
+            {
+                ErrorPresenter.ShowFriendlyError(
+                    ex is InvalidOperationException ? ex.Message : "从零安装整合包失败，可能是网络问题或磁盘空间不足。",
+                    ex.ToString(), Loc.T("Str_Cs_Modpack_Installation_Failed", "安装整合包失败"));
+            }
+            finally
+            {
+                progressDialog.Close();
+            }
+            return;
+        }
+
+        // ---------- 退回旧行为：装进用户选的已有/新建目录（不下载本体和加载器）----------
+        var folderService = new FolderService();
+        List<GameVersion> existing;
+        try { existing = folderService.ScanVersions(folder.Path); }
+        catch { existing = new List<GameVersion>(); }
+
+        var suggestedLegacy = Path.GetFileNameWithoutExtension(modpackPath);
+        var dialog = new ModpackTargetVersionDialog(suggestedLegacy, existing);
+        if (OverlayDialogService.ShowModal(dialog) != true) return;
+
+        var targetDir = Path.Combine(folder.Path, "versions", dialog.TargetVersionId);
+
+        var pd = new ProgressDialog($"正在导入整合包 {Path.GetFileName(modpackPath)} ...");
+        pd.Show();
+        try
+        {
+            var service = new ModpackService();
+            if (ModpackService.IsMrpack(modpackPath))
+            {
+                var r = await service.ImportMrpackAsync(modpackPath, targetDir,
+                    new Progress<string>(msg => pd.Progress.Report(new ProgressInfo(msg, 0, 1, ""))));
+
+                if (r.FailedFiles.Count > 0)
+                {
+                    MessageBoxDialog.ShowInfo(
+                        $"整合包已导入到「{dialog.TargetVersionId}」，但有 {r.FailedFiles.Count} 个文件下载失败，" +
+                        $"需要手动补齐：\n\n{string.Join("\n", r.FailedFiles.Take(10))}",
+                        "整合包部分文件未下载成功");
+                }
+                else
+                {
+                    ToastService.ShowSuccess($"整合包已导入到「{dialog.TargetVersionId}」");
+                }
+            }
+            else
+            {
+                await Task.Run(() => service.Import(modpackPath, targetDir));
+                ToastService.ShowSuccess($"整合包已导入到「{dialog.TargetVersionId}」");
+            }
+
+            RefreshSidebar();
+        }
+        catch (Exception ex)
+        {
+            ErrorPresenter.ShowFriendlyError(Loc.T("Str_Cs_Importing_The_Modpack_Failed_The_File_Ma", "导入整合包失败，可能是文件损坏或磁盘空间不足。"),
+                ex.ToString(), Loc.T("Str_Cs_Modpack_Import_Failed", "导入整合包失败"));
+        }
+        finally
+        {
+            pd.Close();
+        }
+    }
+
+    private void MainWindow_DragLeave(object sender, DragEventArgs e)
+    {
+        DragHintLayer.Visibility = Visibility.Collapsed;
+    }
+
+    /// <summary>
+    /// 当前显示的是哪个页面。拖拽的默认行为跟页面走（需求原文：
+    /// "在服务器管理页面拖入 jar 文件，默认会给服务器安装；在主页版本选择其他界面拖动进入，
+    /// 默认给当前选中实例安装模组"）。
+    /// </summary>
+    private bool IsOnServerManagerPage => MainContent.Content is ServerManagerPage;
+
+    /// <summary>
+    /// 按"当前页面 + 设置项"决定每个拖入文件的去向，必要时弹内嵌选择框问用户。
+    /// 返回 null 表示用户取消了整个操作。
+    /// </summary>
+    private async Task<Dictionary<string, DragDropInstallService.DropKind>?> ResolveDropKindsAsync(string[] paths)
+    {
+        var cfg = ConfigService.Config;
+        var overrides = new Dictionary<string, DragDropInstallService.DropKind>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var path in paths)
+        {
+            var ext = Path.GetExtension(path).ToLowerInvariant();
+
+            // ---------- .jar：按页面决定装给客户端还是服务端 ----------
+            if (ext == ".jar")
+            {
+                var target = IsOnServerManagerPage ? cfg.ServerPageJarDropTarget : cfg.DefaultJarDropTarget;
+
+                if (target == DropJarTarget.Ask)
+                {
+                    var dlg = new DropJarTargetDialog(path, IsOnServerManagerPage);
+                    if (OverlayDialogService.ShowModal(dlg) != true) return null;
+                    target = dlg.SelectedTarget;
+                    if (dlg.Remember)
+                    {
+                        if (IsOnServerManagerPage) cfg.ServerPageJarDropTarget = target;
+                        else cfg.DefaultJarDropTarget = target;
+                        try { ConfigService.Save(); } catch { }
+                    }
+                }
+
+                overrides[path] = target == DropJarTarget.Server
+                    ? DragDropInstallService.DropKind.ServerJar
+                    : DragDropInstallService.DropKind.Mod;
+                continue;
+            }
+
+            // ---------- .zip 且内容认不出来：按设置决定问不问 ----------
+            if (_dragDropService.IsAmbiguousZip(path))
+            {
+                var def = cfg.ZipDropDefault;
+                if (def == DropZipDefault.Ask)
+                {
+                    var preselect = DragDropInstallService.DropKind.Modpack;
+                    var dlg = new DropTypeChoiceDialog(path, preselect);
+                    if (OverlayDialogService.ShowModal(dlg) != true) return null;
+
+                    overrides[path] = dlg.SelectedKind;
+                    if (dlg.Remember)
+                    {
+                        cfg.ZipDropDefault = dlg.SelectedKind switch
+                        {
+                            DragDropInstallService.DropKind.ResourcePack => DropZipDefault.ResourcePack,
+                            DragDropInstallService.DropKind.Modpack => DropZipDefault.Modpack,
+                            _ => DropZipDefault.Ask,
+                        };
+                        try { ConfigService.Save(); } catch { }
+                    }
+                }
+                else
+                {
+                    overrides[path] = def == DropZipDefault.ResourcePack
+                        ? DragDropInstallService.DropKind.ResourcePack
+                        : DragDropInstallService.DropKind.Modpack;
+                }
+            }
+        }
+
+        await Task.CompletedTask;
+        return overrides;
+    }
+
+    private async void MainWindow_Drop(object sender, DragEventArgs e)
+    {
+        DragHintLayer.Visibility = Visibility.Collapsed;
+        if (!e.Data.GetDataPresent(DataFormats.FileDrop)) return;
+
+        var paths = (string[])e.Data.GetData(DataFormats.FileDrop)!;
+        if (paths.Length == 0) return;
+
+        // 先把"每个文件该怎么处理"定下来（可能会弹选择框），再动手装。
+        var overrides = await ResolveDropKindsAsync(paths);
+        if (overrides == null) return;  // 用户取消
+
+        // 服务端 jar 单独走服务端安装路径，不需要客户端实例目录。
+        var serverJars = overrides.Where(kv => kv.Value == DragDropInstallService.DropKind.ServerJar)
+                                  .Select(kv => kv.Key).ToList();
+        if (serverJars.Count > 0)
+        {
+            InstallJarsToSelectedServer(serverJars);
+            foreach (var j in serverJars) overrides.Remove(j);
+            if (overrides.Count == 0 && paths.Length == serverJars.Count) return;
+        }
+
+        var target = ResolveDropTargetInstanceDir();
+        if (target == null)
+        {
+            ToastService.ShowWarning(Loc.T("Str_Drop_NoInstance", "请先在「版本选择」里选一个游戏版本，再拖入文件。"));
+            return;
+        }
+
+        var remaining = paths.Where(p => !serverJars.Contains(p)).ToArray();
+        if (remaining.Length == 0) return;
+
+        DragDropInstallService.DropResult result;
+        try
+        {
+            result = await Task.Run(() => _dragDropService.InstallMany(remaining, target, null, overrides));
+        }
+        catch (Exception ex)
+        {
+            ErrorPresenter.ShowFriendlyError(Loc.T("Str_Cs_Drag_And_Drop_Install_Failed_The_Target_", "拖拽安装失败，可能是目标目录没有写入权限。"),
+                ex.ToString(), Loc.T("Str_Cs_Drag_And_Drop_Install_Failed", "拖拽安装失败"));
+            return;
+        }
+
+        // 整合包：按设置决定"从零建新实例"还是"装进已有实例"。
+        foreach (var modpack in result.Modpacks)
+            await ImportDroppedModpackAsync(modpack);
+
+        // 基岩版内容（.mcworld/.mcpack/.mcaddon/.mctemplate）直接就地导入，
+        // 不再只是提示用户自己去别处操作。基岩版没装时 ImportMany 会抛出带说明的异常。
+        if (result.BedrockItems.Count > 0)
+            await ImportDroppedBedrockAsync(result.BedrockItems);
+
+        if (result.Installed.Count > 0)
+        {
+            ToastService.ShowSuccess(result.Installed.Count == 1
+                ? $"已安装：{result.Installed[0]}"
+                : $"已安装 {result.Installed.Count} 个文件到当前实例");
+        }
+
+        if (result.Skipped.Count > 0)
+            ToastService.ShowWarning($"有 {result.Skipped.Count} 个文件没有安装：{string.Join("；", result.Skipped.Take(3))}");
+
+        if (!result.AnythingHappened && result.Skipped.Count == 0)
+            ToastService.ShowInfo(Loc.T("Str_Cs_Nothing_Installable_Was_Found_In_What_Yo", "拖进来的文件里没有可安装的内容。"));
+    }
+
+    /// <summary>
+    /// 拖进来的基岩版内容：世界 / 资源包 / 行为包 / 附加包 / 世界模板。
+    /// 全部是解压到 com.mojang 下对应子目录的纯本地操作，不涉及任何 Store 许可证。
+    /// 见 BedrockContentService 类头注释里对"基岩版能做什么、不能做什么"的说明。
+    /// </summary>
+    private async Task ImportDroppedBedrockAsync(List<string> paths)
+    {
+        var service = new BedrockContentService();
+
+        if (!BedrockContentService.IsBedrockDataPresent)
+        {
+            // 这属于"必须让用户读完并且要去做一件事"的情况，用模态框而不是 Toast。
+            MessageBoxDialog.ShowInfo(
+                "这台电脑上还没有安装 Minecraft for Windows（基岩版），无法导入基岩版内容。\n\n" +
+                "请先从 Microsoft Store 安装基岩版，并**至少启动一次**（首次启动才会创建数据目录），再来导入。",
+                Loc.T("Str_Cs_Bedrock_Edition_Isn_T_Installed", "还没有安装基岩版"));
+            return;
+        }
+
+        var pd = new ProgressDialog("正在导入基岩版内容 ...");
+        pd.Show();
+        try
+        {
+            var r = await Task.Run(() => service.ImportMany(paths,
+                new Progress<string>(msg => pd.Progress.Report(new ProgressInfo(msg, 0, 1, "")))));
+
+            if (r.Installed.Count > 0)
+            {
+                ToastService.ShowSuccess(r.Installed.Count == 1
+                    ? $"已导入基岩版内容：{r.Installed[0]}"
+                    : $"已导入 {r.Installed.Count} 个基岩版内容，重启基岩版后生效");
+            }
+            if (r.Failed.Count > 0)
+                ToastService.ShowWarning($"有 {r.Failed.Count} 个没导入成功：{string.Join("；", r.Failed.Take(3))}");
+        }
+        catch (Exception ex)
+        {
+            ErrorPresenter.ShowFriendlyError(
+                ex is InvalidOperationException ? ex.Message : Loc.T("Str_Cs_Couldn_T_Import_The_Bedrock_Content", "导入基岩版内容失败。"),
+                ex.ToString(), Loc.T("Str_Cs_Bedrock_Import_Failed", "导入基岩版内容失败"));
+        }
+        finally
+        {
+            pd.Close();
+        }
+    }
+
+    /// <summary>
+    /// 把 jar 装进当前选中的服务器实例的 mods/ 目录。
+    /// 在「服务端管理」页拖 jar 时走这条路（需求："在服务器管理页面拖入 jar 文件，
+    /// 默认会给服务器安装"）。没有选中服务器时提示用户先选一个，而不是默默装到客户端去。
+    /// </summary>
+    private void InstallJarsToSelectedServer(List<string> jarPaths)
+    {
+        // ServerInstance 上标了 IsDefault 的优先，没有就取第一个。
+        // （服务端实例没有像客户端 SelectedVersionId 那样的"当前选中"配置项，
+        //  IsDefault 是这个模型里已有的、语义最接近的字段。）
+        var instance = ServerInstanceService.Instances.FirstOrDefault(i => i.IsDefault)
+                       ?? ServerInstanceService.Instances.FirstOrDefault();
+
+        if (instance == null || string.IsNullOrEmpty(instance.Directory))
+        {
+            ToastService.ShowWarning(Loc.T("Str_Cs_No_Server_Exists_Yet_So_Server_Mods_Can_", "还没有创建服务器实例，无法安装服务端 Mod。请先到「服务端管理」新建一个。"));
+            return;
+        }
+
+        var modsDir = Path.Combine(instance.Directory, "mods");
+        var ok = 0;
+        var failed = new List<string>();
+        try
+        {
+            Directory.CreateDirectory(modsDir);
+            foreach (var jar in jarPaths)
+            {
+                try
+                {
+                    var dest = Path.Combine(modsDir, Path.GetFileName(jar));
+                    var baseName = Path.GetFileNameWithoutExtension(dest);
+                    var i = 2;
+                    while (File.Exists(dest))
+                    {
+                        dest = Path.Combine(modsDir, $"{baseName} ({i}).jar");
+                        i++;
+                    }
+                    File.Copy(jar, dest);
+                    ok++;
+                }
+                catch (Exception ex) { failed.Add($"{Path.GetFileName(jar)}（{ex.Message}）"); }
+            }
+        }
+        catch (Exception ex)
+        {
+            ErrorPresenter.ShowFriendlyError(Loc.T("Str_Cs_Couldn_T_Install_The_Server_Mod_The_Serv", "安装服务端 Mod 失败，可能是服务器目录没有写入权限。"),
+                ex.ToString(), Loc.T("Str_Cs_Server_Mod_Installation_Failed", "安装服务端 Mod 失败"));
+            return;
+        }
+
+        if (ok > 0) ToastService.ShowSuccess($"已给服务器「{instance.DisplayName}」安装 {ok} 个 Mod");
+        if (failed.Count > 0) ToastService.ShowWarning($"有 {failed.Count} 个没装上：{string.Join("；", failed.Take(3))}");
+    }
+
 }

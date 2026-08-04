@@ -39,7 +39,7 @@ public partial class LoginPage : UserControl
 
     private async void AddMicrosoft_Click(object sender, RoutedEventArgs e)
     {
-        StatusText.Text = "正在准备登录，请稍候...";
+        StatusText.Text = Loc.T("Str_Cs_Preparing_To_Sign_In_Please_Wait", "正在准备登录，请稍候...");
 
         MicrosoftAuthService auth;
         try
@@ -60,7 +60,7 @@ public partial class LoginPage : UserControl
         {
             Dispatcher.Invoke(() =>
             {
-                popup = new DeviceCodeWindow(uri, code, cts) { Owner = Window.GetWindow(this) };
+                popup = new DeviceCodeWindow(uri, code, cts);
                 popup.Show();
             });
         };
@@ -76,7 +76,7 @@ public partial class LoginPage : UserControl
 
             if (account == null)
             {
-                StatusText.Text = "微软账户登录失败或已取消，请重试。";
+                StatusText.Text = Loc.T("Str_Cs_Microsoft_Sign_In_Failed_Or_Was_Cancelle", "微软账户登录失败或已取消，请重试。");
                 return;
             }
             _owner.ConfigService.AddOrUpdateAccount(account);
@@ -88,7 +88,7 @@ public partial class LoginPage : UserControl
         catch (OperationCanceledException)
         {
             popup?.Dispatcher.Invoke(() => popup.Close());
-            StatusText.Text = "登录已取消。";
+            StatusText.Text = Loc.T("Str_Cs_Sign_In_Cancelled", "登录已取消。");
         }
         catch (AuthStepException ex)
         {
@@ -100,7 +100,7 @@ public partial class LoginPage : UserControl
         {
             popup?.Dispatcher.Invoke(() => popup.Close());
             ErrorPresenter.LogTechnicalDetail($"微软账户登录(浏览器)出错: {ex}");
-            StatusText.Text = "登录出错，请检查网络连接后重试。详细日志已记录，如果反复出现，请把日志发给可信的专业人士。";
+            StatusText.Text = Loc.T("Str_Cs_Sign_In_Failed_Check_Your_Connection_And_2", "登录出错，请检查网络连接后重试。详细日志已记录，如果反复出现，请把日志发给可信的专业人士。");
         }
     }
 
@@ -132,12 +132,12 @@ public partial class LoginPage : UserControl
             }
             else
             {
-                StatusText.Text = "已取消内嵌登录，可以点击「浏览器登录」改用系统浏览器完成登录。";
+                StatusText.Text = Loc.T("Str_Cs_Embedded_Sign_In_Cancelled_You_Can_Use_B", "已取消内嵌登录，可以点击「浏览器登录」改用系统浏览器完成登录。");
             }
             return;
         }
 
-        StatusText.Text = "正在打开内嵌登录窗口...";
+        StatusText.Text = Loc.T("Str_Cs_Opening_The_Embedded_Sign_In_Window", "正在打开内嵌登录窗口...");
 
         MicrosoftAuthService auth;
         string url, verifier;
@@ -146,7 +146,7 @@ public partial class LoginPage : UserControl
         {
             auth = new MicrosoftAuthService();
             (url, verifier) = auth.BuildInteractiveAuthorizeUrl();
-            popup = new MicrosoftLoginWindow(url) { Owner = Window.GetWindow(this) };
+            popup = new MicrosoftLoginWindow(url);
         }
         catch (AuthStepException ex)
         {
@@ -163,7 +163,7 @@ public partial class LoginPage : UserControl
         }
         catch (OperationCanceledException)
         {
-            StatusText.Text = "登录已取消。";
+            StatusText.Text = Loc.T("Str_Cs_Sign_In_Cancelled", "登录已取消。");
             return;
         }
         catch (AuthStepException ex)
@@ -178,7 +178,7 @@ public partial class LoginPage : UserControl
             var account = await auth.LoginWithAuthorizationCodeAsync(code, verifier);
             if (account == null)
             {
-                StatusText.Text = "微软账户登录失败，请重试。";
+                StatusText.Text = Loc.T("Str_Cs_Microsoft_Sign_In_Failed_Please_Try_Agai", "微软账户登录失败，请重试。");
                 return;
             }
             _owner.ConfigService.AddOrUpdateAccount(account);
@@ -195,7 +195,7 @@ public partial class LoginPage : UserControl
         catch (Exception ex)
         {
             ErrorPresenter.LogTechnicalDetail($"微软账户登录(内嵌)出错: {ex}");
-            StatusText.Text = "登录出错，请检查网络连接后重试。详细日志已记录，如果反复出现，请把日志发给可信的专业人士。";
+            StatusText.Text = Loc.T("Str_Cs_Sign_In_Failed_Check_Your_Connection_And_2", "登录出错，请检查网络连接后重试。详细日志已记录，如果反复出现，请把日志发给可信的专业人士。");
         }
     }
 
@@ -205,7 +205,7 @@ public partial class LoginPage : UserControl
         var username = AuthServerUsernameBox.Text?.Trim() ?? "";
         var password = AuthServerPasswordBox.Password ?? "";
 
-        StatusText.Text = "正在登录认证服务器，请稍候...";
+        StatusText.Text = Loc.T("Str_Cs_Signing_In_To_The_Auth_Server_Please_Wai", "正在登录认证服务器，请稍候...");
 
         try
         {
@@ -232,7 +232,7 @@ public partial class LoginPage : UserControl
         catch (Exception ex)
         {
             ErrorPresenter.LogTechnicalDetail($"认证服务器登录出错: {ex}");
-            StatusText.Text = "登录出错，请检查网络连接后重试。详细日志已记录，如果反复出现，请把日志发给可信的专业人士。";
+            StatusText.Text = Loc.T("Str_Cs_Sign_In_Failed_Check_Your_Connection_And_2", "登录出错，请检查网络连接后重试。详细日志已记录，如果反复出现，请把日志发给可信的专业人士。");
         }
     }
 
@@ -252,7 +252,7 @@ public partial class LoginPage : UserControl
         if (acc.Type != AccountType.Offline) return; // 保险起见：微软账户不应该走到这里
 
         var skinService = new SkinService();
-        var win = new SkinSelectWindow(acc, skinService) { Owner = Window.GetWindow(this) };
+        var win = new SkinSelectWindow(acc, skinService);
         if (win.ShowDialog() == true)
         {
             _owner.ConfigService.AddOrUpdateAccount(acc);

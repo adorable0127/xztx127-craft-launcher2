@@ -190,7 +190,7 @@ public partial class ServerManagerPage : UserControl
         }
         catch (Exception ex)
         {
-            ErrorPresenter.ShowFriendlyError("获取版本列表失败，可能是网络连接问题或下载源暂时不可用，请检查网络后重试。", $"[获取版本列表失败] {ex}", "获取版本列表失败");
+            ErrorPresenter.ShowFriendlyError(Loc.T("Str_Cs_Couldn_T_Fetch_The_Version_List_This_Is_", "获取版本列表失败，可能是网络连接问题或下载源暂时不可用，请检查网络后重试。"), $"[获取版本列表失败] {ex}", "获取版本列表失败");
         }
         finally
         {
@@ -238,7 +238,7 @@ public partial class ServerManagerPage : UserControl
         }
         catch (Exception ex)
         {
-            ErrorPresenter.ShowFriendlyError("获取构建版本列表失败，可能是网络连接问题或下载源暂时不可用，请检查网络后重试。", $"[获取构建版本列表失败] {ex}", "获取构建版本列表失败");
+            ErrorPresenter.ShowFriendlyError(Loc.T("Str_Cs_Couldn_T_Fetch_The_Build_List_This_Is_Us", "获取构建版本列表失败，可能是网络连接问题或下载源暂时不可用，请检查网络后重试。"), $"[获取构建版本列表失败] {ex}", "获取构建版本列表失败");
         }
     }
 
@@ -254,12 +254,12 @@ public partial class ServerManagerPage : UserControl
     {
         if (McVersionCombo.SelectedItem is not string mcVersion)
         {
-            MessageBoxDialog.ShowInfo("请先选择 Minecraft 版本。");
+            MessageBoxDialog.ShowInfo(Loc.T("Str_Cs_Please_Choose_A_Minecraft_Version_First", "请先选择 Minecraft 版本。"));
             return;
         }
         if (string.IsNullOrWhiteSpace(TargetDirBox.Text))
         {
-            MessageBoxDialog.ShowInfo("请先选择安装位置。");
+            MessageBoxDialog.ShowInfo(Loc.T("Str_Cs_Please_Choose_An_Install_Location_First", "请先选择安装位置。"));
             return;
         }
 
@@ -318,7 +318,7 @@ public partial class ServerManagerPage : UserControl
                 _pendingInstallResult = result;
                 _pendingInstallTargetDir = req.TargetDir;
                 _pendingInstallMcVersion = mcVersion;
-                InstallHintText.Text = "Spigot 官方不提供预编译文件，需要本地用 BuildTools 编译（需要联网 + 已安装 Git，" +
+                InstallHintText.Text = Loc.T("Str_Cs_Spigot_Doesn_T_Publish_Prebuilt_Files_So", "Spigot 官方不提供预编译文件，需要本地用 BuildTools 编译（需要联网 + 已安装 Git，") +
                     "耗时可能有几分钟）。点击下方按钮开始编译。";
                 InstallRequiredPanel.Visibility = Visibility.Visible;
             }
@@ -345,7 +345,7 @@ public partial class ServerManagerPage : UserControl
         }
         catch (Exception ex)
         {
-            ErrorPresenter.ShowFriendlyError("下载失败，可能是网络连接问题或下载源暂时不可用，请检查网络后重试。", $"[下载失败] {ex}", "下载失败");
+            ErrorPresenter.ShowFriendlyError(Loc.T("Str_Cs_Download_Failed_This_Is_Usually_A_Networ", "下载失败，可能是网络连接问题或下载源暂时不可用，请检查网络后重试。"), $"[下载失败] {ex}", "下载失败");
         }
         finally
         {
@@ -364,13 +364,13 @@ public partial class ServerManagerPage : UserControl
         {
             MessageBoxDialog.ShowWarning(
                 "没有找到可用的 Java，无法运行安装器。请先在「设置」页配置或下载 Java 后再试。",
-                "缺少 Java");
+                Loc.T("Str_Cs_Java_Missing", "缺少 Java"));
             return;
         }
 
         RunInstallerBtn.IsEnabled = false;
         ProgressPanel.Visibility = Visibility.Visible;
-        ProgressStageText.Text = _pendingInstallResult.RequiresBuild ? "正在用 BuildTools 编译 Spigot" : "正在运行安装器";
+        ProgressStageText.Text = _pendingInstallResult.RequiresBuild ? Loc.T("Str_Cs_Building_Spigot_With_Buildtools", "正在用 BuildTools 编译 Spigot") : Loc.T("Str_Cs_Running_The_Installer", "正在运行安装器");
         ProgressDetailText.Text = _pendingInstallResult.RequiresBuild
             ? "首次编译需要联网拉取源码并本地反编译/打补丁，可能需要几分钟，请耐心等待..."
             : "";
@@ -421,8 +421,8 @@ public partial class ServerManagerPage : UserControl
                 _pendingInstallResult.RequiredJavaMajorVersion, javaPath);
 
             MessageBoxDialog.ShowSuccess(registered
-                    ? $"{(_pendingInstallResult.RequiresBuild ? "编译" : "安装")}完成！服务端已生成到：\n{_pendingInstallTargetDir}\n\n生成文件：{resultPath}\n\n已自动添加到「服务器列表」。"
-                    : $"{(_pendingInstallResult.RequiresBuild ? "编译" : "安装")}完成！服务端已生成到：\n{_pendingInstallTargetDir}\n\n生成文件：{resultPath}");
+                    ? $"{(_pendingInstallResult.RequiresBuild ? Loc.T("Str_Cs_Build", "编译") : Loc.T("Str_Common_Install", "安装"))}完成！服务端已生成到：\n{_pendingInstallTargetDir}\n\n生成文件：{resultPath}\n\n已自动添加到「服务器列表」。"
+                    : $"{(_pendingInstallResult.RequiresBuild ? Loc.T("Str_Cs_Build", "编译") : Loc.T("Str_Common_Install", "安装"))}完成！服务端已生成到：\n{_pendingInstallTargetDir}\n\n生成文件：{resultPath}");
             _pendingInstallResult = null;
             _pendingInstallMcVersion = null;
         }
@@ -433,7 +433,7 @@ public partial class ServerManagerPage : UserControl
                 isBuild
                     ? "编译失败，可能是网络连接问题、缺少 Git，或该 MC 版本 BuildTools 不再支持，请检查后重试。"
                     : "安装失败，可能是网络连接问题、下载源暂时不可用，或安装文件已损坏，请检查网络后重试。",
-                $"[{(isBuild ? "编译" : "安装")}失败] {ex}", isBuild ? "编译失败" : "安装失败");
+                $"[{(isBuild ? Loc.T("Str_Cs_Build", "编译") : Loc.T("Str_Common_Install", "安装"))}失败] {ex}", isBuild ? "编译失败" : "安装失败");
         }
         finally
         {
@@ -562,7 +562,7 @@ public partial class ServerManagerPage : UserControl
         var instance = GetPreferredInstance();
         if (instance == null)
         {
-            MessageBoxDialog.ShowInfo("还没有任何服务器，请先用「傻瓜式开服」创建一个。");
+            MessageBoxDialog.ShowInfo(Loc.T("Str_Cs_You_Don_T_Have_Any_Servers_Yet_Use_The_G", "还没有任何服务器，请先用「傻瓜式开服」创建一个。"));
             return;
         }
 
@@ -594,7 +594,7 @@ public partial class ServerManagerPage : UserControl
         var instance = GetPreferredInstance();
         if (instance == null)
         {
-            MessageBoxDialog.ShowInfo("还没有任何服务器，请先用「傻瓜式开服」创建一个。");
+            MessageBoxDialog.ShowInfo(Loc.T("Str_Cs_You_Don_T_Have_Any_Servers_Yet_Use_The_G", "还没有任何服务器，请先用「傻瓜式开服」创建一个。"));
             return;
         }
 
@@ -876,7 +876,7 @@ public partial class ServerManagerPage : UserControl
     /// </summary>
     private void OpenServerProperties(ServerInstance instance)
     {
-        var window = new ServerPropertiesWindow(instance.Directory) { Owner = Window.GetWindow(this) };
+        var window = new ServerPropertiesWindow(instance.Directory);
         window.ShowDialog();
     }
 
@@ -893,7 +893,7 @@ public partial class ServerManagerPage : UserControl
 
     private void CreateServer_Click(object sender, RoutedEventArgs e)
     {
-        var wizard = new CreateServerWindow(_owner) { Owner = Window.GetWindow(this) };
+        var wizard = new CreateServerWindow(_owner);
         wizard.ShowDialog();
         RefreshInstanceList(); // 无论用户是否成功创建/取消，都刷新一遍，成功创建时列表会多一条
     }
@@ -921,7 +921,7 @@ public partial class ServerManagerPage : UserControl
     /// </summary>
     private void OpenNetworkGuide_Click(object sender, RoutedEventArgs e)
     {
-        var guide = new ServerNetworkGuideWindow { Owner = Window.GetWindow(this) };
+        var guide = new ServerNetworkGuideWindow();
         guide.ShowDialog();
         if (guide.DontShowAgain)
         {
@@ -942,7 +942,7 @@ public partial class ServerManagerPage : UserControl
         var cfg = _owner.ConfigService.Config;
         if (!cfg.ShowServerNetworkGuideOnStart) return;
 
-        var guide = new ServerNetworkGuideWindow { Owner = Window.GetWindow(this) };
+        var guide = new ServerNetworkGuideWindow();
         guide.ShowDialog();
         if (guide.DontShowAgain)
         {
@@ -974,8 +974,10 @@ public partial class ServerManagerPage : UserControl
 
     private void OpenConsole(ServerInstance instance)
     {
-        var console = new ServerConsoleWindow(_owner, instance) { Owner = Window.GetWindow(this) };
-        console.Closed += (_, _) => RefreshInstanceList(); // 控制台关闭时（可能服务器也被停止了）刷新状态
+        var console = new ServerConsoleWindow(_owner, instance);
+        // ServerConsoleWindow 已迁移成内嵌 Overlay，没有 Window.Closed，
+        // 改用等价的 IOverlayDialog.RequestClose。
+        console.RequestClose += (_, _) => RefreshInstanceList(); // 控制台关闭时（可能服务器也被停止了）刷新状态
         console.Show();
     }
 
@@ -983,7 +985,7 @@ public partial class ServerManagerPage : UserControl
     {
         if (_owner.ServerProcessManager.IsRunning(instance.Id))
         {
-            MessageBoxDialog.ShowInfo("服务器正在运行，请先停止后再删除。");
+            MessageBoxDialog.ShowInfo(Loc.T("Str_Cs_The_Server_Is_Running_Stop_It_Before_Del", "服务器正在运行，请先停止后再删除。"));
             return;
         }
 
@@ -991,7 +993,7 @@ public partial class ServerManagerPage : UserControl
             $"确定要删除服务器「{instance.DisplayName}」吗？\n\n" +
             "这里只会移除启动器里的记录，不会删除磁盘上的服务端文件夹。\n" +
             "如果需要连同存档/配置一起删除，请使用「更多」菜单里的「清除服务器数据」。",
-            "确认删除");
+            Loc.T("Str_Cs_Confirm_Deletion", "确认删除"));
         if (!confirm) return;
 
         try
@@ -1016,7 +1018,7 @@ public partial class ServerManagerPage : UserControl
     {
         if (_owner.ServerProcessManager.IsRunning(instance.Id))
         {
-            MessageBoxDialog.ShowInfo("服务器正在运行，请先停止后再清除数据。");
+            MessageBoxDialog.ShowInfo(Loc.T("Str_Cs_The_Server_Is_Running_Stop_It_Before_Cle", "服务器正在运行，请先停止后再清除数据。"));
             return;
         }
 
@@ -1061,7 +1063,7 @@ public partial class ServerManagerPage : UserControl
         try
         {
             _transferService.Export(instance, dlg.FileName);
-            MessageBoxDialog.ShowSuccess("导出完成。", "存档导出");
+            MessageBoxDialog.ShowSuccess(Loc.T("Str_Cs_Export_Complete_2", "导出完成。"), Loc.T("Str_Cs_World_Export", "存档导出"));
         }
         catch (Exception ex)
         {
@@ -1078,7 +1080,7 @@ public partial class ServerManagerPage : UserControl
     {
         if (_owner.ServerProcessManager.IsRunning(instance.Id))
         {
-            MessageBoxDialog.ShowInfo("服务器正在运行，请先停止后再导入。");
+            MessageBoxDialog.ShowInfo(Loc.T("Str_Cs_The_Server_Is_Running_Stop_It_Before_Imp", "服务器正在运行，请先停止后再导入。"));
             return;
         }
 
@@ -1088,7 +1090,7 @@ public partial class ServerManagerPage : UserControl
         var confirm = MessageBoxDialog.ShowConfirm(
             $"即将把存档内容合并覆盖到「{instance.DisplayName}」的服务器目录：\n{instance.Directory}\n\n" +
             "同名文件会被存档内容覆盖，其余现有文件保留。此操作不可撤销，建议先自行备份重要数据。",
-            "确认导入");
+            Loc.T("Str_Cs_Confirm_Import", "确认导入"));
         if (!confirm) return;
 
         try
@@ -1098,7 +1100,7 @@ public partial class ServerManagerPage : UserControl
                 ? $"\n\n存档内附带的原始配置：{manifest.CoreType} · MC {manifest.McVersion}，内存 {manifest.MinMemoryMb}~{manifest.MaxMemoryMb}MB。\n" +
                   "如果需要按这份配置更新当前实例，请手动在创建/编辑向导里调整。"
                 : "";
-            MessageBoxDialog.ShowSuccess("导入完成。" + extra, "存档导入");
+            MessageBoxDialog.ShowSuccess(Loc.T("Str_Cs_Import_Complete", "导入完成。") + extra, Loc.T("Str_Cs_World_Import", "存档导入"));
         }
         catch (Exception ex)
         {
@@ -1173,17 +1175,17 @@ public partial class ServerManagerPage : UserControl
     {
         if (_owner.ServerProcessManager.IsRunning(instance.Id))
         {
-            MessageBoxDialog.ShowInfo("服务器正在运行，请先停止后再重新安装核心。");
+            MessageBoxDialog.ShowInfo(Loc.T("Str_Cs_The_Server_Is_Running_Stop_It_Before_Rei", "服务器正在运行，请先停止后再重新安装核心。"));
             return;
         }
 
         var confirm = MessageBoxDialog.ShowConfirm(
             $"即将为「{instance.DisplayName}」重新下载并覆盖安装服务端核心文件。\n" +
             "world 存档等其余文件不会被清空，但核心 jar/启动脚本会被替换。是否继续？",
-            "确认重新安装");
+            Loc.T("Str_Cs_Confirm_Reinstall", "确认重新安装"));
         if (!confirm) return;
 
-        var wizard = new CreateServerWindow(_owner, reinstallTarget: instance) { Owner = Window.GetWindow(this) };
+        var wizard = new CreateServerWindow(_owner, reinstallTarget: instance);
         wizard.ShowDialog();
         RefreshInstanceList();
     }
@@ -1359,16 +1361,16 @@ public partial class ServerManagerPage : UserControl
             if (showEmptyHint)
             {
                 if (outcome.Items.Count == 0 && outcome.Warnings.Count == 0)
-                    MessageBoxDialog.ShowInfo("没有找到匹配的资源，换个关键词试试。");
+                    MessageBoxDialog.ShowInfo(Loc.T("Str_Cs_Nothing_Matched_Try_A_Different_Keyword", "没有找到匹配的资源，换个关键词试试。"));
                 else if (outcome.Warnings.Count > 0)
-                    MessageBoxDialog.ShowWarning(string.Join("\n", outcome.Warnings), "部分来源搜索失败");
+                    MessageBoxDialog.ShowWarning(string.Join("\n", outcome.Warnings), Loc.T("Str_Cs_Some_Sources_Failed_To_Return_Results", "部分来源搜索失败"));
             }
         }
         catch (Exception ex)
         {
             if (seq != _serverResourceSearchSeq) return;
             if (showEmptyHint)
-                ErrorPresenter.ShowFriendlyError("搜索失败，可能是网络连接问题，请检查网络后重试。", $"[搜索失败] {ex}", "搜索失败");
+                ErrorPresenter.ShowFriendlyError(Loc.T("Str_Cs_Search_Failed_Most_Likely_A_Network_Prob", "搜索失败，可能是网络连接问题，请检查网络后重试。"), $"[搜索失败] {ex}", "搜索失败");
         }
     }
 
@@ -1388,7 +1390,7 @@ public partial class ServerManagerPage : UserControl
     {
         if (ServerTargetCombo.SelectedItem is not ServerInstance targetInstance)
         {
-            MessageBoxDialog.ShowInfo("请先在上面选择一个要下载到的服务器（还没有服务器的话，先去「服务器列表」创建一个）。");
+            MessageBoxDialog.ShowInfo(Loc.T("Str_Cs_Choose_A_Target_Server_Above_First_If_Yo", "请先在上面选择一个要下载到的服务器（还没有服务器的话，先去「服务器列表」创建一个）。"));
             return;
         }
 
@@ -1477,7 +1479,7 @@ public partial class ServerManagerPage : UserControl
                 // (CurseForgeResourceKind 没有 Mod 这个成员)。
                 if (_serverResourceType == ModrinthResourceType.Mod)
                 {
-                    MessageBoxDialog.ShowInfo("Mod 类型目前仅支持从 Modrinth 下载，请把上方来源切换为「仅 Modrinth」或「综合」。");
+                    MessageBoxDialog.ShowInfo(Loc.T("Str_Cs_Mods_Can_Currently_Only_Be_Downloaded_Fr", "Mod 类型目前仅支持从 Modrinth 下载，请把上方来源切换为「仅 Modrinth」或「综合」。"));
                     item.HasNoResults = true;
                     return;
                 }
@@ -1496,11 +1498,11 @@ public partial class ServerManagerPage : UserControl
         }
         catch (CurseForgeKeyMissingException ex)
         {
-            MessageBoxDialog.ShowInfo(ex.Message, "未配置 Key");
+            MessageBoxDialog.ShowInfo(ex.Message, Loc.T("Str_Cs_No_Api_Key_Configured", "未配置 Key"));
         }
         catch (Exception ex)
         {
-            ErrorPresenter.ShowFriendlyError("获取版本列表失败，可能是网络连接问题或下载源暂时不可用，请检查网络后重试。", $"[获取版本列表失败] {ex}", "获取版本列表失败");
+            ErrorPresenter.ShowFriendlyError(Loc.T("Str_Cs_Couldn_T_Fetch_The_Version_List_This_Is_", "获取版本列表失败，可能是网络连接问题或下载源暂时不可用，请检查网络后重试。"), $"[获取版本列表失败] {ex}", "获取版本列表失败");
         }
         finally
         {
@@ -1515,7 +1517,7 @@ public partial class ServerManagerPage : UserControl
     {
         if (item.IsDataPack && string.IsNullOrEmpty(item.SelectedSaveName))
         {
-            MessageBoxDialog.ShowInfo("请先填写要安装到哪个存档（数据包必须放进具体存档才会生效）。");
+            MessageBoxDialog.ShowInfo(Loc.T("Str_Cs_Enter_Which_World_To_Install_Into_First_", "请先填写要安装到哪个存档（数据包必须放进具体存档才会生效）。"));
             return;
         }
 
@@ -1523,7 +1525,7 @@ public partial class ServerManagerPage : UserControl
         progressWin.Show();
         try
         {
-            var progress = new Progress<string>(msg => progressWin.Progress.Report(new ProgressInfo("下载中", 0, 1, msg)));
+            var progress = new Progress<string>(msg => progressWin.Progress.Report(new ProgressInfo(Loc.T("Str_Cs_Downloading", "下载中"), 0, 1, msg)));
             string path;
             if (entry.Source == ModSource.Modrinth)
             {
@@ -1548,7 +1550,7 @@ public partial class ServerManagerPage : UserControl
         }
         catch (Exception ex)
         {
-            ErrorPresenter.ShowFriendlyError("下载失败，可能是网络连接问题或下载源暂时不可用，请检查网络后重试。", $"[下载失败] {ex}", "下载失败");
+            ErrorPresenter.ShowFriendlyError(Loc.T("Str_Cs_Download_Failed_This_Is_Usually_A_Networ", "下载失败，可能是网络连接问题或下载源暂时不可用，请检查网络后重试。"), $"[下载失败] {ex}", "下载失败");
         }
         finally
         {

@@ -66,6 +66,32 @@ public static class ThemeService
     /// <summary>亮橙色：新增。饱和度拉满的鲜橙色，比下界红更亮更跳、比暖黄更偏红，
     /// 补上"高饱和暖色但独立于红/黄两端"这个位置，适合喜欢高对比度界面的用户。</summary>
     public const string SkinOrange = "Orange";
+    /// <summary>曜石黑：新增，"磨砂高级感"系列之一。对标黑曜石抛光后的哑光质感——不是纯黑，
+    /// 而是带一点点冷蓝调的深灰黑，强调色用低饱和度的雾面蓝紫，避免像其它深色系那样
+    /// 用高饱和亮色做强调，改用"压住饱和度、拉高灰度"的配色手法制造磨砂/哑光观感。
+    /// 浅色版同理：不是纯白，而是浅灰调，模拟磨砂玻璃在光线下的浅灰哑光反光。</summary>
+    public const string SkinObsidian = "Obsidian";
+    /// <summary>雾灰蓝：新增，"磨砂高级感"系列之一。整体基调是低饱和度的雾蓝灰，视觉上像
+    /// 蒙了一层薄雾的磨砂玻璃——背景色刻意选用带灰调而不是纯净的蓝，強调色也压低饱和度，
+    /// 跟已有的 Blue/Silver 两个色系区分开：Blue 是鲜艳科技蓝，Silver 是冷调金属灰，
+    /// Frostglass 介于两者之间、更"雾面"、更柔和，不追求鲜艳或金属反光而是磨砂朦胧感。</summary>
+    public const string SkinFrostglass = "Frostglass";
+    /// <summary>香槟灰：新增，"磨砂高级感"系列之一。暖灰调打底、强调色用低饱和度的雾面香槟金，
+    /// 定位是"低调奢华"——跟已有的 Gold（鲜亮暖金）区分开，这里刻意把金色的饱和度压得
+    /// 更低、混入更多灰度，做出"磨砂哑光金属"而不是"抛光反光金属"的观感，整体更内敛。</summary>
+    public const string SkinChampagneFrost = "ChampagneFrost";
+    /// <summary>珍珠白：新增，"高级白"系列之一。跟默认 SkinWhite(纯白背景+科技蓝强调色)不同，
+    /// 这里背景不用纯白而是带一点点珠光灰调的米白，强调色也压低饱和度用柔和的雾面藕粉紫灰，
+    /// 整体像打磨过的珍珠表面，观感更柔和内敛，不做默认皮肤那种高对比度的科技感。</summary>
+    public const string SkinPearl = "Pearl";
+    /// <summary>云杉白：新增，"高级白"系列之一。走"雪花石膏(Alabaster)"路线——极浅的暖白背景，
+    /// 强调色是低饱和度的暖灰米色，几乎不带任何鲜艳色相，是所有色系里最接近"无色"的一个，
+    /// 适合喜欢极简、几乎看不出主题色存在感的用户。</summary>
+    public const string SkinAlabaster = "Alabaster";
+    /// <summary>冰晶白：新增，"高级白"系列之一。冷调玻璃质感——背景带一点点极浅的蓝灰，
+    /// 强调色用清冷的冰蓝，比默认白色系的科技蓝更浅、更透，模拟"磨砂冰晶/毛玻璃"在光线下
+    /// 泛出的淡蓝冷光，定位介于"清透"和"高级冷淡"之间。</summary>
+    public const string SkinGlacier = "Glacier";
     /// <summary>历史遗留色系常量：仅用于兼容"旧配置文件里 UiSkin 存的是 Dark"这种数据，
     /// 新增的色系选择 UI（设置页下拉框等）不再把它作为一个可选项列出——现在"要不要深色"
     /// 已经拆到 IsDarkMode 独立控制，不需要再单独占一个"色系"位置。</summary>
@@ -73,7 +99,7 @@ public static class ThemeService
 
     /// <summary>提供给设置页"色系"下拉框遍历用的可选值，不包含 SkinDark（见上面注释，
     /// 深色已经拆成 IsDarkMode 独立维度，不再是一个单独的色系选项）。</summary>
-    public static readonly string[] AllSkins = { SkinWhite, SkinBlue, SkinYellow, SkinPurple, SkinPink, SkinSilver, SkinGold, SkinEmerald, SkinNether, SkinEndStone, SkinWarmYellow, SkinOrange };
+    public static readonly string[] AllSkins = { SkinWhite, SkinBlue, SkinYellow, SkinPurple, SkinPink, SkinSilver, SkinGold, SkinEmerald, SkinNether, SkinEndStone, SkinWarmYellow, SkinOrange, SkinObsidian, SkinFrostglass, SkinChampagneFrost, SkinPearl, SkinAlabaster, SkinGlacier };
 
     /// <summary>当前是否深色模式，Apply 每次调用时同步更新。供 WindowChromeService 在
     /// 新窗口刚创建（SourceInitialized）时查询"现在该用深色标题栏还是浅色标题栏"——
@@ -97,7 +123,7 @@ public static class ThemeService
     {
         // ------- 白色系：浅色版是原来 App.xaml 里写死的"科技感冷蓝"配色，原样保留 -------
         [(SkinWhite, false)] = new Palette(
-            Accent: "#1868E8", AccentHover: "#0F52C4", Glow: "#00C2E8", GlowSoft: "#E3F7FC",
+            Accent: "#5B9BF2", AccentHover: "#4488EB", Glow: "#00C2E8", GlowSoft: "#E3F7FC",
             Panel: "#FFFFFF", Side: "#F4F7FB", Border: "#D6E2F0", BorderHover: "#9DC0EC",
             TextPrimary: "#151B26", TextSecondary: "#6B7686",
             TileBlue: "#E3F7FC", TileIndigo: "#EAF1FF", TileGreen: "#E7F6EC", TileOrange: "#FFF1E3", TilePurple: "#F1E9FF",
@@ -329,6 +355,133 @@ public static class ThemeService
             TileBlue: "#1C3547", TileIndigo: "#212D4A", TileGreen: "#1B4230", TileOrange: "#4A3018", TilePurple: "#2E2448",
             SuccessText: "#5FE092", WarningText: "#F5B565", WarningBanner: "#4A3018", Danger: "#F0716F", Divider: "#543724",
             ButtonBackground: "#5C3A20", ButtonHoverBackground: "#744A2A", ButtonForeground: "#FCE3D0"),
+
+        // ------- 曜石黑：新增，"磨砂高级感"系列之一。刻意压低饱和度、拉高灰度模拟哑光/
+        // 磨砂质感，跟已有 Dark/Silver 深色系的差别是：强调色不追求鲜艳醒目，而是用
+        // 灰紫调"雾面蓝紫"，浅色版背景也不是纯白而是浅灰白，制造"隔了一层磨砂玻璃看东西"
+        // 的朦胧观感，而不是强对比度的清晰科技感。 -------
+        [(SkinObsidian, false)] = new Palette(
+            Accent: "#6B6E85", AccentHover: "#565A70", Glow: "#9296AC", GlowSoft: "#EDEDF2",
+            Panel: "#F5F5F7", Side: "#E9E9EE", Border: "#D2D2DC", BorderHover: "#AFAFC0",
+            TextPrimary: "#232330", TextSecondary: "#6E6E80",
+            TileBlue: "#E9EAF0", TileIndigo: "#EAEAF2", TileGreen: "#E6EDE9", TileOrange: "#F0EAE6", TilePurple: "#EBE8F0",
+            SuccessText: "#1E9E4F", WarningText: "#B5762B", WarningBanner: "#EDEDF2", Danger: "#C24B4B", Divider: "#D2D2DC",
+            ButtonBackground: "#D8D8E0", ButtonHoverBackground: "#C6C6D2", ButtonForeground: "#2A2A38"),
+
+        // 曜石黑-深：接近纯黑但带一点点冷紫调的哑光深色，是全部深色版里饱和度最低的一个，
+        // 强调色只比背景亮一档，刻意不做强对比、追求"哑光黑曜石抛光面"那种低调质感。
+        [(SkinObsidian, true)] = new Palette(
+            Accent: "#9296AC", AccentHover: "#A6AABC", Glow: "#9296AC", GlowSoft: "#26262E",
+            Panel: "#1C1C22", Side: "#131316", Border: "#3A3A44", BorderHover: "#4E4E5A",
+            TextPrimary: "#E8E8EE", TextSecondary: "#A0A0B0",
+            TileBlue: "#26262E", TileIndigo: "#26262E", TileGreen: "#20262A", TileOrange: "#282422", TilePurple: "#26242E",
+            SuccessText: "#5FE092", WarningText: "#F0B368", WarningBanner: "#282422", Danger: "#EE7E7C", Divider: "#3A3A44",
+            ButtonBackground: "#34343E", ButtonHoverBackground: "#40404C", ButtonForeground: "#E4E4EC"),
+
+        // ------- 雾灰蓝：新增，"磨砂高级感"系列之一。低饱和雾蓝灰打底，介于 Blue(鲜艳科技蓝)
+        // 和 Silver(冷调金属灰)之间，走"磨砂玻璃蒙雾"路线——背景/边框都刻意混入灰度，
+        // 不追求清透或反光，而是柔和朦胧的雾面质感。 -------
+        [(SkinFrostglass, false)] = new Palette(
+            Accent: "#5E85A8", AccentHover: "#4A6D8C", Glow: "#8FB2CE", GlowSoft: "#EAF0F5",
+            Panel: "#F5F8FA", Side: "#E8EEF2", Border: "#CBD8E0", BorderHover: "#A8BDCC",
+            TextPrimary: "#20272E", TextSecondary: "#5F6E78",
+            TileBlue: "#E7EEF4", TileIndigo: "#E9ECF4", TileGreen: "#E6EEE9", TileOrange: "#F0ECE6", TilePurple: "#EAE9F2",
+            SuccessText: "#1E9E4F", WarningText: "#B5762B", WarningBanner: "#EAF0F5", Danger: "#C24B4B", Divider: "#CBD8E0",
+            ButtonBackground: "#D2E0E8", ButtonHoverBackground: "#BCD0DC", ButtonForeground: "#26343E"),
+
+        // 雾灰蓝-深：深灰蓝背景配柔和的雾面浅蓝强调色，比 Blue-深更内敛、比 Silver-深更有
+        // 一点点色相辨识度，介于两者之间的"低调雾面"深色版本。
+        [(SkinFrostglass, true)] = new Palette(
+            Accent: "#8FB2CE", AccentHover: "#A4C1D8", Glow: "#8FB2CE", GlowSoft: "#242E36",
+            Panel: "#1B2126", Side: "#12171B", Border: "#38424A", BorderHover: "#4C5A64",
+            TextPrimary: "#E6EDF2", TextSecondary: "#9DAEB8",
+            TileBlue: "#212C34", TileIndigo: "#242A38", TileGreen: "#1E2A26", TileOrange: "#2C2620", TilePurple: "#26242E",
+            SuccessText: "#5FE092", WarningText: "#F0B368", WarningBanner: "#2C2620", Danger: "#EE7E7C", Divider: "#38424A",
+            ButtonBackground: "#2E3A42", ButtonHoverBackground: "#3A4852", ButtonForeground: "#E0EAF0"),
+
+        // ------- 香槟灰：新增，"磨砂高级感"系列之一。暖灰调打底，强调色是压低饱和度的
+        // 雾面香槟金，跟已有 Gold(抛光暖金、明亮跳跃)刻意区分开——这里追求"低调奢华"，
+        // 金色元素只作为点缀、不抢眼，整体灰度更高、更接近哑光金属而不是抛光反光。 -------
+        [(SkinChampagneFrost, false)] = new Palette(
+            Accent: "#A88C64", AccentHover: "#8C724E", Glow: "#CBB48E", GlowSoft: "#F5F0E6",
+            Panel: "#FAF8F4", Side: "#F0EAE0", Border: "#DCD0BC", BorderHover: "#C2AE8E",
+            TextPrimary: "#2A2620", TextSecondary: "#7A6E5C",
+            TileBlue: "#EDEEF2", TileIndigo: "#EEEDF2", TileGreen: "#E9EFE9", TileOrange: "#F2ECE2", TilePurple: "#EFEAF0",
+            SuccessText: "#1E9E4F", WarningText: "#B5762B", WarningBanner: "#F5F0E6", Danger: "#C24B4B", Divider: "#DCD0BC",
+            ButtonBackground: "#E4D8C4", ButtonHoverBackground: "#D6C6A8", ButtonForeground: "#3A3020"),
+
+        // 香槟灰-深：深棕灰背景配柔和的雾面香槟金强调色，比 Gold-深更沉、更灰调，
+        // 是暖色系深色版里饱和度最低、最"哑光"的一个。
+        [(SkinChampagneFrost, true)] = new Palette(
+            Accent: "#CBB48E", AccentHover: "#D9C6A2", Glow: "#CBB48E", GlowSoft: "#2E2A22",
+            Panel: "#211E18", Side: "#17140F", Border: "#48412E", BorderHover: "#5E5540",
+            TextPrimary: "#F0EAE0", TextSecondary: "#BCAE94",
+            TileBlue: "#22262E", TileIndigo: "#242430", TileGreen: "#1E2822", TileOrange: "#302A1E", TilePurple: "#28242E",
+            SuccessText: "#5FE092", WarningText: "#F0B368", WarningBanner: "#302A1E", Danger: "#EE7E7C", Divider: "#48412E",
+            ButtonBackground: "#3C3628", ButtonHoverBackground: "#4A4232", ButtonForeground: "#F0E6D2"),
+
+        // ------- 珍珠白：新增，"高级白"系列之一。跟默认白色系(纯白+科技蓝)拉开差异——
+        // 背景是带一点珠光灰调的米白，强调色压低饱和度用柔和的藕粉紫灰，像打磨过的珍珠，
+        // 卡片色块也统一调成低饱和的柔粉调，整体走"温柔高级"路线而不是默认皮肤的清爽科技感。 -------
+        [(SkinPearl, false)] = new Palette(
+            Accent: "#8C7B94", AccentHover: "#73647C", Glow: "#C9B8D0", GlowSoft: "#F5F0F4",
+            Panel: "#FCFAFB", Side: "#F3EEF1", Border: "#E2D6DE", BorderHover: "#C7B4C2",
+            TextPrimary: "#2A2530", TextSecondary: "#7A6E78",
+            TileBlue: "#EEEDF4", TileIndigo: "#F0EDF4", TileGreen: "#ECF1EC", TileOrange: "#F5EFEA", TilePurple: "#F2EAF0",
+            SuccessText: "#1E9E4F", WarningText: "#B5762B", WarningBanner: "#F5F0F4", Danger: "#C24B4B", Divider: "#E2D6DE",
+            ButtonBackground: "#E8DCE4", ButtonHoverBackground: "#DAC7D4", ButtonForeground: "#3A2E38"),
+
+        // 珍珠白-深：跟珍珠白配对的深色版，深灰背景带一点紫调，强调色是柔和的浅藕紫，
+        // 延续"温柔高级"基调，不做强对比度的鲜艳强调色。
+        [(SkinPearl, true)] = new Palette(
+            Accent: "#C9B8D0", AccentHover: "#D8C8DE", Glow: "#C9B8D0", GlowSoft: "#2A2530",
+            Panel: "#211E24", Side: "#17151A", Border: "#453E4A", BorderHover: "#5A5260",
+            TextPrimary: "#F0EAF0", TextSecondary: "#B8ADBC",
+            TileBlue: "#26242E", TileIndigo: "#28242E", TileGreen: "#20262A", TileOrange: "#2C2622", TilePurple: "#2A2430",
+            SuccessText: "#5FE092", WarningText: "#F0B368", WarningBanner: "#2C2622", Danger: "#EE7E7C", Divider: "#453E4A",
+            ButtonBackground: "#3A3440", ButtonHoverBackground: "#484050", ButtonForeground: "#EEE4EE"),
+
+        // ------- 云杉白：新增，"高级白"系列之一。走"雪花石膏"路线——极浅暖白背景，
+        // 强调色是低饱和度暖灰米色，是所有色系里色相存在感最弱的一个，追求极简、
+        // 几乎看不出主题色、只靠留白和层次做设计的高级感。 -------
+        [(SkinAlabaster, false)] = new Palette(
+            Accent: "#9C9284", AccentHover: "#7F766A", Glow: "#D6CFC2", GlowSoft: "#F8F6F1",
+            Panel: "#FDFCFA", Side: "#F5F2EC", Border: "#E6E0D4", BorderHover: "#CFC6B4",
+            TextPrimary: "#28251E", TextSecondary: "#7C7566",
+            TileBlue: "#EFEEEA", TileIndigo: "#F0EEEA", TileGreen: "#EDF0E9", TileOrange: "#F4EFE6", TilePurple: "#F0EDEE",
+            SuccessText: "#1E9E4F", WarningText: "#B5762B", WarningBanner: "#F8F6F1", Danger: "#C24B4B", Divider: "#E6E0D4",
+            ButtonBackground: "#EAE4D6", ButtonHoverBackground: "#DCD2BC", ButtonForeground: "#38342A"),
+
+        // 云杉白-深：跟云杉白配对的深色版，暖灰黑背景配柔和米色强调色，同样保持
+        // 极低的色相存在感，是所有深色版里最接近"纯中性灰"的一个。
+        [(SkinAlabaster, true)] = new Palette(
+            Accent: "#D6CFC2", AccentHover: "#E2DCD0", Glow: "#D6CFC2", GlowSoft: "#28251E",
+            Panel: "#201E1A", Side: "#161512", Border: "#48443A", BorderHover: "#5E594C",
+            TextPrimary: "#F0EDE6", TextSecondary: "#B8B0A0",
+            TileBlue: "#24241E", TileIndigo: "#26241E", TileGreen: "#20261C", TileOrange: "#2A2620", TilePurple: "#26241E",
+            SuccessText: "#5FE092", WarningText: "#F0B368", WarningBanner: "#2A2620", Danger: "#EE7E7C", Divider: "#48443A",
+            ButtonBackground: "#3A362C", ButtonHoverBackground: "#484236", ButtonForeground: "#F0E9DA"),
+
+        // ------- 冰晶白：新增，"高级白"系列之一。冷调玻璃质感——背景带极浅的蓝灰，
+        // 强调色用清冷冰蓝，比默认白色系的科技蓝更浅更透，模拟磨砂冰晶泛出的淡蓝冷光，
+        // 定位介于"清透"和"高级冷淡"之间，跟默认皮肤/雾灰蓝都区分开。 -------
+        [(SkinGlacier, false)] = new Palette(
+            Accent: "#6E93AC", AccentHover: "#57798F", Glow: "#B0D4E8", GlowSoft: "#EEF6FA",
+            Panel: "#FBFDFE", Side: "#EEF4F8", Border: "#D2E2EA", BorderHover: "#AECBDA",
+            TextPrimary: "#20282E", TextSecondary: "#66767E",
+            TileBlue: "#E8F1F6", TileIndigo: "#EAEEF6", TileGreen: "#E7F1EC", TileOrange: "#F1EEE6", TilePurple: "#EDECF4",
+            SuccessText: "#1E9E4F", WarningText: "#B5762B", WarningBanner: "#EEF6FA", Danger: "#C24B4B", Divider: "#D2E2EA",
+            ButtonBackground: "#D6E8F0", ButtonHoverBackground: "#C0DCE8", ButtonForeground: "#28404A"),
+
+        // 冰晶白-深：跟冰晶白配对的深色版，深蓝灰背景配清透冰蓝强调色，是所有深色版里
+        // 最"清冷"的一个，跟雾灰蓝-深(更灰调、雾面)拉开差异，冰晶白-深更透亮清澈。
+        [(SkinGlacier, true)] = new Palette(
+            Accent: "#B0D4E8", AccentHover: "#C4DFEE", Glow: "#B0D4E8", GlowSoft: "#1E2A30",
+            Panel: "#19222A", Side: "#101820", Border: "#374854", BorderHover: "#4A5E6C",
+            TextPrimary: "#E8F2F8", TextSecondary: "#9AB0BC",
+            TileBlue: "#1E3440", TileIndigo: "#20293E", TileGreen: "#1C2E28", TileOrange: "#2A2620", TilePurple: "#242238",
+            SuccessText: "#5FE092", WarningText: "#F0B368", WarningBanner: "#2A2620", Danger: "#EE7E7C", Divider: "#374854",
+            ButtonBackground: "#28404C", ButtonHoverBackground: "#345060", ButtonForeground: "#DCEEF6"),
     };
 
     /// <summary>
@@ -417,6 +570,11 @@ public static class ThemeService
             // 不在 WPF 资源系统管辖范围内，普通的画刷刷新逻辑碰不到它，这里单独调一次
             // DWM API 让已打开窗口的标题栏立即跟着当前深浅色切换，不需要关闭重开窗口。
             WindowChromeService.ApplyTitleBarTheme(window, CurrentIsDarkMode);
+
+            // 窗口图标（标题栏左上角 / 任务栏 / Alt-Tab）同样不归 WPF 资源系统管，
+            // 跟标题栏一样需要在这里主动重设，才能在切换深浅色时立即跟着换。
+            // 深色图标文件缺失会自动回退浅色，不会抛异常。见 AppIconService 类头注释。
+            AppIconService.ApplyTo(window);
         }
     }
 
@@ -493,6 +651,12 @@ public static class ThemeService
         SkinEndStone => "末地石",
         SkinWarmYellow => "暖黄色",
         SkinOrange => "亮橙色",
+        SkinObsidian => "曜石黑（磨砂）",
+        SkinFrostglass => "雾灰蓝（磨砂）",
+        SkinChampagneFrost => "香槟灰（磨砂）",
+        SkinPearl => "珍珠白（高级）",
+        SkinAlabaster => "云杉白（高级）",
+        SkinGlacier => "冰晶白（高级）",
         SkinDark => "黑色",
         _ => skin
     };

@@ -41,6 +41,12 @@ public partial class SettingsPage : UserControl
         ShowModIconsCheck.IsChecked = cfg.ShowModIcons;
         ShowServerNetworkGuideCheck.IsChecked = cfg.ShowServerNetworkGuideOnStart;
         IsolateVersionsCheck.IsChecked = cfg.IsolateVersionsByDefault;
+
+        // 拖拽安装默认值：三个下拉框按 Tag 匹配当前配置值。
+        ModpackDropNewInstanceCheck.IsChecked = cfg.ModpackDropCreatesNewInstance;
+        SelectComboByTag(ZipDropDefaultCombo, cfg.ZipDropDefault.ToString());
+        SelectComboByTag(ServerJarDropCombo, cfg.ServerPageJarDropTarget.ToString());
+        SelectComboByTag(DefaultJarDropCombo, cfg.DefaultJarDropTarget.ToString());
         IsolateResourcePacksCheck.IsChecked = cfg.IsolateResourcePacksByDefault;
         // CurseForge 地图下载走内置 Key，不再需要在这里读取/展示用户配置状态（见下方删除说明）。
 
@@ -279,7 +285,7 @@ public partial class SettingsPage : UserControl
         SimpleJavaPanel.Visibility = advanced ? Visibility.Collapsed : Visibility.Visible;
         AdvancedJavaPanel.Visibility = advanced ? Visibility.Visible : Visibility.Collapsed;
         CustomJvmArgsPanel.Visibility = advanced ? Visibility.Visible : Visibility.Collapsed;
-        DownloadJavaBtn.Content = advanced ? "按上方设置下载 Java" : "按上方版本下载 Java";
+        DownloadJavaBtn.Content = advanced ? Loc.T("Str_Cs_Download_Java_Using_The_Settings_Above", "按上方设置下载 Java") : Loc.T("Str_Cs_Download_The_Java_Version_Selected_Above", "按上方版本下载 Java");
         AdvancedModeHintText.Text = advanced
             ? "已切换到高手模式：本页会显示 Java 版本/架构/安装方式、自定义启动参数等高级选项，左侧「日志」页也建议勾选显示日志面板。"
             : "当前是普通模式：启动器只展示必要的选项，Java 会自动探测/下载推荐版本，无需任何手动配置。";
@@ -320,13 +326,13 @@ public partial class SettingsPage : UserControl
 
     private void ReopenWizard_Click(object sender, RoutedEventArgs e)
     {
-        var wizard = new FirstRunWizardWindow(_owner) { Owner = Window.GetWindow(this) };
+        var wizard = new FirstRunWizardWindow(_owner);
         wizard.ShowDialog();
         // 向导跑完可能改了游戏文件夹/语言等设置，重新加载这个页面的显示值，
         // 避免用户看到的还是打开向导之前的旧值。
         SelectComboByTag(GameLanguageCombo, _owner.ConfigService.Config.GameLanguage);
         GameVersionTypeLabelBox.Text = _owner.ConfigService.Config.GameVersionTypeLabel;
-        StatusText.Text = "新手引导已完成，相关设置已自动刷新。";
+        StatusText.Text = Loc.T("Str_Cs_Setup_Is_Complete_And_The_Related_Settin", "新手引导已完成，相关设置已自动刷新。");
     }
 
     private async void DownloadJava_Click(object sender, RoutedEventArgs e)
@@ -373,7 +379,7 @@ public partial class SettingsPage : UserControl
         }
         catch (Exception ex)
         {
-            ErrorPresenter.ShowFriendlyError("下载失败，可能是网络连接问题或下载源暂时不可用，请检查网络后重试。", $"[下载失败] {ex}", "下载失败");
+            ErrorPresenter.ShowFriendlyError(Loc.T("Str_Cs_Download_Failed_This_Is_Usually_A_Networ", "下载失败，可能是网络连接问题或下载源暂时不可用，请检查网络后重试。"), $"[下载失败] {ex}", "下载失败");
         }
         finally
         {
@@ -394,7 +400,7 @@ public partial class SettingsPage : UserControl
         button.IsEnabled = false;
         var originalContent = button.Content;
         button.Content = "探测中...";
-        StatusText.Text = "正在自动探测本机 Java...";
+        StatusText.Text = Loc.T("Str_Cs_Auto_Detecting_Installed_Java", "正在自动探测本机 Java...");
 
         try
         {
@@ -432,7 +438,7 @@ public partial class SettingsPage : UserControl
         }
         catch (Exception ex)
         {
-            MessageBoxDialog.ShowError("自动探测失败：\n" + ex.Message);
+            MessageBoxDialog.ShowError(Loc.T("Str_Cs_Auto_Detection_Failed_N", "自动探测失败：\n") + ex.Message);
         }
         finally
         {
@@ -461,7 +467,7 @@ public partial class SettingsPage : UserControl
         progressWin.Show();
 
         var cts = new System.Threading.CancellationTokenSource();
-        var textProgress = new Progress<string>(msg => progressWin.Progress.Report(new ProgressInfo("全盘扫描 Java", 0, 0, msg)));
+        var textProgress = new Progress<string>(msg => progressWin.Progress.Report(new ProgressInfo(Loc.T("Str_Cs_Scan_The_Whole_Disk_For_Java", "全盘扫描 Java"), 0, 0, msg)));
 
         try
         {
@@ -470,11 +476,11 @@ public partial class SettingsPage : UserControl
 
             if (candidates.Count == 0)
             {
-                MessageBoxDialog.ShowInfo("扫描完成，没有在本机磁盘上找到任何 javaw.exe。", "全盘扫描结果");
+                MessageBoxDialog.ShowInfo(Loc.T("Str_Cs_Scan_Finished_No_Javaw_Exe_Was_Found_Any", "扫描完成，没有在本机磁盘上找到任何 javaw.exe。"), "全盘扫描结果");
                 return;
             }
 
-            var picker = new JavaCandidatePickerWindow(candidates) { Owner = Window.GetWindow(this) };
+            var picker = new JavaCandidatePickerWindow(candidates);
             if (picker.ShowDialog() == true && picker.SelectedPath != null)
             {
                 // 选中的这个候选自动登记进 Java 列表；候选自带的版本号（字符串，如 "21.0.5"）
@@ -611,6 +617,14 @@ public partial class SettingsPage : UserControl
         cfg.ShowModIcons = ShowModIconsCheck.IsChecked == true;
         cfg.ShowServerNetworkGuideOnStart = ShowServerNetworkGuideCheck.IsChecked == true;
         cfg.IsolateVersionsByDefault = IsolateVersionsCheck.IsChecked == true;
+
+        cfg.ModpackDropCreatesNewInstance = ModpackDropNewInstanceCheck.IsChecked == true;
+        if (Enum.TryParse<DropZipDefault>(TagOf(ZipDropDefaultCombo), out var zipDef))
+            cfg.ZipDropDefault = zipDef;
+        if (Enum.TryParse<DropJarTarget>(TagOf(ServerJarDropCombo), out var srvJar))
+            cfg.ServerPageJarDropTarget = srvJar;
+        if (Enum.TryParse<DropJarTarget>(TagOf(DefaultJarDropCombo), out var defJar))
+            cfg.DefaultJarDropTarget = defJar;
         cfg.IsolateResourcePacksByDefault = IsolateResourcePacksCheck.IsChecked == true;
 
         cfg.EnableMultiThreadDownload = MultiThreadDownloadCheck.IsChecked == true;
@@ -718,6 +732,37 @@ public partial class SettingsPage : UserControl
     {
         _owner.OpenExperimentalFeatures();
     }
+
+    // ===================== 拖拽安装设置 =====================
+
+    /// <summary>按 Tag 选中下拉项。配置存的是枚举名（"Ask"/"Server"/…），
+    /// XAML 里每个 ComboBoxItem 的 Tag 就写同样的字符串，两边靠这个对上，
+    /// 不依赖下拉项的排列顺序——以后往中间插一项也不会错位。</summary>
+    private static void SelectComboByTag(System.Windows.Controls.ComboBox combo, string tag)
+    {
+        foreach (var obj in combo.Items)
+        {
+            if (obj is System.Windows.Controls.ComboBoxItem item &&
+                string.Equals(item.Tag as string, tag, StringComparison.OrdinalIgnoreCase))
+            {
+                combo.SelectedItem = item;
+                return;
+            }
+        }
+        if (combo.Items.Count > 0) combo.SelectedIndex = 0;
+    }
+
+    private static string TagOf(System.Windows.Controls.ComboBox combo)
+        => (combo.SelectedItem as System.Windows.Controls.ComboBoxItem)?.Tag as string ?? "";
+
+    /// <summary>拖拽相关下拉框的变化处理：跟本页其它设置一样，改动先留在界面上，
+    /// 由统一的保存流程写回配置，不在每次选择时立刻落盘。</summary>
+    private void DragDropSetting_Changed(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
+    {
+        // 目前不需要即时联动，保留这个处理器是因为 XAML 里绑了 SelectionChanged；
+        // 将来若要做"选了『每次询问』就把某些项灰掉"之类的联动，写在这里。
+    }
+
 }
 
 

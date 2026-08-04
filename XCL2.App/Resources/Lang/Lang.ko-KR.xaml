@@ -5,7 +5,7 @@
     <!-- 한국어(대한민국). 키 집합은 Lang.zh-Hans.xaml 과 정확히 일치해야 합니다. README.md 참조. -->
 
     <system:String x:Key="Str_Lang_DialogTitle">언어 선택</system:String>
-    <system:String x:Key="Str_Lang_EntryButton">언어</system:String>
+    <system:String x:Key="Str_Lang_EntryButton">언어/Language</system:String>
     <system:String x:Key="Str_Lang_ExperimentalNotice">일부 실험적 기능은 간체 중국어 UI에서만 제공됩니다. 다른 언어로 전환하면 이 기능들은 일시적으로 숨겨집니다(기능 자체는 정상 작동하며, 아직 번역이 준비되지 않았을 뿐입니다).</system:String>
     <system:String x:Key="Str_Lang_Ok">확인</system:String>
     <system:String x:Key="Str_Lang_Cancel">취소</system:String>
@@ -45,9 +45,157 @@
     <system:String x:Key="Str_Nav_Logs">로그</system:String>
     <system:String x:Key="Str_Nav_Experimental">실험적 기능</system:String>
     <system:String x:Key="Str_Nav_Toolbox">도구 상자</system:String>
+    <system:String x:Key="Str_Nav_AboutHelp">감사 인사 &amp; 도움말</system:String>
+    <system:String x:Key="Str_Ui_Account_Version_Loader_And_Mods_In_One_P">계정, 버전, 로더, Mod를 한 번에 설정</system:String>
+    <system:String x:Key="Str_Ui_Changes_The_Launcher_S_Language_Only_The">런처 인터페이스 언어만 전환합니다(게임 내 언어에는 영향을 주지 않으며, 게임 내 언어는 「설정」 페이지에서 별도로 설정합니다)</system:String>
+    <system:String x:Key="Str_Ui_Download_Game_Versions_Mods_Maps_Resourc">게임 코어, Mod, 맵, 리소스팩, 모드팩 다운로드</system:String>
+    <system:String x:Key="Str_Ui_Normal_Mode_Shows_Only_The_Essentials_An">일반 모드: 필수 항목만 표시하며 Java를 자동으로 감지/다운로드하여 별도 설정이 필요 없습니다; 전문가 모드: Java 버전/아키텍처/설치 방식, 사용자 지정 실행 인자 등 고급 옵션을 조정할 수 있습니다</system:String>
+    <system:String x:Key="Str_Ui_Switches_Between_Dark_And_Light_It_Only_">다크 모드와 라이트 모드를 전환하며, 밝기에만 영향을 주고 「색상 테마」에서 선택한 색 계열에는 영향을 주지 않습니다. 「자동 전환」이 켜져 있을 때 이 선택은 일시적인 재정의일 뿐이며, 다음 자동 전환 시각이 되면 자동 순환이 다시 제어권을 가져갑니다.</system:String>
+    <system:String x:Key="Str_Ui_Switches_Between_Light_And_Dark_Automati">켜면 시스템 시간에 따라 라이트/다크 모드가 자동으로 전환됩니다(기본값: 08:00~19:00은 라이트, 나머지 시간은 다크). 전환 시각은 「설정」 페이지에서 조정할 수 있습니다.</system:String>
+    <system:String x:Key="Str_Ui_When_On_The_Game_Launches_With_A_Tempora">켜면 저장된 계정 대신 이번 세션에만 존재하는 임시 계정으로 게임이 실행됩니다; 끄면 이번 세션에서 생성된 로그/임시 다운로드 파일을 정리합니다</system:String>
 
     <system:String x:Key="Str_Settings_LanguageSection_Title">런처 UI 언어</system:String>
     <system:String x:Key="Str_Settings_LanguageSection_Hint">즉시 적용되며 재시작이 필요 없습니다. 여기서 선택하는 것은 "런처 UI" 언어이며, 아래의 "게임 내 언어"와는 별개입니다.</system:String>
     <system:String x:Key="Str_Settings_LanguageSection_OpenPicker">🌐 언어 선택</system:String>
+
+
+    <!-- ============ 通用界面文案（第二批，按"用户高频看到"的顺序补充） ============
+         说明：全项目还有 1700+ 条硬编码中文尚未抽出（见 Tools/extract-hardcoded-strings.py
+         的统计），翻译是分批推进的。LocalizationService 现在会在加载非中文语言时
+         先铺一层简体中文做底再覆盖，所以"还没翻的条目显示中文、翻了的显示本语言"，
+         界面不会出现空白控件。 -->
+    <system:String x:Key="Str_Common_Ok">확인</system:String>
+    <system:String x:Key="Str_Common_Cancel">취소</system:String>
+    <system:String x:Key="Str_Common_Yes">예</system:String>
+    <system:String x:Key="Str_Common_No">아니요</system:String>
+    <system:String x:Key="Str_Common_Close">닫기</system:String>
+    <system:String x:Key="Str_Common_Save">저장</system:String>
+    <system:String x:Key="Str_Common_Delete">삭제</system:String>
+    <system:String x:Key="Str_Common_Search">검색</system:String>
+    <system:String x:Key="Str_Common_Refresh">새로 고침</system:String>
+    <system:String x:Key="Str_Common_Install">설치</system:String>
+    <system:String x:Key="Str_Common_Download">다운로드</system:String>
+    <system:String x:Key="Str_Common_Back">뒤로</system:String>
+    <system:String x:Key="Str_Common_Next">다음</system:String>
+    <system:String x:Key="Str_Common_Skip">건너뛰기</system:String>
+    <system:String x:Key="Str_Common_Finish">완료</system:String>
+    <system:String x:Key="Str_Common_Retry">다시 시도</system:String>
+    <system:String x:Key="Str_Common_Browse">찾아보기</system:String>
+    <system:String x:Key="Str_Common_Reset">초기화</system:String>
+    <system:String x:Key="Str_Common_Loading">불러오는 중...</system:String>
+    <system:String x:Key="Str_Status_Success">성공</system:String>
+    <system:String x:Key="Str_Status_Failed">실패</system:String>
+    <system:String x:Key="Str_Status_Tip">알림</system:String>
+    <system:String x:Key="Str_Status_Confirm">확인</system:String>
+    <system:String x:Key="Str_Status_Error">문제가 발생했습니다</system:String>
+    <system:String x:Key="Str_Launch_Button">게임 시작</system:String>
+    <system:String x:Key="Str_Launch_Started">게임이 시작되었습니다</system:String>
+    <system:String x:Key="Str_Launch_NoVersion">버전이 선택되지 않음</system:String>
+    <system:String x:Key="Str_Launch_NoAccount">계정이 선택되지 않음</system:String>
+    <system:String x:Key="Str_Launch_CloseAll">모두 종료</system:String>
+    <system:String x:Key="Str_Launch_CloseSelected">선택 항목 종료</system:String>
+    <system:String x:Key="Str_Launch_CloseUnresponsive">응답 없음 종료</system:String>
+    <system:String x:Key="Str_Drop_Title">놓으면 설치됩니다</system:String>
+    <system:String x:Key="Str_Drop_Hint">모드, 리소스팩, 셰이더, 월드, 모드팩이 선택한 인스턴스에 설치됩니다</system:String>
+    <system:String x:Key="Str_Drop_NoInstance">먼저 [버전 선택]에서 게임 버전을 선택한 후 파일을 놓아 주세요.</system:String>
+    <system:String x:Key="Str_Drop_SectionTitle">드래그 앤 드롭 설치</system:String>
+    <system:String x:Key="Str_Settings_Title">설정</system:String>
+    <system:String x:Key="Str_Settings_Java">Java 설정</system:String>
+    <system:String x:Key="Str_Settings_Memory">메모리 설정</system:String>
+    <system:String x:Key="Str_Settings_Download">다운로드 설정</system:String>
+    <system:String x:Key="Str_Settings_Appearance">모양</system:String>
+    <system:String x:Key="Str_Toolbox_Title">도구 상자</system:String>
+    <system:String x:Key="Str_Toolbox_Achievement">업적 이미지 만들기</system:String>
+    <system:String x:Key="Str_Toolbox_ItemId">아이템 ID</system:String>
+    <system:String x:Key="Str_Toolbox_Preview">미리 보기</system:String>
+
+
+    <!-- ============ Version select + download center page strings (added) ============ -->
+    <system:String x:Key="Str_Ui_A_Beginner_S_Wizard_That_Takes_You_From_">계정 설정부터 게임 실행까지 안내하는 초보자용 마법사: 버전/로더 선택, 필요 시 모드와 리소스팩/셰이더팩 설치까지 마치면 자동으로 게임을 다운로드하고 실행합니다</system:String>
+    <system:String x:Key="Str_Ui_Add_Existing_Folder">➕ 기존 폴더 추가</system:String>
+    <system:String x:Key="Str_Ui_Add_Or_Import">추가 또는 가져오기</system:String>
+    <system:String x:Key="Str_Ui_All">전체</system:String>
+    <system:String x:Key="Str_Ui_Any_Loader">로더 무관</system:String>
+    <system:String x:Key="Str_Ui_April_Fools_Versions">만우절 버전</system:String>
+    <system:String x:Key="Str_Ui_Author">제작자: </system:String>
+    <system:String x:Key="Str_Ui_Blank_Means_Auto_Match_The_Version_S_Own">비워두면 자동 일치(버전의 Java 요구 사항과 설치된 모드의 Java 요구 사항 중 더 높은 값을 사용); 숫자 입력(예: 25) 시 이 버전은 항상 해당 Java 메이저 버전을 강제 사용</system:String>
+    <system:String x:Key="Str_Ui_Bmclapi_Mirror">BMCLAPI 미러 서버</system:String>
+    <system:String x:Key="Str_Ui_Clear_The_Name_And_Version_Filters_And_B">이름/버전 필터를 지우고 인기 리소스 둘러보기</system:String>
+    <system:String x:Key="Str_Ui_Clear_The_Name_Version_And_Loader_Filter">이름/버전/로더 필터를 지우고 인기 모드 둘러보기</system:String>
+    <system:String x:Key="Str_Ui_Click_For_Details_And_Downloadable_Versi">클릭하면 상세 정보와 다운로드 가능한 버전을 볼 수 있습니다</system:String>
+    <system:String x:Key="Str_Ui_Click_To_Choose_Between_Vanilla_And_The_">클릭하여 바닐라 또는 Fabric/Forge/NeoForge 로더 중 선택</system:String>
+    <system:String x:Key="Str_Ui_Combined_Modrinth_Curseforge">통합(Modrinth+CurseForge)</system:String>
+    <system:String x:Key="Str_Ui_Configure_In_Settings">설정 페이지에서 구성</system:String>
+    <system:String x:Key="Str_Ui_Curseforge_Only">CurseForge만</system:String>
+    <system:String x:Key="Str_Ui_Data_From_Curseforge">CurseForge 제공 데이터</system:String>
+    <system:String x:Key="Str_Ui_Data_Packs">데이터팩</system:String>
+    <system:String x:Key="Str_Ui_Dependencies">필수 리소스</system:String>
+    <system:String x:Key="Str_Ui_Download_Install">다운로드 및 설치</system:String>
+    <system:String x:Key="Str_Ui_Downloads">  다운로드 수: </system:String>
+    <system:String x:Key="Str_Ui_Favorites">즐겨찾기</system:String>
+    <system:String x:Key="Str_Ui_File">  파일명: </system:String>
+    <system:String x:Key="Str_Ui_Folders">폴더 목록</system:String>
+    <system:String x:Key="Str_Ui_Game_Version">게임 버전</system:String>
+    <system:String x:Key="Str_Ui_Game_Version_Downloads">게임 버전 다운로드</system:String>
+    <system:String x:Key="Str_Ui_Get_A_Key_From_Console_Curseforge_Com_Th">console.curseforge.com 에서 키를 발급받은 뒤 「설정」 페이지에 붙여넣어 저장하세요.</system:String>
+    <system:String x:Key="Str_Ui_Independent_Of_The_Version_Isolation_Swi">위의 버전 격리 스위치와는 별개입니다. 선택하지 않으면 「설정」 페이지의 전역 기본값을 따릅니다</system:String>
+    <system:String x:Key="Str_Ui_Install_New_Version">➕ 새 버전 설치</system:String>
+    <system:String x:Key="Str_Ui_Installed_On_This_Pc">이 PC에 설치된 버전</system:String>
+    <system:String x:Key="Str_Ui_Installed_Versions">설치된 버전</system:String>
+    <system:String x:Key="Str_Ui_Java_Version_Used_By_This_Instance">이 인스턴스가 사용하는 Java 버전</system:String>
+    <system:String x:Key="Str_Ui_Join_A_Specific_Server_On_Launch_Connect">실행 시 특정 서버에 자동 접속(실행 후 지정한 서버로 자동으로 접속)</system:String>
+    <system:String x:Key="Str_Ui_Joining_A_Server_Automatically_Needs_Min">서버 자동 접속에는 Minecraft 1.20.6 이상이 필요합니다. 그보다 낮은 버전에서는 체크해도 효과가 없으며 정상적으로 메인 메뉴가 열립니다</system:String>
+    <system:String x:Key="Str_Ui_Keep_This_Instance_S_Resource_And_Shader">이 버전의 리소스팩/셰이더팩도 별도로 격리(다른 버전과 공유하지 않음)</system:String>
+    <system:String x:Key="Str_Ui_Leave_Unchecked_To_Follow_The_Global_Def">선택하지 않으면 「설정」 페이지의 전역 기본값을 따릅니다</system:String>
+    <system:String x:Key="Str_Ui_Legacy_Versions">구버전</system:String>
+    <system:String x:Key="Str_Ui_Limit_To_A_Game_Version_E_G_1_20_1_Leave">특정 게임 버전으로 제한(예: 1.20.1). 비워두면 제한 없음</system:String>
+    <system:String x:Key="Str_Ui_Loading_Versions">버전 목록을 불러오는 중…</system:String>
+    <system:String x:Key="Str_Ui_Local_Mod_Management">로컬 모드 관리</system:String>
+    <system:String x:Key="Str_Ui_Map_Downloads">맵 다운로드</system:String>
+    <system:String x:Key="Str_Ui_Map_Downloads_Need_A_Curseforge_Api_Key_">맵 다운로드를 이용하려면 먼저 CurseForge API 키를 설정해야 합니다</system:String>
+    <system:String x:Key="Str_Ui_Maps">맵</system:String>
+    <system:String x:Key="Str_Ui_Mc_Wiki_Reference">MC 백과(Wiki) 참고</system:String>
+    <system:String x:Key="Str_Ui_Mod_Downloads">모드 다운로드</system:String>
+    <system:String x:Key="Str_Ui_Modpacks">모드팩</system:String>
+    <system:String x:Key="Str_Ui_Modrinth_Only">Modrinth만</system:String>
+    <system:String x:Key="Str_Ui_Name">이름</system:String>
+    <system:String x:Key="Str_Ui_Next">다음 페이지 ▶</system:String>
+    <system:String x:Key="Str_Ui_No_Matching_Versions_Found_The_Game_Vers">일치하는 버전을 찾을 수 없습니다(필터링한 게임 버전이 맞지 않을 수 있습니다).</system:String>
+    <system:String x:Key="Str_Ui_Nothing_Saved_Yet_Try_The_Button_In_The_">아직 즐겨찾기한 항목이 없습니다. 「게임 버전」/「모드」/「리소스팩」 등에서 ☆ 즐겨찾기 버튼을 눌러보세요.</system:String>
+    <system:String x:Key="Str_Ui_Official_Mojang">공식 소스(Mojang)</system:String>
+    <system:String x:Key="Str_Ui_Only_Applies_When_No_Specific_Java_Is_Ch">위에서 특정 Java를 선택하지 않았을 때만 적용됩니다: 비워두면 자동 일치(권장), 숫자(예: 25)를 입력하면 해당 메이저 버전을 강제 지정할 수 있습니다</system:String>
+    <system:String x:Key="Str_Ui_Open_On_The_Chinese_Minecraft_Wiki">중국어 Minecraft Wiki에서 보기</system:String>
+    <system:String x:Key="Str_Ui_Pick_A_Java_For_This_Instance_From_The_J">「설정」 페이지의 Java 목록에서 이 버전 전용 Java를 선택하세요. 「(지정 안 함)」을 선택하면 아래에 입력한 메이저 버전으로 자동 일치됩니다</system:String>
+    <system:String x:Key="Str_Ui_Previous">◀ 이전 페이지</system:String>
+    <system:String x:Key="Str_Ui_Project_Id">프로젝트 ID: </system:String>
+    <system:String x:Key="Str_Ui_Reference_Material_Click_To_Open_The_Wik">중국어 참고 자료입니다. 클릭하면 백과 페이지로 이동해 자세히 볼 수 있습니다</system:String>
+    <system:String x:Key="Str_Ui_Refresh_Now">수동 새로고침</system:String>
+    <system:String x:Key="Str_Ui_Release">정식 버전</system:String>
+    <system:String x:Key="Str_Ui_Reset_Filters">조건 초기화</system:String>
+    <system:String x:Key="Str_Ui_Resource_Data_Shader_Packs">리소스팩 / 데이터팩 / 셰이더팩</system:String>
+    <system:String x:Key="Str_Ui_Resource_Pack_Downloads">리소스팩 다운로드</system:String>
+    <system:String x:Key="Str_Ui_Resource_Packs">리소스팩</system:String>
+    <system:String x:Key="Str_Ui_Save_Settings_For_This_Version">이 버전의 설정 저장</system:String>
+    <system:String x:Key="Str_Ui_Search_By_Keyword_E_G_A_Map_Name_Leave_B">키워드로 검색(예: 맵 이름). 비워두면 인기 맵을 둘러볼 수 있으며 입력 시 자동으로 검색됩니다</system:String>
+    <system:String x:Key="Str_Ui_Search_By_Keyword_In_English_Or_Chinese_">영어 또는 중국어 키워드로 검색 가능. 예: &amp;quot;JEI&amp;quot; 또는 &amp;quot;钠&amp;quot;(자동으로 Sodium으로 번역되어 검색됨). 비워두면 인기 모드를 둘러볼 수 있으며 입력 시 자동으로 검색됩니다</system:String>
+    <system:String x:Key="Str_Ui_Search_By_Keyword_Leave_Blank_To_Browse_">영어 또는 중국어 키워드로 검색 가능. 비워두면 인기 리소스를 둘러볼 수 있으며 입력 시 자동으로 검색됩니다</system:String>
+    <system:String x:Key="Str_Ui_Search_By_Version_E_G_1_20_Or_21w_Filter">버전 번호로 검색(예: 1.20 또는 21w). 입력 시 자동으로 필터링됩니다</system:String>
+    <system:String x:Key="Str_Ui_Server_Address_E_G_Play_Example_Com_Or_1">서버 주소(예: play.example.com 또는 1.2.3.4:25565)</system:String>
+    <system:String x:Key="Str_Ui_Shader_Packs">셰이더팩</system:String>
+    <system:String x:Key="Str_Ui_Show_Pre_Release_Resources">프리뷰(사전 공개) 리소스 표시</system:String>
+    <system:String x:Key="Str_Ui_Snapshot">스냅샷</system:String>
+    <system:String x:Key="Str_Ui_Source">소스</system:String>
+    <system:String x:Key="Str_Ui_Supports"> · 지원: </system:String>
+    <system:String x:Key="Str_Ui_The_List_Refreshes_Automatically_Click_H">목록은 자동으로 새로고침됩니다. 네트워크 오류가 있거나 현재 조건으로 즉시 다시 검색하려면 여기를 클릭하세요</system:String>
+    <system:String x:Key="Str_Ui_The_List_Refreshes_Automatically_Use_Thi">목록은 자동으로 새로고침됩니다. 네트워크 오류 시 여기에서 수동으로 다시 시도할 수 있습니다</system:String>
+    <system:String x:Key="Str_Ui_The_List_Refreshes_Automatically_Use_Thi_2">목록은 자동으로 새로고침됩니다. 네트워크 오류가 있거나 소스를 전환한 뒤에는 여기에서 수동으로 다시 시도할 수 있습니다</system:String>
+    <system:String x:Key="Str_Ui_Turn_On_Version_Isolation_Just_For_This_">이 버전에만 「버전 격리」를 활성화(모드/리소스팩/세이브 데이터 등을 독립적으로 저장)</system:String>
+    <system:String x:Key="Str_Ui_Type">유형</system:String>
+    <system:String x:Key="Str_Ui_Type_Loader">유형 (로더)</system:String>
+    <system:String x:Key="Str_Ui_Unfavorite">즐겨찾기 해제</system:String>
+    <system:String x:Key="Str_Ui_Version">버전</system:String>
+    <system:String x:Key="Str_Ui_Versions">버전 목록</system:String>
+    <system:String x:Key="Str_Ui_View_Enable_Disable_And_Remove_Installed">설치된 로컬 모드 보기/활성화/비활성화/삭제, 모드팩 가져오기·내보내기</system:String>
+    <system:String x:Key="Str_Ui_When_Ticked_Search_Results_Include_Beta_">체크하면 검색 결과에 아직 정식 출시되지 않은 beta/alpha 버전도 포함됩니다. 기본값은 정식 버전만 표시입니다.</system:String>
 
 </ResourceDictionary>

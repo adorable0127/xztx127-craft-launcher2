@@ -347,10 +347,10 @@ public class ServerCoreDownloadService
             requiredJava = ServerJavaRequirement.EstimateMajorVersionForMcVersion(req.McVersion);
         }
 
-        progress?.Report(new ProgressInfo("下载服务端主程序", 2, 3, "server.jar"));
+        progress?.Report(new ProgressInfo(Loc.T("Str_Cs_Downloading_The_Server_Binary", "下载服务端主程序"), 2, 3, "server.jar"));
         await DownloadFileAsync(url, destPath, sha1, ct);
 
-        progress?.Report(new ProgressInfo("完成", 3, 3, "server.jar"));
+        progress?.Report(new ProgressInfo(Loc.T("Str_Common_Finish", "完成"), 3, 3, "server.jar"));
         return new ServerCoreDownloadResult
         {
             DownloadedFilePath = destPath,
@@ -375,7 +375,7 @@ public class ServerCoreDownloadService
         }
         else
         {
-            progress?.Report(new ProgressInfo("查询可用构建", 0, 2, req.McVersion));
+            progress?.Report(new ProgressInfo(Loc.T("Str_Cs_Looking_Up_Available_Builds", "查询可用构建"), 0, 2, req.McVersion));
             var builds = await GetPaperBuildsAsync(req.McVersion, ct);
             if (builds.Count == 0)
                 throw new InvalidOperationException($"Paper 没有找到 MC {req.McVersion} 对应的可用构建。");
@@ -401,7 +401,7 @@ public class ServerCoreDownloadService
                 // 这个 API 域名本身、而不是真正存文件的 CDN，所以无论换哪个 build 号都会 404——
                 // 这正是"Paper 换了好几个 build 号还是全部下载失败"的根因，不是某个 build 本身
                 // 下架了，是 URL 拼接方式过时了。
-                progress?.Report(new ProgressInfo("查询构建详情", 1, 2, build));
+                progress?.Report(new ProgressInfo(Loc.T("Str_Cs_Fetching_Build_Details", "查询构建详情"), 1, 2, build));
                 var buildDetailJson = await _http.GetStringAsync(
                     $"{PaperApiBase}/projects/paper/versions/{req.McVersion}/builds/{build}", ct);
                 using var buildDoc = JsonDocument.Parse(buildDetailJson);
@@ -484,7 +484,7 @@ public class ServerCoreDownloadService
         var url = $"{PurpurApiBase}/{req.McVersion}/{build}/download";
         var destPath = Path.Combine(req.TargetDir, "server.jar");
 
-        progress?.Report(new ProgressInfo("下载服务端主程序", 1, 1, fileName));
+        progress?.Report(new ProgressInfo(Loc.T("Str_Cs_Downloading_The_Server_Binary", "下载服务端主程序"), 1, 1, fileName));
         await DownloadFileNoHashCheckAsync(url, destPath, ct);
 
         return new ServerCoreDownloadResult
@@ -512,7 +512,7 @@ public class ServerCoreDownloadService
         }
         else
         {
-            progress?.Report(new ProgressInfo("查询可用构建", 0, 2, req.McVersion));
+            progress?.Report(new ProgressInfo(Loc.T("Str_Cs_Looking_Up_Available_Builds", "查询可用构建"), 0, 2, req.McVersion));
             var builds = await GetPaperFamilyBuildsAsync(projectKey, req.McVersion, ct);
             if (builds.Count == 0)
                 throw new InvalidOperationException($"{projectKey} 没有找到 MC {req.McVersion} 对应的可用构建。");
@@ -529,7 +529,7 @@ public class ServerCoreDownloadService
             var build = candidateBuilds[i];
             try
             {
-                progress?.Report(new ProgressInfo("查询构建详情", 1, 2, build));
+                progress?.Report(new ProgressInfo(Loc.T("Str_Cs_Fetching_Build_Details", "查询构建详情"), 1, 2, build));
                 var buildDetailJson = await _http.GetStringAsync(
                     $"{PaperApiBase}/projects/{projectKey}/versions/{req.McVersion}/builds/{build}", ct);
                 using var buildDoc = JsonDocument.Parse(buildDetailJson);
@@ -641,7 +641,7 @@ public class ServerCoreDownloadService
         var url = $"{FabricMetaBase}/versions/loader/{req.McVersion}/{loaderVersion}/{installerVersion}/server/jar";
         var destPath = Path.Combine(req.TargetDir, "server.jar");
 
-        progress?.Report(new ProgressInfo("下载服务端主程序", 2, 2, "server.jar"));
+        progress?.Report(new ProgressInfo(Loc.T("Str_Cs_Downloading_The_Server_Binary", "下载服务端主程序"), 2, 2, "server.jar"));
         await DownloadFileNoHashCheckAsync(url, destPath, ct);
 
         return new ServerCoreDownloadResult
@@ -672,7 +672,7 @@ public class ServerCoreDownloadService
 
         progress?.Report(new ProgressInfo("下载 Forge 安装器", 1, 2, fileName));
         await DownloadFileNoHashCheckAsync(url, destPath, ct);
-        progress?.Report(new ProgressInfo("安装器下载完成，等待安装", 2, 2, fileName));
+        progress?.Report(new ProgressInfo(Loc.T("Str_Cs_Installer_Downloaded_Ready_To_Run", "安装器下载完成，等待安装"), 2, 2, fileName));
 
         return new ServerCoreDownloadResult
         {
@@ -705,7 +705,7 @@ public class ServerCoreDownloadService
 
         progress?.Report(new ProgressInfo("下载 NeoForge 安装器", 1, 2, fileName));
         await DownloadFileNoHashCheckAsync(url, destPath, ct);
-        progress?.Report(new ProgressInfo("安装器下载完成，等待安装", 2, 2, fileName));
+        progress?.Report(new ProgressInfo(Loc.T("Str_Cs_Installer_Downloaded_Ready_To_Run", "安装器下载完成，等待安装"), 2, 2, fileName));
 
         return new ServerCoreDownloadResult
         {

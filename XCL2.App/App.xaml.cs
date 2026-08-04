@@ -42,6 +42,11 @@ public partial class App : Application
 
         if (!IsRunningOnNet8Desktop())
         {
+            // 这里**必须**用系统原生 MessageBox，不能换成内嵌的 MessageBoxDialog：
+            // 内嵌弹窗要挂在 MainWindow 的 OverlayContentHost 上（见 OverlayDialogService.Register），
+            // 而这段代码跑在 OnStartup 里、MainWindow 还没被创建，没有宿主可挂。
+            // 这是全项目仅剩的两处原生 MessageBox 之一，另一处是下面的全局未处理异常兜底，
+            // 同理：异常可能发生在主窗口已经崩掉/还没建好的时刻，不能依赖它。
             MessageBox.Show(
                 "你需要安装 .NET8 运行时才可以继续使用本程序。\n\n" +
                 "检测到当前机器上的 .NET 运行时版本不是 8.x（或者装的是不含桌面支持的精简版），" +
@@ -64,10 +69,32 @@ public partial class App : Application
         ThemeService.ApplyForCurrentState(earlyConfig.Config.GuestModeEnabled, earlyConfig.Config.UiSkin, earlyConfig.Config.IsDarkMode);
         LocalizationService.ApplyForCurrentState(earlyConfig.Config.LauncherLanguage);
 
+        // 深色/浅色窗口图标自动切换：原来靠 App.xaml 里一条隐式 Window Style 的
+        // Setter 统一设图标，那条已经移除（Setter 的样式值会跟运行时赋的本地值打架，
+        // 详见 AppIconService 类头注释）。改成在这里注册一个全局类处理器：
+        // 任何 Window 一旦 Loaded 就自动套用当前主题对应的图标——
+        // 不需要给 17 个窗口挨个写代码，以后新增窗口也自动生效。
+        EventManager.RegisterClassHandler(typeof(Window), FrameworkElement.LoadedEvent,
+            new RoutedEventHandler((sender, _) =>
+            {
+                if (sender is Window w) AppIconService.ApplyTo(w);
+            }));
+
         Directory.CreateDirectory(DataDir);
         Directory.CreateDirectory(Path.Combine(DataDir, "logs"));
         Directory.CreateDirectory(Path.Combine(DataDir, "runtime")); // java
         Directory.CreateDirectory(Path.Combine(DataDir, "scripts")); // 导出的启动脚本
+
+        // 需求："启动器每次关闭时会自动在 xcl2/logs/日期-时间-分钟-今日第几次启动启动器.log 生成日志"。
+        // 文件名要在启动时就定下来（见 LauncherLogService 类注释），所以在这里、目录已创建好之后
+        // 尽早调用；真正的落盘动作留到关闭时，见下面的 Exit 事件和 MainWindow.Closed。
+        LauncherLogService.BeginSession(earlyConfig);
+
+        // 兜底：正常情况下 MainWindow.Closed 会调用一次 EndSessionAndFlush（见 MainWindow 构造函数），
+        // 但如果窗口没能正常触发 Closed 就整个应用退出了（比如上面 Shutdown() 分支、或者其它
+        // 异常路径导致的提前退出），这里的 Application.Exit 兜底确保日志文件仍然会被写出去。
+        // EndSessionAndFlush 内部做了幂等处理，不会因为被调用两次而出问题。
+        Exit += (_, _) => LauncherLogService.EndSessionAndFlush();
 
         // 深色标题栏（修复"顶部白条"，见 WindowChromeService 类注释）：项目里有 20 多个
         // Window（MainWindow + 各种弹窗），逐个在各自构造函数里调用
@@ -91,6 +118,9 @@ public partial class App : Application
                     $"[{DateTime.Now}] {args.Exception}\n\n");
             }
             catch { /* ignore */ }
+            LauncherLogService.AppendLine($"[未处理异常] {args.Exception.GetType().Name}: {args.Exception.Message}");
+            // 同上：全局未处理异常的最后兜底，此时主窗口可能已经不可用，
+            // 只能用系统原生 MessageBox，不能走内嵌 Overlay。
             MessageBox.Show("发生未处理的异常：\n" + GetFullExceptionMessage(args.Exception), "XCL2 错误",
                 MessageBoxButton.OK, MessageBoxImage.Error);
             args.Handled = true;
@@ -100,7 +130,32 @@ public partial class App : Application
         // 主窗口。App.xaml 没有设置 StartupUri，所以 WPF 不会自动创建任何窗口，这一步
         // 是必须的，否则应用会启动后立刻因为"没有任何窗口、也没有设置
         // ShutdownMode=OnExplicitShutdown"而退出。
-        new Views.MainWindow().Show();
+        var mainWindow = new Views.MainWindow();
+        mainWindow.Show();
+
+        // 修复"首次打开白屏，要手动拖动/全屏窗口才会渲染出内容"：这是 WPF 一个常见坑——
+        // Show() 只是把窗口标记为可见（Win32 层面发出 WM_SHOWWINDOW），真正的首帧
+        // 布局(Measure/Arrange)+渲染要等消息循环空闲下来才会被排上；如果 Show() 之后
+        // 紧接着还有一堆 Loaded 事件、后台任务启动、绑定刷新等工作抢占了 UI 线程，
+        // 第一次 Layout/Render 就会被无限推迟，表现就是"看起来是白屏，直到用户做了一次
+        // 窗口大小变化——不管是拖动改变尺寸还是切换全屏——才会连带强制触发一次
+        // Measure/Arrange，内容才画出来"。
+        //
+        // 之前只用一次 Dispatcher.Invoke(..., DispatcherPriority.Render) 占位，实测
+        // 不够可靠：那一行本身也是在 OnStartup（Send 优先级、比 Render 更高）这个尚未
+        // 返回的调用栈里发起的重入调用，只能强制处理"当时已经排队"的 Render 级工作项，
+        // 而 MainWindow 的首次 Layout 请求往往是 Show() 内部通过 Loaded/布局失效
+        // 才异步排上队的，可能比这次 Dispatcher.Invoke 本身还晚入队，从而被跳过——
+        // 这也是为什么有的机器上这个坑修复了、有的机器上（时序更慢/窗口更复杂）依然
+        // 会白屏。改成直接调用 mainWindow.UpdateLayout()：这是 WPF 提供的同步 API，
+        // 明确语义就是"立刻强制走一次 Measure→Arrange"，不依赖任何消息队列时序/
+        // 优先级排队是否"恰好"发生在这次调用之前，从根上避免"该发生的布局请求还没
+        // 排上就被跳过"这个不确定性。UpdateLayout 只处理布局，不含 Win32
+        // 合成/呈现那一步，所以后面仍然保留一次 Render 优先级的 Dispatcher.Invoke，
+        // 让已经算好的布局结果真正被合成绘制出来——两步合起来才是"强制完整走一遍
+        // 首帧"的完整流程，缺一不可。
+        mainWindow.UpdateLayout();
+        Dispatcher.Invoke(() => { }, System.Windows.Threading.DispatcherPriority.Render);
     }
 
     /// <summary>

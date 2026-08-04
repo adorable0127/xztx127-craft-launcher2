@@ -11,7 +11,7 @@ namespace XCL2.App.Views;
 /// 留待后续根据用户对这版内嵌面板的反馈再决定是否要补充（用户当时没有最终确认这三选一，
 /// 先实现"内嵌面板"这个默认最常用、大多数同类启动器采用的方式）。
 /// </summary>
-public partial class ServerConsoleWindow : Window
+public partial class ServerConsoleWindow : OverlayDialogControl
 {
     private readonly MainWindow _owner;
     private readonly ServerInstance _instance;
@@ -26,7 +26,8 @@ public partial class ServerConsoleWindow : Window
         TitleText.Text = $"服务器控制台 - {instance.DisplayName}";
         AttachToProcess();
 
-        Closed += (_, _) => Detach();
+        // 同上：Window.Closed → IOverlayDialog.RequestClose
+        RequestClose += (_, _) => Detach();
     }
 
     private void AttachToProcess()
@@ -34,7 +35,7 @@ public partial class ServerConsoleWindow : Window
         _processInfo = _owner.ServerProcessManager.GetRunning(_instance.Id);
         if (_processInfo == null)
         {
-            OutputText.Text = "（服务器当前没有在运行）";
+            OutputText.Text = Loc.T("Str_Cs_The_Server_Isn_T_Running", "（服务器当前没有在运行）");
             StopBtn.IsEnabled = false;
             CommandBox.IsEnabled = false;
             return;
@@ -94,17 +95,15 @@ public partial class ServerConsoleWindow : Window
         }
         catch (Exception ex)
         {
-            ErrorPresenter.ShowFriendlyError("发送命令失败，可能是服务器进程已经停止响应。",
-                ex.ToString(), "发送命令失败");
+            ErrorPresenter.ShowFriendlyError(Loc.T("Str_Cs_Couldn_T_Send_The_Command_The_Server_Pro", "发送命令失败，可能是服务器进程已经停止响应。"),
+                ex.ToString(), Loc.T("Str_Cs_Couldn_T_Send_The_Command", "发送命令失败"));
         }
     }
 
     private async void Stop_Click(object sender, RoutedEventArgs e)
     {
-        var confirm = MessageBox.Show(
-            $"确定要停止服务器「{_instance.DisplayName}」吗？\n会先尝试正常关服（保存世界），最长等待60秒后如仍未退出将强制结束。",
-            "确认停止", MessageBoxButton.YesNo, MessageBoxImage.Question);
-        if (confirm != MessageBoxResult.Yes) return;
+        var confirm = MessageBoxDialog.ShowConfirm($"确定要停止服务器「{_instance.DisplayName}」吗？\n会先尝试正常关服（保存世界），最长等待60秒后如仍未退出将强制结束。", "确认停止");
+        if (!confirm) return;   // ShowConfirm 返回 bool（true=用户点了"是"），不再是 MessageBoxResult
 
         StopBtn.IsEnabled = false;
         CommandBox.IsEnabled = false;
@@ -117,8 +116,8 @@ public partial class ServerConsoleWindow : Window
         }
         catch (Exception ex)
         {
-            ErrorPresenter.ShowFriendlyError("停止服务器时出错，如果服务器进程还在运行，可以尝试从「进程管理」里手动结束它。",
-                ex.ToString(), "停止服务器失败");
+            ErrorPresenter.ShowFriendlyError(Loc.T("Str_Cs_Something_Went_Wrong_Stopping_The_Server", "停止服务器时出错，如果服务器进程还在运行，可以尝试从「进程管理」里手动结束它。"),
+                ex.ToString(), Loc.T("Str_Cs_Couldn_T_Stop_The_Server", "停止服务器失败"));
         }
     }
 }

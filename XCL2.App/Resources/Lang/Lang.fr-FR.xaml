@@ -5,7 +5,7 @@
     <!-- Français (France). L'ensemble des clés doit correspondre exactement à Lang.zh-Hans.xaml — voir README.md. -->
 
     <system:String x:Key="Str_Lang_DialogTitle">Choisir la langue</system:String>
-    <system:String x:Key="Str_Lang_EntryButton">Langue</system:String>
+    <system:String x:Key="Str_Lang_EntryButton">Langue/Language</system:String>
     <system:String x:Key="Str_Lang_ExperimentalNotice">Certaines fonctionnalités expérimentales ne sont disponibles qu'en interface chinois simplifié. Après avoir changé de langue, ces fonctionnalités seront temporairement masquées (elles restent fonctionnelles, seule la traduction de l'interface manque).</system:String>
     <system:String x:Key="Str_Lang_Ok">OK</system:String>
     <system:String x:Key="Str_Lang_Cancel">Annuler</system:String>
@@ -45,9 +45,157 @@
     <system:String x:Key="Str_Nav_Logs">Journaux</system:String>
     <system:String x:Key="Str_Nav_Experimental">Fonctionnalités expérimentales</system:String>
     <system:String x:Key="Str_Nav_Toolbox">Boîte à outils</system:String>
+    <system:String x:Key="Str_Nav_AboutHelp">Remerciements et aide</system:String>
+    <system:String x:Key="Str_Ui_Account_Version_Loader_And_Mods_In_One_P">Compte, version, loader et mods en une seule fois</system:String>
+    <system:String x:Key="Str_Ui_Changes_The_Launcher_S_Language_Only_The">Change uniquement la langue de l'interface du launcher (n'affecte pas la langue en jeu, qui se règle séparément dans la page « Paramètres »)</system:String>
+    <system:String x:Key="Str_Ui_Download_Game_Versions_Mods_Maps_Resourc">Télécharger le cœur du jeu, des mods, des cartes, des packs de ressources et des modpacks</system:String>
+    <system:String x:Key="Str_Ui_Normal_Mode_Shows_Only_The_Essentials_An">Mode normal : n'affiche que l'essentiel, Java est détecté/téléchargé automatiquement, aucune configuration manuelle requise ; Mode expert : permet de régler la version/architecture Java, le mode d'installation, les arguments de lancement personnalisés et d'autres options avancées</system:String>
+    <system:String x:Key="Str_Ui_Switches_Between_Dark_And_Light_It_Only_">Bascule entre les modes sombre et clair, n'affecte que la luminosité, pas la teinte choisie dans « Thème de couleurs ». Lorsque le « cycle automatique » est activé, ce choix n'est qu'une substitution temporaire ; le cycle automatique reprendra la main au prochain changement programmé.</system:String>
+    <system:String x:Key="Str_Ui_Switches_Between_Light_And_Dark_Automati">Une fois activé, bascule automatiquement entre les modes clair et sombre selon l'heure du système (clair de 8h00 à 19h00 par défaut, sombre le reste du temps). Les horaires de changement peuvent être ajustés dans la page « Paramètres ».</system:String>
+    <system:String x:Key="Str_Ui_When_On_The_Game_Launches_With_A_Tempora">Une fois activé, le jeu se lance avec un compte temporaire qui n'existe que pour cette session, au lieu des comptes enregistrés ; à la désactivation, les journaux et téléchargements temporaires de cette session sont nettoyés</system:String>
 
     <system:String x:Key="Str_Settings_LanguageSection_Title">Langue de l'interface du lanceur</system:String>
     <system:String x:Key="Str_Settings_LanguageSection_Hint">Prend effet immédiatement, aucun redémarrage requis. Ceci définit la langue de l'interface du lanceur — indépendant de la « langue du jeu » ci-dessous.</system:String>
     <system:String x:Key="Str_Settings_LanguageSection_OpenPicker">🌐 Choisir la langue</system:String>
+
+
+    <!-- ============ 通用界面文案（第二批，按"用户高频看到"的顺序补充） ============
+         说明：全项目还有 1700+ 条硬编码中文尚未抽出（见 Tools/extract-hardcoded-strings.py
+         的统计），翻译是分批推进的。LocalizationService 现在会在加载非中文语言时
+         先铺一层简体中文做底再覆盖，所以"还没翻的条目显示中文、翻了的显示本语言"，
+         界面不会出现空白控件。 -->
+    <system:String x:Key="Str_Common_Ok">OK</system:String>
+    <system:String x:Key="Str_Common_Cancel">Annuler</system:String>
+    <system:String x:Key="Str_Common_Yes">Oui</system:String>
+    <system:String x:Key="Str_Common_No">Non</system:String>
+    <system:String x:Key="Str_Common_Close">Fermer</system:String>
+    <system:String x:Key="Str_Common_Save">Enregistrer</system:String>
+    <system:String x:Key="Str_Common_Delete">Supprimer</system:String>
+    <system:String x:Key="Str_Common_Search">Rechercher</system:String>
+    <system:String x:Key="Str_Common_Refresh">Actualiser</system:String>
+    <system:String x:Key="Str_Common_Install">Installer</system:String>
+    <system:String x:Key="Str_Common_Download">Télécharger</system:String>
+    <system:String x:Key="Str_Common_Back">Retour</system:String>
+    <system:String x:Key="Str_Common_Next">Suivant</system:String>
+    <system:String x:Key="Str_Common_Skip">Passer</system:String>
+    <system:String x:Key="Str_Common_Finish">Terminer</system:String>
+    <system:String x:Key="Str_Common_Retry">Réessayer</system:String>
+    <system:String x:Key="Str_Common_Browse">Parcourir</system:String>
+    <system:String x:Key="Str_Common_Reset">Réinitialiser</system:String>
+    <system:String x:Key="Str_Common_Loading">Chargement...</system:String>
+    <system:String x:Key="Str_Status_Success">Succès</system:String>
+    <system:String x:Key="Str_Status_Failed">Échec</system:String>
+    <system:String x:Key="Str_Status_Tip">Information</system:String>
+    <system:String x:Key="Str_Status_Confirm">Confirmation</system:String>
+    <system:String x:Key="Str_Status_Error">Un problème est survenu</system:String>
+    <system:String x:Key="Str_Launch_Button">Lancer le jeu</system:String>
+    <system:String x:Key="Str_Launch_Started">Jeu lancé</system:String>
+    <system:String x:Key="Str_Launch_NoVersion">Aucune version sélectionnée</system:String>
+    <system:String x:Key="Str_Launch_NoAccount">Aucun compte sélectionné</system:String>
+    <system:String x:Key="Str_Launch_CloseAll">Tout fermer</system:String>
+    <system:String x:Key="Str_Launch_CloseSelected">Fermer la sélection</system:String>
+    <system:String x:Key="Str_Launch_CloseUnresponsive">Fermer les bloqués</system:String>
+    <system:String x:Key="Str_Drop_Title">Relâchez pour installer</system:String>
+    <system:String x:Key="Str_Drop_Hint">Les mods, packs de ressources, shaders, mondes et modpacks seront installés dans l'instance sélectionnée</system:String>
+    <system:String x:Key="Str_Drop_NoInstance">Sélectionnez d'abord une version dans « Sélection de version » avant de déposer des fichiers.</system:String>
+    <system:String x:Key="Str_Drop_SectionTitle">Installation par glisser-déposer</system:String>
+    <system:String x:Key="Str_Settings_Title">Paramètres</system:String>
+    <system:String x:Key="Str_Settings_Java">Paramètres Java</system:String>
+    <system:String x:Key="Str_Settings_Memory">Paramètres de mémoire</system:String>
+    <system:String x:Key="Str_Settings_Download">Paramètres de téléchargement</system:String>
+    <system:String x:Key="Str_Settings_Appearance">Apparence</system:String>
+    <system:String x:Key="Str_Toolbox_Title">Boîte à outils</system:String>
+    <system:String x:Key="Str_Toolbox_Achievement">Image de succès</system:String>
+    <system:String x:Key="Str_Toolbox_ItemId">ID d'objet</system:String>
+    <system:String x:Key="Str_Toolbox_Preview">Aperçu</system:String>
+
+
+    <!-- ============ Version select + download center page strings (added) ============ -->
+    <system:String x:Key="Str_Ui_A_Beginner_S_Wizard_That_Takes_You_From_">Un assistant pour débutants qui vous guide du compte jusqu'au lancement du jeu : choisissez la version/le loader, installez éventuellement des mods et des packs de ressources/shaders, puis le jeu est téléchargé et lancé automatiquement</system:String>
+    <system:String x:Key="Str_Ui_Add_Existing_Folder">➕ Ajouter un dossier existant</system:String>
+    <system:String x:Key="Str_Ui_Add_Or_Import">Ajouter ou importer</system:String>
+    <system:String x:Key="Str_Ui_All">Tous</system:String>
+    <system:String x:Key="Str_Ui_Any_Loader">N'importe quel loader</system:String>
+    <system:String x:Key="Str_Ui_April_Fools_Versions">Versions du poisson d'avril</system:String>
+    <system:String x:Key="Str_Ui_Author">Auteur : </system:String>
+    <system:String x:Key="Str_Ui_Blank_Means_Auto_Match_The_Version_S_Own">Vide = correspondance automatique (utilise l'exigence Java de la version et des mods installés, en prenant la plus élevée) ; un nombre (ex. 25) = forcer cette version majeure de Java pour cette version du jeu</system:String>
+    <system:String x:Key="Str_Ui_Bmclapi_Mirror">Miroir BMCLAPI</system:String>
+    <system:String x:Key="Str_Ui_Clear_The_Name_And_Version_Filters_And_B">Effacer les filtres de nom et de version, et parcourir les ressources populaires</system:String>
+    <system:String x:Key="Str_Ui_Clear_The_Name_Version_And_Loader_Filter">Effacer les filtres de nom, de version et de loader, et parcourir les mods populaires</system:String>
+    <system:String x:Key="Str_Ui_Click_For_Details_And_Downloadable_Versi">Cliquez pour voir les détails et les versions téléchargeables</system:String>
+    <system:String x:Key="Str_Ui_Click_To_Choose_Between_Vanilla_And_The_">Cliquez pour choisir entre Vanilla et le loader Fabric/Forge/NeoForge</system:String>
+    <system:String x:Key="Str_Ui_Combined_Modrinth_Curseforge">Combiné (Modrinth+CurseForge)</system:String>
+    <system:String x:Key="Str_Ui_Configure_In_Settings">Configurer dans les paramètres</system:String>
+    <system:String x:Key="Str_Ui_Curseforge_Only">CurseForge uniquement</system:String>
+    <system:String x:Key="Str_Ui_Data_From_Curseforge">Données provenant de CurseForge</system:String>
+    <system:String x:Key="Str_Ui_Data_Packs">Packs de données</system:String>
+    <system:String x:Key="Str_Ui_Dependencies">Dépendances</system:String>
+    <system:String x:Key="Str_Ui_Download_Install">Télécharger et installer</system:String>
+    <system:String x:Key="Str_Ui_Downloads">  Téléchargements : </system:String>
+    <system:String x:Key="Str_Ui_Favorites">Mes favoris</system:String>
+    <system:String x:Key="Str_Ui_File">  Nom du fichier : </system:String>
+    <system:String x:Key="Str_Ui_Folders">Liste des dossiers</system:String>
+    <system:String x:Key="Str_Ui_Game_Version">Version du jeu</system:String>
+    <system:String x:Key="Str_Ui_Game_Version_Downloads">Téléchargement des versions du jeu</system:String>
+    <system:String x:Key="Str_Ui_Get_A_Key_From_Console_Curseforge_Com_Th">Demandez une clé sur console.curseforge.com, puis collez-la et enregistrez-la dans la page « Paramètres ».</system:String>
+    <system:String x:Key="Str_Ui_Independent_Of_The_Version_Isolation_Swi">Indépendant de l'option d'isolation de version ci-dessus ; si non coché, la valeur par défaut globale de « Paramètres » s'applique</system:String>
+    <system:String x:Key="Str_Ui_Install_New_Version">➕ Installer une nouvelle version</system:String>
+    <system:String x:Key="Str_Ui_Installed_On_This_Pc">Versions installées sur cet ordinateur</system:String>
+    <system:String x:Key="Str_Ui_Installed_Versions">Versions installées</system:String>
+    <system:String x:Key="Str_Ui_Java_Version_Used_By_This_Instance">Version de Java utilisée par cette instance</system:String>
+    <system:String x:Key="Str_Ui_Join_A_Specific_Server_On_Launch_Connect">Rejoindre un serveur spécifique au lancement (se connecte automatiquement au serveur indiqué après le démarrage)</system:String>
+    <system:String x:Key="Str_Ui_Joining_A_Server_Automatically_Needs_Min">Rejoindre automatiquement un serveur nécessite Minecraft 1.20.6 ou supérieur ; sur des versions antérieures, cette case n'aura aucun effet et le jeu ouvrira normalement le menu principal</system:String>
+    <system:String x:Key="Str_Ui_Keep_This_Instance_S_Resource_And_Shader">Isoler également séparément les packs de ressources/shaders de cette version (non partagés avec les autres versions)</system:String>
+    <system:String x:Key="Str_Ui_Leave_Unchecked_To_Follow_The_Global_Def">Si non coché, la valeur par défaut globale de « Paramètres » s'applique</system:String>
+    <system:String x:Key="Str_Ui_Legacy_Versions">Versions historiques</system:String>
+    <system:String x:Key="Str_Ui_Limit_To_A_Game_Version_E_G_1_20_1_Leave">Limiter à une version du jeu, par ex. 1.20.1 ; laisser vide pour ne pas limiter</system:String>
+    <system:String x:Key="Str_Ui_Loading_Versions">Chargement de la liste des versions…</system:String>
+    <system:String x:Key="Str_Ui_Local_Mod_Management">Gestion des mods locaux</system:String>
+    <system:String x:Key="Str_Ui_Map_Downloads">Téléchargement de cartes</system:String>
+    <system:String x:Key="Str_Ui_Map_Downloads_Need_A_Curseforge_Api_Key_">Le téléchargement de cartes nécessite d'abord de configurer une clé API CurseForge</system:String>
+    <system:String x:Key="Str_Ui_Maps">Cartes</system:String>
+    <system:String x:Key="Str_Ui_Mc_Wiki_Reference">Référence MC Wiki</system:String>
+    <system:String x:Key="Str_Ui_Mod_Downloads">Téléchargement de mods</system:String>
+    <system:String x:Key="Str_Ui_Modpacks">Packs de mods</system:String>
+    <system:String x:Key="Str_Ui_Modrinth_Only">Modrinth uniquement</system:String>
+    <system:String x:Key="Str_Ui_Name">Nom</system:String>
+    <system:String x:Key="Str_Ui_Next">Page suivante ▶</system:String>
+    <system:String x:Key="Str_Ui_No_Matching_Versions_Found_The_Game_Vers">Aucune version correspondante trouvée (la version de jeu filtrée ne correspond peut-être pas).</system:String>
+    <system:String x:Key="Str_Ui_Nothing_Saved_Yet_Try_The_Button_In_The_">Rien n'a encore été enregistré. Essayez le bouton ☆ Ajouter aux favoris dans « Version du jeu »/« Mod »/« Pack de ressources », etc.</system:String>
+    <system:String x:Key="Str_Ui_Official_Mojang">Source officielle (Mojang)</system:String>
+    <system:String x:Key="Str_Ui_Only_Applies_When_No_Specific_Java_Is_Ch">S'applique uniquement si aucun Java spécifique n'est sélectionné ci-dessus : laisser vide pour une correspondance automatique (recommandé) ; un nombre (ex. 25) force cette version majeure</system:String>
+    <system:String x:Key="Str_Ui_Open_On_The_Chinese_Minecraft_Wiki">Voir sur le Minecraft Wiki chinois</system:String>
+    <system:String x:Key="Str_Ui_Pick_A_Java_For_This_Instance_From_The_J">Choisissez un Java spécifiquement pour cette version dans la liste Java de « Paramètres » ; sélectionnez « (non spécifié) » pour utiliser à la place la version majeure saisie ci-dessous en correspondance automatique</system:String>
+    <system:String x:Key="Str_Ui_Previous">◀ Page précédente</system:String>
+    <system:String x:Key="Str_Ui_Project_Id">ID du projet : </system:String>
+    <system:String x:Key="Str_Ui_Reference_Material_Click_To_Open_The_Wik">Documentation de référence en chinois, cliquez pour ouvrir la page wiki avec les détails</system:String>
+    <system:String x:Key="Str_Ui_Refresh_Now">Actualiser manuellement</system:String>
+    <system:String x:Key="Str_Ui_Release">Version stable</system:String>
+    <system:String x:Key="Str_Ui_Reset_Filters">Réinitialiser les filtres</system:String>
+    <system:String x:Key="Str_Ui_Resource_Data_Shader_Packs">Packs de ressources / de données / de shaders</system:String>
+    <system:String x:Key="Str_Ui_Resource_Pack_Downloads">Téléchargement de packs de ressources</system:String>
+    <system:String x:Key="Str_Ui_Resource_Packs">Packs de ressources</system:String>
+    <system:String x:Key="Str_Ui_Save_Settings_For_This_Version">Enregistrer les paramètres de cette version</system:String>
+    <system:String x:Key="Str_Ui_Search_By_Keyword_E_G_A_Map_Name_Leave_B">Rechercher par mot-clé, par ex. le nom d'une carte ; laisser vide pour parcourir les cartes populaires, la recherche se lance automatiquement après saisie</system:String>
+    <system:String x:Key="Str_Ui_Search_By_Keyword_In_English_Or_Chinese_">Recherche par mot-clé en anglais ou en chinois, par ex. &amp;quot;JEI&amp;quot; ou &amp;quot;钠&amp;quot; (traduit automatiquement en Sodium) ; laisser vide pour parcourir les mods populaires, la recherche se lance automatiquement après saisie</system:String>
+    <system:String x:Key="Str_Ui_Search_By_Keyword_Leave_Blank_To_Browse_">Recherche par mot-clé en anglais ou en chinois ; laisser vide pour parcourir les ressources populaires, la recherche se lance automatiquement après saisie</system:String>
+    <system:String x:Key="Str_Ui_Search_By_Version_E_G_1_20_Or_21w_Filter">Rechercher par numéro de version, par ex. 1.20 ou 21w, filtre automatiquement après saisie</system:String>
+    <system:String x:Key="Str_Ui_Server_Address_E_G_Play_Example_Com_Or_1">Adresse du serveur, par ex. play.example.com ou 1.2.3.4:25565</system:String>
+    <system:String x:Key="Str_Ui_Shader_Packs">Packs de shaders</system:String>
+    <system:String x:Key="Str_Ui_Show_Pre_Release_Resources">Afficher les versions préliminaires des ressources</system:String>
+    <system:String x:Key="Str_Ui_Snapshot">Snapshot</system:String>
+    <system:String x:Key="Str_Ui_Source">Source</system:String>
+    <system:String x:Key="Str_Ui_Supports"> · Compatible : </system:String>
+    <system:String x:Key="Str_Ui_The_List_Refreshes_Automatically_Click_H">La liste s'actualise automatiquement ; en cas d'échec réseau ou pour relancer immédiatement la recherche avec les filtres actuels, cliquez ici</system:String>
+    <system:String x:Key="Str_Ui_The_List_Refreshes_Automatically_Use_Thi">La liste s'actualise automatiquement ; en cas d'échec réseau, réessayez manuellement ici</system:String>
+    <system:String x:Key="Str_Ui_The_List_Refreshes_Automatically_Use_Thi_2">La liste s'actualise automatiquement ; en cas d'échec réseau ou après un changement de source, réessayez manuellement ici</system:String>
+    <system:String x:Key="Str_Ui_Turn_On_Version_Isolation_Just_For_This_">Activer l'« isolation de version » uniquement pour cette version (mods/packs de ressources/mondes, etc. stockés séparément)</system:String>
+    <system:String x:Key="Str_Ui_Type">Type</system:String>
+    <system:String x:Key="Str_Ui_Type_Loader">Type (loader)</system:String>
+    <system:String x:Key="Str_Ui_Unfavorite">Retirer des favoris</system:String>
+    <system:String x:Key="Str_Ui_Version">Version</system:String>
+    <system:String x:Key="Str_Ui_Versions">Liste des versions</system:String>
+    <system:String x:Key="Str_Ui_View_Enable_Disable_And_Remove_Installed">Afficher/activer/désactiver/supprimer les mods locaux installés, importer/exporter des packs de mods</system:String>
+    <system:String x:Key="Str_Ui_When_Ticked_Search_Results_Include_Beta_">Si coché, les résultats de recherche incluront les versions bêta/alpha non encore officiellement publiées. Par défaut, seules les versions stables sont affichées.</system:String>
 
 </ResourceDictionary>

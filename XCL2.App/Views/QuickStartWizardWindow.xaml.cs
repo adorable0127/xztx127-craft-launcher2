@@ -28,7 +28,7 @@ namespace XCL2.App.Views;
 ///    要求必须已经选中一个账户，属于强校验。
 /// 4) 入口：DownloadCenterPage 顶部加一个按钮（见该文件改动），不在 HomePage 加。
 /// </summary>
-public partial class QuickStartWizardWindow : Window
+public partial class QuickStartWizardWindow : OverlayDialogControl
 {
     private readonly MainWindow _owner;
     private readonly JavaService _javaService = new();
@@ -217,7 +217,10 @@ public partial class QuickStartWizardWindow : Window
     private void BrowseExistingFolder_Click(object sender, RoutedEventArgs e)
     {
         var dialog = new Microsoft.Win32.OpenFolderDialog { Title = "选择 .minecraft 文件夹位置" };
-        if (dialog.ShowDialog(this) != true) return;
+
+        // 修复编译错误 CS1503：见 CreateServerWindow.xaml.cs 同类注释——
+        // ShowDialog 要 Window，改用 Window.GetWindow(this) 找到宿主 MainWindow。
+        if (dialog.ShowDialog(Window.GetWindow(this)) != true) return;
 
         var path = dialog.FolderName;
         var versions = _folderService.ScanVersions(path).Where(v => v.IsInstalled).ToList();
@@ -281,7 +284,7 @@ public partial class QuickStartWizardWindow : Window
         // 需求变更：创建账户之后不再自动选中，需要用户自己在"已保存的账户"下拉框/账户管理页里选用。
         RefreshExistingAccountCombo();
         UpdateAccountStatusText();
-        MessageBox.Show($"离线账户「{name}」创建成功，请在上方选择要使用的账户。", "完成", MessageBoxButton.OK, MessageBoxImage.Information);
+        MessageBoxDialog.ShowInfo($"离线账户「{name}」创建成功，请在上方选择要使用的账户。", "完成");
     }
 
     /// <summary>
@@ -292,7 +295,7 @@ public partial class QuickStartWizardWindow : Window
     private async void MicrosoftLogin_Click(object sender, RoutedEventArgs e)
     {
         MicrosoftLoginBtn.IsEnabled = false;
-        AccountStatusText.Text = "正在准备登录，请稍候...";
+        AccountStatusText.Text = Loc.T("Str_Cs_Preparing_To_Sign_In_Please_Wait", "正在准备登录，请稍候...");
 
         MicrosoftAuthService auth;
         try
@@ -313,7 +316,7 @@ public partial class QuickStartWizardWindow : Window
         {
             Dispatcher.Invoke(() =>
             {
-                popup = new DeviceCodeWindow(uri, code, cts) { Owner = this };
+                popup = new DeviceCodeWindow(uri, code, cts) ;
                 popup.Show();
             });
         };
@@ -326,7 +329,7 @@ public partial class QuickStartWizardWindow : Window
 
             if (account == null)
             {
-                AccountStatusText.Text = "微软账户登录失败或已取消，请重试。";
+                AccountStatusText.Text = Loc.T("Str_Cs_Microsoft_Sign_In_Failed_Or_Was_Cancelle", "微软账户登录失败或已取消，请重试。");
                 return;
             }
             _owner.ConfigService.AddOrUpdateAccount(account);
@@ -337,7 +340,7 @@ public partial class QuickStartWizardWindow : Window
         catch (OperationCanceledException)
         {
             popup?.Dispatcher.Invoke(() => popup.Close());
-            AccountStatusText.Text = "登录已取消。";
+            AccountStatusText.Text = Loc.T("Str_Cs_Sign_In_Cancelled", "登录已取消。");
         }
         catch (AuthStepException ex)
         {
@@ -368,7 +371,10 @@ public partial class QuickStartWizardWindow : Window
             Title = "选择整合包文件",
             Filter = "整合包 (*.xclpack;*.mrpack;*.zip)|*.xclpack;*.mrpack;*.zip|所有文件 (*.*)|*.*"
         };
-        if (dialog.ShowDialog(this) != true) return;
+
+        // 修复编译错误 CS1503：见 CreateServerWindow.xaml.cs 同类注释——
+        // ShowDialog 要 Window，改用 Window.GetWindow(this) 找到宿主 MainWindow。
+        if (dialog.ShowDialog(Window.GetWindow(this)) != true) return;
 
         var cfgFolders = _owner.ConfigService.Config.Folders;
         var defaultFolder = cfgFolders.FirstOrDefault(f => f.IsDefault) ?? cfgFolders.FirstOrDefault();
@@ -432,7 +438,7 @@ public partial class QuickStartWizardWindow : Window
             FolderPathBox.Text = existing.Path;
 
             var label = string.IsNullOrWhiteSpace(packName) ? "整合包" : $"整合包「{packName}」";
-            MessageBox.Show($"{label}导入成功！接下来选一个账户就能启动游戏了。", "完成", MessageBoxButton.OK, MessageBoxImage.Information);
+            MessageBoxDialog.ShowInfo($"{label}导入成功！接下来选一个账户就能启动游戏了。", "完成");
             GoToStep(1);
         }
         catch (Exception ex)
@@ -455,7 +461,10 @@ public partial class QuickStartWizardWindow : Window
             Title = "选择游戏文件夹",
             InitialDirectory = Directory.Exists(FolderPathBox.Text) ? FolderPathBox.Text : AppContext.BaseDirectory
         };
-        if (dialog.ShowDialog(this) == true) FolderPathBox.Text = dialog.FolderName;
+
+        // 修复编译错误 CS1503：见 CreateServerWindow.xaml.cs 同类注释——
+        // ShowDialog 要 Window，改用 Window.GetWindow(this) 找到宿主 MainWindow。
+        if (dialog.ShowDialog(Window.GetWindow(this)) == true) FolderPathBox.Text = dialog.FolderName;
     }
 
     private ClientLoaderInstallService GetLoaderService()
@@ -492,7 +501,7 @@ public partial class QuickStartWizardWindow : Window
         _mcVersions.Clear();
         _buildVersions.Clear();
         McVersionCombo.IsEnabled = false;
-        Step2StatusText.Text = "正在获取版本列表...";
+        Step2StatusText.Text = Loc.T("Str_Ui_Fetching_Versions", "正在获取版本列表...");
 
         try
         {
@@ -545,7 +554,7 @@ public partial class QuickStartWizardWindow : Window
         {
             List<ServerCoreBuild> builds = _selectedLoaderType switch
             {
-                ServerCoreType.Fabric => await GetLoaderService().GetFabricLoaderVersionsAsync(),
+                ServerCoreType.Fabric => await GetLoaderService().GetFabricLoaderVersionsAsync(mcVersion),
                 ServerCoreType.Forge => await GetLoaderService().GetForgeInstallerVersionsAsync(mcVersion),
                 _ => new List<ServerCoreBuild>()
             };
@@ -651,7 +660,7 @@ public partial class QuickStartWizardWindow : Window
         }
         catch (Exception ex)
         {
-            ErrorPresenter.ShowFriendlyError("获取版本列表失败，可能是网络连接问题或下载源暂时不可用，请检查网络后重试。",
+            ErrorPresenter.ShowFriendlyError(Loc.T("Str_Cs_Couldn_T_Fetch_The_Version_List_This_Is_", "获取版本列表失败，可能是网络连接问题或下载源暂时不可用，请检查网络后重试。"),
                 $"[一键启动向导 - 获取Mod版本列表失败] {ex}", "获取版本列表失败");
             return new List<VersionGroup>();
         }
@@ -706,7 +715,7 @@ public partial class QuickStartWizardWindow : Window
         }
         catch (Exception ex)
         {
-            ErrorPresenter.ShowFriendlyError("搜索失败，可能是网络连接问题，请检查网络后重试。", $"[搜索失败] {ex}", "搜索失败");
+            ErrorPresenter.ShowFriendlyError(Loc.T("Str_Cs_Search_Failed_Most_Likely_A_Network_Prob", "搜索失败，可能是网络连接问题，请检查网络后重试。"), $"[搜索失败] {ex}", "搜索失败");
         }
     }
 
@@ -786,13 +795,13 @@ public partial class QuickStartWizardWindow : Window
         {
             if (McVersionCombo.SelectedItem is not string)
             {
-                MessageBox.Show("请选择 Minecraft 版本。", "提示", MessageBoxButton.OK, MessageBoxImage.Information);
+                MessageBoxDialog.ShowInfo(Loc.T("Str_Cs_Please_Choose_A_Minecraft_Version", "请选择 Minecraft 版本。"), Loc.T("Str_Status_Tip", "提示"));
                 return;
             }
             if (_selectedLoaderType != ServerCoreType.Vanilla && _selectedLoaderType != ServerCoreType.NeoForge
                 && BuildVersionCombo.SelectedItem == null)
             {
-                MessageBox.Show("请选择构建/加载器版本。", "提示", MessageBoxButton.OK, MessageBoxImage.Information);
+                MessageBoxDialog.ShowInfo(Loc.T("Str_Cs_Please_Choose_A_Build_Or_Loader_Version", "请选择构建/加载器版本。"), Loc.T("Str_Status_Tip", "提示"));
                 return;
             }
             // 原版不能装 Mod，从步骤 2 直接跳到步骤 4（跳过步骤 3）。
@@ -890,7 +899,7 @@ public partial class QuickStartWizardWindow : Window
             "Mod/资源包这类次要步骤某一项失败只会跳过，不影响其它内容继续安装。";
     }
 
-    private void Close_Click(object sender, RoutedEventArgs e) => Close();
+    private void Close_Click(object sender, RoutedEventArgs e) => CloseWith(null);
 
     // ========== 步骤 5：下载编排 + 启动 ==========
 
@@ -1088,7 +1097,7 @@ public partial class QuickStartWizardWindow : Window
             // 弹一次一模一样的账户选择框——传 skipAccountConfirm: true 跳过那一步，直接用
             // 当前已选中的账户启动。
             _owner.RefreshSidebar();
-            Close();
+            CloseWith(null);
             _owner.Launch_Click(this, new RoutedEventArgs(), skipAccountConfirm: true);
         }
         catch (CriticalStepFailedException ex)

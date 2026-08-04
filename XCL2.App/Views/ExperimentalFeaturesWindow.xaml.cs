@@ -15,7 +15,7 @@ namespace XCL2.App.Views;
 /// 已经做过这个检查（同一个模式在这个项目里很常见，比如各个 XxxWindow 都不重复校验
 /// 调用者是否已经登录/已经选好版本，这类前置条件由外层页面负责）。
 /// </summary>
-public partial class ExperimentalFeaturesWindow : Window
+public partial class ExperimentalFeaturesWindow : OverlayDialogControl
 {
     private readonly MainWindow _owner;
 
@@ -27,7 +27,7 @@ public partial class ExperimentalFeaturesWindow : Window
 
     private void Close_Click(object sender, RoutedEventArgs e)
     {
-        Close();
+        CloseWith(null);
     }
 
     /// <summary>
@@ -44,7 +44,7 @@ public partial class ExperimentalFeaturesWindow : Window
             MessageBoxDialog.ShowInfo(
                 "没有检测到已安装的「Minecraft for Windows」（基岩版）。\n\n" +
                 "这是完全独立于 Java 版的另一个游戏（不同引擎、不同 Mod 生态），需要先在 Microsoft Store 里搜索" +
-                "「Minecraft」单独安装，本启动器不提供下载。", "未检测到基岩版");
+                "「Minecraft」单独安装，本启动器不提供下载。", Loc.T("Str_Cs_Bedrock_Edition_Not_Detected", "未检测到基岩版"));
             return;
         }
 
@@ -57,7 +57,7 @@ public partial class ExperimentalFeaturesWindow : Window
     /// </summary>
     private void MultiLoaderFeature_Click(object sender, RoutedEventArgs e)
     {
-        var window = new MultiLoaderInstallWindow(_owner) { Owner = this };
+        var window = new MultiLoaderInstallWindow(_owner) ;
         var result = window.ShowDialog();
 
         // 修复："一锅乱炖"装完之后启动器找不到刚装好的版本，根本原因是这里以前从不

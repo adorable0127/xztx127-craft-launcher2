@@ -175,6 +175,9 @@ public partial class DownloadCenterPage : UserControl
         ModListBox.ItemsSource = _mods;
         McModListBox.ItemsSource = _mcModHits;
 
+        // 「显示预览版资源」勾选框：从配置恢复上次的选择，并同步给资源详情页做默认值。
+        InitPreviewToggleFromConfig();
+
         _debounceTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(500) };
         _debounceTimer.Tick += (_, _) =>
         {
@@ -211,7 +214,7 @@ public partial class DownloadCenterPage : UserControl
     /// </summary>
     private void QuickStartWizard_Click(object sender, RoutedEventArgs e)
     {
-        var wizard = new QuickStartWizardWindow(_owner) { Owner = Window.GetWindow(this) };
+        var wizard = new QuickStartWizardWindow(_owner);
         wizard.ShowDialog();
     }
 
@@ -524,7 +527,7 @@ public partial class DownloadCenterPage : UserControl
         }
         catch (Exception ex)
         {
-            ErrorPresenter.ShowFriendlyError("获取版本列表失败，可能是网络连接问题或下载源暂时不可用，请检查网络后重试。", $"[获取版本列表失败] {ex}", "获取版本列表失败");
+            ErrorPresenter.ShowFriendlyError(Loc.T("Str_Cs_Couldn_T_Fetch_The_Version_List_This_Is_", "获取版本列表失败，可能是网络连接问题或下载源暂时不可用，请检查网络后重试。"), $"[获取版本列表失败] {ex}", "获取版本列表失败");
         }
     }
 
@@ -604,7 +607,7 @@ public partial class DownloadCenterPage : UserControl
 
         if (folder == null)
         {
-            MessageBoxDialog.ShowInfo("请先去「版本选择」页添加一个 .minecraft 文件夹。");
+            MessageBoxDialog.ShowInfo(Loc.T("Str_Cs_Add_A_Minecraft_Folder_On_The_Versions_P", "请先去「版本选择」页添加一个 .minecraft 文件夹。"));
             return;
         }
 
@@ -615,7 +618,7 @@ public partial class DownloadCenterPage : UserControl
         // 的 MC 版本号，复用现成的三级联动安装逻辑，不在这里重新实现一遍加载器安装。
         if (choiceDialog.SelectedLoader != ServerCoreType.Vanilla)
         {
-            var loaderWindow = new InstallClientLoaderWindow(_owner, choiceDialog.SelectedLoader, entry.Id) { Owner = Window.GetWindow(this) };
+            var loaderWindow = new InstallClientLoaderWindow(_owner, choiceDialog.SelectedLoader, entry.Id);
             if (loaderWindow.ShowDialog() == true && loaderWindow.InstalledVersionId != null)
             {
                 _owner.EnsureVisibleForDialog();
@@ -637,7 +640,7 @@ public partial class DownloadCenterPage : UserControl
         }
         catch (Exception ex)
         {
-            ErrorPresenter.ShowFriendlyError("安装失败，可能是网络连接问题、下载源暂时不可用，或安装文件已损坏，请检查网络后重试。", $"[安装失败] {ex}", "安装失败");
+            ErrorPresenter.ShowFriendlyError(Loc.T("Str_Cs_Installation_Failed_This_Could_Be_A_Netw", "安装失败，可能是网络连接问题、下载源暂时不可用，或安装文件已损坏，请检查网络后重试。"), $"[安装失败] {ex}", "安装失败");
         }
         finally
         {
@@ -803,6 +806,41 @@ public partial class DownloadCenterPage : UserControl
     }
 
     /// <summary>
+    /// 需求："加入社区资源下载筛选预览版功能"。
+    ///
+    /// 勾选框改变时做三件事：
+    /// 1) 写进配置并持久化（下次打开启动器还记得）；
+    /// 2) 推给 ModDetailPage.DefaultShowPreview，让之后打开的任何资源详情页
+    ///    直接就是对应的展开状态，不用进去再点一次；
+    /// 3) 立刻重新搜一次，让当前列表马上反映新的筛选条件。
+    ///
+    /// 注意这个开关跟详情页里那个"显示/隐藏预览版"按钮控制的**不是同一层东西**：
+    /// 这个是全局默认，详情页那个是当前这个资源的临时覆盖。两者故意分开，
+    /// 这样用户可以"整体只看正式版，但某个特定 mod 我想看看它的 beta"。
+    /// </summary>
+    private void ResourceShowPreview_Changed(object sender, RoutedEventArgs e)
+    {
+        var show = ResourceShowPreviewCheck.IsChecked == true;
+
+        _owner.ConfigService.Config.ShowPreviewVersions = show;
+        try { _owner.ConfigService.Save(); } catch { /* 存不下不影响本次会话生效 */ }
+
+        ModDetailPage.DefaultShowPreview = show;
+
+        _resourcePageIndex = 0;
+        _ = RunResourceSearchAsync();
+    }
+
+    /// <summary>把配置里的「显示预览版资源」同步到勾选框和 ModDetailPage 的默认值。
+    /// 页面构造时调用一次，保证刷新/重开页面后勾选状态跟配置一致。</summary>
+    private void InitPreviewToggleFromConfig()
+    {
+        var show = _owner.ConfigService.Config.ShowPreviewVersions;
+        ResourceShowPreviewCheck.IsChecked = show;
+        ModDetailPage.DefaultShowPreview = show;
+    }
+
+    /// <summary>
     /// 搜索框/游戏版本号输入变化：走防抖，不打断用户打字，也不在每次搜索为空时弹提示框打扰（
     /// 静默完成即可，只有用户主动点"手动刷新"按钮时才在无结果时弹提示，见 showEmptyHint 参数）。
     /// </summary>
@@ -870,16 +908,16 @@ public partial class DownloadCenterPage : UserControl
             if (showEmptyHint)
             {
                 if (outcome.Items.Count == 0 && outcome.Warnings.Count == 0)
-                    MessageBoxDialog.ShowInfo("没有找到匹配的资源，换个关键词试试。");
+                    MessageBoxDialog.ShowInfo(Loc.T("Str_Cs_Nothing_Matched_Try_A_Different_Keyword", "没有找到匹配的资源，换个关键词试试。"));
                 else if (outcome.Warnings.Count > 0)
-                    MessageBoxDialog.ShowWarning(string.Join("\n", outcome.Warnings), "部分来源搜索失败");
+                    MessageBoxDialog.ShowWarning(string.Join("\n", outcome.Warnings), Loc.T("Str_Cs_Some_Sources_Failed_To_Return_Results", "部分来源搜索失败"));
             }
         }
         catch (Exception ex)
         {
             if (seq != _resourceSearchSeq) return;
             if (showEmptyHint)
-                ErrorPresenter.ShowFriendlyError("搜索失败，可能是网络连接问题，请检查网络后重试。", $"[搜索失败] {ex}", "搜索失败");
+                ErrorPresenter.ShowFriendlyError(Loc.T("Str_Cs_Search_Failed_Most_Likely_A_Network_Prob", "搜索失败，可能是网络连接问题，请检查网络后重试。"), $"[搜索失败] {ex}", "搜索失败");
             // 自动触发的搜索静默失败即可：切换分类/防抖引发的请求本来就是"锦上添花"，
             // 网络抖动没必要每次都弹窗打扰用户，用户仍可点"手动刷新"重试并看到明确错误。
         }
@@ -951,7 +989,7 @@ public partial class DownloadCenterPage : UserControl
 
         if (folder == null)
         {
-            MessageBoxDialog.ShowInfo("请先去「版本选择」页添加一个 .minecraft 文件夹。");
+            MessageBoxDialog.ShowInfo(Loc.T("Str_Cs_Add_A_Minecraft_Folder_On_The_Versions_P", "请先去「版本选择」页添加一个 .minecraft 文件夹。"));
             return;
         }
 
@@ -1039,11 +1077,11 @@ public partial class DownloadCenterPage : UserControl
         }
         catch (CurseForgeKeyMissingException ex)
         {
-            MessageBoxDialog.ShowInfo(ex.Message, "未配置 Key");
+            MessageBoxDialog.ShowInfo(ex.Message, Loc.T("Str_Cs_No_Api_Key_Configured", "未配置 Key"));
         }
         catch (Exception ex)
         {
-            ErrorPresenter.ShowFriendlyError("获取版本列表失败，可能是网络连接问题或下载源暂时不可用，请检查网络后重试。", $"[获取版本列表失败] {ex}", "获取版本列表失败");
+            ErrorPresenter.ShowFriendlyError(Loc.T("Str_Cs_Couldn_T_Fetch_The_Version_List_This_Is_", "获取版本列表失败，可能是网络连接问题或下载源暂时不可用，请检查网络后重试。"), $"[获取版本列表失败] {ex}", "获取版本列表失败");
         }
         finally
         {
@@ -1145,7 +1183,7 @@ public partial class DownloadCenterPage : UserControl
 
         if (item.IsDataPack && string.IsNullOrEmpty(item.SelectedSaveName))
         {
-            MessageBoxDialog.ShowInfo("请先选择要安装到哪个存档（数据包必须放进具体存档才会生效）。");
+            MessageBoxDialog.ShowInfo(Loc.T("Str_Cs_Choose_Which_World_To_Install_Into_First", "请先选择要安装到哪个存档（数据包必须放进具体存档才会生效）。"));
             return;
         }
 
@@ -1172,7 +1210,7 @@ public partial class DownloadCenterPage : UserControl
         progressWin.Show();
         try
         {
-            var progress = new Progress<string>(msg => progressWin.Progress.Report(new ProgressInfo("下载中", 0, 1, msg)));
+            var progress = new Progress<string>(msg => progressWin.Progress.Report(new ProgressInfo(Loc.T("Str_Cs_Downloading", "下载中"), 0, 1, msg)));
             string path;
             if (entry.Source == ModSource.Modrinth)
             {
@@ -1196,7 +1234,7 @@ public partial class DownloadCenterPage : UserControl
         }
         catch (Exception ex)
         {
-            ErrorPresenter.ShowFriendlyError("下载失败，可能是网络连接问题或下载源暂时不可用，请检查网络后重试。", $"[下载失败] {ex}", "下载失败");
+            ErrorPresenter.ShowFriendlyError(Loc.T("Str_Cs_Download_Failed_This_Is_Usually_A_Networ", "下载失败，可能是网络连接问题或下载源暂时不可用，请检查网络后重试。"), $"[下载失败] {ex}", "下载失败");
         }
         finally
         {
@@ -1466,14 +1504,14 @@ public partial class DownloadCenterPage : UserControl
                 if (outcome.Items.Count == 0 && outcome.Warnings.Count == 0)
                     MessageBoxDialog.ShowInfo("没有找到匹配的 Mod，换个关键词试试。");
                 else if (outcome.Warnings.Count > 0)
-                    MessageBoxDialog.ShowWarning(string.Join("\n", outcome.Warnings), "部分来源搜索失败");
+                    MessageBoxDialog.ShowWarning(string.Join("\n", outcome.Warnings), Loc.T("Str_Cs_Some_Sources_Failed_To_Return_Results", "部分来源搜索失败"));
             }
         }
         catch (Exception ex)
         {
             if (seq != _modSearchSeq) return;
             if (showHints)
-                ErrorPresenter.ShowFriendlyError("搜索失败，可能是网络连接问题，请检查网络后重试。", $"[搜索失败] {ex}", "搜索失败");
+                ErrorPresenter.ShowFriendlyError(Loc.T("Str_Cs_Search_Failed_Most_Likely_A_Network_Prob", "搜索失败，可能是网络连接问题，请检查网络后重试。"), $"[搜索失败] {ex}", "搜索失败");
         }
 
         if (seq != _modSearchSeq) return; // 主搜索已过时，配套的MC百科辅助搜索也不必再跑
@@ -1503,7 +1541,7 @@ public partial class DownloadCenterPage : UserControl
         }
         catch (Exception ex)
         {
-            MessageBoxDialog.ShowError("无法打开浏览器：\n" + ex.Message);
+            MessageBoxDialog.ShowError(Loc.T("Str_Cs_Couldn_T_Open_Your_Browser_N", "无法打开浏览器：\n") + ex.Message);
         }
     }
 
@@ -1538,7 +1576,7 @@ public partial class DownloadCenterPage : UserControl
 
         if (folder == null)
         {
-            MessageBoxDialog.ShowInfo("请先去「版本选择」页添加一个 .minecraft 文件夹。");
+            MessageBoxDialog.ShowInfo(Loc.T("Str_Cs_Add_A_Minecraft_Folder_On_The_Versions_P", "请先去「版本选择」页添加一个 .minecraft 文件夹。"));
             return;
         }
 
@@ -1610,11 +1648,11 @@ public partial class DownloadCenterPage : UserControl
         }
         catch (CurseForgeKeyMissingException ex)
         {
-            MessageBoxDialog.ShowInfo(ex.Message, "未配置 Key");
+            MessageBoxDialog.ShowInfo(ex.Message, Loc.T("Str_Cs_No_Api_Key_Configured", "未配置 Key"));
         }
         catch (Exception ex)
         {
-            ErrorPresenter.ShowFriendlyError("获取版本列表失败，可能是网络连接问题或下载源暂时不可用，请检查网络后重试。", $"[获取版本列表失败] {ex}", "获取版本列表失败");
+            ErrorPresenter.ShowFriendlyError(Loc.T("Str_Cs_Couldn_T_Fetch_The_Version_List_This_Is_", "获取版本列表失败，可能是网络连接问题或下载源暂时不可用，请检查网络后重试。"), $"[获取版本列表失败] {ex}", "获取版本列表失败");
         }
         finally
         {
@@ -1685,7 +1723,7 @@ public partial class DownloadCenterPage : UserControl
         progressWin.Show();
         try
         {
-            var progress = new Progress<string>(msg => progressWin.Progress.Report(new ProgressInfo("下载中", 0, 1, msg)));
+            var progress = new Progress<string>(msg => progressWin.Progress.Report(new ProgressInfo(Loc.T("Str_Cs_Downloading", "下载中"), 0, 1, msg)));
             string path;
             if (entry.Source == ModSource.Modrinth)
                 path = await _modrinth.DownloadResourceAsync(targetDir, ModrinthResourceType.Mod, (ModrinthVersion)entry.RawVersion, progress);
@@ -1696,7 +1734,7 @@ public partial class DownloadCenterPage : UserControl
         }
         catch (Exception ex)
         {
-            ErrorPresenter.ShowFriendlyError("下载失败，可能是网络连接问题或下载源暂时不可用，请检查网络后重试。", $"[下载失败] {ex}", "下载失败");
+            ErrorPresenter.ShowFriendlyError(Loc.T("Str_Cs_Download_Failed_This_Is_Usually_A_Networ", "下载失败，可能是网络连接问题或下载源暂时不可用，请检查网络后重试。"), $"[下载失败] {ex}", "下载失败");
         }
         finally
         {
@@ -1776,7 +1814,7 @@ public partial class DownloadCenterPage : UserControl
             if (seq != _mapSearchSeq) return;
             if (showHints)
             {
-                MessageBoxDialog.ShowInfo(ex.Message, "未配置 Key");
+                MessageBoxDialog.ShowInfo(ex.Message, Loc.T("Str_Cs_No_Api_Key_Configured", "未配置 Key"));
                 Category_Checked(CatMap, new RoutedEventArgs()); // 重新走一遍分类切换逻辑，切到"未配置key"提示面板
             }
         }
@@ -1784,7 +1822,7 @@ public partial class DownloadCenterPage : UserControl
         {
             if (seq != _mapSearchSeq) return;
             if (showHints)
-                ErrorPresenter.ShowFriendlyError("搜索失败，可能是网络连接问题，请检查网络后重试。", $"[搜索失败] {ex}", "搜索失败");
+                ErrorPresenter.ShowFriendlyError(Loc.T("Str_Cs_Search_Failed_Most_Likely_A_Network_Prob", "搜索失败，可能是网络连接问题，请检查网络后重试。"), $"[搜索失败] {ex}", "搜索失败");
         }
     }
 
@@ -1813,7 +1851,7 @@ public partial class DownloadCenterPage : UserControl
 
         if (folder == null)
         {
-            MessageBoxDialog.ShowInfo("请先去「版本选择」页添加一个 .minecraft 文件夹。");
+            MessageBoxDialog.ShowInfo(Loc.T("Str_Cs_Add_A_Minecraft_Folder_On_The_Versions_P", "请先去「版本选择」页添加一个 .minecraft 文件夹。"));
             return;
         }
 
@@ -1841,7 +1879,7 @@ public partial class DownloadCenterPage : UserControl
         catch (CurseForgeKeyMissingException ex)
         {
             detail.ShowGroups(Enumerable.Empty<VersionGroup>());
-            MessageBoxDialog.ShowInfo(ex.Message, "未配置 Key");
+            MessageBoxDialog.ShowInfo(ex.Message, Loc.T("Str_Cs_No_Api_Key_Configured", "未配置 Key"));
         }
         catch (Exception ex)
         {
@@ -1866,14 +1904,14 @@ public partial class DownloadCenterPage : UserControl
         progressWin.Show();
         try
         {
-            var progress = new Progress<string>(msg => progressWin.Progress.Report(new ProgressInfo("下载中", 0, 1, msg)));
+            var progress = new Progress<string>(msg => progressWin.Progress.Report(new ProgressInfo(Loc.T("Str_Cs_Downloading", "下载中"), 0, 1, msg)));
             var path = await GetCurseForge().DownloadMapAsync(folderPath, (CurseForgeFile)entry.RawVersion, progress);
             _owner.EnsureVisibleForDialog();
             MessageBoxDialog.ShowSuccess($"地图已下载到：\n{path}");
         }
         catch (Exception ex)
         {
-            ErrorPresenter.ShowFriendlyError("下载失败，可能是网络连接问题或下载源暂时不可用，请检查网络后重试。", $"[下载失败] {ex}", "下载失败");
+            ErrorPresenter.ShowFriendlyError(Loc.T("Str_Cs_Download_Failed_This_Is_Usually_A_Networ", "下载失败，可能是网络连接问题或下载源暂时不可用，请检查网络后重试。"), $"[下载失败] {ex}", "下载失败");
         }
         finally
         {

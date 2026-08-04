@@ -23,6 +23,11 @@ public class GameProcessInfo
     /// <summary>用户是否已手动标记这个进程为"无响应"，标记后才允许使用"关闭未响应的游戏"按钮。</summary>
     public bool ManuallyMarkedUnresponsive { get; set; }
 
+    /// <summary>是否是启动器/用户主动请求关闭的（点了"关闭游戏"按钮，或"关闭未响应的游戏"）。
+    /// 用来区分"用户主动结束游戏"和"游戏自己意外退出/崩溃"——只有后者才需要弹崩溃提示，
+    /// 前者是用户自己的操作，不应该被当成崩溃打扰用户。见 <see cref="Close"/>/<see cref="ForceKill"/>。</summary>
+    public bool UserRequestedClose { get; private set; }
+
     public bool HasExited
     {
         get
@@ -78,6 +83,7 @@ public class GameProcessInfo
     /// <summary>正常请求关闭（先尝试优雅关闭主窗口消息，超时后强制结束）。</summary>
     public void Close()
     {
+        UserRequestedClose = true;
         try
         {
             if (HasExited) return;
@@ -90,6 +96,7 @@ public class GameProcessInfo
     /// <summary>强制结束进程树（用于"未响应"场景，CloseMainWindow 大概率无效，直接 Kill）。</summary>
     public void ForceKill()
     {
+        UserRequestedClose = true;
         try
         {
             if (!HasExited) Process.Kill(entireProcessTree: true);

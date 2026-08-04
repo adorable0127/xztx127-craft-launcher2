@@ -11,6 +11,27 @@ public class CrashReportResult
     public DateTime ModifiedAt { get; init; }
     public string RawText { get; init; } = "";
     public List<string> Findings { get; init; } = new();
+
+    /// <summary>带置信度的结论列表。Findings 保留为纯文本以兼容既有界面绑定，
+    /// 新界面可以用这个按置信度排序/分级显示。</summary>
+    public List<CrashFinding> RankedFindings { get; init; } = new();
+}
+
+/// <summary>一条分析结论。Confidence 决定显示顺序——高置信度的结论排前面，
+/// 避免"内存不足"这种泛泛的猜测盖过"某个 mod 缺依赖"这种确定性结论。</summary>
+public record CrashFinding(string Text, CrashConfidence Confidence)
+{
+    public override string ToString() => Text;
+}
+
+public enum CrashConfidence
+{
+    /// <summary>启发式猜测，可能误报。</summary>
+    Guess = 0,
+    /// <summary>比较可靠的关键字匹配。</summary>
+    Likely = 1,
+    /// <summary>日志里明确写出了原因（例如 Fabric 直接报"缺少依赖 X"），基本可以确定。</summary>
+    Certain = 2,
 }
 
 /// <summary>
@@ -38,18 +59,39 @@ public class CrashAnalyzerService
         foreach (var f in Directory.GetFiles(gameDir, "hs_err_pid*.log"))
             results.Add((f, File.GetLastWriteTime(f)));
 
+        // ===== 关键补充：logs/latest.log =====
+        // 这是之前最大的盲区。**大量启动失败根本不会产生 crash-report**：
+        // - Fabric/Forge 的依赖解析失败（缺前置 mod、版本不匹配）会打印错误后直接 exit，
+        //   crash-reports 目录里什么都没有；
+        // - mod 在 mixin 阶段就炸掉时也常常只有日志、没有崩溃报告。
+        // 这两类恰恰是玩家最常遇到的问题。只看 crash-reports 就等于对它们完全失明——
+        // 用户会看到"游戏闪退但找不到崩溃报告"，启动器也给不出任何提示。
+        var logsDir = Path.Combine(gameDir, "logs");
+        if (Directory.Exists(logsDir))
+        {
+            foreach (var name in new[] { "latest.log", "debug.log" })
+            {
+                var f = Path.Combine(logsDir, name);
+                if (File.Exists(f)) results.Add((f, File.GetLastWriteTime(f)));
+            }
+        }
+
         return results.OrderByDescending(r => r.Item2).ToList();
     }
 
     public CrashReportResult Analyze(string filePath)
     {
         var raw = SafeReadAll(filePath);
+        var ranked = RunRankedRules(raw);
         return new CrashReportResult
         {
             FilePath = filePath,
             ModifiedAt = File.Exists(filePath) ? File.GetLastWriteTime(filePath) : DateTime.MinValue,
             RawText = raw,
-            Findings = RunRules(raw)
+            // 按置信度从高到低排：日志里明确写出原因的结论要排在启发式猜测前面，
+            // 否则"内存不足"这种泛泛的提示会盖过"缺少前置 mod X"这种确定性结论。
+            RankedFindings = ranked,
+            Findings = ranked.Select(f => f.Text).ToList(),
         };
     }
 
@@ -62,6 +104,175 @@ public class CrashAnalyzerService
     /// <summary>启发式规则库：按顺序匹配，命中即加入提示，允许同时命中多条。
     /// 面向"小白也能看懂"这个目标重写：每条结论都尽量说清楚"是什么原因"+"具体是哪个方块/
     /// 实体/mod"+"应该怎么处理"，而不是只甩一个异常类名。</summary>
+    /// <summary>
+    /// 分析入口：先跑「高置信度」规则（日志里明确写出了原因的），再跑原有的启发式规则，
+    /// 最后按置信度排序。高置信度规则命中时会抑制掉那句"未匹配到已知规则"的兜底提示。
+    /// </summary>
+    private static List<CrashFinding> RunRankedRules(string text)
+    {
+        var result = new List<CrashFinding>();
+        if (string.IsNullOrWhiteSpace(text)) return result;
+
+        result.AddRange(RunDependencyRules(text));
+        result.AddRange(RunExitCodeRules(text));
+
+        // 原有启发式规则：整体归为 Likely（关键字匹配，比"猜"强，但不如日志明说可靠）。
+        var heuristic = RunRules(text);
+        foreach (var h in heuristic)
+        {
+            // 已经有高置信度结论时，不要再附上"未匹配到已知规则"那句兜底——自相矛盾。
+            if (result.Count > 0 && h.StartsWith("未匹配到已知的常见崩溃规则")) continue;
+            result.Add(new CrashFinding(h, CrashConfidence.Likely));
+        }
+
+        return result.OrderByDescending(f => f.Confidence).ToList();
+    }
+
+    /// <summary>
+    /// 依赖/前置 mod 相关规则 —— 这是**玩家最常遇到、而旧版完全没覆盖**的一类。
+    ///
+    /// Fabric 和 Forge 在依赖解析失败时会打印结构化的错误块，里面明确写着
+    /// "哪个 mod 需要哪个前置的哪个版本"。这类信息是确定性的（不是猜的），
+    /// 而且直接告诉用户该去下什么，所以给 Certain 置信度、排在最前面。
+    ///
+    /// 注意这类失败通常**不产生 crash-report**，只写进 logs/latest.log——
+    /// 这也是为什么 ListCrashFiles 现在必须把 latest.log 一起列出来。
+    /// </summary>
+    private static List<CrashFinding> RunDependencyRules(string text)
+    {
+        var found = new List<CrashFinding>();
+
+        // --- Fabric: "requires version x.y.z of mod abc, which is missing!" ---
+        foreach (Match m in Regex.Matches(text,
+            @"Mod '(?<name>[^']+)'\s*\((?<id>[\w\-]+)\)[^\n]*?requires\s+(?<req>[^\n]+?)\s+of\s+(?<dep>[\w\-']+)[^\n]*?which is missing",
+            RegexOptions.IgnoreCase))
+        {
+            found.Add(new CrashFinding(
+                $"缺少前置 Mod：「{m.Groups["name"].Value}」需要 {m.Groups["dep"].Value}（版本要求 {m.Groups["req"].Value}），" +
+                "但这个前置没有安装。去 Modrinth/CurseForge 搜这个前置的名字，下载版本要求里写的那个版本装进 mods 文件夹即可。",
+                CrashConfidence.Certain));
+        }
+
+        // --- Fabric 简化形态：requires any version of fabric-api ---
+        foreach (Match m in Regex.Matches(text,
+            @"requires\s+(?:any version of\s+)?(?<dep>[\w\-]+)[^\n]{0,40}?(?:which is missing|but it is missing)",
+            RegexOptions.IgnoreCase))
+        {
+            var dep = m.Groups["dep"].Value;
+            if (found.Any(f => f.Text.Contains(dep))) continue;
+            found.Add(new CrashFinding(
+                $"缺少前置 Mod：{dep}。这个 mod 是其它 mod 运行的必需依赖，没装就会直接启动失败。" +
+                (dep.Contains("fabric", StringComparison.OrdinalIgnoreCase) && dep.Contains("api", StringComparison.OrdinalIgnoreCase)
+                    ? " 注意 Fabric API 要下跟你游戏版本完全对应的那一份。"
+                    : ""),
+                CrashConfidence.Certain));
+        }
+
+        // --- Forge/NeoForge: "Mod X requires Y a.b.c or above" ---
+        foreach (Match m in Regex.Matches(text,
+            @"Mod\s+(?<id>[\w\-]+)\s+requires\s+(?<dep>[\w\-]+)\s+(?<ver>[\d.\[\],)(]+)\s*(?:or above)?",
+            RegexOptions.IgnoreCase))
+        {
+            found.Add(new CrashFinding(
+                $"依赖版本不满足：「{m.Groups["id"].Value}」要求 {m.Groups["dep"].Value} {m.Groups["ver"].Value} 或更高，" +
+                "当前装的版本太低或者没装。把这个依赖更新到要求的版本即可。",
+                CrashConfidence.Certain));
+        }
+
+        // --- 版本不匹配：mod 声明只支持某些 MC 版本 ---
+        foreach (Match m in Regex.Matches(text,
+            @"Mod\s+'?(?<id>[\w\-]+)'?\s+requires\s+minecraft\s+(?<ver>[^\n,]+)",
+            RegexOptions.IgnoreCase))
+        {
+            found.Add(new CrashFinding(
+                $"游戏版本不匹配：「{m.Groups["id"].Value}」只支持 Minecraft {m.Groups["ver"].Value.Trim()}，" +
+                "跟你当前启动的版本对不上。要么换这个 mod 的对应版本，要么换一个游戏版本启动。",
+                CrashConfidence.Certain));
+        }
+
+        // --- Fabric 的整块 "Incompatible mods found" 摘要 ---
+        if (Regex.IsMatch(text, @"Incompatible mod(s)? found|Mod resolution encountered an incompatible mod set",
+                RegexOptions.IgnoreCase) && found.Count == 0)
+        {
+            found.Add(new CrashFinding(
+                "Fabric 报告 mod 之间不兼容（依赖解析失败），游戏还没进主菜单就退出了。" +
+                "日志里紧跟这句话的下面几行会写明是哪几个 mod 冲突，按那里的提示增删对应 mod 即可。",
+                CrashConfidence.Certain));
+        }
+
+        // --- 重复安装同一个 mod（换版本时最常见的手滑）---
+        foreach (Match m in Regex.Matches(text,
+            @"Duplicate mod(?:s)?[^\n]*?['""]?(?<id>[\w\-]+)['""]?",
+            RegexOptions.IgnoreCase))
+        {
+            found.Add(new CrashFinding(
+                $"mods 文件夹里装了两份「{m.Groups["id"].Value}」（多半是更新时新旧版本都留着了）。" +
+                "打开 mods 文件夹，把旧的那个 jar 删掉，只保留一个。",
+                CrashConfidence.Certain));
+        }
+
+        // 同一条结论可能被多个正则重复命中，去重
+        return found
+            .GroupBy(f => f.Text)
+            .Select(g => g.First())
+            .Take(8)
+            .ToList();
+    }
+
+    /// <summary>
+    /// 退出码规则。游戏被系统杀掉时往往没有任何 Java 堆栈，只有一个退出码，
+    /// 旧版对这种情况完全给不出提示。这里覆盖几个最常见的。
+    /// </summary>
+    private static List<CrashFinding> RunExitCodeRules(string text)
+    {
+        var found = new List<CrashFinding>();
+
+        var m = Regex.Match(text, @"(?:exit code|Process exited with code|退出代码)[:\s]+(-?\d+)",
+            RegexOptions.IgnoreCase);
+        if (!m.Success) return found;
+
+        if (!long.TryParse(m.Groups[1].Value, out var code)) return found;
+
+        switch (code)
+        {
+            case 0:
+                break;   // 正常退出，不用提示
+            case -1073741819:   // 0xC0000005
+                found.Add(new CrashFinding(
+                    "退出码 -1073741819（内存访问违规）：这是系统层面的崩溃，几乎总是显卡驱动或某个自带 .dll 的 mod 导致的。" +
+                    "先更新显卡驱动；还不行就把最近新装的 mod（尤其是光影/渲染类）逐个移除试。",
+                    CrashConfidence.Likely));
+                break;
+            case -1073740791:   // 0xC0000409 stack buffer overrun
+                found.Add(new CrashFinding(
+                    "退出码 -1073740791（栈溢出保护触发）：通常是某个 mod 递归调用失控。" +
+                    "回想一下最近装了什么 mod，先把它移除试试。",
+                    CrashConfidence.Likely));
+                break;
+            case 1:
+                found.Add(new CrashFinding(
+                    "退出码 1：游戏在启动早期就退出了，多半是 mod 依赖没满足或者 Java 版本不对。" +
+                    "翻一下上面的日志内容，通常会有更具体的报错行。",
+                    CrashConfidence.Guess));
+                break;
+            case -805306369:    // 0xCFFFFFFF
+                found.Add(new CrashFinding(
+                    "退出码 -805306369：游戏卡死后被强制结束。常见于内存给得太少导致长时间 GC 停顿，" +
+                    "可以在设置里把最大内存调高一些。",
+                    CrashConfidence.Likely));
+                break;
+            default:
+                if (code < 0)
+                    found.Add(new CrashFinding(
+                        $"退出码 {code}：游戏被系统异常终止（不是 Java 层的崩溃，所以没有崩溃报告）。" +
+                        "这类问题优先怀疑显卡驱动、杀毒软件拦截、内存不足三个方向。",
+                        CrashConfidence.Guess));
+                break;
+        }
+
+        return found;
+    }
+
     private static List<string> RunRules(string text)
     {
         var findings = new List<string>();

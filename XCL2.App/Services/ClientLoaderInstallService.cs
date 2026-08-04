@@ -95,20 +95,70 @@ public class ClientLoaderInstallService : IDisposable
         return result;
     }
 
-    /// <summary>Fabric：可用 loader 版本列表。</summary>
-    public async Task<List<ServerCoreBuild>> GetFabricLoaderVersionsAsync(CancellationToken ct = default)
+    /// <summary>
+    /// Fabric：可用 loader 版本列表。
+    ///
+    /// ===== 修复安装 Fabric 报 404 (Not Found) =====
+    /// 旧实现请求的是 /v2/versions/loader —— 这是**全量** loader 列表，跟具体哪个 MC 版本
+    /// 无关，从 0.x 最早的构建一路列到最新。拿这个列表里的任意一项去拼
+    ///     /v2/versions/loader/{mc}/{loader}/{installer}/profile/json
+    /// 时，只要这对 (mcVersion, loaderVersion) 在 Fabric 那边**没有交集条目**，服务端就直接
+    /// 返回 404，于是 GetStringAsync 抛 HttpRequestException("...404 (Not Found)")，
+    /// 整个安装流程报"安装失败"——这正是日志里那条异常的来源。
+    ///
+    /// 典型触发场景有两种，用户都很容易碰到：
+    /// - 选了一个较新的 MC 版本（例如截图里的 26.x），但被默认选中的 loader 是列表里
+    ///   第一个 stable 项，未必声明支持这个 MC 版本；
+    /// - 选了很老的 MC 版本，而新 loader 早已不再为它发布交集条目。
+    ///
+    /// 正确做法是用 Fabric Meta 官方提供的**按游戏版本查交集**端点：
+    ///     GET /v2/versions/loader/{gameVersion}
+    /// 它只返回"确实能用在这个 MC 版本上"的 loader，逐条都保证 profile/json 能取到。
+    /// gameVersion 做一次 URL 编码，避免版本号里出现空格/特殊字符时拼出非法 URL。
+    /// </summary>
+    /// <param name="mcVersion">必填。为空时退回全量列表（仅用于"还没选 MC 版本"的过渡态，
+    /// 真正安装前调用方必须已经选定 MC 版本）。</param>
+    public async Task<List<ServerCoreBuild>> GetFabricLoaderVersionsAsync(string? mcVersion = null, CancellationToken ct = default)
     {
-        var json = await _http.GetStringAsync($"{FabricMetaBase}/versions/loader", ct);
+        var url = string.IsNullOrWhiteSpace(mcVersion)
+            ? $"{FabricMetaBase}/versions/loader"
+            : $"{FabricMetaBase}/versions/loader/{Uri.EscapeDataString(mcVersion.Trim())}";
+
+        string json;
+        try
+        {
+            json = await _http.GetStringAsync(url, ct);
+        }
+        catch (HttpRequestException ex) when (ex.StatusCode == System.Net.HttpStatusCode.NotFound)
+        {
+            // 这个 MC 版本在 Fabric 那边压根没有任何 loader 交集——直接给一句人话，
+            // 而不是把 "404 (Not Found)" 原样甩给用户。
+            throw new InvalidOperationException(
+                $"Fabric 目前还没有为 Minecraft {mcVersion} 发布 Loader。\n" +
+                "通常是因为这个版本太新（Fabric 还没跟进）或太老（已停止支持）。" +
+                "可以换一个 MC 版本，或者过几天等 Fabric 更新后再试。", ex);
+        }
+
         using var doc = JsonDocument.Parse(json);
         var result = new List<ServerCoreBuild>();
         foreach (var v in doc.RootElement.EnumerateArray())
         {
+            // 按游戏版本查交集时，返回的每一项形如 { "loader": {...}, "intermediary": {...} }，
+            // 真正的 loader 信息在 "loader" 子对象里；全量列表则是平铺的。两种形状都兼容。
+            var node = v.TryGetProperty("loader", out var loaderNode) ? loaderNode : v;
+            if (!node.TryGetProperty("version", out var verEl)) continue;
+
             result.Add(new ServerCoreBuild
             {
-                DisplayVersion = v.GetProperty("version").GetString()!,
-                IsRecommended = v.TryGetProperty("stable", out var stable) && stable.GetBoolean()
+                DisplayVersion = verEl.GetString()!,
+                IsRecommended = node.TryGetProperty("stable", out var stable) && stable.GetBoolean()
             });
         }
+
+        if (result.Count == 0)
+            throw new InvalidOperationException(
+                $"Fabric 没有返回任何适用于 Minecraft {mcVersion} 的 Loader 版本，无法继续安装。");
+
         return result;
     }
 
@@ -127,24 +177,53 @@ public class ClientLoaderInstallService : IDisposable
         return result;
     }
 
-    /// <summary>Quilt：可用 loader 版本列表。</summary>
-    public async Task<List<ServerCoreBuild>> GetQuiltLoaderVersionsAsync(CancellationToken ct = default)
+    /// <summary>Quilt：可用 loader 版本列表。跟 GetFabricLoaderVersionsAsync 同样的 404 修复
+    /// （见那边的详细注释）——Quilt Meta 的端点形状跟 Fabric Meta 一一对应，
+    /// /v3/versions/loader/{gameVersion} 同样返回"该 MC 版本可用的 loader 交集"。</summary>
+    public async Task<List<ServerCoreBuild>> GetQuiltLoaderVersionsAsync(string? mcVersion = null, CancellationToken ct = default)
     {
-        var json = await _http.GetStringAsync($"{QuiltMetaBase}/versions/loader", ct);
+        var url = string.IsNullOrWhiteSpace(mcVersion)
+            ? $"{QuiltMetaBase}/versions/loader"
+            : $"{QuiltMetaBase}/versions/loader/{Uri.EscapeDataString(mcVersion.Trim())}";
+
+        string json;
+        try
+        {
+            json = await _http.GetStringAsync(url, ct);
+        }
+        catch (HttpRequestException ex) when (ex.StatusCode == System.Net.HttpStatusCode.NotFound)
+        {
+            throw new InvalidOperationException(
+                $"Quilt 目前还没有为 Minecraft {mcVersion} 发布 Loader。\n" +
+                "可以换一个 MC 版本，或者过几天等 Quilt 更新后再试。", ex);
+        }
+
         using var doc = JsonDocument.Parse(json);
         var result = new List<ServerCoreBuild>();
         foreach (var v in doc.RootElement.EnumerateArray())
         {
+            // 同 Fabric：按游戏版本查交集时条目是 { "loader": {...}, "intermediary": {...} }，
+            // 全量列表时是平铺的。两种形状都要认，否则按版本查回来的数据会全部取不到 "version"
+            // 而抛 KeyNotFoundException（表现同样是"安装失败"，只是异常类型不同）。
+            var node = v.TryGetProperty("loader", out var loaderNode) ? loaderNode : v;
+            if (!node.TryGetProperty("version", out var verEl)) continue;
+            var ver = verEl.GetString()!;
+
             result.Add(new ServerCoreBuild
             {
-                DisplayVersion = v.GetProperty("version").GetString()!,
+                DisplayVersion = ver,
                 // Quilt Meta 的 loader 列表条目本身不像 Fabric 那样带 "stable" 字段，
                 // 官方约定"不含 -beta/-rc 等预发布后缀的版本号"即视为稳定版，
                 // 用字符串是否包含连字符来判断，跟 Quilt 官方文档/其它启动器(PCL2/HMCL)
                 // 采用的判断口径一致。
-                IsRecommended = !v.GetProperty("version").GetString()!.Contains('-')
+                IsRecommended = !ver.Contains('-')
             });
         }
+
+        if (result.Count == 0)
+            throw new InvalidOperationException(
+                $"Quilt 没有返回任何适用于 Minecraft {mcVersion} 的 Loader 版本，无法继续安装。");
+
         return result;
     }
 
@@ -167,6 +246,28 @@ public class ClientLoaderInstallService : IDisposable
     private const string FabricApiModrinthSlug = "fabric-api";
 
     /// <summary>
+    /// GetStringAsync 的包装：把 HTTP 404 翻译成一句用户能看懂的话。
+    ///
+    /// 之前所有 Meta 请求都是裸的 _http.GetStringAsync，一旦 404 就直接把
+    /// "Response status code does not indicate success: 404 (Not Found)." 连同整个
+    /// 调用栈抛到界面上——用户完全无法从这句话判断"是我选错了版本组合"还是"网炸了"。
+    /// 其它状态码（超时/5xx/DNS 失败）保持原样抛出，交给上层的
+    /// ErrorPresenter.ShowFriendlyError 统一按"网络问题"处理，这里只专门处理 404，
+    /// 因为只有 404 才明确对应"这个组合不存在"这一种业务含义。
+    /// </summary>
+    private async Task<string> GetStringWithFriendly404Async(string url, string friendlyMessage, CancellationToken ct)
+    {
+        try
+        {
+            return await _http.GetStringAsync(url, ct);
+        }
+        catch (HttpRequestException ex) when (ex.StatusCode == System.Net.HttpStatusCode.NotFound)
+        {
+            throw new InvalidOperationException(friendlyMessage, ex);
+        }
+    }
+
+    /// <summary>
     /// 安装 Fabric 客户端到 .minecraft/versions/{versionId}/。
     /// 步骤：1) 先确保原版父版本已安装（Fabric json 靠 inheritsFrom 引用它，父版本缺失会导致启动失败）；
     /// 2) 直接下载 Fabric Meta 提供的现成客户端 profile json；3) 按 json 里的 libraries 列表补下依赖库
@@ -184,7 +285,7 @@ public class ClientLoaderInstallService : IDisposable
         var parentVersionDir = Path.Combine(minecraftDir, "versions", mcVersion);
         if (!File.Exists(Path.Combine(parentVersionDir, $"{mcVersion}.jar")))
         {
-            progress?.Report(new ProgressInfo("安装原版父版本", 0, 1, mcVersion));
+            progress?.Report(new ProgressInfo(Loc.T("Str_Cs_Installing_The_Base_Vanilla_Version", "安装原版父版本"), 0, 1, mcVersion));
             var manifest = await _vanillaDownloader.GetVersionManifestAsync(ct);
             var entry = manifest.Versions.FirstOrDefault(v => v.Id == mcVersion)
                 ?? throw new InvalidOperationException($"在版本清单中找不到 MC 版本 {mcVersion}，无法安装 Fabric 所需的原版父版本。");
@@ -193,7 +294,9 @@ public class ClientLoaderInstallService : IDisposable
 
         // 2. 拉取 installer 版本（取最新稳定版，用户不需要关心这个号）
         progress?.Report(new ProgressInfo("查询 Fabric installer 版本", 0, 1, loaderVersion));
-        var installerJson = await _http.GetStringAsync($"{FabricMetaBase}/versions/installer", ct);
+        var installerJson = await GetStringWithFriendly404Async(
+            $"{FabricMetaBase}/versions/installer",
+            "无法获取 Fabric 安装器版本列表，请检查网络或稍后重试。", ct);
         using var installerDoc = JsonDocument.Parse(installerJson);
         string? installerVersion = null;
         foreach (var v in installerDoc.RootElement.EnumerateArray())
@@ -207,9 +310,17 @@ public class ClientLoaderInstallService : IDisposable
         installerVersion ??= installerDoc.RootElement[0].GetProperty("version").GetString();
 
         // 3. 下载现成的客户端 profile json（含 inheritsFrom + libraries + mainClass，官方生成好的，不用自己拼）
-        var profileUrl = $"{FabricMetaBase}/versions/loader/{mcVersion}/{loaderVersion}/{installerVersion}/profile/json";
+        //    版本号统一做 URL 编码：MC 版本号里可能出现空格（用户手改过的目录名）、
+        //    loader 版本号里可能出现 "+build.xxx" 这类字符，不编码就会拼出非法 URL。
+        var profileUrl = $"{FabricMetaBase}/versions/loader/" +
+                         $"{Uri.EscapeDataString(mcVersion)}/" +
+                         $"{Uri.EscapeDataString(loaderVersion)}/" +
+                         $"{Uri.EscapeDataString(installerVersion!)}/profile/json";
         progress?.Report(new ProgressInfo("下载 Fabric 版本信息", 0, 1, "profile/json"));
-        var profileJson = await _http.GetStringAsync(profileUrl, ct);
+        var profileJson = await GetStringWithFriendly404Async(profileUrl,
+            $"Fabric 没有 \"Minecraft {mcVersion} + Loader {loaderVersion}\" 这个组合的安装信息。\n" +
+            "多半是这个 Loader 版本并不支持所选的 MC 版本。请在「Loader 版本」下拉框里换一个" +
+            "（列表现在只会列出确实支持当前 MC 版本的 Loader），或者换一个 MC 版本再试。", ct);
 
         var detail = JsonSerializer.Deserialize<VersionDetail>(profileJson)
             ?? throw new InvalidOperationException("Fabric 返回的版本信息解析失败。");
@@ -269,7 +380,7 @@ public class ClientLoaderInstallService : IDisposable
         // 时提示缺依赖，用户还能再手动装一次，不应该因为这一步网络抖动就让用户以为 Fabric 都没装上。
         if (installFabricApi)
         {
-            progress?.Report(new ProgressInfo("下载 Fabric API", 0, 1, FabricApiModrinthSlug));
+            progress?.Report(new ProgressInfo(Loc.T("Str_Cs_Downloading_Fabric_Api", "下载 Fabric API"), 0, 1, FabricApiModrinthSlug));
             try
             {
                 var versions = await _modrinth.GetVersionsAsync(FabricApiModrinthSlug, mcVersion, ct);
@@ -288,7 +399,7 @@ public class ClientLoaderInstallService : IDisposable
                 else
                 {
                     var apiProgress = new Progress<string>(msg =>
-                        progress?.Report(new ProgressInfo("下载 Fabric API", 0, 1, msg)));
+                        progress?.Report(new ProgressInfo(Loc.T("Str_Cs_Downloading_Fabric_Api", "下载 Fabric API"), 0, 1, msg)));
                     await _modrinth.DownloadResourceAsync(minecraftDir, ModrinthResourceType.Mod, apiVersion,
                         apiProgress, saveName: null, ct);
                 }
@@ -303,7 +414,7 @@ public class ClientLoaderInstallService : IDisposable
             }
         }
 
-        progress?.Report(new ProgressInfo("安装完成", 1, 1, versionId));
+        progress?.Report(new ProgressInfo(Loc.T("Str_Cs_Installation_Complete", "安装完成"), 1, 1, versionId));
         return versionId;
     }
 
@@ -332,7 +443,7 @@ public class ClientLoaderInstallService : IDisposable
         var parentVersionDir = Path.Combine(minecraftDir, "versions", mcVersion);
         if (!File.Exists(Path.Combine(parentVersionDir, $"{mcVersion}.jar")))
         {
-            progress?.Report(new ProgressInfo("安装原版父版本", 0, 1, mcVersion));
+            progress?.Report(new ProgressInfo(Loc.T("Str_Cs_Installing_The_Base_Vanilla_Version", "安装原版父版本"), 0, 1, mcVersion));
             var manifest = await _vanillaDownloader.GetVersionManifestAsync(ct);
             var entry = manifest.Versions.FirstOrDefault(v => v.Id == mcVersion)
                 ?? throw new InvalidOperationException($"在版本清单中找不到 MC 版本 {mcVersion}，无法安装 Quilt 所需的原版父版本。");
@@ -341,9 +452,13 @@ public class ClientLoaderInstallService : IDisposable
 
         // 2. 下载现成的客户端 profile json（Quilt Meta 直接给完整 json，跟 Fabric 一样不需要
         // 本地跑安装器；路径里没有 installer 版本这一段，见方法上方注释）。
-        var profileUrl = $"{QuiltMetaBase}/versions/loader/{mcVersion}/{loaderVersion}/profile/json";
+        var profileUrl = $"{QuiltMetaBase}/versions/loader/" +
+                         $"{Uri.EscapeDataString(mcVersion)}/" +
+                         $"{Uri.EscapeDataString(loaderVersion)}/profile/json";
         progress?.Report(new ProgressInfo("下载 Quilt 版本信息", 0, 1, "profile/json"));
-        var profileJson = await _http.GetStringAsync(profileUrl, ct);
+        var profileJson = await GetStringWithFriendly404Async(profileUrl,
+            $"Quilt 没有 \"Minecraft {mcVersion} + Loader {loaderVersion}\" 这个组合的安装信息。\n" +
+            "请在「Loader 版本」下拉框里换一个，或者换一个 MC 版本再试。", ct);
 
         var detail = JsonSerializer.Deserialize<VersionDetail>(profileJson)
             ?? throw new InvalidOperationException("Quilt 返回的版本信息解析失败。");
@@ -392,7 +507,7 @@ public class ClientLoaderInstallService : IDisposable
         // 时提示缺依赖，用户还能再手动装一次，不应该因为网络抖动就让用户以为 Quilt 都没装上。
         if (installQsl)
         {
-            progress?.Report(new ProgressInfo("下载 QSL", 0, 1, QslModrinthSlug));
+            progress?.Report(new ProgressInfo(Loc.T("Str_Cs_Downloading_Qsl", "下载 QSL"), 0, 1, QslModrinthSlug));
             try
             {
                 var versions = await _modrinth.GetVersionsAsync(QslModrinthSlug, mcVersion, ct);
@@ -411,7 +526,7 @@ public class ClientLoaderInstallService : IDisposable
                 else
                 {
                     var qslProgress = new Progress<string>(msg =>
-                        progress?.Report(new ProgressInfo("下载 QSL", 0, 1, msg)));
+                        progress?.Report(new ProgressInfo(Loc.T("Str_Cs_Downloading_Qsl", "下载 QSL"), 0, 1, msg)));
                     await _modrinth.DownloadResourceAsync(minecraftDir, ModrinthResourceType.Mod, qslVersion,
                         qslProgress, saveName: null, ct);
                 }
@@ -426,7 +541,7 @@ public class ClientLoaderInstallService : IDisposable
             }
         }
 
-        progress?.Report(new ProgressInfo("安装完成", 1, 1, versionId));
+        progress?.Report(new ProgressInfo(Loc.T("Str_Cs_Installation_Complete", "安装完成"), 1, 1, versionId));
         return versionId;
     }
 
@@ -598,7 +713,7 @@ public class ClientLoaderInstallService : IDisposable
             }
         }
 
-        progress?.Report(new ProgressInfo("安装完成", 2, 2, fileName));
+        progress?.Report(new ProgressInfo(Loc.T("Str_Cs_Installation_Complete", "安装完成"), 2, 2, fileName));
         return candidate != null ? Path.GetFileName(candidate) : fullVersion;
     }
 

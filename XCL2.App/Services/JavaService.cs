@@ -703,7 +703,7 @@ public class JavaService
         if (found == null)
             throw new InvalidOperationException("Java 解压后未找到 javaw.exe，请手动配置 Java 路径。");
 
-        progress?.Report(new ProgressInfo("Java 安装完成", 1, 1, found));
+        progress?.Report(new ProgressInfo(Loc.T("Str_Cs_Java_Installation_Complete", "Java 安装完成"), 1, 1, found));
         return found;
     }
 
@@ -750,14 +750,14 @@ public class JavaService
         if (found == null)
             throw new InvalidOperationException("系统安装似乎已完成，但未能自动探测到 javaw.exe，请在设置中手动指定路径（通常在 C:\\Program Files\\Eclipse Adoptium\\ 下）。");
 
-        progress?.Report(new ProgressInfo("Java 安装完成", 1, 1, found));
+        progress?.Report(new ProgressInfo(Loc.T("Str_Cs_Java_Installation_Complete", "Java 安装完成"), 1, 1, found));
         return found;
     }
 
     private async Task DownloadToFileAsync(string url, string destPath, string displayName,
         IProgress<ProgressInfo>? progress, CancellationToken ct)
     {
-        progress?.Report(new ProgressInfo("下载 Java 运行时", 0, 1, displayName));
+        progress?.Report(new ProgressInfo(Loc.T("Str_Cs_Downloading_The_Java_Runtime", "下载 Java 运行时"), 0, 1, displayName));
         using var resp = await _http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, ct);
         if (!resp.IsSuccessStatusCode)
             throw new InvalidOperationException($"下载 Java 失败: HTTP {(int)resp.StatusCode} {resp.ReasonPhrase} ({url})");
@@ -773,7 +773,7 @@ public class JavaService
             await fs.WriteAsync(buffer.AsMemory(0, n), ct);
             read += n;
             if (total > 0)
-                progress?.Report(new ProgressInfo("下载 Java 运行时", (int)(read * 100 / total), 100, displayName));
+                progress?.Report(new ProgressInfo(Loc.T("Str_Cs_Downloading_The_Java_Runtime", "下载 Java 运行时"), (int)(read * 100 / total), 100, displayName));
         }
     }
 

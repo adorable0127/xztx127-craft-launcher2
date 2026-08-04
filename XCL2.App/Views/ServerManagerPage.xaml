@@ -92,7 +92,7 @@
              左右两个面板不再有 1px 级别的不对称间距。 -->
         <Border Grid.Column="0" Background="{DynamicResource PanelBrush}" CornerRadius="10" Padding="10">
             <StackPanel>
-                <TextBlock Text="服务端管理" FontSize="18" FontWeight="Bold" Margin="8,4,0,16" Foreground="{DynamicResource AccentBrush}"/>
+                <TextBlock Text="{DynamicResource Str_Nav_ServerManager}" FontSize="18" FontWeight="Bold" Margin="8,4,0,16" Foreground="{DynamicResource AccentBrush}"/>
 
                 <!-- 首页：进入"服务端管理"默认停在这里，四个磁贴对应最常用的四件事，
                      不需要用户先搞清楚"核心下载/服务器列表/插件/资源包"这几个分类各自是干什么的
@@ -101,7 +101,7 @@
                              Checked="Category_Checked" Tag="home">
                     <StackPanel Orientation="Horizontal">
                         <TextBlock Text="🏠" FontFamily="Segoe UI Emoji" VerticalAlignment="Center"/>
-                        <TextBlock Text="首页" Margin="8,0,0,0" VerticalAlignment="Center"/>
+                        <TextBlock Text="{DynamicResource Str_Ui_Home}" Margin="8,0,0,0" VerticalAlignment="Center"/>
                     </StackPanel>
                 </RadioButton>
                 <RadioButton x:Name="CatCoreDownload" Style="{StaticResource DownloadCategoryButton}"
@@ -114,28 +114,28 @@
                              (VARIATION SELECTOR-16) 强制它按 emoji 呈现方式渲染，跟其它几个
                              图标使用同一套字形来源，视觉大小才会一致。 -->
                         <TextBlock Text="&#x2B07;&#xFE0F;" FontFamily="Segoe UI Emoji" VerticalAlignment="Center"/>
-                        <TextBlock Text="核心下载" Margin="8,0,0,0" VerticalAlignment="Center"/>
+                        <TextBlock Text="{DynamicResource Str_Ui_Server_Core_Downloads}" Margin="8,0,0,0" VerticalAlignment="Center"/>
                     </StackPanel>
                 </RadioButton>
                 <RadioButton x:Name="CatInstances" Style="{StaticResource DownloadCategoryButton}"
                              Checked="Category_Checked" Tag="instances">
                     <StackPanel Orientation="Horizontal">
                         <TextBlock Text="🖥" FontFamily="Segoe UI Emoji" VerticalAlignment="Center"/>
-                        <TextBlock Text="服务器列表" Margin="8,0,0,0" VerticalAlignment="Center"/>
+                        <TextBlock Text="{DynamicResource Str_Ui_Server_List}" Margin="8,0,0,0" VerticalAlignment="Center"/>
                     </StackPanel>
                 </RadioButton>
                 <RadioButton x:Name="CatPlugins" Style="{StaticResource DownloadCategoryButton}"
                              Checked="Category_Checked" Tag="plugins">
                     <StackPanel Orientation="Horizontal">
                         <TextBlock Text="🧩" FontFamily="Segoe UI Emoji" VerticalAlignment="Center"/>
-                        <TextBlock Text="插件下载" Margin="8,0,0,0" VerticalAlignment="Center"/>
+                        <TextBlock Text="{DynamicResource Str_Ui_Plugin_Downloads}" Margin="8,0,0,0" VerticalAlignment="Center"/>
                     </StackPanel>
                 </RadioButton>
                 <RadioButton x:Name="CatResourcePack" Style="{StaticResource DownloadCategoryButton}"
                              Checked="Category_Checked" Tag="resourcepack">
                     <StackPanel Orientation="Horizontal">
                         <TextBlock Text="🎨" FontFamily="Segoe UI Emoji" VerticalAlignment="Center"/>
-                        <TextBlock Text="资源包" Margin="8,0,0,0" VerticalAlignment="Center"/>
+                        <TextBlock Text="{DynamicResource Str_Ui_Resource_Packs_2}" Margin="8,0,0,0" VerticalAlignment="Center"/>
                     </StackPanel>
                 </RadioButton>
             </StackPanel>
@@ -168,8 +168,8 @@
                         <RowDefinition Height="*"/>
                     </Grid.RowDefinitions>
 
-                    <TextBlock Grid.Row="0" Text="服务端管理" FontSize="18" FontWeight="Bold" Margin="0,0,0,4"/>
-                    <TextBlock Grid.Row="1" Text="选一件想做的事，点进去就直接开始。"
+                    <TextBlock Grid.Row="0" Text="{DynamicResource Str_Nav_ServerManager}" FontSize="18" FontWeight="Bold" Margin="0,0,0,4"/>
+                    <TextBlock Grid.Row="1" Text="{DynamicResource Str_Ui_Pick_What_You_Want_To_Do_And_Jump_Straig}"
                                Foreground="{DynamicResource TextSecondaryBrush}" FontSize="12" Margin="0,0,0,14"/>
 
                     <UniformGrid Grid.Row="2" Columns="2" Rows="2" VerticalAlignment="Top">
@@ -178,8 +178,8 @@
                                 <Border Style="{StaticResource TileIconBadge}" Background="{DynamicResource TileBadgeOrangeBrush}">
                                     <TextBlock Text="&#128640;" Style="{StaticResource TileIconText}"/>
                                 </Border>
-                                <TextBlock Text="傻瓜式开服" Style="{StaticResource TileTitleText}"/>
-                                <TextBlock Text="选核心类型和 MC 版本，自动下载、安装、配 Java，一步到位创建服务器" Style="{StaticResource TileDescText}"/>
+                                <TextBlock Text="{DynamicResource Str_Ui_Guided_Server_Setup}" Style="{StaticResource TileTitleText}"/>
+                                <TextBlock Text="{DynamicResource Str_Ui_Pick_A_Server_Type_And_Minecraft_Version}" Style="{StaticResource TileDescText}"/>
                             </StackPanel>
                         </Button>
 
@@ -188,8 +188,8 @@
                                 <Border Style="{StaticResource TileIconBadge}" Background="{DynamicResource TileBadgeBlueBrush}">
                                     <TextBlock Text="&#9654;" Style="{StaticResource TileIconText}" Foreground="{DynamicResource AccentBrush}"/>
                                 </Border>
-                                <TextBlock Text="启动所选的服务器" Style="{StaticResource TileTitleText}"/>
-                                <TextBlock Text="启动默认服务器（未设置默认时用列表里的第一个）" Style="{StaticResource TileDescText}"/>
+                                <TextBlock Text="{DynamicResource Str_Ui_Start_Selected_Server}" Style="{StaticResource TileTitleText}"/>
+                                <TextBlock Text="{DynamicResource Str_Ui_Start_The_Default_Server_Falls_Back_To_T}" Style="{StaticResource TileDescText}"/>
                             </StackPanel>
                         </Button>
 
@@ -198,8 +198,8 @@
                                 <Border Style="{StaticResource TileIconBadge}" Background="{DynamicResource TileBadgeGreenBrush}">
                                     <TextBlock Text="&#129513;" Style="{StaticResource TileIconText}"/>
                                 </Border>
-                                <TextBlock Text="插件、资源包管理" Style="{StaticResource TileTitleText}"/>
-                                <TextBlock Text="为服务器下载/管理插件和资源包" Style="{StaticResource TileDescText}"/>
+                                <TextBlock Text="{DynamicResource Str_Ui_Plugins_Resource_Packs}" Style="{StaticResource TileTitleText}"/>
+                                <TextBlock Text="{DynamicResource Str_Ui_Download_And_Manage_Server_Plugins_And_R}" Style="{StaticResource TileDescText}"/>
                             </StackPanel>
                         </Button>
 
@@ -208,8 +208,8 @@
                                 <Border Style="{StaticResource TileIconBadge}" Background="{DynamicResource TileBadgePurpleBrush}">
                                     <TextBlock Text="&#9881;" Style="{StaticResource TileIconText}" Foreground="{DynamicResource TextSecondaryBrush}"/>
                                 </Border>
-                                <TextBlock Text="设置选中的服务器参数" Style="{StaticResource TileTitleText}"/>
-                                <TextBlock Text="图形化编辑 motd、最大人数、正版验证等 server.properties 常用项" Style="{StaticResource TileDescText}"/>
+                                <TextBlock Text="{DynamicResource Str_Ui_Configure_Selected_Server}" Style="{StaticResource TileTitleText}"/>
+                                <TextBlock Text="{DynamicResource Str_Ui_Edit_The_Common_Server_Properties_Entrie}" Style="{StaticResource TileDescText}"/>
                             </StackPanel>
                         </Button>
                     </UniformGrid>
@@ -224,15 +224,15 @@
                         <RowDefinition Height="*"/>
                     </Grid.RowDefinitions>
 
-                    <TextBlock Grid.Row="0" Text="服务端核心下载" FontSize="18" FontWeight="Bold" Margin="0,0,0,4"/>
-                    <TextBlock Grid.Row="1" Text="选择核心类型和 Minecraft 版本，下载可直接用于开服的服务端文件。"
+                    <TextBlock Grid.Row="0" Text="{DynamicResource Str_Ui_Server_Core_Downloads_2}" FontSize="18" FontWeight="Bold" Margin="0,0,0,4"/>
+                    <TextBlock Grid.Row="1" Text="{DynamicResource Str_Ui_Choose_A_Server_Type_And_Minecraft_Versi}"
                                Foreground="{DynamicResource TextSecondaryBrush}" FontSize="12" Margin="0,0,0,14"/>
 
                     <!-- 核心类型选择：原本是横排 StackPanel，5 个不会溢出；现在加到 11 个换成
                          WrapPanel，放不下时自动换行，避免右边的按钮被裁掉点不到。 -->
                     <WrapPanel Grid.Row="2" Margin="0,0,0,14">
                         <RadioButton x:Name="CoreVanilla" Style="{StaticResource DownloadCategoryButton}" IsChecked="True"
-                                     Content="Vanilla 原版" Checked="CoreType_Checked" Tag="Vanilla" Margin="0,0,6,6"/>
+                                     Content="{DynamicResource Str_Ui_Vanilla}" Checked="CoreType_Checked" Tag="Vanilla" Margin="0,0,6,6"/>
                         <RadioButton x:Name="CorePaper" Style="{StaticResource DownloadCategoryButton}"
                                      Content="Paper" Checked="CoreType_Checked" Tag="Paper" Margin="0,0,6,6"/>
                         <RadioButton x:Name="CoreFolia" Style="{StaticResource DownloadCategoryButton}"
@@ -264,20 +264,20 @@
                             </Grid.ColumnDefinitions>
 
                             <StackPanel Grid.Column="0">
-                                <TextBlock Text="Minecraft 版本" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4"/>
+                                <TextBlock Text="{DynamicResource Str_Ui_Minecraft_Version}" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4"/>
                                 <ComboBox x:Name="McVersionCombo" Style="{StaticResource FilterComboBox}" Height="34"
                                           SelectionChanged="McVersionCombo_SelectionChanged"/>
                             </StackPanel>
 
                             <StackPanel Grid.Column="2" x:Name="BuildVersionPanel">
-                                <TextBlock x:Name="BuildVersionLabel" Text="构建版本" FontSize="12"
+                                <TextBlock x:Name="BuildVersionLabel" Text="{DynamicResource Str_Ui_Build}" FontSize="12"
                                            Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4"/>
                                 <ComboBox x:Name="BuildVersionCombo" Style="{StaticResource FilterComboBox}" Height="34"/>
                             </StackPanel>
                         </Grid>
 
                         <!-- 安装位置 -->
-                        <TextBlock Text="安装位置" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4"/>
+                        <TextBlock Text="{DynamicResource Str_Ui_Install_Location}" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4"/>
                         <Grid Margin="0,0,0,14">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="*"/>
@@ -285,11 +285,11 @@
                             </Grid.ColumnDefinitions>
                             <TextBox x:Name="TargetDirBox" Grid.Column="0" Style="{StaticResource SearchTextBox}"
                                      Height="34" IsReadOnly="True" Margin="0,0,8,0"/>
-                            <Button Grid.Column="1" Content="浏览..." Style="{StaticResource PrimaryButton}"
+                            <Button Grid.Column="1" Content="{DynamicResource Str_Ui_Browse}" Style="{StaticResource PrimaryButton}"
                                     Click="BrowseTargetDir_Click"/>
                         </Grid>
 
-                        <Button x:Name="DownloadCoreBtn" Content="⬇  开始下载" Style="{StaticResource PrimaryButton}"
+                        <Button x:Name="DownloadCoreBtn" Content="{DynamicResource Str_Ui_Start_Download_2}" Style="{StaticResource PrimaryButton}"
                                 HorizontalAlignment="Left" Padding="24,10" Click="DownloadCore_Click"/>
 
                         <!-- 进度展示 -->
@@ -303,10 +303,10 @@
                         <Border x:Name="InstallRequiredPanel" Background="{DynamicResource SideBrush}" CornerRadius="8"
                                 Padding="14" Margin="0,16,0,0" Visibility="Collapsed">
                             <StackPanel>
-                                <TextBlock Text="安装器已下载，还需再运行一次安装" FontWeight="Bold" Margin="0,0,0,6"/>
+                                <TextBlock Text="{DynamicResource Str_Ui_Installer_Downloaded_It_Still_Needs_To_B}" FontWeight="Bold" Margin="0,0,0,6"/>
                                 <TextBlock x:Name="InstallHintText" TextWrapping="Wrap" FontSize="12"
                                            Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,10"/>
-                                <Button x:Name="RunInstallerBtn" Content="立即运行安装" Style="{StaticResource PrimaryButton}"
+                                <Button x:Name="RunInstallerBtn" Content="{DynamicResource Str_Ui_Run_Installer_Now}" Style="{StaticResource PrimaryButton}"
                                         HorizontalAlignment="Left" Click="RunInstaller_Click"/>
                             </StackPanel>
                         </Border>
@@ -327,8 +327,8 @@
                             <ColumnDefinition Width="Auto"/>
                         </Grid.ColumnDefinitions>
                         <StackPanel Grid.Column="0">
-                            <TextBlock Text="服务器列表" FontSize="18" FontWeight="Bold" Margin="0,0,0,4"/>
-                            <TextBlock Text="一键启动/停止已创建的服务器，或创建一个新的。"
+                            <TextBlock Text="{DynamicResource Str_Ui_Server_List}" FontSize="18" FontWeight="Bold" Margin="0,0,0,4"/>
+                            <TextBlock Text="{DynamicResource Str_Ui_Start_Or_Stop_A_Server_You_Ve_Created_Or}"
                                        Foreground="{DynamicResource TextSecondaryBrush}" FontSize="12"/>
                         </StackPanel>
                         <!-- 内网穿透/公网访问教程的常驻入口：之前这个教程(ServerNetworkGuideWindow)只在
@@ -340,11 +340,11 @@
                              本来的浅蓝底色（ButtonBackgroundBrush）覆盖成了强调色的深蓝，导致这个按钮
                              看起来比其它同样用 PrimaryButton 样式的按钮颜色深很多。去掉这个内联覆盖，
                              跟"创建服务器"按钮保持一致的浅蓝底色。 -->
-                        <Button Grid.Column="1" Content="🌐 如何联机/内网穿透教程" Style="{StaticResource PrimaryButton}"
+                        <Button Grid.Column="1" Content="{DynamicResource Str_Ui_Multiplayer_Port_Forwarding_Guide}" Style="{StaticResource PrimaryButton}"
                                 Padding="14,10" Margin="0,0,10,0"
                                 Click="OpenNetworkGuide_Click"
-                                ToolTip="教你怎么让好友从外网连进你的服务器：内网穿透 / 路由器端口映射 / 云服务器中转"/>
-                        <Button Grid.Column="2" Content="＋ 创建服务器" Style="{StaticResource PrimaryButton}"
+                                ToolTip="{DynamicResource Str_Ui_How_To_Let_Friends_Connect_From_Outside_}"/>
+                        <Button Grid.Column="2" Content="{DynamicResource Str_Ui_Create_Server}" Style="{StaticResource PrimaryButton}"
                                 Padding="16,10" Click="CreateServer_Click"/>
                     </Grid>
 
@@ -370,7 +370,7 @@
                         <RowDefinition Height="*"/>
                     </Grid.RowDefinitions>
 
-                    <TextBlock Grid.Row="0" x:Name="ServerResourcePanelTitle" Text="服务端插件下载" FontSize="18" FontWeight="Bold" Margin="0,0,0,10"/>
+                    <TextBlock Grid.Row="0" x:Name="ServerResourcePanelTitle" Text="{DynamicResource Str_Ui_Server_Plugin_Downloads}" FontSize="18" FontWeight="Bold" Margin="0,0,0,10"/>
 
                     <!-- 资源类型选择：插件(默认)/资源包/数据包/光影包/Mod。不同分类的下载入口
                          (Category_Checked 里的 tag)各自独立，但落到同一个物理面板复用逻辑，
@@ -383,15 +383,15 @@
                          并点击到，不会再被裁切到看不见/点不到的地方。 -->
                     <WrapPanel Grid.Row="1" Orientation="Horizontal" Margin="0,0,0,10">
                         <RadioButton x:Name="SrvResPlugin" Style="{StaticResource DownloadCategoryButton}" IsChecked="True"
-                                     Content="插件" Checked="ServerResourceType_Checked" Tag="Plugin" Margin="0,0,6,4"/>
+                                     Content="{DynamicResource Str_Ui_Plugins}" Checked="ServerResourceType_Checked" Tag="Plugin" Margin="0,0,6,4"/>
                         <RadioButton x:Name="SrvResResourcePack" Style="{StaticResource DownloadCategoryButton}"
-                                     Content="资源包" Checked="ServerResourceType_Checked" Tag="ResourcePack" Margin="0,0,6,4"/>
+                                     Content="{DynamicResource Str_Ui_Resource_Packs_2}" Checked="ServerResourceType_Checked" Tag="ResourcePack" Margin="0,0,6,4"/>
                         <RadioButton x:Name="SrvResDataPack" Style="{StaticResource DownloadCategoryButton}"
-                                     Content="数据包" Checked="ServerResourceType_Checked" Tag="DataPack" Margin="0,0,6,4"/>
+                                     Content="{DynamicResource Str_Ui_Data_Packs}" Checked="ServerResourceType_Checked" Tag="DataPack" Margin="0,0,6,4"/>
                         <RadioButton x:Name="SrvResShader" Style="{StaticResource DownloadCategoryButton}"
-                                     Content="光影包" Checked="ServerResourceType_Checked" Tag="Shader" Margin="0,0,6,4"/>
+                                     Content="{DynamicResource Str_Ui_Shader_Packs}" Checked="ServerResourceType_Checked" Tag="Shader" Margin="0,0,6,4"/>
                         <RadioButton x:Name="SrvResMod" Style="{StaticResource DownloadCategoryButton}"
-                                     Content="Mod(需 Fabric/Forge/NeoForge 服务端)" Checked="ServerResourceType_Checked" Tag="Mod" Margin="0,0,6,4"/>
+                                     Content="{DynamicResource Str_Ui_Mods_Needs_A_Fabric_Forge_Neoforge_Serve}" Checked="ServerResourceType_Checked" Tag="Mod" Margin="0,0,6,4"/>
                     </WrapPanel>
 
                     <!-- 仿 PCL「搜索 Mod」筛选栏：名称/来源 一行，版本/(数据包场景下是"目标世界文件夹") 一行，
@@ -403,7 +403,7 @@
                             <ColumnDefinition Width="Auto"/>
                             <ColumnDefinition Width="*"/>
                         </Grid.ColumnDefinitions>
-                        <TextBlock Text="下载到服务器：" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                        <TextBlock Text="{DynamicResource Str_Ui_Download_To_Server}" VerticalAlignment="Center" Margin="0,0,8,0"/>
                         <ComboBox x:Name="ServerTargetCombo" Style="{StaticResource FilterComboBox}" Grid.Column="1"
                                   DisplayMemberPath="DisplayName" HorizontalAlignment="Stretch"
                                   SelectionChanged="ServerTargetCombo_SelectionChanged"/>
@@ -425,33 +425,33 @@
                             </Grid.ColumnDefinitions>
 
                             <StackPanel Grid.Row="0" Grid.Column="0">
-                                <TextBlock Text="名称" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4"/>
+                                <TextBlock Text="{DynamicResource Str_Ui_Name}" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4"/>
                                 <TextBox x:Name="ServerResourceSearchBox" Style="{StaticResource SearchTextBox}" Padding="8" FontSize="13"
                                          TextChanged="ServerResourceFilter_Changed"
-                                         ToolTip="搜索关键词，支持中英文，留空浏览热门资源，输入后自动搜索"/>
+                                         ToolTip="{DynamicResource Str_Ui_Search_By_Keyword_Leave_Blank_To_Browse_}"/>
                             </StackPanel>
                             <StackPanel Grid.Row="0" Grid.Column="2">
-                                <TextBlock Text="来源" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4"/>
+                                <TextBlock Text="{DynamicResource Str_Ui_Source}" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4"/>
                                 <ComboBox x:Name="ServerResourceSourceCombo" Style="{StaticResource FilterComboBox}"
                                           SelectionChanged="ServerResourceSourceCombo_SelectionChanged">
-                                    <ComboBoxItem Content="综合(Modrinth+CurseForge)" IsSelected="True" Tag="combined"/>
-                                    <ComboBoxItem Content="仅 Modrinth" Tag="modrinth"/>
-                                    <ComboBoxItem Content="仅 CurseForge" Tag="curseforge"/>
+                                    <ComboBoxItem Content="{DynamicResource Str_Ui_Combined_Modrinth_Curseforge}" IsSelected="True" Tag="combined"/>
+                                    <ComboBoxItem Content="{DynamicResource Str_Ui_Modrinth_Only}" Tag="modrinth"/>
+                                    <ComboBoxItem Content="{DynamicResource Str_Ui_Curseforge_Only}" Tag="curseforge"/>
                                 </ComboBox>
                             </StackPanel>
 
                             <StackPanel Grid.Row="1" Grid.Column="0" Margin="0,10,0,0">
-                                <TextBlock Text="版本" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4"/>
+                                <TextBlock Text="{DynamicResource Str_Ui_Version}" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4"/>
                                 <TextBox x:Name="ServerResourceGameVersionBox" Style="{StaticResource SearchTextBox}" Padding="8" FontSize="13"
                                          TextChanged="ServerResourceFilter_Changed"
-                                         ToolTip="限定游戏版本，例如 1.20.1；留空不限定"/>
+                                         ToolTip="{DynamicResource Str_Ui_Limit_To_A_Game_Version_E_G_1_20_1_Leave}"/>
                             </StackPanel>
                             <!-- 版本快捷选择条：跟 DownloadCenterPage 的 Mod/资源面板同一套结构
                                  （ResourceVersionChipPanel/ModVersionChipPanel），点一下直接把常用
                                  版本号填进上面的"版本"输入框，不用自己手打。 -->
                             <StackPanel Grid.Row="2" Grid.Column="0" Grid.ColumnSpan="3" Margin="0,8,0,0">
                                 <WrapPanel x:Name="ServerResourceVersionChipPanel">
-                                    <Button Content="全部" Style="{StaticResource VersionChipButton}" Tag="" Click="ServerResourceVersionChip_Click"/>
+                                    <Button Content="{DynamicResource Str_Ui_All}" Style="{StaticResource VersionChipButton}" Tag="" Click="ServerResourceVersionChip_Click"/>
                                     <Button Content="1.21" Style="{StaticResource VersionChipButton}" Tag="1.21" Click="ServerResourceVersionChip_Click"/>
                                     <Button Content="1.20" Style="{StaticResource VersionChipButton}" Tag="1.20" Click="ServerResourceVersionChip_Click"/>
                                     <Button Content="1.19" Style="{StaticResource VersionChipButton}" Tag="1.19" Click="ServerResourceVersionChip_Click"/>
@@ -467,17 +467,17 @@
                                  其它类型这一格留空，不占用视觉重量。 -->
                             <StackPanel Grid.Row="1" Grid.Column="2" Margin="0,10,0,0"
                                         x:Name="ServerDataPackWorldPanel" Visibility="Collapsed">
-                                <TextBlock Text="目标世界文件夹" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4"/>
+                                <TextBlock Text="{DynamicResource Str_Ui_Target_World_Folder}" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4"/>
                                 <TextBox x:Name="ServerDataPackWorldBox" Style="{StaticResource SearchTextBox}"
                                          Padding="8" FontSize="13" Text="world"
-                                         ToolTip="服务端存档目录名，默认 world；如果服主自定义了 level-name，请改成对应名称"/>
+                                         ToolTip="{DynamicResource Str_Ui_The_Server_S_World_Folder_Name_World_By_}"/>
                             </StackPanel>
 
                             <StackPanel Grid.Row="3" Grid.Column="0" Grid.ColumnSpan="3" Orientation="Horizontal" Margin="0,14,0,0">
-                                <Button Content="搜索" Style="{StaticResource PrimaryButton}" Padding="20,8" Click="ServerResourceSearch_Click"
-                                        ToolTip="列表已自动刷新；网络失败或想立即按当前条件重新搜索时可点这里"/>
-                                <Button Content="重置条件" Style="{StaticResource SecondaryButton}" Padding="20,8" Margin="10,0,0,0"
-                                        Click="ServerResourceFilterReset_Click" ToolTip="清空名称/版本筛选，恢复到浏览热门资源"/>
+                                <Button Content="{DynamicResource Str_Common_Search}" Style="{StaticResource PrimaryButton}" Padding="20,8" Click="ServerResourceSearch_Click"
+                                        ToolTip="{DynamicResource Str_Ui_The_List_Refreshes_Automatically_Click_H}"/>
+                                <Button Content="{DynamicResource Str_Ui_Reset_Filters}" Style="{StaticResource SecondaryButton}" Padding="20,8" Margin="10,0,0,0"
+                                        Click="ServerResourceFilterReset_Click" ToolTip="{DynamicResource Str_Ui_Clear_The_Name_And_Version_Filters_And_B}"/>
                             </StackPanel>
                         </Grid>
                     </Border>
@@ -492,7 +492,7 @@
                         <ListBox.ItemTemplate>
                             <DataTemplate>
                                 <Grid Margin="4,8" Cursor="Hand" Background="Transparent" Tag="{Binding}"
-                                      MouseLeftButtonUp="ServerResourceListItem_Click" ToolTip="点击查看详情和可下载的版本">
+                                      MouseLeftButtonUp="ServerResourceListItem_Click" ToolTip="{DynamicResource Str_Ui_Click_For_Details_And_Downloadable_Versi}">
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="Auto"/>
                                         <ColumnDefinition Width="*"/>
@@ -509,8 +509,8 @@
                                         <TextBlock Text="{Binding Description}" FontSize="12" TextWrapping="Wrap" MaxHeight="34"
                                                    Foreground="{DynamicResource TextSecondaryBrush}"/>
                                         <TextBlock FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}">
-                                            <Run Text="作者: "/><Run Text="{Binding Author}"/>
-                                            <Run Text="  下载量: "/><Run Text="{Binding Downloads}"/>
+                                            <Run Text="{DynamicResource Str_Ui_Author}"/><Run Text="{Binding Author}"/>
+                                            <Run Text="{DynamicResource Str_Ui_Downloads}"/><Run Text="{Binding Downloads}"/>
                                         </TextBlock>
                                     </StackPanel>
                                 </Grid>
@@ -519,7 +519,7 @@
                     </ListBox>
 
                     <TextBlock x:Name="ServerResourceNoTargetHint" Grid.Row="4"
-                               Text="还没有创建任何服务器，请先去「服务器列表」创建一个再来下载资源。"
+                               Text="{DynamicResource Str_Ui_You_Haven_T_Created_A_Server_Yet_Create_}"
                                FontSize="13" Foreground="{DynamicResource TextSecondaryBrush}"
                                HorizontalAlignment="Center" VerticalAlignment="Center" Visibility="Collapsed"/>
                 </Grid>

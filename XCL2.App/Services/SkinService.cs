@@ -64,7 +64,7 @@ public class SkinService
             return AuthlibInjectorPath;
 
         Directory.CreateDirectory(App.DataDir);
-        progress?.Report(new ProgressInfo("下载万能皮肤补丁", 0, 1, "正在获取 authlib-injector 最新版本信息..."));
+        progress?.Report(new ProgressInfo(Loc.T("Str_Cs_Downloading_Customskinloader", "下载万能皮肤补丁"), 0, 1, "正在获取 authlib-injector 最新版本信息..."));
 
         // 官方 API：GET https://authlib-injector.yushi.moe/artifacts.json 返回最新构建信息
         var infoJson = await _http.GetStringAsync("https://authlib-injector.yushi.moe/artifacts.json", ct);
@@ -79,7 +79,7 @@ public class SkinService
         if (string.IsNullOrEmpty(downloadUrl))
             throw new InvalidOperationException("未能获取 authlib-injector 的下载地址。");
 
-        progress?.Report(new ProgressInfo("下载万能皮肤补丁", 0, 1, "正在下载 authlib-injector.jar..."));
+        progress?.Report(new ProgressInfo(Loc.T("Str_Cs_Downloading_Customskinloader", "下载万能皮肤补丁"), 0, 1, "正在下载 authlib-injector.jar..."));
         using var resp = await _http.GetAsync(downloadUrl, HttpCompletionOption.ResponseHeadersRead, ct);
         if (!resp.IsSuccessStatusCode)
             throw new InvalidOperationException($"下载 authlib-injector 失败：HTTP {(int)resp.StatusCode} {resp.ReasonPhrase}");
@@ -92,7 +92,7 @@ public class SkinService
         }
         File.Move(tempPath, AuthlibInjectorPath, overwrite: true);
 
-        progress?.Report(new ProgressInfo("下载万能皮肤补丁", 1, 1, "完成"));
+        progress?.Report(new ProgressInfo(Loc.T("Str_Cs_Downloading_Customskinloader", "下载万能皮肤补丁"), 1, 1, Loc.T("Str_Common_Finish", "完成")));
         return AuthlibInjectorPath;
     }
 

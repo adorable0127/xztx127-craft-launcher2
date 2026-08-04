@@ -114,6 +114,45 @@ public class AppConfig
     /// 关闭后只是不再请求/渲染这些图标图片，不影响搜索和下载功能本身。</summary>
     public bool ShowModIcons { get; set; } = true;
 
+    // ===================== 拖拽安装（Drag & Drop）默认行为 =====================
+
+    /// <summary>
+    /// 拖入 .zip 且无法从内容百分百确定类型时的默认处理方式。
+    /// zip 是材质包/光影包/数据包/存档/整合包的共同容器，光看扩展名分不出来；
+    /// DragDropInstallService 会先开包看结构，只有**看不出来**时才用这个默认值。
+    /// "Ask" = 弹一个内嵌选择框问用户（默认，也最不容易装错地方）。
+    /// </summary>
+    public DropZipDefault ZipDropDefault { get; set; } = DropZipDefault.Ask;
+
+    /// <summary>
+    /// 在「服务端管理」页拖入 .jar 时的默认去向。
+    /// 服务端页面拖 jar 绝大多数情况是想装服务端核心/服务端 mod，
+    /// 而不是装到客户端实例的 mods 里，所以这里默认 Server。
+    /// </summary>
+    public DropJarTarget ServerPageJarDropTarget { get; set; } = DropJarTarget.Server;
+
+    /// <summary>
+    /// 在主页 / 版本选择 / 其它非服务端页面拖入 .jar 时的默认去向。
+    /// 默认装进当前选中实例的 mods。
+    /// </summary>
+    public DropJarTarget DefaultJarDropTarget { get; set; } = DropJarTarget.CurrentInstanceMods;
+
+    /// <summary>
+    /// 拖入整合包时，是否默认"从零下载一个全新实例"（下载对应的原版 + 加载器再装整合包内容），
+    /// 而不是把内容覆盖进某个已有实例。默认 true——整合包本来就是"一整套独立环境"，
+    /// 覆盖装进已有实例几乎必然跟已装的 mod 打架。
+    /// </summary>
+    public bool ModpackDropCreatesNewInstance { get; set; } = true;
+
+    /// <summary>
+    /// 社区资源是否显示预览版（beta / alpha）。
+    /// 对应「下载中心 - 社区资源」筛选栏里的"显示预览版资源"勾选框，
+    /// 以及资源详情页版本列表的默认展开状态（详情页仍可临时切换，不写回这里）。
+    /// 默认 false：新手装到 beta 版 mod 导致游戏崩溃是很常见的坑，
+    /// 让用户主动打开比默认打开安全。
+    /// </summary>
+    public bool ShowPreviewVersions { get; set; } = false;
+
     /// <summary>是否在服务器启动成功后自动弹出"如何开放外网访问"教程窗口。默认开启，
     /// 帮助不熟悉内网穿透/端口映射的用户第一次开服后就知道下一步该做什么；用户在教程窗口里
     /// 勾选"不再提示"后关闭。</summary>
@@ -359,6 +398,14 @@ public class AppConfig
     /// 是一个只增不减的历史累计值，不随删除版本/切换文件夹而重置。</summary>
     public long GameLaunchSuccessCount { get; set; } = 0;
 
+    /// <summary>"今日第几次启动启动器"计数所属的日期（yyyy-MM-dd）。跟 <see cref="TodayLauncherStartCount"/>
+    /// 配套使用：LauncherLogService 在每次启动器启动时检查这个日期是否等于今天，不等于就把计数清零重新开始，
+    /// 用来给 xcl2/logs/ 下每次会话的日志文件命名（见 LauncherLogService 类注释）。</summary>
+    public string? LastLaunchCountDate { get; set; }
+
+    /// <summary>当天（LastLaunchCountDate 那一天）启动器已经被打开的次数，跨天自动从 0 重新计数。</summary>
+    public int TodayLauncherStartCount { get; set; } = 0;
+
     /// <summary>
     /// 内存优化功能总开关：开启后，启动游戏前会按 <see cref="Services.MemoryOptimizerService"/>
     /// 的推荐算法，结合当前系统可用内存 + 已选版本的加载器类型，自动把 MinMemoryMb/MaxMemoryMb
@@ -382,4 +429,26 @@ public class AppConfig
     /// 只影响当前这一次显示）把它们都显示出来，方便用户自己手滑隐藏后还能找回来改设置。
     /// </summary>
     public List<string> HiddenFeatureKeys { get; set; } = new();
+}
+
+/// <summary>拖入 .zip 且内容特征不明确时的默认处理方式。</summary>
+public enum DropZipDefault
+{
+    /// <summary>弹内嵌选择框问用户（默认）。</summary>
+    Ask,
+    /// <summary>一律当整合包处理。</summary>
+    Modpack,
+    /// <summary>一律当资源包（材质包）处理。</summary>
+    ResourcePack,
+}
+
+/// <summary>拖入 .jar 时的默认安装去向。</summary>
+public enum DropJarTarget
+{
+    /// <summary>装进当前选中客户端实例的 mods/。</summary>
+    CurrentInstanceMods,
+    /// <summary>装进当前选中服务器实例的 mods/（服务端 mod）。</summary>
+    Server,
+    /// <summary>每次都问。</summary>
+    Ask,
 }

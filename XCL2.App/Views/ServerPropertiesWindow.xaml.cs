@@ -18,7 +18,7 @@ namespace XCL2.App.Views;
 /// K-V，Minecraft 服务端自己启动时会做校验/给默认值，这里过度校验反而可能跟服务端实际
 /// 接受的格式不一致（拦住合法输入），保存原样透传交给服务端处理更省事也更不容易出错。
 /// </summary>
-public partial class ServerPropertiesWindow : Window
+public partial class ServerPropertiesWindow : OverlayDialogControl
 {
     private readonly string _serverDir;
 
@@ -112,19 +112,18 @@ public partial class ServerPropertiesWindow : Window
         try
         {
             ServerPropertiesService.Save(_serverDir, updates);
-            StatusText.Text = "已保存，重启服务器后生效。";
-            DialogResult = true;
+            StatusText.Text = Loc.T("Str_Cs_Saved_Restart_The_Server_For_It_To_Take_", "已保存，重启服务器后生效。");
+            CloseWith(true);
         }
         catch (Exception ex)
         {
-            ErrorPresenter.ShowFriendlyError("保存服务器配置失败，可能是文件正被占用（比如服务器还在运行），请停止服务器后重试。",
+            ErrorPresenter.ShowFriendlyError(Loc.T("Str_Cs_Couldn_T_Save_The_Server_Configuration_T", "保存服务器配置失败，可能是文件正被占用（比如服务器还在运行），请停止服务器后重试。"),
                 ex.ToString(), "保存配置失败");
         }
     }
 
     private void Cancel_Click(object sender, RoutedEventArgs e)
     {
-        DialogResult = false;
-        Close();
+        CloseWith(false);
     }
 }

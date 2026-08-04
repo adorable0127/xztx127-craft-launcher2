@@ -47,4 +47,32 @@ public class OverlayDialogControl : UserControl, IOverlayDialog
     /// <summary>请求宿主关闭当前弹窗并带上结果，等价于原来的
     /// "DialogResult = xxx; Close();"两行。</summary>
     protected void CloseWith(bool? result) => RequestClose?.Invoke(this, result);
+
+    // ==================== Window 兼容层 ====================
+    //
+    // 16 个原本是独立 Window 的弹窗迁移到 Overlay 之后，全项目有 30 多个调用点在用
+    // 熟悉的 Window 三件套：`dlg.ShowDialog()`、`dlg.Show()`、`dlg.Close()`。
+    //
+    // 与其把这 30 多处逐个改写成 OverlayDialogService.ShowModal(dlg)（改动面大、
+    // 容易漏、而且以后每加一个弹窗都要记得用新写法），不如在基类上补三个同名成员，
+    // 让原有调用写法**原样继续可用**。这样迁移对调用方是完全透明的：
+    // 调用点一行都不用动，行为从"弹出一个独立的系统窗口"变成"在主窗口内部弹出遮罩层"。
+    //
+    // 三个成员的语义跟 Window 上的同名成员一一对应：
+    //   ShowDialog() → 模态，阻塞到关闭，返回 bool?（对应原 DialogResult）
+    //   Show()       → 非模态，立即返回
+    //   Close()      → 关闭自己（结果为 null，等价于原来"直接叉掉窗口"）
+    //
+    // Close() 必须是 public：DeviceCodeWindow / MicrosoftLoginWindow 这类弹窗
+    // 是由**外部**代码（登录流程拿到 token 之后）调用 popup.Close() 关掉的，
+    // 而 CloseWith 是 protected，外部够不着。
+
+    /// <summary>模态显示并等待结果，等价于原 Window.ShowDialog()。</summary>
+    public bool? ShowDialog() => OverlayDialogService.ShowModal(this);
+
+    /// <summary>非模态显示，等价于原 Window.Show()。</summary>
+    public void Show() => OverlayDialogService.ShowNonModal(this);
+
+    /// <summary>关闭自己，等价于原 Window.Close()（结果为 null）。</summary>
+    public void Close() => RequestClose?.Invoke(this, null);
 }

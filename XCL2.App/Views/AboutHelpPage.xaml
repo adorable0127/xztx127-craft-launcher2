@@ -1,0 +1,366 @@
+<UserControl x:Class="XCL2.App.Views.AboutHelpPage"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:services="clr-namespace:XCL2.App.Services">
+    <Border Background="{DynamicResource PanelBrush}" CornerRadius="10" Padding="20">
+        <Grid>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="*"/>
+            </Grid.RowDefinitions>
+
+            <!-- ===== 顶部：页面内二级导航（帮助 / 鸣谢），默认停在"帮助"，
+                 点子菜单或者往下滚都能到"鸣谢"，两种方式互相同步。 -->
+            <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="0,0,0,14">
+                <TextBlock Text="鸣谢与帮助" FontSize="20" FontWeight="Bold"
+                           Foreground="{DynamicResource TextPrimaryBrush}" VerticalAlignment="Center"/>
+                <StackPanel Orientation="Horizontal" Margin="24,0,0,0" VerticalAlignment="Center">
+                    <RadioButton x:Name="SubNavHelp" Content="帮助" GroupName="AboutHelpSubNav"
+                                 Style="{StaticResource GameVersionTabRadioButton}" IsChecked="True"
+                                 Checked="SubNavHelp_Checked"/>
+                    <RadioButton x:Name="SubNavThanks" Content="鸣谢" GroupName="AboutHelpSubNav"
+                                 Style="{StaticResource GameVersionTabRadioButton}"
+                                 Checked="SubNavThanks_Checked"/>
+                </StackPanel>
+            </StackPanel>
+
+            <ScrollViewer x:Name="MainScroll" Grid.Row="1" VerticalScrollBarVisibility="Auto"
+                          HorizontalScrollBarVisibility="Disabled"
+                          services:ScrollWheelBehavior.EnableFastWheel="True"
+                          ScrollChanged="MainScroll_ScrollChanged">
+                <StackPanel>
+
+                    <!-- ============================================================
+                         第一部分：帮助
+                         ============================================================ -->
+                    <StackPanel x:Name="HelpSection" MaxWidth="760" HorizontalAlignment="Left">
+
+                        <TextBlock Text="帮助" FontSize="16" FontWeight="Bold" Margin="0,0,0,10"/>
+
+                        <!-- 1. 如何登录微软账户 -->
+                        <Border Background="{DynamicResource SideBrush}" CornerRadius="8" Padding="14" Margin="0,0,0,12">
+                            <StackPanel>
+                                <TextBlock Text="如何登录微软账户" FontWeight="Bold" Margin="0,0,0,6"/>
+                                <TextBlock TextWrapping="Wrap" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="13">
+                                    <Run Text="1. 在左侧导航栏点击「账户」进入账户管理页；"/>
+                                    <LineBreak/>
+                                    <Run Text="2. 点击「添加正版账户 / 微软登录」，启动器会打开一个登录窗口（或给出一个设备代码 + 登录网址）；"/>
+                                    <LineBreak/>
+                                    <Run Text="3. 使用你的微软账户邮箱和密码登录，并完成可能出现的两步验证；"/>
+                                    <LineBreak/>
+                                    <Run Text="4. 登录成功后启动器会自动获取你的正版 Minecraft 档案（用户名、皮肤等），无需手动填写；"/>
+                                    <LineBreak/>
+                                    <Run Text="5. 如果长时间卡在登录页面加载不出来，通常是网络问题，请检查网络连接或稍后重试。"/>
+                                </TextBlock>
+                                <Button Content="打开微软登录页面" HorizontalAlignment="Left" Padding="12,6" Margin="0,10,0,0"
+                                        Click="OpenMicrosoftLogin_Click"/>
+                            </StackPanel>
+                        </Border>
+
+                        <!-- 2. 如何购买 Minecraft -->
+                        <Border Background="{DynamicResource SideBrush}" CornerRadius="8" Padding="14" Margin="0,0,0,12">
+                            <StackPanel>
+                                <TextBlock Text="如何购买 Minecraft" FontWeight="Bold" Margin="0,0,0,6"/>
+                                <TextBlock TextWrapping="Wrap" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="13">
+                                    <Run Text="1. 打开 Minecraft 官网，选择 Java &amp; Bedrock Edition（Java 版 &amp; 基岩版）套装；"/>
+                                    <LineBreak/>
+                                    <Run Text="2. 使用你的微软账户登录并完成支付（支持信用卡 / 借记卡等常见支付方式，具体以官网为准）；"/>
+                                    <LineBreak/>
+                                    <Run Text="3. 购买成功后，该正版身份会直接绑定在你的微软账户上，不需要额外的激活码或安装其它启动器；"/>
+                                    <LineBreak/>
+                                    <Run Text="4. 回到本启动器，使用同一个微软账户登录，就能看到已购买的正版档案。"/>
+                                    <LineBreak/>
+                                    <Run Text="（本启动器本身不销售、不提供游戏本体，购买行为需要在官方渠道完成。）"/>
+                                </TextBlock>
+                                <Button Content="打开 Minecraft 官网购买页面" HorizontalAlignment="Left" Padding="12,6" Margin="0,10,0,0"
+                                        Click="OpenMinecraftBuy_Click"/>
+                            </StackPanel>
+                        </Border>
+
+                        <!-- 3. 开局第一天该怎么玩 -->
+                        <Border Background="{DynamicResource SideBrush}" CornerRadius="8" Padding="14" Margin="0,0,0,12">
+                            <StackPanel>
+                                <TextBlock Text="开局第一天该怎么玩" FontWeight="Bold" Margin="0,0,0,6"/>
+                                <TextBlock TextWrapping="Wrap" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="13">
+                                    <Run Text="1. 落地先观察周围地形，找一处靠近树林、平原或者水源的地方作为落脚点；"/>
+                                    <LineBreak/>
+                                    <Run Text="2. 优先punch几棵树拿到原木，合成工作台和基础木质/石质工具（镐、斧、剑）；"/>
+                                    <LineBreak/>
+                                    <Run Text="3. 趁天还亮，挖一个简单的地洞或者用方块搭一个能封住四面的临时庇护所，避免天黑被怪物摸家；"/>
+                                    <LineBreak/>
+                                    <Run Text="4. 找到煤炭和铁矿，升级到石制/铁制工具，并合成一个熔炉；"/>
+                                    <LineBreak/>
+                                    <Run Text="5. 补充食物（击杀动物或采集浆果/胡萝卜等），保证饥饿值不空；"/>
+                                    <LineBreak/>
+                                    <Run Text="6. 有条件的话摆一张床，晚上睡觉跳过夜晚、锁定重生点；"/>
+                                    <LineBreak/>
+                                    <Run Text="7. 后续再逐步扩展基地、探索地下矿洞、准备下界传送门等中后期目标。"/>
+                                </TextBlock>
+                            </StackPanel>
+                        </Border>
+
+                        <!-- 4. 如果报错怎么办 -->
+                        <Border Background="{DynamicResource SideBrush}" CornerRadius="8" Padding="14" Margin="0,0,0,12">
+                            <StackPanel>
+                                <TextBlock Text="如果报错怎么办" FontWeight="Bold" Margin="0,0,0,6"/>
+                                <TextBlock TextWrapping="Wrap" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="13">
+                                    <Run Text="1. 先在左侧导航栏打开「日志」页，查看「游戏日志」或「崩溃报告分析」标签页，启动器会尝试自动分析常见报错原因；"/>
+                                    <LineBreak/>
+                                    <Run Text="2. 常见问题：内存分配不足（可在「设置」里调整最大内存）、Java 版本不匹配（部分新版本需要更高版本 Java）、模组之间冲突（可在「本地 Mod 管理」里逐个禁用排查）；"/>
+                                    <LineBreak/>
+                                    <Run Text="3. 如果是网络相关报错（登录失败、下载失败），请检查网络连接，或尝试切换下载源；"/>
+                                    <LineBreak/>
+                                    <Run Text="4. 排查无果时，可以把崩溃日志复制出来，去启动器的开源仓库提交 Issue，附上完整日志会更容易定位问题。"/>
+                                </TextBlock>
+                                <StackPanel Orientation="Horizontal" Margin="0,10,0,0">
+                                    <Button x:Name="OpenLogsPageBtn" Content="前往日志页" Padding="12,6" Margin="0,0,10,0"
+                                            Click="OpenLogsPage_Click"/>
+                                    <Button Content="去仓库提交 Issue" Padding="12,6" Click="OpenIssue_Click"/>
+                                </StackPanel>
+                            </StackPanel>
+                        </Border>
+
+                        <!-- 5. 离线模式和正版账户有什么区别 -->
+                        <Border Background="{DynamicResource SideBrush}" CornerRadius="8" Padding="14" Margin="0,0,0,12">
+                            <StackPanel>
+                                <TextBlock Text="离线模式和正版账户有什么区别" FontWeight="Bold" Margin="0,0,0,6"/>
+                                <TextBlock TextWrapping="Wrap" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="13">
+                                    <Run Text="• 正版账户：登录你购买过 Minecraft 的微软账户，可以连正版验证服务器、使用正版皮肤，也是加入大多数公共正版服务器的前提；"/>
+                                    <LineBreak/>
+                                    <Run Text="• 离线模式：不需要购买游戏，只需要在账户页手动填一个用户名即可进入单人游戏或者未开正版验证的私人/局域网服务器；"/>
+                                    <LineBreak/>
+                                    <Run Text="• 离线模式下的用户名不会做唯一性校验，只要联机的服务器没开正版验证，任何人都可以填相同的用户名，请自行和联机的朋友协调好用户名，避免混淆；"/>
+                                    <LineBreak/>
+                                    <Run Text="• 大多数开了正版验证的公共服务器（包括陶瓦联机等）都要求正版账户登录，离线账户会被拒绝加入。"/>
+                                </TextBlock>
+                            </StackPanel>
+                        </Border>
+
+                        <!-- 6. 如何安装和管理 Mod -->
+                        <Border Background="{DynamicResource SideBrush}" CornerRadius="8" Padding="14" Margin="0,0,0,12">
+                            <StackPanel>
+                                <TextBlock Text="如何安装和管理 Mod" FontWeight="Bold" Margin="0,0,0,6"/>
+                                <TextBlock TextWrapping="Wrap" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="13">
+                                    <Run Text="1. 先确认游戏版本装的是带模组加载器的版本（Forge / Fabric / NeoForge / Quilt 等），纯原版不能装 Mod；如果还没装，可以在「下载中心」选择版本时一并勾选加载器；"/>
+                                    <LineBreak/>
+                                    <Run Text="2. 打开左侧「下载中心」，切换到 Mod 分类，通过 Modrinth / CurseForge 综合搜索找到想要的 Mod，点击下载，会自动装到当前选中的游戏版本目录里；"/>
+                                    <LineBreak/>
+                                    <Run Text="3. 打开左侧「本地 Mod 管理」，可以看到当前版本已安装的所有 Mod，支持逐个启用/禁用（不删除文件，方便临时排查冲突）、删除、查看依赖关系；"/>
+                                    <LineBreak/>
+                                    <Run Text="4. 注意 Mod 的加载器类型（Forge / Fabric 等）和游戏版本号必须跟你当前的实例完全匹配，装错加载器或版本号的 Mod 通常会导致游戏无法启动；"/>
+                                    <LineBreak/>
+                                    <Run Text="5. 一次装太多 Mod 又报错时，建议用「本地 Mod 管理」的启用/禁用功能做二分排查：先禁用一半 Mod，能进游戏就说明问题在被禁用的那一半，逐步缩小范围。"/>
+                                </TextBlock>
+                            </StackPanel>
+                        </Border>
+
+                        <!-- 7. 如何和朋友联机 -->
+                        <Border Background="{DynamicResource SideBrush}" CornerRadius="8" Padding="14" Margin="0,0,0,12">
+                            <StackPanel>
+                                <TextBlock Text="如何和朋友联机" FontWeight="Bold" Margin="0,0,0,6"/>
+                                <TextBlock TextWrapping="Wrap" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="13">
+                                    <Run Text="• 加入别人开的服务器：在左侧「联机」页添加服务器地址（IP:端口），直接连接即可，无需额外配置；"/>
+                                    <LineBreak/>
+                                    <Run Text="• 自己开服给朋友玩：可以用「服务端管理」页创建/管理一个 Minecraft 服务端，再配合陶瓦联机（Terracotta）或者路由器端口映射，让公网另一端的朋友连进来，不需要自己懂复杂的网络知识；"/>
+                                    <LineBreak/>
+                                    <Run Text="• 局域网快速联机（都在同一个 Wi-Fi/路由器下）：在存档界面选择「对局域网开放」，同一局域网内的朋友直接在多人游戏列表里就能自动搜到；"/>
+                                    <LineBreak/>
+                                    <Run Text="• 连不上时优先检查：双方是否用的同一个游戏版本 + 加载器类型 + Mod 列表（联机通常要求客户端 Mod 与服务端一致）、服务器地址端口是否正确、以及双方网络本身是否连通。"/>
+                                </TextBlock>
+                            </StackPanel>
+                        </Border>
+
+                        <!-- 8. 如何选择合适的 Java 版本 -->
+                        <Border Background="{DynamicResource SideBrush}" CornerRadius="8" Padding="14" Margin="0,0,0,12">
+                            <StackPanel>
+                                <TextBlock Text="如何选择合适的 Java 版本" FontWeight="Bold" Margin="0,0,0,6"/>
+                                <TextBlock TextWrapping="Wrap" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="13">
+                                    <Run Text="1. 不同 Minecraft 版本对 Java 版本有硬性要求，大致规律：1.16 及更早通常用 Java 8，1.17-1.20.4 左右用 Java 17，1.20.5 及更新的版本通常需要 Java 21；具体以启动报错信息或官方说明为准；"/>
+                                    <LineBreak/>
+                                    <Run Text="2. 启动器一般会在你选择版本时自动检测并推荐合适的 Java，也可以在「设置」页里手动添加/管理已安装的 Java 路径；"/>
+                                    <LineBreak/>
+                                    <Run Text="3. 如果本机还没装任何 Java，可以在「设置」页使用一键下载安装功能，不需要自己去官网找安装包；"/>
+                                    <LineBreak/>
+                                    <Run Text="4. 报错信息里出现「UnsupportedClassVersionError」或者类似「该版本由更高版本的 Java 运行时创建」字样，基本可以确定是 Java 版本不匹配，按上面的对照关系换一个 Java 版本即可。"/>
+                                </TextBlock>
+                            </StackPanel>
+                        </Border>
+
+                        <!-- 9. 存档的备份、迁移与找回 -->
+                        <Border Background="{DynamicResource SideBrush}" CornerRadius="8" Padding="14" Margin="0,0,0,12">
+                            <StackPanel>
+                                <TextBlock Text="存档的备份、迁移与找回" FontWeight="Bold" Margin="0,0,0,6"/>
+                                <TextBlock TextWrapping="Wrap" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="13">
+                                    <Run Text="1. 存档默认保存在对应游戏版本目录下的 saves 文件夹里，可以在「版本」页对应版本上右键，用「打开文件夹」快速定位；"/>
+                                    <LineBreak/>
+                                    <Run Text="2. 备份存档：直接把 saves 文件夹下对应的存档子文件夹整个复制出来保存即可，不需要额外工具；"/>
+                                    <LineBreak/>
+                                    <Run Text="3. 换电脑/迁移存档：把备份出来的存档文件夹整个拷贝到新电脑对应版本的 saves 目录下即可，只要游戏版本一致（或新版本能兼容旧存档），就能直接读取；"/>
+                                    <LineBreak/>
+                                    <Run Text="4. 定期备份重要存档是好习惯，尤其是在更新游戏版本、安装/卸载 Mod 之前，避免因为版本不兼容或 Mod 冲突导致存档损坏后无法找回。"/>
+                                </TextBlock>
+                            </StackPanel>
+                        </Border>
+
+                        <!-- 10. 下载慢或者连不上怎么办 -->
+                        <Border Background="{DynamicResource SideBrush}" CornerRadius="8" Padding="14" Margin="0,0,0,12">
+                            <StackPanel>
+                                <TextBlock Text="下载慢或者连不上怎么办" FontWeight="Bold" Margin="0,0,0,6"/>
+                                <TextBlock TextWrapping="Wrap" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="13">
+                                    <Run Text="1. 官方下载源（Mojang/Modrinth/CurseForge 等）在国内网络环境下有时会比较慢或者偶尔连接超时，属于正常现象，不代表启动器本身有问题；"/>
+                                    <LineBreak/>
+                                    <Run Text="2. 可以在「设置」页查看/切换下载源（如果提供了镜像加速选项），通常能明显提升下载速度；"/>
+                                    <LineBreak/>
+                                    <Run Text="3. 下载中途失败可以直接重试，已下载完成的部分一般不需要重新下载；"/>
+                                    <LineBreak/>
+                                    <Run Text="4. 如果长期完全连不上（不只是慢），可以检查系统代理设置、防火墙/杀毒软件是否拦截了启动器的网络访问，必要时把启动器加入白名单。"/>
+                                </TextBlock>
+                            </StackPanel>
+                        </Border>
+
+                        <!-- 11. 如何更换游戏内皮肤 -->
+                        <Border Background="{DynamicResource SideBrush}" CornerRadius="8" Padding="14" Margin="0,0,0,12">
+                            <StackPanel>
+                                <TextBlock Text="如何更换游戏内皮肤" FontWeight="Bold" Margin="0,0,0,6"/>
+                                <TextBlock TextWrapping="Wrap" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="13">
+                                    <Run Text="• 正版账户：皮肤跟随微软账户，需要在 Minecraft 官网的个人资料页上传/更换新皮肤，更换后重新登录（或重启游戏）即可在本启动器和游戏内看到新皮肤；"/>
+                                    <LineBreak/>
+                                    <Run Text="• 离线账户：可以在左侧「百宝箱」页使用皮肤头像生成器等小工具本地预览/生成头像，但离线模式下的皮肤展示能力有限，具体取决于所在服务器/客户端 Mod 是否支持自定义皮肤。"/>
+                                </TextBlock>
+                            </StackPanel>
+                        </Border>
+
+                        <!-- 12. 常用小技巧 -->
+                        <Border Background="{DynamicResource SideBrush}" CornerRadius="8" Padding="14" Margin="0,0,0,12">
+                            <StackPanel>
+                                <TextBlock Text="启动器使用小技巧" FontWeight="Bold" Margin="0,0,0,6"/>
+                                <TextBlock TextWrapping="Wrap" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="13">
+                                    <Run Text="• 左上角的三横杠按钮可以收起/展开侧边栏，收起后只留图标，适合小屏幕或者想要更大内容区域时使用；"/>
+                                    <LineBreak/>
+                                    <Run Text="• 侧边栏底部可以看到当前选中的账户和游戏版本，启动前建议确认一下，避免选错版本或者用错账户登录；"/>
+                                    <LineBreak/>
+                                    <Run Text="• 拖动文件（比如 Mod 的 jar 包）到启动器窗口内可以快速触发对应的导入/安装流程，不需要每次都手动去下载中心搜索；"/>
+                                    <LineBreak/>
+                                    <Run Text="• 游戏卡死没反应时不需要强制结束进程，可以用侧边栏底部的「关闭所选」/「关闭未响应」按钮，比直接杀进程更安全，能减少存档损坏的概率；"/>
+                                    <LineBreak/>
+                                    <Run Text="• 「百宝箱」页里还收纳了清理游戏垃圾文件、创建桌面快捷方式、内存优化等一些不常用但很实用的小工具，遇到相关需求时可以先去那里看看有没有现成功能。"/>
+                                </TextBlock>
+                            </StackPanel>
+                        </Border>
+
+                        <!-- 官网语言设置说明 -->
+                        <Border Background="{DynamicResource WarningBannerBrush}" CornerRadius="8" Padding="14" Margin="0,0,0,4">
+                            <StackPanel>
+                                <TextBlock Text="关于外部官网的语言" FontWeight="Bold" Margin="0,0,0,6"/>
+                                <TextBlock TextWrapping="Wrap" FontSize="13" Foreground="{DynamicResource TextPrimaryBrush}">
+                                    <Run Text="上面这些按钮打开的是 Minecraft 官网 / 微软官网等第三方网站，默认会跳转到简体中文页面。"/>
+                                    <LineBreak/>
+                                    <Run Text="如果你在这些官网上手动切换到"/>
+                                    <Run Text="简体中文以外" FontWeight="Bold"/>
+                                    <Run Text="的其它语言，官网通常会自动跳转到"/>
+                                    <Run Text="英文版" FontWeight="Bold"/>
+                                    <Run Text="页面（这是官网自身的行为，不是本启动器造成的，也无法在启动器这边控制）。如果切换后打不开中文，属于正常现象，重新选回简体中文即可恢复。"/>
+                                </TextBlock>
+                            </StackPanel>
+                        </Border>
+
+                    </StackPanel>
+
+                    <!-- 分隔：帮助 / 鸣谢 两个区块之间留一道视觉分割线，滚动经过这里时
+                         触发二级导航自动切到"鸣谢"（见 code-behind ScrollChanged）。 -->
+                    <Border x:Name="SectionDivider" Height="1" Background="{DynamicResource DividerBrush}" Margin="0,24,0,24"/>
+
+                    <!-- ============================================================
+                         第二部分：鸣谢
+                         ============================================================ -->
+                    <StackPanel x:Name="ThanksSection" MaxWidth="760" HorizontalAlignment="Left">
+
+                        <TextBlock Text="鸣谢" FontSize="16" FontWeight="Bold" Margin="0,0,0,10"/>
+
+                        <!-- 作者信息 + 赞助 + 开源仓库 -->
+                        <Border Background="{DynamicResource SideBrush}" CornerRadius="8" Padding="16" Margin="0,0,0,16">
+                            <StackPanel>
+                                <TextBlock FontSize="14" Margin="0,0,0,10">
+                                    <Run Text="本启动器作者："/>
+                                    <Run Text="xztx127" FontWeight="Bold" Foreground="{DynamicResource AccentBrush}"/>
+                                </TextBlock>
+                                <StackPanel Orientation="Horizontal">
+                                    <Button Content="💖 赞助作者" Style="{StaticResource PrimaryButton}" Padding="14,7" Margin="0,0,10,0"
+                                            Click="OpenDonate_Click"
+                                            ToolTip="https://ifdian.net/a/xztx127"/>
+                                    <Button Content="📂 开源仓库（GitHub）" Padding="14,7" Click="OpenRepo_Click"
+                                            ToolTip="adorable0127/xztx127-craft-launcher2"/>
+                                </StackPanel>
+                                <TextBlock TextWrapping="Wrap" FontSize="12" Margin="0,10,0,0"
+                                           Foreground="{DynamicResource TextSecondaryBrush}"
+                                           Text="个人开发的第三方 Minecraft Java 版启动器，接入 Modrinth / CurseForge 模组平台，支持离线登录。开源地址：github.com/adorable0127/xztx127-craft-launcher2"/>
+                            </StackPanel>
+                        </Border>
+
+                        <!-- 感谢名单 -->
+                        <TextBlock Text="特别感谢" FontWeight="Bold" Margin="0,0,0,8"/>
+                        <Border Background="{DynamicResource SideBrush}" CornerRadius="8" Padding="14" Margin="0,0,0,16">
+                            <StackPanel>
+                                <TextBlock TextWrapping="Wrap" FontSize="13" LineHeight="24">
+                                    <Run Text="• 各第三方镜像站的 API 提供者"/><LineBreak/>
+                                    <Run Text="• Minecraft 服官方网站（minecraft.net）"/><LineBreak/>
+                                    <Run Text="• 微软官方网站（microsoft.com）"/><LineBreak/>
+                                    <Run Text="• Minecraft Wiki（minecraft.wiki）"/><LineBreak/>
+                                    <Run Text="• MC 百科（mcmod.cn）"/><LineBreak/>
+                                    <Run Text="• Modrinth 和 CurseForge 模组平台"/><LineBreak/>
+                                    <Run Text="• 各种社区资源的创作者们"/><LineBreak/>
+                                    <Run Text="• Claude（Anthropic）—— 协助完成了本启动器的多语言翻译工作"/>
+                                </TextBlock>
+                            </StackPanel>
+                        </Border>
+
+                        <!-- 永久赞助榜 -->
+                        <TextBlock Text="永久赞助榜" FontWeight="Bold" Margin="0,0,0,8"/>
+                        <Border Background="{DynamicResource SideBrush}" CornerRadius="8" Padding="14" Margin="0,0,0,16">
+                            <StackPanel x:Name="PermanentSponsorPanel">
+                                <TextBlock TextWrapping="Wrap" FontSize="13" Foreground="{DynamicResource TextSecondaryBrush}"
+                                           Text="前十位赞助者均为永久赞助，或者赞助满 50 元即可永久上榜。目前榜单空缺，欢迎成为第一位永久赞助者！"/>
+                            </StackPanel>
+                        </Border>
+
+                        <!-- 临时赞助榜 -->
+                        <TextBlock Text="临时赞助榜" FontWeight="Bold" Margin="0,0,0,8"/>
+                        <Border Background="{DynamicResource SideBrush}" CornerRadius="8" Padding="14" Margin="0,0,0,20">
+                            <StackPanel x:Name="TemporarySponsorPanel">
+                                <TextBlock TextWrapping="Wrap" FontSize="13" Foreground="{DynamicResource TextSecondaryBrush}"
+                                           Text="随意赞助一点金额即可上榜，感谢每一位支持者！目前榜单空缺，快来抢占第一个位置吧～"/>
+                            </StackPanel>
+                        </Border>
+
+                        <!-- 哔哩哔哩粉丝墙 -->
+                        <TextBlock Text="感谢我的哔哩哔哩粉丝们" FontWeight="Bold" Margin="0,0,0,8"/>
+                        <Border Background="{DynamicResource SideBrush}" CornerRadius="8" Padding="14" Margin="0,0,0,4">
+                            <StackPanel>
+                                <TextBlock TextWrapping="Wrap" FontSize="12" Margin="0,0,0,10"
+                                           Foreground="{DynamicResource TextSecondaryBrush}"
+                                           Text="感谢一直以来关注和支持的哔哩哔哩粉丝们，排名不分先后："/>
+                                <ItemsControl x:Name="BiliFansList">
+                                    <ItemsControl.ItemsPanel>
+                                        <ItemsPanelTemplate>
+                                            <WrapPanel Orientation="Horizontal"/>
+                                        </ItemsPanelTemplate>
+                                    </ItemsControl.ItemsPanel>
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <Border Background="{DynamicResource PanelBrush}" CornerRadius="14" Padding="10,5" Margin="0,0,8,8"
+                                                    BorderBrush="{DynamicResource DividerBrush}" BorderThickness="1">
+                                                <TextBlock Text="{Binding}" FontSize="12"/>
+                                            </Border>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </StackPanel>
+                        </Border>
+
+                    </StackPanel>
+
+                </StackPanel>
+            </ScrollViewer>
+        </Grid>
+    </Border>
+</UserControl>

@@ -24,8 +24,8 @@
         </Grid.RowDefinitions>
 
         <StackPanel Grid.Row="0" Margin="0,0,0,14">
-            <TextBlock x:Name="TitleText" Text="安装 1.20.1" FontSize="17" FontWeight="Bold" Margin="0,0,0,4"/>
-            <TextBlock Text="选择要安装的方式：原版可以直接游玩；如果要装 Mod，需要选择一个加载器。"
+            <TextBlock x:Name="TitleText" Text="{DynamicResource Str_Ui_Install_1_20_1}" FontSize="17" FontWeight="Bold" Margin="0,0,0,4"/>
+            <TextBlock Text="{DynamicResource Str_Ui_Choose_What_To_Install_Vanilla_Is_Playab}"
                        FontSize="12" TextWrapping="Wrap" Foreground="{DynamicResource TextSecondaryBrush}"/>
         </StackPanel>
 
@@ -33,44 +33,44 @@
             <StackPanel>
                 <RadioButton x:Name="OptVanilla" GroupName="LoaderChoice" IsChecked="True" Margin="0,0,0,10">
                     <StackPanel Margin="8,2">
-                        <TextBlock Text="原版 (Vanilla)" FontWeight="Bold" FontSize="14"/>
-                        <TextBlock Text="官方原版游戏，不支持安装 Mod。" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}"/>
+                        <TextBlock Text="{DynamicResource Str_Ui_Vanilla_2}" FontWeight="Bold" FontSize="14"/>
+                        <TextBlock Text="{DynamicResource Str_Ui_The_Official_Unmodified_Game_Mods_Are_No}" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}"/>
                     </StackPanel>
                 </RadioButton>
 
                 <RadioButton x:Name="OptFabric" GroupName="LoaderChoice" Margin="0,0,0,10">
                     <StackPanel Margin="8,2">
                         <TextBlock Text="Fabric" FontWeight="Bold" FontSize="14"/>
-                        <TextBlock Text="轻量加载器，安装快、启动快，多数优化类/内容类 Mod 首选。" FontSize="12" TextWrapping="Wrap" Foreground="{DynamicResource TextSecondaryBrush}"/>
+                        <TextBlock Text="{DynamicResource Str_Ui_A_Lightweight_Loader_Quick_To_Install_Qu}" FontSize="12" TextWrapping="Wrap" Foreground="{DynamicResource TextSecondaryBrush}"/>
                     </StackPanel>
                 </RadioButton>
 
                 <RadioButton x:Name="OptForge" GroupName="LoaderChoice" Margin="0,0,0,10">
                     <StackPanel Margin="8,2">
                         <TextBlock Text="Forge" FontWeight="Bold" FontSize="14"/>
-                        <TextBlock Text="历史最久、生态最大的加载器，很多大型科技/魔法整合包依赖它。需要本地 Java 运行安装器。" FontSize="12" TextWrapping="Wrap" Foreground="{DynamicResource TextSecondaryBrush}"/>
+                        <TextBlock Text="{DynamicResource Str_Ui_The_Oldest_Loader_With_The_Largest_Ecosy}" FontSize="12" TextWrapping="Wrap" Foreground="{DynamicResource TextSecondaryBrush}"/>
                     </StackPanel>
                 </RadioButton>
 
                 <RadioButton x:Name="OptNeoForge" GroupName="LoaderChoice" Margin="0,0,0,10">
                     <StackPanel Margin="8,2">
                         <TextBlock Text="NeoForge" FontWeight="Bold" FontSize="14"/>
-                        <TextBlock Text="从 Forge 分支出来的新加载器，新版本 Mod 生态逐步迁移到这里。同样需要本地 Java。" FontSize="12" TextWrapping="Wrap" Foreground="{DynamicResource TextSecondaryBrush}"/>
+                        <TextBlock Text="{DynamicResource Str_Ui_A_Newer_Loader_Forked_From_Forge_The_Mod}" FontSize="12" TextWrapping="Wrap" Foreground="{DynamicResource TextSecondaryBrush}"/>
                     </StackPanel>
                 </RadioButton>
 
                 <RadioButton x:Name="OptQuilt" GroupName="LoaderChoice" Margin="0,0,0,4">
                     <StackPanel Margin="8,2">
                         <TextBlock Text="Quilt" FontWeight="Bold" FontSize="14"/>
-                        <TextBlock Text="从 Fabric 分支出来的加载器，兼容大部分 Fabric Mod，同时提供一些额外的模组开发特性。安装方式和 Fabric 一样，不需要本地 Java。" FontSize="12" TextWrapping="Wrap" Foreground="{DynamicResource TextSecondaryBrush}"/>
+                        <TextBlock Text="{DynamicResource Str_Ui_A_Loader_Forked_From_Fabric_It_Runs_Most}" FontSize="12" TextWrapping="Wrap" Foreground="{DynamicResource TextSecondaryBrush}"/>
                     </StackPanel>
                 </RadioButton>
             </StackPanel>
         </ScrollViewer>
 
         <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,16,0,0">
-            <Button x:Name="CancelBtn" Content="取消" Width="80" Margin="0,0,8,0" Click="Cancel_Click"/>
-            <Button x:Name="OkBtn" Content="下一步" Width="90" Style="{DynamicResource PrimaryButton}" Click="Ok_Click" IsDefault="True"/>
+            <Button x:Name="CancelBtn" Content="{DynamicResource Str_Common_Cancel}" Width="80" Margin="0,0,8,0" Click="Cancel_Click"/>
+            <Button x:Name="OkBtn" Content="{DynamicResource Str_Common_Next}" Width="90" Style="{DynamicResource PrimaryButton}" Click="Ok_Click" IsDefault="True"/>
         </StackPanel>
     </Grid>
 </local:OverlayDialogControl>

@@ -45,7 +45,10 @@ public partial class ProgressDialog : OverlayDialogControl
 
     /// <summary>兼容原 Window.Show() 调用习惯：把自己显示到 Overlay 层，非模态，
     /// 不阻塞调用方后续代码（后台下载/安装 Task 该怎么跑还怎么跑）。</summary>
-    public void Show()
+    // 'new'：基类 OverlayDialogControl 现在也有同名的 Window 兼容成员（见 IOverlayDialog.cs），
+    // ProgressDialog 这两个是更早就写好的、语义相同但实现更贴合进度条场景的版本，
+    // 显式加 new 表明是有意隐藏基类实现，不是漏写（否则编译器会报 CS0108 警告）。
+    public new void Show()
     {
         if (_isShowing) return;
         _isShowing = true;
@@ -54,7 +57,7 @@ public partial class ProgressDialog : OverlayDialogControl
     }
 
     /// <summary>兼容原 Window.Close() 调用习惯：把自己从 Overlay 层摘除。</summary>
-    public void Close()
+    public new void Close()
     {
         if (!_isShowing) return;
         _isShowing = false;

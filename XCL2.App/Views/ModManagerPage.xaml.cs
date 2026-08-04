@@ -121,7 +121,7 @@ public partial class ModManagerPage : UserControl
         }
         catch (Exception ex)
         {
-            ErrorPresenter.ShowFriendlyError("扫描 Mod 列表失败，可能是文件被占用或权限不足，请重试。",
+            ErrorPresenter.ShowFriendlyError(Loc.T("Str_Cs_Couldn_T_Scan_The_Mod_List_A_File_May_Be", "扫描 Mod 列表失败，可能是文件被占用或权限不足，请重试。"),
                 ex.ToString(), "扫描 Mod 列表失败");
         }
 
@@ -165,7 +165,7 @@ public partial class ModManagerPage : UserControl
         var gameDir = GetEffectiveGameDir();
         if (gameDir == null)
         {
-            MessageBoxDialog.ShowInfo("请先选择一个文件夹和版本。");
+            MessageBoxDialog.ShowInfo(Loc.T("Str_Cs_Please_Choose_A_Folder_And_A_Version_Fir", "请先选择一个文件夹和版本。"));
             return;
         }
 
@@ -176,7 +176,7 @@ public partial class ModManagerPage : UserControl
         }
         catch (Exception ex)
         {
-            ErrorPresenter.ShowFriendlyError("扫描 Mod 列表失败，可能是文件被占用或权限不足，请重试。",
+            ErrorPresenter.ShowFriendlyError(Loc.T("Str_Cs_Couldn_T_Scan_The_Mod_List_A_File_May_Be", "扫描 Mod 列表失败，可能是文件被占用或权限不足，请重试。"),
                 ex.ToString(), "检查前置模组失败");
             return;
         }
@@ -188,7 +188,7 @@ public partial class ModManagerPage : UserControl
             return;
         }
 
-        var warnWin = new ModDependencyWarningWindow(analysis, gameDir, enabledMods) { Owner = Window.GetWindow(this) };
+        var warnWin = new ModDependencyWarningWindow(analysis, gameDir, enabledMods);
         warnWin.ShowDialog();
         RefreshMods(); // 用户可能在弹窗里下载了前置或删除了 mod，刷新列表让状态保持一致
     }
@@ -254,7 +254,7 @@ public partial class ModManagerPage : UserControl
         var version = VersionCombo.SelectedItem as GameVersion;
         if (gameDir == null || version == null)
         {
-            MessageBoxDialog.ShowInfo("请先选择一个文件夹和版本。");
+            MessageBoxDialog.ShowInfo(Loc.T("Str_Cs_Please_Choose_A_Folder_And_A_Version_Fir", "请先选择一个文件夹和版本。"));
             return;
         }
 
@@ -318,7 +318,7 @@ public partial class ModManagerPage : UserControl
         var gameDir = GetEffectiveGameDir();
         if (gameDir == null)
         {
-            MessageBoxDialog.ShowInfo("请先选择一个文件夹和版本。");
+            MessageBoxDialog.ShowInfo(Loc.T("Str_Cs_Please_Choose_A_Folder_And_A_Version_Fir", "请先选择一个文件夹和版本。"));
             return;
         }
 
@@ -346,7 +346,7 @@ public partial class ModManagerPage : UserControl
               "部分 mod 下载源如果暂时不可用，会跳过并在导入完成后提示，不影响其余内容导入。确定要继续吗？"
             : "导入会把整合包内的 mods/config/resourcepacks/shaderpacks 合并覆盖到当前选中的版本目录，\n" +
               "同名文件会被整合包内容覆盖。确定要继续吗？";
-        var confirm = MessageBoxDialog.ShowConfirm(confirmMsg, "确认导入");
+        var confirm = MessageBoxDialog.ShowConfirm(confirmMsg, Loc.T("Str_Cs_Confirm_Import", Loc.T("Str_Cs_Confirm_Import", "确认导入")));
         if (!confirm) return;
 
         var progressWin = new ProgressDialog("正在导入整合包 ...");
@@ -378,7 +378,7 @@ public partial class ModManagerPage : UserControl
         catch (Exception ex)
         {
             ErrorPresenter.ShowFriendlyError("导入整合包失败，可能是整合包文件已损坏，或格式不受支持。",
-                ex.ToString(), "导入整合包失败");
+                ex.ToString(), Loc.T("Str_Cs_Modpack_Import_Failed", "导入整合包失败"));
         }
         finally
         {

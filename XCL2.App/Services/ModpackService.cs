@@ -44,6 +44,11 @@ public class ModpackService
 
         try
         {
+            // 跟 ExportMrpack 同样的兜底：manifest 里的版本信息不可信时就地重新解析，
+            // 保证 .xclpack 里的 manifest.json 也带上正确的 MC 版本 / 加载器版本，
+            // 否则本启动器自己再导入这个包时同样读不到版本信息（"无法导入"的另一半成因）。
+            manifest = NormalizeManifest(versionDir, manifest);
+
             File.WriteAllText(Path.Combine(tmpDir, ManifestFileName),
                 JsonSerializer.Serialize(manifest, new JsonSerializerOptions { WriteIndented = true }));
 
@@ -66,13 +71,13 @@ public class ModpackService
                 CopyDirectory(src, Path.Combine(tmpDir, folder), (file, name) =>
                 {
                     doneFiles++;
-                    progress?.Report(new ProgressInfo("打包文件", doneFiles, totalFiles, name));
+                    progress?.Report(new ProgressInfo(Loc.T("Str_Cs_Packaging_Files", "打包文件"), doneFiles, totalFiles, name));
                 });
             }
 
-            progress?.Report(new ProgressInfo("生成压缩包", totalFiles, totalFiles, Path.GetFileName(destZipPath)));
+            progress?.Report(new ProgressInfo(Loc.T("Str_Cs_Creating_Archive", "生成压缩包"), totalFiles, totalFiles, Path.GetFileName(destZipPath)));
             ZipFile.CreateFromDirectory(tmpDir, destZipPath, CompressionLevel.Optimal, includeBaseDirectory: false);
-            progress?.Report(new ProgressInfo("导出完成", totalFiles, totalFiles, ""));
+            progress?.Report(new ProgressInfo(Loc.T("Str_Cs_Export_Complete", "导出完成"), totalFiles, totalFiles, ""));
         }
         finally
         {
@@ -283,18 +288,48 @@ public class ModpackService
 
         try
         {
+            // ===== 修复"导出的整合包根本没有代表版本信息，无法导入" =====
+            // 成因见 VersionInfoResolver 类头注释：上游传进来的 manifest.McVersion 过去可能是
+            // "fabric-loader-0.15.11-1.20.1" 这种版本 ID（不是合法 MC 版本号），
+            // manifest.ModLoaderVersion 则恒为空字符串。写进 dependencies 之后整个 mrpack 作废。
+            //
+            // 这里做两道处理：
+            // 1) 兜底再解析一次：manifest 里的 McVersion 不像合法版本号时，直接从版本目录重新解析，
+            //    保证即使调用方传了脏数据，导出的包依然是对的。
+            // 2) 空串一律转成 null：mrpack 规范里"没有这个加载器"应当是**省略该键**，
+            //    而不是给一个空字符串——空串会被其它启动器当成"加载器版本 = 空"从而解析失败。
+            var resolved = VersionInfoResolver.Resolve(versionDir, Path.GetFileName(versionDir.TrimEnd('\\', '/')), null);
+
+            var mcVersion = VersionInfoResolver.LooksLikeMcVersion(manifest.McVersion)
+                ? manifest.McVersion!.Trim()
+                : resolved.McVersion;
+
+            if (!VersionInfoResolver.LooksLikeMcVersion(mcVersion))
+                throw new InvalidOperationException(
+                    $"无法确定这个版本对应的 Minecraft 版本号（解析结果：\"{mcVersion}\"）。" +
+                    "导出的 .mrpack 必须在 dependencies.minecraft 里写一个合法的版本号，否则任何启动器都无法导入。" +
+                    "请检查该版本目录下的 version json 是否完整。");
+
+            var loader = string.IsNullOrWhiteSpace(manifest.ModLoader) ? resolved.ModLoader : manifest.ModLoader;
+            var loaderVersion = string.IsNullOrWhiteSpace(manifest.ModLoaderVersion)
+                ? resolved.ModLoaderVersion
+                : manifest.ModLoaderVersion;
+            if (string.IsNullOrWhiteSpace(loaderVersion)) loaderVersion = null;
+
             var index = new MrpackIndex
             {
                 Name = string.IsNullOrWhiteSpace(manifest.Name) ? "XCL2 整合包" : manifest.Name,
                 Dependencies = new MrpackDependencies
                 {
-                    Minecraft = manifest.McVersion,
-                    FabricLoader = string.Equals(manifest.ModLoader, "Fabric", StringComparison.OrdinalIgnoreCase)
-                        ? manifest.ModLoaderVersion : null,
-                    Forge = string.Equals(manifest.ModLoader, "Forge", StringComparison.OrdinalIgnoreCase)
-                        ? manifest.ModLoaderVersion : null,
-                    NeoForge = string.Equals(manifest.ModLoader, "NeoForge", StringComparison.OrdinalIgnoreCase)
-                        ? manifest.ModLoaderVersion : null,
+                    Minecraft = mcVersion,
+                    FabricLoader = string.Equals(loader, "Fabric", StringComparison.OrdinalIgnoreCase)
+                        ? loaderVersion : null,
+                    QuiltLoader = string.Equals(loader, "Quilt", StringComparison.OrdinalIgnoreCase)
+                        ? loaderVersion : null,
+                    Forge = string.Equals(loader, "Forge", StringComparison.OrdinalIgnoreCase)
+                        ? loaderVersion : null,
+                    NeoForge = string.Equals(loader, "NeoForge", StringComparison.OrdinalIgnoreCase)
+                        ? loaderVersion : null,
                 },
                 // Files 有意留空，见上方注释：所有实体内容走 overrides/，不写远程直链。
                 Files = new List<MrpackFile>(),
@@ -314,7 +349,10 @@ public class ModpackService
             {
                 ["formatVersion"] = 1,
                 ["game"] = "minecraft",
-                ["versionId"] = manifest.ExportedAtUtc,
+                // versionId 是"整合包自身的版本号"，不是导出时间。过去这里直接塞了
+                // ExportedAtUtc（形如 2026-08-04T01:11:54.0000000Z），别的启动器会把这一长串
+                // 原样当成整合包版本显示出来。改成基于 MC 版本 + 日期的短版本号。
+                ["versionId"] = $"{mcVersion}-{DateTime.Now:yyyyMMdd}",
             };
             foreach (var kv in indexObj) withHeader[kv.Key] = kv.Value;
             File.WriteAllText(Path.Combine(tmpDir, "modrinth.index.json"),
@@ -338,13 +376,13 @@ public class ModpackService
                 CopyDirectory(src, Path.Combine(overridesDir, folder), (file, name) =>
                 {
                     doneFiles++;
-                    progress?.Report(new ProgressInfo("打包文件", doneFiles, totalFiles, name));
+                    progress?.Report(new ProgressInfo(Loc.T("Str_Cs_Packaging_Files", "打包文件"), doneFiles, totalFiles, name));
                 });
             }
 
-            progress?.Report(new ProgressInfo("生成压缩包", totalFiles, totalFiles, Path.GetFileName(destMrpackPath)));
+            progress?.Report(new ProgressInfo(Loc.T("Str_Cs_Creating_Archive", "生成压缩包"), totalFiles, totalFiles, Path.GetFileName(destMrpackPath)));
             ZipFile.CreateFromDirectory(tmpDir, destMrpackPath, CompressionLevel.Optimal, includeBaseDirectory: false);
-            progress?.Report(new ProgressInfo("导出完成", totalFiles, totalFiles, ""));
+            progress?.Report(new ProgressInfo(Loc.T("Str_Cs_Export_Complete", "导出完成"), totalFiles, totalFiles, ""));
         }
         finally
         {
@@ -358,6 +396,35 @@ public class ModpackService
         foreach (var sub in Directory.GetDirectories(dir))
             count += CountFiles(sub);
         return count;
+    }
+
+    /// <summary>
+    /// 统一把一个可能"脏"的 ModpackManifest 修正成带真实版本信息的版本。
+    ///
+    /// 调用方（ModManagerPage）填的是 GameVersion 上的字段，而 GameVersion 又来自
+    /// FolderService.ScanVersions —— 那一段过去用的是 `InheritsFrom ?? Id` + 空字符串的
+    /// 假实现，独立实例（inheritsFrom 被主动清空）下会把整个版本 ID 当成 MC 版本号。
+    /// 这里再兜一层，即使上游还没改到位，导出的包也一定是对的。
+    /// </summary>
+    private static ModpackManifest NormalizeManifest(string versionDir, ModpackManifest manifest)
+    {
+        var versionId = Path.GetFileName(versionDir.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+        var resolved = VersionInfoResolver.Resolve(versionDir, versionId, null);
+
+        return new ModpackManifest
+        {
+            Name = string.IsNullOrWhiteSpace(manifest.Name) ? versionId : manifest.Name,
+            McVersion = VersionInfoResolver.LooksLikeMcVersion(manifest.McVersion)
+                ? manifest.McVersion!.Trim()
+                : resolved.McVersion,
+            ModLoader = string.IsNullOrWhiteSpace(manifest.ModLoader) ? resolved.ModLoader : manifest.ModLoader,
+            // 空字符串一律归一成 null：导入方靠 `!= null` 判断"有没有加载器版本信息"，
+            // 空串会被当成"有，但是空的"，比缺失更难处理。
+            ModLoaderVersion = string.IsNullOrWhiteSpace(manifest.ModLoaderVersion)
+                ? resolved.ModLoaderVersion
+                : manifest.ModLoaderVersion,
+            ExportedAtUtc = manifest.ExportedAtUtc,
+        };
     }
 
     /// <summary>onFile 在每复制完一个文件后回调一次(源文件全路径, 用于展示的文件名)，
@@ -399,6 +466,9 @@ public class MrpackDependencies
 {
     public string? Minecraft { get; set; }
     [JsonPropertyName("fabric-loader")] public string? FabricLoader { get; set; }
+    /// <summary>Quilt 的依赖键，Modrinth 规范里跟 fabric-loader 平级。原来漏了这一项，
+    /// 导致 Quilt 实例导出的 mrpack 完全丢失加载器信息（导入方只知道 MC 版本、不知道要装 Quilt）。</summary>
+    [JsonPropertyName("quilt-loader")] public string? QuiltLoader { get; set; }
     [JsonPropertyName("forge")] public string? Forge { get; set; }
     [JsonPropertyName("neoforge")] public string? NeoForge { get; set; }
 }

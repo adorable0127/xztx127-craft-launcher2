@@ -17,7 +17,7 @@ namespace XCL2.App.Views;
 /// 2) 一键完成：点一下，后台按推荐配置自动跑完全部步骤(自动装 Java、用默认文件夹、
 ///    简体中文、自动生成一个离线账户)，全程不需要用户再做任何选择——服务小白用户。
 /// </summary>
-public partial class FirstRunWizardWindow : Window
+public partial class FirstRunWizardWindow : OverlayDialogControl
 {
     private readonly MainWindow _owner;
     private readonly JavaService _javaService = new();
@@ -59,7 +59,12 @@ public partial class FirstRunWizardWindow : Window
         // 遗留 bug。这里用 Closing 事件兜底：不管用户是点 Skip、点完成，还是直接点 ×
         // 关闭，只要窗口关闭这一步就必然会执行到这里，统一保证标记为已完成
         // （_completed 幂等标志避免重复保存；已经手动走完 Complete() 的路径会在此处跳过）。
-        Closing += (_, _) =>
+        // Window.Closing → IOverlayDialog.RequestClose。原来靠 Closing 兜底"不管怎么关都要
+        // 标记为已完成"，Overlay 下 RequestClose 同样在每一条关闭路径上都会触发
+        // （点跳过/点完成/按 Esc/点遮罩），兜底效果一致。
+        // 另外 Overlay 没有 WPF"窗口关闭期间不能再 Close()"那条限制，
+        // 但下面仍然保留 _completed 幂等标志，避免重复保存配置。
+        RequestClose += (_, _) =>
         {
             if (!_completed)
             {
@@ -142,7 +147,7 @@ public partial class FirstRunWizardWindow : Window
 
     private async System.Threading.Tasks.Task DetectJavaAsync()
     {
-        JavaStatusText.Text = "正在检测本机 Java...";
+        JavaStatusText.Text = Loc.T("Str_Ui_Detecting_Installed_Java", "正在检测本机 Java...");
         AutoInstallJavaBtn.IsEnabled = false;
         try
         {
@@ -159,12 +164,12 @@ public partial class FirstRunWizardWindow : Window
             }
             else
             {
-                JavaStatusText.Text = "本机没有检测到可用的 Java，建议点击下面的按钮一键安装（约 200MB，需要联网）。";
+                JavaStatusText.Text = Loc.T("Str_Cs_No_Usable_Java_Was_Found_On_This_Pc_Use_", "本机没有检测到可用的 Java，建议点击下面的按钮一键安装（约 200MB，需要联网）。");
             }
         }
         catch (Exception ex)
         {
-            JavaStatusText.Text = "检测 Java 时出错，可以直接点「一键安装」重新安装一份：" + ex.Message;
+            JavaStatusText.Text = Loc.T("Str_Cs_Something_Went_Wrong_Detecting_Java_You_", "检测 Java 时出错，可以直接点「一键安装」重新安装一份：") + ex.Message;
         }
         finally
         {
@@ -186,8 +191,7 @@ public partial class FirstRunWizardWindow : Window
         }
         catch (Exception ex)
         {
-            MessageBox.Show("Java 安装失败：\n" + ex.Message + "\n\n可以先跳过这一步，之后在「设置」页重试。",
-                "安装失败", MessageBoxButton.OK, MessageBoxImage.Warning);
+            MessageBoxDialog.ShowWarning(Loc.T("Str_Cs_Java_Installation_Failed_N", "Java 安装失败：\n") + ex.Message + Loc.T("Str_Cs_N_Nyou_Can_Skip_This_For_Now_And_Try_Aga", "\n\n可以先跳过这一步，之后在「设置」页重试。"), Loc.T("Str_Cs_Installation_Failed", "安装失败"));
         }
         finally
         {
@@ -208,7 +212,16 @@ public partial class FirstRunWizardWindow : Window
             Title = "选择游戏文件夹",
             InitialDirectory = Directory.Exists(FolderPathBox.Text) ? FolderPathBox.Text : AppContext.BaseDirectory
         };
-        if (dialog.ShowDialog(this) == true)
+
+        // 修复编译错误 CS1503：OpenFolderDialog/OpenFileDialog.ShowDialog(Window? owner)
+        // 要的是一个真正的 Window，而这个类现在继承 OverlayDialogControl（UserControl），
+        // this 不再能隐式转成 Window——这是上一轮批量迁移脚本的又一处漏网：脚本只处理了
+        // "new XxxWindow(...) { Owner = ... }" 这一种写法，没处理
+        // "原生文件/文件夹选择框.ShowDialog(this)" 这种把 this 当 owner 传的用法。
+        // 改用 Window.GetWindow(this)：顺着可视化树往上找，找到的正是承载这个 Overlay
+        // 弹窗的 MainWindow，效果跟以前"以自己为 owner"是一致的（原生对话框弹出时
+        // 仍然正确地叠在主窗口之上、随主窗口一起最小化）。
+        if (dialog.ShowDialog(Window.GetWindow(this)) == true)
         {
             FolderPathBox.Text = dialog.FolderName;
         }
@@ -226,7 +239,7 @@ public partial class FirstRunWizardWindow : Window
         // 一个账户可用"，不代表"已经确定要用哪个账户启动"，跟自动选中是两件事。
         _accountStepDone = true;
         UpdateAccountStatusText();
-        MessageBox.Show($"离线账户「{name}」创建成功，之后可以在「账户管理」页或启动游戏时选用它。", "完成", MessageBoxButton.OK, MessageBoxImage.Information);
+        MessageBoxDialog.ShowInfo($"离线账户「{name}」创建成功，之后可以在「账户管理」页或启动游戏时选用它。", "完成");
     }
 
     private void GotoMicrosoftLogin_Click(object sender, RoutedEventArgs e)
@@ -245,7 +258,7 @@ public partial class FirstRunWizardWindow : Window
     /// </summary>
     private async void MicrosoftLoginBrowser_Click(object sender, RoutedEventArgs e)
     {
-        AccountStatusText.Text = "正在准备登录，请稍候...";
+        AccountStatusText.Text = Loc.T("Str_Cs_Preparing_To_Sign_In_Please_Wait", "正在准备登录，请稍候...");
 
         MicrosoftAuthService auth;
         try
@@ -265,7 +278,7 @@ public partial class FirstRunWizardWindow : Window
         {
             Dispatcher.Invoke(() =>
             {
-                popup = new DeviceCodeWindow(uri, code, cts) { Owner = this };
+                popup = new DeviceCodeWindow(uri, code, cts) ;
                 popup.Show();
             });
         };
@@ -278,7 +291,7 @@ public partial class FirstRunWizardWindow : Window
 
             if (account == null)
             {
-                AccountStatusText.Text = "微软账户登录失败或已取消，请重试。";
+                AccountStatusText.Text = Loc.T("Str_Cs_Microsoft_Sign_In_Failed_Or_Was_Cancelle", "微软账户登录失败或已取消，请重试。");
                 return;
             }
             _owner.ConfigService.AddOrUpdateAccount(account);
@@ -288,7 +301,7 @@ public partial class FirstRunWizardWindow : Window
         catch (OperationCanceledException)
         {
             popup?.Dispatcher.Invoke(() => popup.Close());
-            AccountStatusText.Text = "登录已取消。";
+            AccountStatusText.Text = Loc.T("Str_Cs_Sign_In_Cancelled", "登录已取消。");
         }
         catch (AuthStepException ex)
         {
@@ -299,7 +312,7 @@ public partial class FirstRunWizardWindow : Window
         {
             popup?.Dispatcher.Invoke(() => popup.Close());
             ErrorPresenter.LogTechnicalDetail($"微软账户登录(浏览器，新手向导内)出错: {ex}");
-            AccountStatusText.Text = "登录出错，请检查网络连接后重试。";
+            AccountStatusText.Text = Loc.T("Str_Cs_Sign_In_Failed_Check_Your_Connection_And", "登录出错，请检查网络连接后重试。");
         }
     }
 
@@ -328,12 +341,12 @@ public partial class FirstRunWizardWindow : Window
             }
             else
             {
-                AccountStatusText.Text = "已取消内嵌登录，可以点击「浏览器登录」改用系统浏览器完成登录。";
+                AccountStatusText.Text = Loc.T("Str_Cs_Embedded_Sign_In_Cancelled_You_Can_Use_B", "已取消内嵌登录，可以点击「浏览器登录」改用系统浏览器完成登录。");
             }
             return;
         }
 
-        AccountStatusText.Text = "正在打开内嵌登录窗口...";
+        AccountStatusText.Text = Loc.T("Str_Cs_Opening_The_Embedded_Sign_In_Window", "正在打开内嵌登录窗口...");
 
         MicrosoftAuthService auth;
         string url, verifier;
@@ -342,7 +355,7 @@ public partial class FirstRunWizardWindow : Window
         {
             auth = new MicrosoftAuthService();
             (url, verifier) = auth.BuildInteractiveAuthorizeUrl();
-            popup = new MicrosoftLoginWindow(url) { Owner = this };
+            popup = new MicrosoftLoginWindow(url) ;
         }
         catch (AuthStepException ex)
         {
@@ -358,7 +371,7 @@ public partial class FirstRunWizardWindow : Window
         }
         catch (OperationCanceledException)
         {
-            AccountStatusText.Text = "登录已取消。";
+            AccountStatusText.Text = Loc.T("Str_Cs_Sign_In_Cancelled", "登录已取消。");
             return;
         }
         catch (AuthStepException ex)
@@ -372,7 +385,7 @@ public partial class FirstRunWizardWindow : Window
             var account = await auth.LoginWithAuthorizationCodeAsync(code, verifier);
             if (account == null)
             {
-                AccountStatusText.Text = "微软账户登录失败，请重试。";
+                AccountStatusText.Text = Loc.T("Str_Cs_Microsoft_Sign_In_Failed_Please_Try_Agai", "微软账户登录失败，请重试。");
                 return;
             }
             _owner.ConfigService.AddOrUpdateAccount(account);
@@ -386,7 +399,7 @@ public partial class FirstRunWizardWindow : Window
         catch (Exception ex)
         {
             ErrorPresenter.LogTechnicalDetail($"微软账户登录(内嵌，新手向导内)出错: {ex}");
-            AccountStatusText.Text = "登录出错，请检查网络连接后重试。";
+            AccountStatusText.Text = Loc.T("Str_Cs_Sign_In_Failed_Check_Your_Connection_And", "登录出错，请检查网络连接后重试。");
         }
     }
 
@@ -423,7 +436,7 @@ public partial class FirstRunWizardWindow : Window
         StepDot4.Background = _step >= 4 ? (System.Windows.Media.Brush)FindResource("AccentBrush") : System.Windows.Media.Brushes.LightGray;
 
         BackBtn.IsEnabled = _step > 1;
-        NextBtn.Content = _step == TotalSteps ? "完成" : "下一步";
+        NextBtn.Content = _step == TotalSteps ? Loc.T("Str_Common_Finish", "完成") : Loc.T("Str_Common_Next", "下一步");
 
         if (_step == 3) UpdateAccountStatusText();
         if (_step == 4) UpdateSummary();
@@ -497,7 +510,7 @@ public partial class FirstRunWizardWindow : Window
         try
         {
             // 1) Java：已经就绪就跳过下载，否则自动装推荐版本。
-            AutoRunText.Text = "正在检查 Java 环境...";
+            AutoRunText.Text = Loc.T("Str_Cs_Checking_Your_Java_Setup", "正在检查 Java 环境...");
             AutoRunBar.Value = 5;
             if (!_javaStepDone)
             {
@@ -522,12 +535,12 @@ public partial class FirstRunWizardWindow : Window
             }
 
             // 2) 文件夹 + 语言：用当前表单里的值（默认值已经在构造函数里填好）。
-            AutoRunText.Text = "正在设置游戏文件夹与语言...";
+            AutoRunText.Text = Loc.T("Str_Cs_Setting_Up_The_Game_Folder_And_Language", "正在设置游戏文件夹与语言...");
             AutoRunBar.Value = 65;
             ApplyFolderAndLanguage();
 
             // 3) 账户：如果还没有任何账户，自动创建一个离线账户，用户随时可以后续换成微软账户。
-            AutoRunText.Text = "正在创建默认账户...";
+            AutoRunText.Text = Loc.T("Str_Cs_Creating_A_Default_Account", "正在创建默认账户...");
             AutoRunBar.Value = 85;
             if (!_accountStepDone)
             {
@@ -540,7 +553,7 @@ public partial class FirstRunWizardWindow : Window
             }
 
             AutoRunBar.Value = 100;
-            AutoRunText.Text = "全部完成！";
+            AutoRunText.Text = Loc.T("Str_Cs_All_Done", "全部完成！");
             await System.Threading.Tasks.Task.Delay(500);
 
             GoToStep(TotalSteps);
@@ -571,6 +584,6 @@ public partial class FirstRunWizardWindow : Window
             _owner.ConfigService.Save();
         }
         _owner.RefreshSidebar();
-        Close();
+        CloseWith(null);
     }
 }

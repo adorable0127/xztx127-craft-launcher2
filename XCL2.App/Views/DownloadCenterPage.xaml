@@ -14,9 +14,9 @@
                 <Border Visibility="{Binding IsExpanded, Converter={StaticResource BoolToVis}}"
                         Background="{DynamicResource SideBrush}" CornerRadius="6" Margin="0,6,0,0" Padding="10">
                     <StackPanel>
-                        <TextBlock Text="正在加载版本列表..." FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}"
+                        <TextBlock Text="{DynamicResource Str_Ui_Loading_Versions}" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}"
                                    Visibility="{Binding IsLoadingVersions, Converter={StaticResource BoolToVis}}"/>
-                        <TextBlock Text="没有找到匹配的版本（可能是筛选的游戏版本不匹配）。" FontSize="12"
+                        <TextBlock Text="{DynamicResource Str_Ui_No_Matching_Versions_Found_The_Game_Vers}" FontSize="12"
                                    Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,4"
                                    Visibility="{Binding HasNoResults, Converter={StaticResource BoolToVis}}"/>
 
@@ -66,15 +66,15 @@
                                                      不为了好看而编造一个"图标+简介"卡片(那样会显示假数据)。 -->
                                                 <StackPanel Visibility="{Binding HasRequiredDependencies, Converter={StaticResource BoolToVis}}"
                                                             Margin="0,8,0,4">
-                                                    <TextBlock Text="前置资源" FontSize="12" FontWeight="SemiBold"
+                                                    <TextBlock Text="{DynamicResource Str_Ui_Dependencies}" FontSize="12" FontWeight="SemiBold"
                                                                Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4"/>
                                                     <ItemsControl ItemsSource="{Binding RequiredDependencies}">
                                                         <ItemsControl.ItemTemplate>
                                                             <DataTemplate DataType="{x:Type models:ModrinthDependency}">
                                                                 <Border Background="{DynamicResource SideBrush}" CornerRadius="4" Margin="0,2" Padding="8,6">
                                                                     <TextBlock FontSize="12" Foreground="{DynamicResource TextPrimaryBrush}" TextWrapping="Wrap">
-                                                                        <Run Text="项目 ID: "/><Run Text="{Binding ProjectId, Mode=OneWay}"/>
-                                                                        <Run Text="  文件名: "/><Run Text="{Binding FileName, Mode=OneWay}"/>
+                                                                        <Run Text="{DynamicResource Str_Ui_Project_Id}"/><Run Text="{Binding ProjectId, Mode=OneWay}"/>
+                                                                        <Run Text="{DynamicResource Str_Ui_File}"/><Run Text="{Binding FileName, Mode=OneWay}"/>
                                                                     </TextBlock>
                                                                 </Border>
                                                             </DataTemplate>
@@ -82,7 +82,7 @@
                                                     </ItemsControl>
                                                 </StackPanel>
 
-                                                <TextBlock Text="版本列表" FontSize="12" FontWeight="SemiBold"
+                                                <TextBlock Text="{DynamicResource Str_Ui_Versions}" FontSize="12" FontWeight="SemiBold"
                                                            Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,4,0,4"/>
                                                 <ItemsControl ItemsSource="{Binding Entries}">
                                                     <ItemsControl.ItemTemplate>
@@ -97,14 +97,14 @@
                                                                         <TextBlock Text="{Binding Name}" FontSize="13"/>
                                                                         <TextBlock FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}">
                                                                             <Run Text="{Binding VersionNumber, Mode=OneWay}"/>
-                                                                            <Run Text=" · 支持: "/><Run Text="{Binding GameVersionsText, Mode=OneWay}"/>
+                                                                            <Run Text="{DynamicResource Str_Ui_Supports}"/><Run Text="{Binding GameVersionsText, Mode=OneWay}"/>
                                                                         </TextBlock>
                                                                     </StackPanel>
                                                                     <!-- 修复：这里之前单独覆盖了 Padding="14,6" FontSize="13"，比 PrimaryButton
                                                                          默认的 Padding="12,8" FontSize="15"（见"下载安装"按钮）还小，导致同一个
                                                                          页面里"下载"按钮比其它主按钮明显小一圈。现在去掉这个覆盖，改用样式默认值，
                                                                          跟"下载安装""搜索"等按钮保持同样大小。 -->
-                                                                    <Button Grid.Column="1" Content="下载" Style="{StaticResource PrimaryButton}"
+                                                                    <Button Grid.Column="1" Content="{DynamicResource Str_Common_Download}" Style="{StaticResource PrimaryButton}"
                                                                             Tag="{Binding}"/>
                                                                 </Grid>
                                                             </Border>
@@ -135,14 +135,14 @@
              间距由 Grid 布局保证，不会再有像素级偏差。 -->
         <Border x:Name="ListRootLeft" Grid.Column="0" Background="{DynamicResource PanelBrush}" CornerRadius="10" Padding="10">
             <StackPanel>
-                <TextBlock Text="下载" FontSize="18" FontWeight="Bold" Margin="8,4,0,16" Foreground="{DynamicResource AccentBrush}"/>
+                <TextBlock Text="{DynamicResource Str_Common_Download}" FontSize="18" FontWeight="Bold" Margin="8,4,0,16" Foreground="{DynamicResource AccentBrush}"/>
 
                 <Button Style="{StaticResource PrimaryButton}" Padding="6,10"
                         Margin="0,0,0,8" HorizontalAlignment="Stretch" Click="QuickStartWizard_Click"
-                        ToolTip="从账户到启动一路走完的新手向导：选版本/加载器，可选装 Mod 和资源包/光影包，最后自动下载并启动游戏">
+                        ToolTip="{DynamicResource Str_Ui_A_Beginner_S_Wizard_That_Takes_You_From_}">
                     <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
                         <TextBlock Text="🚀" FontFamily="Segoe UI Emoji" VerticalAlignment="Center" FontSize="13"/>
-                        <TextBlock Text="一键开始游戏" Margin="6,0,0,0" VerticalAlignment="Center" FontSize="13"
+                        <TextBlock Text="{DynamicResource Str_Home_Tile_QuickStart_Title}" Margin="6,0,0,0" VerticalAlignment="Center" FontSize="13"
                                    TextWrapping="NoWrap" TextTrimming="CharacterEllipsis"/>
                     </StackPanel>
                 </Button>
@@ -151,10 +151,10 @@
                      避免 ModManagerPage（本地已装 Mod 的启用/禁用/删除/整合包导入导出）变得无处可去。 -->
                 <Button Padding="6,8" Margin="0,0,0,14" HorizontalAlignment="Stretch"
                         Click="OpenModManager_Click"
-                        ToolTip="查看/启用/禁用/删除已安装的本地 Mod，导入导出整合包">
+                        ToolTip="{DynamicResource Str_Ui_View_Enable_Disable_And_Remove_Installed}">
                     <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
                         <TextBlock Text="🧰" FontFamily="Segoe UI Emoji" VerticalAlignment="Center" FontSize="13"/>
-                        <TextBlock Text="本地 Mod 管理" Margin="6,0,0,0" VerticalAlignment="Center" FontSize="13"
+                        <TextBlock Text="{DynamicResource Str_Ui_Local_Mod_Management}" Margin="6,0,0,0" VerticalAlignment="Center" FontSize="13"
                                    TextWrapping="NoWrap" TextTrimming="CharacterEllipsis"/>
                     </StackPanel>
                 </Button>
@@ -163,7 +163,7 @@
                              Checked="Category_Checked" Tag="version">
                     <StackPanel Orientation="Horizontal">
                         <TextBlock Text="🧊" FontFamily="Segoe UI Emoji" VerticalAlignment="Center"/>
-                        <TextBlock Text="游戏版本" Margin="8,0,0,0" VerticalAlignment="Center"/>
+                        <TextBlock Text="{DynamicResource Str_Ui_Game_Version}" Margin="8,0,0,0" VerticalAlignment="Center"/>
                     </StackPanel>
                 </RadioButton>
                 <RadioButton x:Name="CatMod" Style="{StaticResource DownloadCategoryButton}"
@@ -177,21 +177,21 @@
                              Checked="Category_Checked" Tag="resourcepack">
                     <StackPanel Orientation="Horizontal">
                         <TextBlock Text="🎨" FontFamily="Segoe UI Emoji" VerticalAlignment="Center"/>
-                        <TextBlock Text="材质包" Margin="8,0,0,0" VerticalAlignment="Center"/>
+                        <TextBlock Text="{DynamicResource Str_Ui_Resource_Packs}" Margin="8,0,0,0" VerticalAlignment="Center"/>
                     </StackPanel>
                 </RadioButton>
                 <RadioButton x:Name="CatDataPack" Style="{StaticResource DownloadCategoryButton}"
                              Checked="Category_Checked" Tag="datapack">
                     <StackPanel Orientation="Horizontal">
                         <TextBlock Text="📦" FontFamily="Segoe UI Emoji" VerticalAlignment="Center"/>
-                        <TextBlock Text="数据包" Margin="8,0,0,0" VerticalAlignment="Center"/>
+                        <TextBlock Text="{DynamicResource Str_Ui_Data_Packs}" Margin="8,0,0,0" VerticalAlignment="Center"/>
                     </StackPanel>
                 </RadioButton>
                 <RadioButton x:Name="CatShader" Style="{StaticResource DownloadCategoryButton}"
                              Checked="Category_Checked" Tag="shader">
                     <StackPanel Orientation="Horizontal">
                         <TextBlock Text="✨" FontFamily="Segoe UI Emoji" VerticalAlignment="Center"/>
-                        <TextBlock Text="光影包" Margin="8,0,0,0" VerticalAlignment="Center"/>
+                        <TextBlock Text="{DynamicResource Str_Ui_Shader_Packs}" Margin="8,0,0,0" VerticalAlignment="Center"/>
                     </StackPanel>
                 </RadioButton>
                 <!-- 整合包分类：跟材质包/数据包/光影包共用同一个 ResourcePanel（见
@@ -202,21 +202,21 @@
                              Checked="Category_Checked" Tag="modpack">
                     <StackPanel Orientation="Horizontal">
                         <TextBlock Text="📚" FontFamily="Segoe UI Emoji" VerticalAlignment="Center"/>
-                        <TextBlock Text="整合包" Margin="8,0,0,0" VerticalAlignment="Center"/>
+                        <TextBlock Text="{DynamicResource Str_Ui_Modpacks}" Margin="8,0,0,0" VerticalAlignment="Center"/>
                     </StackPanel>
                 </RadioButton>
                 <RadioButton x:Name="CatMap" Style="{StaticResource DownloadCategoryButton}"
                              Checked="Category_Checked" Tag="map">
                     <StackPanel Orientation="Horizontal">
                         <TextBlock Text="🗺" FontFamily="Segoe UI Emoji" VerticalAlignment="Center"/>
-                        <TextBlock Text="地图" Margin="8,0,0,0" VerticalAlignment="Center"/>
+                        <TextBlock Text="{DynamicResource Str_Ui_Maps}" Margin="8,0,0,0" VerticalAlignment="Center"/>
                     </StackPanel>
                 </RadioButton>
                 <RadioButton x:Name="CatFavorites" Style="{StaticResource DownloadCategoryButton}"
                              Checked="Category_Checked" Tag="favorites" Margin="0,12,0,0">
                     <StackPanel Orientation="Horizontal">
                         <TextBlock Text="⭐" FontFamily="Segoe UI Emoji" VerticalAlignment="Center"/>
-                        <TextBlock Text="我的收藏" Margin="8,0,0,0" VerticalAlignment="Center"/>
+                        <TextBlock Text="{DynamicResource Str_Ui_Favorites}" Margin="8,0,0,0" VerticalAlignment="Center"/>
                     </StackPanel>
                 </RadioButton>
             </StackPanel>
@@ -246,14 +246,14 @@
                             <ColumnDefinition Width="Auto"/>
                             <ColumnDefinition Width="Auto"/>
                         </Grid.ColumnDefinitions>
-                        <TextBlock Text="游戏版本下载" FontSize="18" FontWeight="Bold" VerticalAlignment="Center"/>
+                        <TextBlock Text="{DynamicResource Str_Ui_Game_Version_Downloads}" FontSize="18" FontWeight="Bold" VerticalAlignment="Center"/>
                         <ComboBox x:Name="SourceCombo" Style="{StaticResource FilterComboBox}" Grid.Column="1" Width="150" Margin="0,0,10,0"
                                   SelectionChanged="SourceCombo_SelectionChanged">
-                            <ComboBoxItem Content="官方源 (Mojang)" IsSelected="True"/>
-                            <ComboBoxItem Content="BMCLAPI 镜像源"/>
+                            <ComboBoxItem Content="{DynamicResource Str_Ui_Official_Mojang}" IsSelected="True"/>
+                            <ComboBoxItem Content="{DynamicResource Str_Ui_Bmclapi_Mirror}"/>
                         </ComboBox>
-                        <Button Grid.Column="2" Content="手动刷新" Style="{StaticResource PrimaryButton}" Click="FetchOnline_Click"
-                                ToolTip="列表已自动刷新；网络失败或切换来源后可在此手动重试"/>
+                        <Button Grid.Column="2" Content="{DynamicResource Str_Ui_Refresh_Now}" Style="{StaticResource PrimaryButton}" Click="FetchOnline_Click"
+                                ToolTip="{DynamicResource Str_Ui_The_List_Refreshes_Automatically_Use_Thi_2}"/>
                     </Grid>
 
                     <!-- 不再有顶部"加载器筛选"预选行（之前需要先切一次顶部单选、再回来点行内按钮，
@@ -267,12 +267,12 @@
                         </Grid.ColumnDefinitions>
                         <TextBox x:Name="VersionSearchBox" Style="{StaticResource SearchTextBox}" Grid.Column="0" Padding="8" FontSize="13" Margin="0,0,10,0"
                                  TextChanged="VersionFilter_Changed"
-                                 ToolTip="按版本号搜索，例如 1.20 或 21w，输入后自动筛选"/>
+                                 ToolTip="{DynamicResource Str_Ui_Search_By_Version_E_G_1_20_Or_21w_Filter}"/>
                         <ComboBox x:Name="VersionTypeCombo" Style="{StaticResource FilterComboBox}" Grid.Column="1" SelectionChanged="VersionFilter_Changed">
-                            <ComboBoxItem Content="正式版" IsSelected="True" Tag="Release"/>
-                            <ComboBoxItem Content="快照版" Tag="Snapshot"/>
-                            <ComboBoxItem Content="远古版本" Tag="Legacy"/>
-                            <ComboBoxItem Content="愚人节版本" Tag="AprilFools"/>
+                            <ComboBoxItem Content="{DynamicResource Str_Ui_Release}" IsSelected="True" Tag="Release"/>
+                            <ComboBoxItem Content="{DynamicResource Str_Ui_Snapshot}" Tag="Snapshot"/>
+                            <ComboBoxItem Content="{DynamicResource Str_Ui_Legacy_Versions}" Tag="Legacy"/>
+                            <ComboBoxItem Content="{DynamicResource Str_Ui_April_Fools_Versions}" Tag="AprilFools"/>
                         </ComboBox>
                     </Grid>
 
@@ -289,7 +289,7 @@
                                     <!-- 右键菜单：跳转到中文 Minecraft Wiki 查看这个版本的介绍/更新内容。 -->
                                     <Grid.ContextMenu>
                                         <ContextMenu>
-                                            <MenuItem Header="在中文 Minecraft Wiki 中查看"
+                                            <MenuItem Header="{DynamicResource Str_Ui_Open_On_The_Chinese_Minecraft_Wiki}"
                                                       Tag="{Binding}" Click="ViewVersionOnWiki_Click"/>
                                         </ContextMenu>
                                     </Grid.ContextMenu>
@@ -299,9 +299,9 @@
                                     </StackPanel>
                                     <Button Grid.Column="1" Content="{Binding FavoriteLabel}" Margin="0,0,8,0" Padding="10,6"
                                             Style="{StaticResource SideNavButton}" Tag="{Binding}" Click="FavoriteVersion_Click"/>
-                                    <Button Grid.Column="2" Content="下载安装" Style="{StaticResource PrimaryButton}"
+                                    <Button Grid.Column="2" Content="{DynamicResource Str_Ui_Download_Install}" Style="{StaticResource PrimaryButton}"
                                             Tag="{Binding}" Click="InstallVersion_Click"
-                                            ToolTip="点击后选择安装原版还是 Fabric/Forge/NeoForge 加载器"/>
+                                            ToolTip="{DynamicResource Str_Ui_Click_To_Choose_Between_Vanilla_And_The_}"/>
                                 </Grid>
                             </DataTemplate>
                         </ListBox.ItemTemplate>
@@ -315,11 +315,11 @@
                             <ColumnDefinition Width="*"/>
                             <ColumnDefinition Width="Auto"/>
                         </Grid.ColumnDefinitions>
-                        <Button Grid.Column="0" x:Name="VersionPrevPageButton" Content="◀ 上一页" Style="{StaticResource SecondaryButton}"
+                        <Button Grid.Column="0" x:Name="VersionPrevPageButton" Content="{DynamicResource Str_Ui_Previous}" Style="{StaticResource SecondaryButton}"
                                 Padding="12,6" Click="VersionPrevPage_Click"/>
                         <TextBlock Grid.Column="1" x:Name="VersionPageSummaryText" HorizontalAlignment="Center"
                                    VerticalAlignment="Center" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}"/>
-                        <Button Grid.Column="2" x:Name="VersionNextPageButton" Content="下一页 ▶" Style="{StaticResource SecondaryButton}"
+                        <Button Grid.Column="2" x:Name="VersionNextPageButton" Content="{DynamicResource Str_Ui_Next}" Style="{StaticResource SecondaryButton}"
                                 Padding="12,6" Click="VersionNextPage_Click"/>
                     </Grid>
                 </Grid>
@@ -339,7 +339,7 @@
                         <RowDefinition Height="Auto"/>
                     </Grid.RowDefinitions>
 
-                    <TextBlock Grid.Row="0" x:Name="ResourcePanelTitle" Text="材质包下载" FontSize="18" FontWeight="Bold" Margin="0,0,0,10"/>
+                    <TextBlock Grid.Row="0" x:Name="ResourcePanelTitle" Text="{DynamicResource Str_Ui_Resource_Pack_Downloads}" FontSize="18" FontWeight="Bold" Margin="0,0,0,10"/>
 
                     <!-- 仿 PCL「搜索 Mod」筛选栏，跟 Mod 面板同一套两列网格+搜索/重置按钮结构。
                          这个面板"类型"其实是靠左侧导航栏(材质包/数据包/光影包三个入口)决定的，
@@ -362,60 +362,68 @@
                             </Grid.ColumnDefinitions>
 
                             <StackPanel Grid.Row="0" Grid.Column="0">
-                                <TextBlock Text="名称" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4"/>
+                                <TextBlock Text="{DynamicResource Str_Ui_Name}" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4"/>
                                 <TextBox x:Name="ResourceSearchBox" Style="{StaticResource SearchTextBox}" Padding="8" FontSize="13"
                                          TextChanged="ResourceFilter_Changed"
-                                         ToolTip="搜索关键词，支持中英文，留空浏览热门资源，输入后自动搜索"/>
+                                         ToolTip="{DynamicResource Str_Ui_Search_By_Keyword_Leave_Blank_To_Browse_}"/>
                             </StackPanel>
                             <StackPanel Grid.Row="0" Grid.Column="2">
-                                <TextBlock Text="来源" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4"/>
+                                <TextBlock Text="{DynamicResource Str_Ui_Source}" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4"/>
                                 <ComboBox x:Name="ResourceSourceCombo" Style="{StaticResource FilterComboBox}"
                                           SelectionChanged="ResourceSourceCombo_SelectionChanged">
-                                    <ComboBoxItem Content="综合(Modrinth+CurseForge)" IsSelected="True" Tag="combined"/>
-                                    <ComboBoxItem Content="仅 Modrinth" Tag="modrinth"/>
-                                    <ComboBoxItem Content="仅 CurseForge" Tag="curseforge"/>
+                                    <ComboBoxItem Content="{DynamicResource Str_Ui_Combined_Modrinth_Curseforge}" IsSelected="True" Tag="combined"/>
+                                    <ComboBoxItem Content="{DynamicResource Str_Ui_Modrinth_Only}" Tag="modrinth"/>
+                                    <ComboBoxItem Content="{DynamicResource Str_Ui_Curseforge_Only}" Tag="curseforge"/>
                                 </ComboBox>
                             </StackPanel>
 
-                            <StackPanel Grid.Row="1" Grid.Column="0" Margin="0,10,0,0">
-                                <TextBlock Text="版本" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4"/>
-                                <TextBox x:Name="ResourceGameVersionBox" Style="{StaticResource SearchTextBox}" Padding="8" FontSize="13"
-                                         TextChanged="ResourceFilter_Changed"
-                                         ToolTip="限定游戏版本，例如 1.20.1；留空不限定"/>
-                            </StackPanel>
-                            <StackPanel Grid.Row="2" Grid.Column="0" Grid.ColumnSpan="3" Margin="0,8,0,0">
-                                <!-- 版本快捷选择条：点一下直接把常见/常用游戏版本号填进上面的"版本"输入框，
-                                     不用自己手打——原需求"选择的都是常见的常用的游戏版本（或者输入）"，
-                                     跟输入框是同一份数据、双向不冲突：点按钮 = 帮用户填字，用户自己手打
-                                     任意版本号（输入框本身没有被禁用/只读）依然完全可行。
-                                     x:Name 供 ResourceVersionChip_Click 统一处理，Tag 是要填入的版本号
-                                     字符串（"" 代表"全部"，即清空版本筛选）。 -->
-                                <WrapPanel x:Name="ResourceVersionChipPanel">
-                                    <Button Content="全部" Style="{StaticResource VersionChipButton}" Tag="" Click="ResourceVersionChip_Click"/>
-                                    <Button Content="1.21" Style="{StaticResource VersionChipButton}" Tag="1.21" Click="ResourceVersionChip_Click"/>
-                                    <Button Content="1.20" Style="{StaticResource VersionChipButton}" Tag="1.20" Click="ResourceVersionChip_Click"/>
-                                    <Button Content="1.19" Style="{StaticResource VersionChipButton}" Tag="1.19" Click="ResourceVersionChip_Click"/>
-                                    <Button Content="1.18" Style="{StaticResource VersionChipButton}" Tag="1.18" Click="ResourceVersionChip_Click"/>
-                                    <Button Content="1.17" Style="{StaticResource VersionChipButton}" Tag="1.17" Click="ResourceVersionChip_Click"/>
-                                    <Button Content="1.16" Style="{StaticResource VersionChipButton}" Tag="1.16" Click="ResourceVersionChip_Click"/>
-                                </WrapPanel>
+                            <!-- ===== 需求："去掉社区资源里搜索框下面的这个，保留图5的这个" =====
+                                 原来这里有一整块「版本」标签 + 版本输入框 + 一排写死的版本按钮
+                                 （全部/1.21/1.20/1.19/1.18/1.17/1.16），已按要求移除。
+                                 版本筛选统一交给资源详情页顶部那一排动态生成的版本 Tab
+                                 （ModDetailPage 的 VersionFilterPanel，也就是截图5那个）——
+                                 那一排是**从接口真实返回的版本里动态生成**的，所以会包含 26.2/26.1
+                                 这类新版本；而这里被删掉的那排是硬编码的，永远停在 1.16~1.21，
+                                 两处并存本身就是数据不一致的来源，删掉正好一并解决。
+
+                                 注意：ResourceGameVersionBox 这个 TextBox **保留但隐藏**，没有删。
+                                 原因：代码里有 9 处引用它（重置条件、跟详情页联动的版本同步、
+                                 搜索参数拼装等），直接删掉会编译不过；而且它仍然承担着
+                                 "从详情页带回来的版本上下文"这个内部状态。
+                                 隐藏之后用户看不到、也点不到，视觉上等于已经移除。 -->
+                            <TextBox x:Name="ResourceGameVersionBox" Visibility="Collapsed"
+                                     TextChanged="ResourceFilter_Changed"/>
+
+                            <!-- ===== 需求："加入社区资源下载筛选预览版功能" =====
+                                 这里放的是**列表页**的预览版开关（详情页原来已经有一个，但只对 Mod 生效、
+                                 而且要进详情页才看得到）。两个开关控制的是不同的东西，不要混：
+                                   - 这个：控制搜索结果里要不要出现 beta/alpha 版本的资源
+                                     （Modrinth 的 version_type != release / CurseForge 的 releaseType 2、3）
+                                   - 详情页那个：控制某个资源的版本列表里要不要列出它的预览版构建
+                                 默认都关闭——新手装到 beta 版 mod 崩游戏是很常见的坑。 -->
+                            <StackPanel Grid.Row="1" Grid.Column="0" Margin="0,10,0,0" Orientation="Horizontal"
+                                        VerticalAlignment="Bottom">
+                                <CheckBox x:Name="ResourceShowPreviewCheck" VerticalAlignment="Center"
+                                          Click="ResourceShowPreview_Changed"
+                                          Content="{DynamicResource Str_Ui_Show_Pre_Release_Resources}"
+                                          ToolTip="{DynamicResource Str_Ui_When_Ticked_Search_Results_Include_Beta_}"/>
                             </StackPanel>
                             <StackPanel Grid.Row="1" Grid.Column="2" Margin="0,10,0,0">
-                                <TextBlock Text="类型" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4"/>
+                                <TextBlock Text="{DynamicResource Str_Ui_Type}" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4"/>
                                 <ComboBox x:Name="ResourceTypeCombo" Style="{StaticResource FilterComboBox}"
                                           SelectionChanged="ResourceTypeCombo_SelectionChanged">
-                                    <ComboBoxItem Content="材质包" IsSelected="True" Tag="ResourcePack"/>
-                                    <ComboBoxItem Content="数据包" Tag="DataPack"/>
-                                    <ComboBoxItem Content="光影包" Tag="Shader"/>
-                                    <ComboBoxItem Content="整合包" Tag="Modpack"/>
+                                    <ComboBoxItem Content="{DynamicResource Str_Ui_Resource_Packs}" IsSelected="True" Tag="ResourcePack"/>
+                                    <ComboBoxItem Content="{DynamicResource Str_Ui_Data_Packs}" Tag="DataPack"/>
+                                    <ComboBoxItem Content="{DynamicResource Str_Ui_Shader_Packs}" Tag="Shader"/>
+                                    <ComboBoxItem Content="{DynamicResource Str_Ui_Modpacks}" Tag="Modpack"/>
                                 </ComboBox>
                             </StackPanel>
 
                             <StackPanel Grid.Row="3" Grid.Column="0" Grid.ColumnSpan="3" Orientation="Horizontal" Margin="0,14,0,0">
-                                <Button Content="搜索" Style="{StaticResource PrimaryButton}" Padding="20,8" Click="ResourceSearch_Click"
-                                        ToolTip="列表已自动刷新；网络失败或想立即按当前条件重新搜索时可点这里"/>
-                                <Button Content="重置条件" Style="{StaticResource SecondaryButton}" Padding="20,8" Margin="10,0,0,0"
-                                        Click="ResourceFilterReset_Click" ToolTip="清空名称/版本筛选，恢复到浏览热门资源"/>
+                                <Button Content="{DynamicResource Str_Common_Search}" Style="{StaticResource PrimaryButton}" Padding="20,8" Click="ResourceSearch_Click"
+                                        ToolTip="{DynamicResource Str_Ui_The_List_Refreshes_Automatically_Click_H}"/>
+                                <Button Content="{DynamicResource Str_Ui_Reset_Filters}" Style="{StaticResource SecondaryButton}" Padding="20,8" Margin="10,0,0,0"
+                                        Click="ResourceFilterReset_Click" ToolTip="{DynamicResource Str_Ui_Clear_The_Name_And_Version_Filters_And_B}"/>
                             </StackPanel>
                         </Grid>
                     </Border>
@@ -426,7 +434,7 @@
                             <DataTemplate>
                                 <!-- 整页跳转：同 Mod 面板，点击后跳到 ModDetailPage，不再原地展开。 -->
                                 <Grid Margin="4,8" Cursor="Hand" Background="Transparent" Tag="{Binding}"
-                                      MouseLeftButtonUp="ResourceListItem_Click" ToolTip="点击查看详情和可下载的版本">
+                                      MouseLeftButtonUp="ResourceListItem_Click" ToolTip="{DynamicResource Str_Ui_Click_For_Details_And_Downloadable_Versi}">
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="Auto"/>
                                         <ColumnDefinition Width="*"/>
@@ -444,8 +452,8 @@
                                         <TextBlock Text="{Binding Description}" FontSize="12" TextWrapping="Wrap" MaxHeight="34"
                                                    Foreground="{DynamicResource TextSecondaryBrush}"/>
                                         <TextBlock FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}">
-                                            <Run Text="作者: "/><Run Text="{Binding Author}"/>
-                                            <Run Text="  下载量: "/><Run Text="{Binding Downloads}"/>
+                                            <Run Text="{DynamicResource Str_Ui_Author}"/><Run Text="{Binding Author}"/>
+                                            <Run Text="{DynamicResource Str_Ui_Downloads}"/><Run Text="{Binding Downloads}"/>
                                         </TextBlock>
                                     </StackPanel>
                                     <Button Grid.Column="2" Content="{Binding FavoriteLabel}" Padding="8,5" FontSize="11"
@@ -463,11 +471,11 @@
                             <ColumnDefinition Width="*"/>
                             <ColumnDefinition Width="Auto"/>
                         </Grid.ColumnDefinitions>
-                        <Button Grid.Column="0" x:Name="ResourcePrevPageButton" Content="◀ 上一页" Style="{StaticResource SecondaryButton}"
+                        <Button Grid.Column="0" x:Name="ResourcePrevPageButton" Content="{DynamicResource Str_Ui_Previous}" Style="{StaticResource SecondaryButton}"
                                 Padding="12,6" Click="ResourcePrevPage_Click"/>
                         <TextBlock Grid.Column="1" x:Name="ResourcePageSummaryText" HorizontalAlignment="Center"
                                    VerticalAlignment="Center" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}"/>
-                        <Button Grid.Column="2" x:Name="ResourceNextPageButton" Content="下一页 ▶" Style="{StaticResource SecondaryButton}"
+                        <Button Grid.Column="2" x:Name="ResourceNextPageButton" Content="{DynamicResource Str_Ui_Next}" Style="{StaticResource SecondaryButton}"
                                 Padding="12,6" Click="ResourceNextPage_Click"/>
                     </Grid>
                 </Grid>
@@ -479,11 +487,11 @@
                         <RowDefinition Height="*"/>
                     </Grid.RowDefinitions>
 
-                    <TextBlock Grid.Row="0" Text="我的收藏" FontSize="18" FontWeight="Bold" Margin="0,0,0,10"/>
+                    <TextBlock Grid.Row="0" Text="{DynamicResource Str_Ui_Favorites}" FontSize="18" FontWeight="Bold" Margin="0,0,0,10"/>
 
                     <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" services:ScrollWheelBehavior.EnableFastWheel="True">
                         <StackPanel>
-                            <TextBlock Text="游戏版本" FontWeight="Bold" FontSize="13" Margin="0,0,0,6"/>
+                            <TextBlock Text="{DynamicResource Str_Ui_Game_Version}" FontWeight="Bold" FontSize="13" Margin="0,0,0,6"/>
                             <ListBox x:Name="FavoritesListBox" BorderThickness="0" Background="Transparent"
                                      ItemContainerStyle="{StaticResource DownloadListItem}">
                                 <ListBox.ItemTemplate>
@@ -500,7 +508,7 @@
                                             </StackPanel>
                                             <Button Grid.Column="1" Content="{Binding FavoriteLabel}" Margin="0,0,8,0" Padding="10,6"
                                                     Style="{StaticResource SideNavButton}" Tag="{Binding}" Click="FavoriteVersion_Click"/>
-                                            <Button Grid.Column="2" Content="下载安装" Style="{StaticResource PrimaryButton}"
+                                            <Button Grid.Column="2" Content="{DynamicResource Str_Ui_Download_Install}" Style="{StaticResource PrimaryButton}"
                                                     Tag="{Binding}" Click="InstallVersion_Click"/>
                                         </Grid>
                                     </DataTemplate>
@@ -530,11 +538,11 @@
                                                 <TextBlock Text="{Binding Description}" FontSize="12" TextWrapping="Wrap" MaxHeight="34"
                                                            Foreground="{DynamicResource TextSecondaryBrush}"/>
                                                 <TextBlock FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}">
-                                                    <Run Text="作者: "/><Run Text="{Binding Author}"/>
-                                                    <Run Text="  下载量: "/><Run Text="{Binding Downloads}"/>
+                                                    <Run Text="{DynamicResource Str_Ui_Author}"/><Run Text="{Binding Author}"/>
+                                                    <Run Text="{DynamicResource Str_Ui_Downloads}"/><Run Text="{Binding Downloads}"/>
                                                 </TextBlock>
                                             </StackPanel>
-                                            <Button Grid.Column="2" Content="取消收藏" Padding="8,5" FontSize="11"
+                                            <Button Grid.Column="2" Content="{DynamicResource Str_Ui_Unfavorite}" Padding="8,5" FontSize="11"
                                                     VerticalAlignment="Top" Style="{StaticResource SideNavButton}"
                                                     Tag="{Binding}" Click="UnfavoriteItem_Click"/>
                                         </Grid>
@@ -542,7 +550,7 @@
                                 </ListBox.ItemTemplate>
                             </ListBox>
 
-                            <TextBlock x:Name="FavoriteResourcesHeader" Text="材质包 / 数据包 / 光影包" FontWeight="Bold" FontSize="13" Margin="0,16,0,6" Visibility="Collapsed"/>
+                            <TextBlock x:Name="FavoriteResourcesHeader" Text="{DynamicResource Str_Ui_Resource_Data_Shader_Packs}" FontWeight="Bold" FontSize="13" Margin="0,16,0,6" Visibility="Collapsed"/>
                             <ListBox x:Name="FavoriteResourcesListBox" BorderThickness="0" Background="Transparent"
                                      ItemContainerStyle="{StaticResource DownloadListItem}">
                                 <ListBox.ItemTemplate>
@@ -565,11 +573,11 @@
                                                 <TextBlock Text="{Binding Description}" FontSize="12" TextWrapping="Wrap" MaxHeight="34"
                                                            Foreground="{DynamicResource TextSecondaryBrush}"/>
                                                 <TextBlock FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}">
-                                                    <Run Text="作者: "/><Run Text="{Binding Author}"/>
-                                                    <Run Text="  下载量: "/><Run Text="{Binding Downloads}"/>
+                                                    <Run Text="{DynamicResource Str_Ui_Author}"/><Run Text="{Binding Author}"/>
+                                                    <Run Text="{DynamicResource Str_Ui_Downloads}"/><Run Text="{Binding Downloads}"/>
                                                 </TextBlock>
                                             </StackPanel>
-                                            <Button Grid.Column="2" Content="取消收藏" Padding="8,5" FontSize="11"
+                                            <Button Grid.Column="2" Content="{DynamicResource Str_Ui_Unfavorite}" Padding="8,5" FontSize="11"
                                                     VerticalAlignment="Top" Style="{StaticResource SideNavButton}"
                                                     Tag="{Binding}" Click="UnfavoriteItem_Click"/>
                                         </Grid>
@@ -577,7 +585,7 @@
                                 </ListBox.ItemTemplate>
                             </ListBox>
 
-                            <TextBlock x:Name="FavoriteMapsHeader" Text="地图" FontWeight="Bold" FontSize="13" Margin="0,16,0,6" Visibility="Collapsed"/>
+                            <TextBlock x:Name="FavoriteMapsHeader" Text="{DynamicResource Str_Ui_Maps}" FontWeight="Bold" FontSize="13" Margin="0,16,0,6" Visibility="Collapsed"/>
                             <ListBox x:Name="FavoriteMapsListBox" BorderThickness="0" Background="Transparent"
                                      ItemContainerStyle="{StaticResource DownloadListItem}">
                                 <ListBox.ItemTemplate>
@@ -592,11 +600,11 @@
                                                 <TextBlock Text="{Binding Description}" FontSize="12" TextWrapping="Wrap" MaxHeight="34"
                                                            Foreground="{DynamicResource TextSecondaryBrush}"/>
                                                 <TextBlock FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}">
-                                                    <Run Text="作者: "/><Run Text="{Binding Author}"/>
-                                                    <Run Text="  下载量: "/><Run Text="{Binding Downloads}"/>
+                                                    <Run Text="{DynamicResource Str_Ui_Author}"/><Run Text="{Binding Author}"/>
+                                                    <Run Text="{DynamicResource Str_Ui_Downloads}"/><Run Text="{Binding Downloads}"/>
                                                 </TextBlock>
                                             </StackPanel>
-                                            <Button Grid.Column="1" Content="取消收藏" Padding="8,5" FontSize="11"
+                                            <Button Grid.Column="1" Content="{DynamicResource Str_Ui_Unfavorite}" Padding="8,5" FontSize="11"
                                                     VerticalAlignment="Top" Style="{StaticResource SideNavButton}"
                                                     Tag="{Binding}" Click="UnfavoriteItem_Click"/>
                                         </Grid>
@@ -606,7 +614,7 @@
                         </StackPanel>
                     </ScrollViewer>
 
-                    <TextBlock x:Name="FavoritesEmptyHint" Grid.Row="1" Text="还没有收藏任何内容，去「游戏版本」/「Mod」/「材质包」等分类点击 ☆ 收藏 试试。"
+                    <TextBlock x:Name="FavoritesEmptyHint" Grid.Row="1" Text="{DynamicResource Str_Ui_Nothing_Saved_Yet_Try_The_Button_In_The_}"
                                FontSize="13" Foreground="{DynamicResource TextSecondaryBrush}"
                                HorizontalAlignment="Center" VerticalAlignment="Center" Visibility="Collapsed"/>
                 </Grid>
@@ -626,8 +634,8 @@
                             <ColumnDefinition Width="*"/>
                             <ColumnDefinition Width="Auto"/>
                         </Grid.ColumnDefinitions>
-                        <TextBlock Text="地图下载" FontSize="18" FontWeight="Bold" VerticalAlignment="Center"/>
-                        <TextBlock Grid.Column="1" Text="数据来自 CurseForge" FontSize="12" VerticalAlignment="Center"
+                        <TextBlock Text="{DynamicResource Str_Ui_Map_Downloads}" FontSize="18" FontWeight="Bold" VerticalAlignment="Center"/>
+                        <TextBlock Grid.Column="1" Text="{DynamicResource Str_Ui_Data_From_Curseforge}" FontSize="12" VerticalAlignment="Center"
                                    Foreground="{DynamicResource TextSecondaryBrush}"/>
                     </Grid>
 
@@ -639,17 +647,17 @@
                         </Grid.ColumnDefinitions>
                         <TextBox x:Name="MapSearchBox" Style="{StaticResource SearchTextBox}" Grid.Column="0" Padding="8" FontSize="13" Margin="0,0,10,0"
                                  TextChanged="MapFilter_Changed"
-                                 ToolTip="搜索关键词，例如 地图名，留空浏览热门地图，输入后自动搜索"/>
+                                 ToolTip="{DynamicResource Str_Ui_Search_By_Keyword_E_G_A_Map_Name_Leave_B}"/>
                         <TextBox x:Name="MapGameVersionBox" Style="{StaticResource SearchTextBox}" Grid.Column="1" Padding="8" FontSize="13" Margin="0,0,10,0"
                                  TextChanged="MapFilter_Changed"
-                                 ToolTip="限定游戏版本，例如 1.20.1；留空不限定"/>
-                        <Button Grid.Column="2" Content="手动刷新" Style="{StaticResource PrimaryButton}" Click="MapSearch_Click"
-                                ToolTip="列表已自动刷新；网络失败可在此手动重试"/>
+                                 ToolTip="{DynamicResource Str_Ui_Limit_To_A_Game_Version_E_G_1_20_1_Leave}"/>
+                        <Button Grid.Column="2" Content="{DynamicResource Str_Ui_Refresh_Now}" Style="{StaticResource PrimaryButton}" Click="MapSearch_Click"
+                                ToolTip="{DynamicResource Str_Ui_The_List_Refreshes_Automatically_Use_Thi}"/>
                     </Grid>
 
                     <!-- 版本快捷选择条，同 Mod/Resource 面板，见 ResourceVersionChipPanel 注释。 -->
                     <WrapPanel x:Name="MapVersionChipPanel" Grid.Row="2" Margin="0,0,0,10">
-                        <Button Content="全部" Style="{StaticResource VersionChipButton}" Tag="" Click="MapVersionChip_Click"/>
+                        <Button Content="{DynamicResource Str_Ui_All}" Style="{StaticResource VersionChipButton}" Tag="" Click="MapVersionChip_Click"/>
                         <Button Content="1.21" Style="{StaticResource VersionChipButton}" Tag="1.21" Click="MapVersionChip_Click"/>
                         <Button Content="1.20" Style="{StaticResource VersionChipButton}" Tag="1.20" Click="MapVersionChip_Click"/>
                         <Button Content="1.19" Style="{StaticResource VersionChipButton}" Tag="1.19" Click="MapVersionChip_Click"/>
@@ -665,7 +673,7 @@
                                 <!-- 整页跳转：地图之前是弹 CurseForgeMapPickerWindow 独立窗口，
                                      现在统一改成跳 ModDetailPage，跟 Mod/资源包同一套交互。 -->
                                 <Grid Margin="4,8" Cursor="Hand" Background="Transparent" Tag="{Binding}"
-                                      MouseLeftButtonUp="MapListItem_Click" ToolTip="点击查看详情和可下载的版本">
+                                      MouseLeftButtonUp="MapListItem_Click" ToolTip="{DynamicResource Str_Ui_Click_For_Details_And_Downloadable_Versi}">
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="*"/>
                                         <ColumnDefinition Width="Auto"/>
@@ -675,8 +683,8 @@
                                         <TextBlock Text="{Binding Summary}" FontSize="12" TextWrapping="Wrap" MaxHeight="34"
                                                    Foreground="{DynamicResource TextSecondaryBrush}"/>
                                         <TextBlock FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}">
-                                            <Run Text="作者: "/><Run Text="{Binding AuthorsDisplay, Mode=OneWay}"/>
-                                            <Run Text="  下载量: "/><Run Text="{Binding DownloadCount}"/>
+                                            <Run Text="{DynamicResource Str_Ui_Author}"/><Run Text="{Binding AuthorsDisplay, Mode=OneWay}"/>
+                                            <Run Text="{DynamicResource Str_Ui_Downloads}"/><Run Text="{Binding DownloadCount}"/>
                                         </TextBlock>
                                     </StackPanel>
                                     <Button Grid.Column="1" Content="{Binding FavoriteLabel}" Padding="8,5" FontSize="11"
@@ -694,11 +702,11 @@
                             <ColumnDefinition Width="*"/>
                             <ColumnDefinition Width="Auto"/>
                         </Grid.ColumnDefinitions>
-                        <Button Grid.Column="0" x:Name="MapPrevPageButton" Content="◀ 上一页" Style="{StaticResource SecondaryButton}"
+                        <Button Grid.Column="0" x:Name="MapPrevPageButton" Content="{DynamicResource Str_Ui_Previous}" Style="{StaticResource SecondaryButton}"
                                 Padding="12,6" Click="MapPrevPage_Click"/>
                         <TextBlock Grid.Column="1" x:Name="MapPageSummaryText" HorizontalAlignment="Center"
                                    VerticalAlignment="Center" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}"/>
-                        <Button Grid.Column="2" x:Name="MapNextPageButton" Content="下一页 ▶" Style="{StaticResource SecondaryButton}"
+                        <Button Grid.Column="2" x:Name="MapNextPageButton" Content="{DynamicResource Str_Ui_Next}" Style="{StaticResource SecondaryButton}"
                                 Padding="12,6" Click="MapNextPage_Click"/>
                     </Grid>
                 </Grid>
@@ -706,12 +714,12 @@
                 <!-- ===== 地图分类但未配置 CurseForge Key：引导去设置页粘贴 ===== -->
                 <StackPanel x:Name="MapKeyMissingPanel" DockPanel.Dock="Top" Visibility="Collapsed"
                             HorizontalAlignment="Center" VerticalAlignment="Center" Margin="0,80,0,0">
-                    <TextBlock Text="地图下载需要先配置 CurseForge API Key" FontSize="16" FontWeight="Bold"
+                    <TextBlock Text="{DynamicResource Str_Ui_Map_Downloads_Need_A_Curseforge_Api_Key_}" FontSize="16" FontWeight="Bold"
                                Foreground="{DynamicResource TextSecondaryBrush}" HorizontalAlignment="Center"/>
-                    <TextBlock Text="去 console.curseforge.com 申请一个 key，然后在「设置」页粘贴保存即可。"
+                    <TextBlock Text="{DynamicResource Str_Ui_Get_A_Key_From_Console_Curseforge_Com_Th}"
                                FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" HorizontalAlignment="Center"
                                Margin="0,6,0,0" TextWrapping="Wrap" MaxWidth="360" TextAlignment="Center"/>
-                    <Button Content="去设置页配置" Style="{StaticResource PrimaryButton}" Margin="0,14,0,0"
+                    <Button Content="{DynamicResource Str_Ui_Configure_In_Settings}" Style="{StaticResource PrimaryButton}" Margin="0,14,0,0"
                             HorizontalAlignment="Center" Click="GoToSettingsForKey_Click"/>
                 </StackPanel>
 
@@ -731,7 +739,7 @@
                             <RowDefinition Height="Auto"/>
                         </Grid.RowDefinitions>
 
-                        <TextBlock Grid.Row="0" Text="Mod 下载" FontSize="18" FontWeight="Bold" Margin="0,0,0,10"/>
+                        <TextBlock Grid.Row="0" Text="{DynamicResource Str_Ui_Mod_Downloads}" FontSize="18" FontWeight="Bold" Margin="0,0,0,10"/>
 
                         <!-- 仿 PCL「搜索 Mod」筛选栏：名称/来源 一行，版本/类型(加载器) 一行，
                              两列网格布局，最后单独一行放"搜索"+"重置条件"两个按钮。
@@ -754,31 +762,31 @@
                                 </Grid.ColumnDefinitions>
 
                                 <StackPanel Grid.Row="0" Grid.Column="0">
-                                    <TextBlock Text="名称" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4"/>
+                                    <TextBlock Text="{DynamicResource Str_Ui_Name}" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4"/>
                                     <TextBox x:Name="ModSearchBox" Style="{StaticResource SearchTextBox}" Padding="8" FontSize="13"
                                              TextChanged="ModFilter_Changed"
-                                             ToolTip="搜索关键词，支持中英文，例如 &quot;JEI&quot; 或 &quot;钠&quot;（自动翻译成 Sodium 搜索），留空浏览热门 Mod，输入后自动搜索"/>
+                                             ToolTip="{DynamicResource Str_Ui_Search_By_Keyword_In_English_Or_Chinese_}"/>
                                 </StackPanel>
                                 <StackPanel Grid.Row="0" Grid.Column="2">
-                                    <TextBlock Text="来源" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4"/>
+                                    <TextBlock Text="{DynamicResource Str_Ui_Source}" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4"/>
                                     <ComboBox x:Name="ModSourceCombo" Style="{StaticResource FilterComboBox}" SelectionChanged="ModSourceCombo_SelectionChanged">
-                                        <ComboBoxItem Content="综合(Modrinth+CurseForge)" IsSelected="True" Tag="combined"/>
-                                        <ComboBoxItem Content="仅 Modrinth" Tag="modrinth"/>
-                                        <ComboBoxItem Content="仅 CurseForge" Tag="curseforge"/>
+                                        <ComboBoxItem Content="{DynamicResource Str_Ui_Combined_Modrinth_Curseforge}" IsSelected="True" Tag="combined"/>
+                                        <ComboBoxItem Content="{DynamicResource Str_Ui_Modrinth_Only}" Tag="modrinth"/>
+                                        <ComboBoxItem Content="{DynamicResource Str_Ui_Curseforge_Only}" Tag="curseforge"/>
                                     </ComboBox>
                                 </StackPanel>
 
                                 <StackPanel Grid.Row="1" Grid.Column="0" Margin="0,10,0,0">
-                                    <TextBlock Text="版本" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4"/>
+                                    <TextBlock Text="{DynamicResource Str_Ui_Version}" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4"/>
                                     <TextBox x:Name="ModGameVersionBox" Style="{StaticResource SearchTextBox}" Padding="8" FontSize="13"
                                              TextChanged="ModFilter_Changed"
-                                             ToolTip="限定游戏版本，例如 1.20.1；留空不限定"/>
+                                             ToolTip="{DynamicResource Str_Ui_Limit_To_A_Game_Version_E_G_1_20_1_Leave}"/>
                                 </StackPanel>
                                 <StackPanel Grid.Row="1" Grid.Column="2" Margin="0,10,0,0">
-                                    <TextBlock Text="类型 (加载器)" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4"/>
+                                    <TextBlock Text="{DynamicResource Str_Ui_Type_Loader}" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4"/>
                                     <ComboBox x:Name="ModLoaderCombo" Style="{StaticResource FilterComboBox}"
                                               SelectionChanged="ModFilter_SelectionChanged">
-                                        <ComboBoxItem Content="不限加载器" IsSelected="True" Tag=""/>
+                                        <ComboBoxItem Content="{DynamicResource Str_Ui_Any_Loader}" IsSelected="True" Tag=""/>
                                         <ComboBoxItem Content="Fabric" Tag="fabric"/>
                                         <ComboBoxItem Content="Forge" Tag="forge"/>
                                         <ComboBoxItem Content="NeoForge" Tag="neoforge"/>
@@ -787,10 +795,10 @@
                                 </StackPanel>
 
                                 <StackPanel Grid.Row="3" Grid.Column="0" Grid.ColumnSpan="3" Orientation="Horizontal" Margin="0,14,0,0">
-                                    <Button Content="搜索" Style="{StaticResource PrimaryButton}" Padding="20,8" Click="ModSearch_Click"
-                                            ToolTip="列表已自动刷新；网络失败或想立即按当前条件重新搜索时可点这里"/>
-                                    <Button Content="重置条件" Style="{StaticResource SecondaryButton}" Padding="20,8" Margin="10,0,0,0"
-                                            Click="ModFilterReset_Click" ToolTip="清空名称/版本/加载器筛选，恢复到浏览热门 Mod"/>
+                                    <Button Content="{DynamicResource Str_Common_Search}" Style="{StaticResource PrimaryButton}" Padding="20,8" Click="ModSearch_Click"
+                                            ToolTip="{DynamicResource Str_Ui_The_List_Refreshes_Automatically_Click_H}"/>
+                                    <Button Content="{DynamicResource Str_Ui_Reset_Filters}" Style="{StaticResource SecondaryButton}" Padding="20,8" Margin="10,0,0,0"
+                                            Click="ModFilterReset_Click" ToolTip="{DynamicResource Str_Ui_Clear_The_Name_Version_And_Loader_Filter}"/>
                                 </StackPanel>
                             </Grid>
                         </Border>
@@ -808,7 +816,7 @@
                                          （仿 CurseForge/PCL：顶部返回箭头，整个内容区替换为该条目的详情），
                                          取代原来的 ContentPresenter 内联展开面板。 -->
                                     <Grid Margin="4,8" Cursor="Hand" Background="Transparent" Tag="{Binding}"
-                                          MouseLeftButtonUp="ModListItem_Click" ToolTip="点击查看详情和可下载的版本">
+                                          MouseLeftButtonUp="ModListItem_Click" ToolTip="{DynamicResource Str_Ui_Click_For_Details_And_Downloadable_Versi}">
                                         <Grid.ColumnDefinitions>
                                             <ColumnDefinition Width="Auto"/>
                                             <ColumnDefinition Width="*"/>
@@ -826,8 +834,8 @@
                                             <TextBlock Text="{Binding Description}" FontSize="12" TextWrapping="Wrap" MaxHeight="34"
                                                        Foreground="{DynamicResource TextSecondaryBrush}"/>
                                             <TextBlock FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}">
-                                                <Run Text="作者: "/><Run Text="{Binding Author}"/>
-                                                <Run Text="  下载量: "/><Run Text="{Binding Downloads}"/>
+                                                <Run Text="{DynamicResource Str_Ui_Author}"/><Run Text="{Binding Author}"/>
+                                                <Run Text="{DynamicResource Str_Ui_Downloads}"/><Run Text="{Binding Downloads}"/>
                                             </TextBlock>
                                         </StackPanel>
                                         <Button Grid.Column="2" Content="{Binding FavoriteLabel}" Padding="8,5" FontSize="11"
@@ -846,11 +854,11 @@
                                 <ColumnDefinition Width="*"/>
                                 <ColumnDefinition Width="Auto"/>
                             </Grid.ColumnDefinitions>
-                            <Button Grid.Column="0" x:Name="ModPrevPageButton" Content="◀ 上一页" Style="{StaticResource SecondaryButton}"
+                            <Button Grid.Column="0" x:Name="ModPrevPageButton" Content="{DynamicResource Str_Ui_Previous}" Style="{StaticResource SecondaryButton}"
                                     Padding="12,6" Click="ModPrevPage_Click"/>
                             <TextBlock Grid.Column="1" x:Name="ModPageSummaryText" HorizontalAlignment="Center"
                                        VerticalAlignment="Center" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}"/>
-                            <Button Grid.Column="2" x:Name="ModNextPageButton" Content="下一页 ▶" Style="{StaticResource SecondaryButton}"
+                            <Button Grid.Column="2" x:Name="ModNextPageButton" Content="{DynamicResource Str_Ui_Next}" Style="{StaticResource SecondaryButton}"
                                     Padding="12,6" Click="ModNextPage_Click"/>
                         </Grid>
                     </Grid>
@@ -858,8 +866,8 @@
                     <!-- MC百科中文名搜索辅助：只提供百科页面链接，不参与下载（见 McModService 类注释） -->
                     <Border Grid.Column="1" Background="{DynamicResource SideBrush}" CornerRadius="8" Padding="10">
                         <DockPanel>
-                            <TextBlock DockPanel.Dock="Top" Text="MC百科 参考" FontSize="14" FontWeight="Bold" Margin="0,0,0,4"/>
-                            <TextBlock DockPanel.Dock="Top" Text="中文资料辅助，点击跳转百科页面查看详情" FontSize="11"
+                            <TextBlock DockPanel.Dock="Top" Text="{DynamicResource Str_Ui_Mc_Wiki_Reference}" FontSize="14" FontWeight="Bold" Margin="0,0,0,4"/>
+                            <TextBlock DockPanel.Dock="Top" Text="{DynamicResource Str_Ui_Reference_Material_Click_To_Open_The_Wik}" FontSize="11"
                                        Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap" Margin="0,0,0,8"/>
                             <ListBox x:Name="McModListBox" BorderThickness="0" Background="Transparent">
                                 <ListBox.ItemTemplate>

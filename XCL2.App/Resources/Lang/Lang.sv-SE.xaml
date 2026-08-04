@@ -5,7 +5,7 @@
     <!-- Svenska (Sverige). Nyckeluppsättningen måste exakt matcha Lang.zh-Hans.xaml — se README.md. -->
 
     <system:String x:Key="Str_Lang_DialogTitle">Välj språk</system:String>
-    <system:String x:Key="Str_Lang_EntryButton">Språk</system:String>
+    <system:String x:Key="Str_Lang_EntryButton">Språk/Language</system:String>
     <system:String x:Key="Str_Lang_ExperimentalNotice">Vissa experimentella funktioner finns bara i det förenklade kinesiska gränssnittet. Efter att du bytt språk döljs dessa funktioner tillfälligt (funktionerna fungerar fortfarande, det saknas bara en översättning).</system:String>
     <system:String x:Key="Str_Lang_Ok">OK</system:String>
     <system:String x:Key="Str_Lang_Cancel">Avbryt</system:String>
@@ -45,9 +45,157 @@
     <system:String x:Key="Str_Nav_Logs">Loggar</system:String>
     <system:String x:Key="Str_Nav_Experimental">Experimentella funktioner</system:String>
     <system:String x:Key="Str_Nav_Toolbox">Verktygslåda</system:String>
+    <system:String x:Key="Str_Nav_AboutHelp">Tack &amp; hjälp</system:String>
+    <system:String x:Key="Str_Ui_Account_Version_Loader_And_Mods_In_One_P">Konto, version, loader och mods i ett svep</system:String>
+    <system:String x:Key="Str_Ui_Changes_The_Launcher_S_Language_Only_The">Ändrar endast språket i launcherns gränssnitt (påverkar inte språket i spelet, som ställs in separat på sidan „Inställningar”)</system:String>
+    <system:String x:Key="Str_Ui_Download_Game_Versions_Mods_Maps_Resourc">Ladda ner spelkärna, mods, kartor, resurspaket och modpaket</system:String>
+    <system:String x:Key="Str_Ui_Normal_Mode_Shows_Only_The_Essentials_An">Normalt läge: visar bara det viktigaste, Java identifieras/hämtas automatiskt, ingen manuell konfiguration behövs; Expertläge: gör det möjligt att justera Java-version/arkitektur/installationstyp, egna startargument och andra avancerade alternativ</system:String>
+    <system:String x:Key="Str_Ui_Switches_Between_Dark_And_Light_It_Only_">Växlar mellan mörkt och ljust läge, påverkar bara ljusstyrkan, inte färgfamiljen som valts under „Färgtema”. När „automatisk cykel” är på är detta val bara en tillfällig överstyrning – vid nästa schemalagda växlingstid tar den automatiska cykeln över igen.</system:String>
+    <system:String x:Key="Str_Ui_Switches_Between_Light_And_Dark_Automati">När det är aktiverat växlar det automatiskt mellan ljust och mörkt läge baserat på systemtiden (ljust kl. 8:00–19:00 som standard, annars mörkt). Växlingstiderna kan justeras på sidan „Inställningar”.</system:String>
+    <system:String x:Key="Str_Ui_When_On_The_Game_Launches_With_A_Tempora">När det är aktiverat startas spelet med ett tillfälligt konto som bara finns för denna session, i stället för dina sparade konton; när det stängs av rensas loggar/tillfälliga nedladdningar från denna session</system:String>
 
     <system:String x:Key="Str_Settings_LanguageSection_Title">Språk för launcherns gränssnitt</system:String>
     <system:String x:Key="Str_Settings_LanguageSection_Hint">Träder i kraft omedelbart, ingen omstart krävs. Detta ställer in språket för launcherns gränssnitt — separat från "språk i spelet" nedan.</system:String>
     <system:String x:Key="Str_Settings_LanguageSection_OpenPicker">🌐 Välj språk</system:String>
+
+
+    <!-- ============ 通用界面文案（第二批，按"用户高频看到"的顺序补充） ============
+         说明：全项目还有 1700+ 条硬编码中文尚未抽出（见 Tools/extract-hardcoded-strings.py
+         的统计），翻译是分批推进的。LocalizationService 现在会在加载非中文语言时
+         先铺一层简体中文做底再覆盖，所以"还没翻的条目显示中文、翻了的显示本语言"，
+         界面不会出现空白控件。 -->
+    <system:String x:Key="Str_Common_Ok">OK</system:String>
+    <system:String x:Key="Str_Common_Cancel">Avbryt</system:String>
+    <system:String x:Key="Str_Common_Yes">Ja</system:String>
+    <system:String x:Key="Str_Common_No">Nej</system:String>
+    <system:String x:Key="Str_Common_Close">Stäng</system:String>
+    <system:String x:Key="Str_Common_Save">Spara</system:String>
+    <system:String x:Key="Str_Common_Delete">Ta bort</system:String>
+    <system:String x:Key="Str_Common_Search">Sök</system:String>
+    <system:String x:Key="Str_Common_Refresh">Uppdatera</system:String>
+    <system:String x:Key="Str_Common_Install">Installera</system:String>
+    <system:String x:Key="Str_Common_Download">Ladda ner</system:String>
+    <system:String x:Key="Str_Common_Back">Tillbaka</system:String>
+    <system:String x:Key="Str_Common_Next">Nästa</system:String>
+    <system:String x:Key="Str_Common_Skip">Hoppa över</system:String>
+    <system:String x:Key="Str_Common_Finish">Klar</system:String>
+    <system:String x:Key="Str_Common_Retry">Försök igen</system:String>
+    <system:String x:Key="Str_Common_Browse">Bläddra</system:String>
+    <system:String x:Key="Str_Common_Reset">Återställ</system:String>
+    <system:String x:Key="Str_Common_Loading">Laddar...</system:String>
+    <system:String x:Key="Str_Status_Success">Klart</system:String>
+    <system:String x:Key="Str_Status_Failed">Misslyckades</system:String>
+    <system:String x:Key="Str_Status_Tip">Obs</system:String>
+    <system:String x:Key="Str_Status_Confirm">Bekräfta</system:String>
+    <system:String x:Key="Str_Status_Error">Något gick fel</system:String>
+    <system:String x:Key="Str_Launch_Button">Starta spelet</system:String>
+    <system:String x:Key="Str_Launch_Started">Spelet har startats</system:String>
+    <system:String x:Key="Str_Launch_NoVersion">Ingen version vald</system:String>
+    <system:String x:Key="Str_Launch_NoAccount">Inget konto valt</system:String>
+    <system:String x:Key="Str_Launch_CloseAll">Stäng alla</system:String>
+    <system:String x:Key="Str_Launch_CloseSelected">Stäng valda</system:String>
+    <system:String x:Key="Str_Launch_CloseUnresponsive">Stäng låsta</system:String>
+    <system:String x:Key="Str_Drop_Title">Släpp för att installera</system:String>
+    <system:String x:Key="Str_Drop_Hint">Mods, resurspaket, shaders, världar och modpaket installeras i den valda instansen</system:String>
+    <system:String x:Key="Str_Drop_NoInstance">Välj först en spelversion under ”Versionsval” innan du släpper filer.</system:String>
+    <system:String x:Key="Str_Drop_SectionTitle">Installation via dra och släpp</system:String>
+    <system:String x:Key="Str_Settings_Title">Inställningar</system:String>
+    <system:String x:Key="Str_Settings_Java">Java-inställningar</system:String>
+    <system:String x:Key="Str_Settings_Memory">Minnesinställningar</system:String>
+    <system:String x:Key="Str_Settings_Download">Nedladdningsinställningar</system:String>
+    <system:String x:Key="Str_Settings_Appearance">Utseende</system:String>
+    <system:String x:Key="Str_Toolbox_Title">Verktygslåda</system:String>
+    <system:String x:Key="Str_Toolbox_Achievement">Bild för framsteg</system:String>
+    <system:String x:Key="Str_Toolbox_ItemId">Föremåls-ID</system:String>
+    <system:String x:Key="Str_Toolbox_Preview">Förhandsgranska</system:String>
+
+
+    <!-- ============ Version select + download center page strings (added) ============ -->
+    <system:String x:Key="Str_Ui_A_Beginner_S_Wizard_That_Takes_You_From_">En guide för nybörjare som tar dig från konto till spelstart: välj version/loader, installera valfritt mods och resurs-/shaderpaket, och till sist laddas spelet ner och startas automatiskt</system:String>
+    <system:String x:Key="Str_Ui_Add_Existing_Folder">➕ Lägg till befintlig mapp</system:String>
+    <system:String x:Key="Str_Ui_Add_Or_Import">Lägg till eller importera</system:String>
+    <system:String x:Key="Str_Ui_All">Alla</system:String>
+    <system:String x:Key="Str_Ui_Any_Loader">Valfri loader</system:String>
+    <system:String x:Key="Str_Ui_April_Fools_Versions">Aprilskämtsversioner</system:String>
+    <system:String x:Key="Str_Ui_Author">Skapare: </system:String>
+    <system:String x:Key="Str_Ui_Blank_Means_Auto_Match_The_Version_S_Own">Tomt = matcha automatiskt (använder versionens och installerade mods Java-krav, det högre värdet gäller); ett tal (t.ex. 25) = tvinga alltid denna Java-huvudversion för den här versionen</system:String>
+    <system:String x:Key="Str_Ui_Bmclapi_Mirror">BMCLAPI-spegel</system:String>
+    <system:String x:Key="Str_Ui_Clear_The_Name_And_Version_Filters_And_B">Rensa namn- och versionsfilter och bläddra bland populära resurser</system:String>
+    <system:String x:Key="Str_Ui_Clear_The_Name_Version_And_Loader_Filter">Rensa namn-, versions- och loaderfilter och bläddra bland populära mods</system:String>
+    <system:String x:Key="Str_Ui_Click_For_Details_And_Downloadable_Versi">Klicka för detaljer och nedladdningsbara versioner</system:String>
+    <system:String x:Key="Str_Ui_Click_To_Choose_Between_Vanilla_And_The_">Klicka för att välja mellan vanilla och Fabric/Forge/NeoForge-loadern</system:String>
+    <system:String x:Key="Str_Ui_Combined_Modrinth_Curseforge">Kombinerat (Modrinth+CurseForge)</system:String>
+    <system:String x:Key="Str_Ui_Configure_In_Settings">Konfigurera på inställningssidan</system:String>
+    <system:String x:Key="Str_Ui_Curseforge_Only">Endast CurseForge</system:String>
+    <system:String x:Key="Str_Ui_Data_From_Curseforge">Data från CurseForge</system:String>
+    <system:String x:Key="Str_Ui_Data_Packs">Datapaket</system:String>
+    <system:String x:Key="Str_Ui_Dependencies">Beroenden</system:String>
+    <system:String x:Key="Str_Ui_Download_Install">Ladda ner och installera</system:String>
+    <system:String x:Key="Str_Ui_Downloads">  Nedladdningar: </system:String>
+    <system:String x:Key="Str_Ui_Favorites">Mina favoriter</system:String>
+    <system:String x:Key="Str_Ui_File">  Filnamn: </system:String>
+    <system:String x:Key="Str_Ui_Folders">Mapplista</system:String>
+    <system:String x:Key="Str_Ui_Game_Version">Spelversion</system:String>
+    <system:String x:Key="Str_Ui_Game_Version_Downloads">Nedladdning av spelversioner</system:String>
+    <system:String x:Key="Str_Ui_Get_A_Key_From_Console_Curseforge_Com_Th">Skaffa en nyckel på console.curseforge.com och klistra in och spara den på sidan "Inställningar".</system:String>
+    <system:String x:Key="Str_Ui_Independent_Of_The_Version_Isolation_Swi">Oberoende av versionsisoleringen ovan; om ej ikryssad gäller det globala standardvärdet från "Inställningar"</system:String>
+    <system:String x:Key="Str_Ui_Install_New_Version">➕ Installera ny version</system:String>
+    <system:String x:Key="Str_Ui_Installed_On_This_Pc">Versioner installerade på den här datorn</system:String>
+    <system:String x:Key="Str_Ui_Installed_Versions">Installerade versioner</system:String>
+    <system:String x:Key="Str_Ui_Java_Version_Used_By_This_Instance">Java-version som denna instans använder</system:String>
+    <system:String x:Key="Str_Ui_Join_A_Specific_Server_On_Launch_Connect">Anslut till en specifik server vid start (ansluter automatiskt till angiven server efter start)</system:String>
+    <system:String x:Key="Str_Ui_Joining_A_Server_Automatically_Needs_Min">Automatisk anslutning till server kräver Minecraft 1.20.6 eller senare; på äldre versioner har alternativet ingen effekt och huvudmenyn öppnas som vanligt</system:String>
+    <system:String x:Key="Str_Ui_Keep_This_Instance_S_Resource_And_Shader">Isolera även denna versions resurs-/shaderpaket separat (delas inte med andra versioner)</system:String>
+    <system:String x:Key="Str_Ui_Leave_Unchecked_To_Follow_The_Global_Def">Om ej ikryssad gäller det globala standardvärdet från "Inställningar"</system:String>
+    <system:String x:Key="Str_Ui_Legacy_Versions">Äldre versioner</system:String>
+    <system:String x:Key="Str_Ui_Limit_To_A_Game_Version_E_G_1_20_1_Leave">Begränsa till en spelversion, t.ex. 1.20.1; lämna tomt för ingen begränsning</system:String>
+    <system:String x:Key="Str_Ui_Loading_Versions">Läser in versionslista…</system:String>
+    <system:String x:Key="Str_Ui_Local_Mod_Management">Lokal modhantering</system:String>
+    <system:String x:Key="Str_Ui_Map_Downloads">Nedladdning av kartor</system:String>
+    <system:String x:Key="Str_Ui_Map_Downloads_Need_A_Curseforge_Api_Key_">Nedladdning av kartor kräver att en CurseForge API-nyckel konfigureras först</system:String>
+    <system:String x:Key="Str_Ui_Maps">Kartor</system:String>
+    <system:String x:Key="Str_Ui_Mc_Wiki_Reference">MC-wiki-referens</system:String>
+    <system:String x:Key="Str_Ui_Mod_Downloads">Nedladdning av mods</system:String>
+    <system:String x:Key="Str_Ui_Modpacks">Modpaket</system:String>
+    <system:String x:Key="Str_Ui_Modrinth_Only">Endast Modrinth</system:String>
+    <system:String x:Key="Str_Ui_Name">Namn</system:String>
+    <system:String x:Key="Str_Ui_Next">Nästa sida ▶</system:String>
+    <system:String x:Key="Str_Ui_No_Matching_Versions_Found_The_Game_Vers">Inga matchande versioner hittades (den filtrerade spelversionen kanske inte stämmer).</system:String>
+    <system:String x:Key="Str_Ui_Nothing_Saved_Yet_Try_The_Button_In_The_">Inget har sparats än. Prova knappen ☆ Lägg till favorit under "Spelversion"/"Mod"/"Resurspaket" med mera.</system:String>
+    <system:String x:Key="Str_Ui_Official_Mojang">Officiell källa (Mojang)</system:String>
+    <system:String x:Key="Str_Ui_Only_Applies_When_No_Specific_Java_Is_Ch">Gäller endast när ingen specifik Java valts ovan: lämna tomt för automatisk matchning (rekommenderas); ett tal (t.ex. 25) tvingar fram den huvudversionen</system:String>
+    <system:String x:Key="Str_Ui_Open_On_The_Chinese_Minecraft_Wiki">Visa på den kinesiska Minecraft-wikin</system:String>
+    <system:String x:Key="Str_Ui_Pick_A_Java_For_This_Instance_From_The_J">Välj en Java specifikt för denna version från Java-listan i "Inställningar"; välj "(ej angiven)" för att i stället matcha automatiskt mot huvudversionen som anges nedan</system:String>
+    <system:String x:Key="Str_Ui_Previous">◀ Föregående sida</system:String>
+    <system:String x:Key="Str_Ui_Project_Id">Projekt-ID: </system:String>
+    <system:String x:Key="Str_Ui_Reference_Material_Click_To_Open_The_Wik">Referensmaterial på kinesiska, klicka för att öppna wikisidan med detaljer</system:String>
+    <system:String x:Key="Str_Ui_Refresh_Now">Uppdatera manuellt</system:String>
+    <system:String x:Key="Str_Ui_Release">Release</system:String>
+    <system:String x:Key="Str_Ui_Reset_Filters">Återställ filter</system:String>
+    <system:String x:Key="Str_Ui_Resource_Data_Shader_Packs">Resurs- / data- / shaderpaket</system:String>
+    <system:String x:Key="Str_Ui_Resource_Pack_Downloads">Nedladdning av resurspaket</system:String>
+    <system:String x:Key="Str_Ui_Resource_Packs">Resurspaket</system:String>
+    <system:String x:Key="Str_Ui_Save_Settings_For_This_Version">Spara inställningar för denna version</system:String>
+    <system:String x:Key="Str_Ui_Search_By_Keyword_E_G_A_Map_Name_Leave_B">Sök på nyckelord, t.ex. ett kartnamn; lämna tomt för att bläddra bland populära kartor, sökningen sker automatiskt när du skriver</system:String>
+    <system:String x:Key="Str_Ui_Search_By_Keyword_In_English_Or_Chinese_">Sök på nyckelord, engelska eller kinesiska stöds, t.ex. &amp;quot;JEI&amp;quot; eller &amp;quot;钠&amp;quot; (översätts automatiskt till Sodium); lämna tomt för att bläddra bland populära mods, sökningen sker automatiskt när du skriver</system:String>
+    <system:String x:Key="Str_Ui_Search_By_Keyword_Leave_Blank_To_Browse_">Sök på nyckelord, engelska eller kinesiska stöds; lämna tomt för att bläddra bland populära resurser, sökningen sker automatiskt när du skriver</system:String>
+    <system:String x:Key="Str_Ui_Search_By_Version_E_G_1_20_Or_21w_Filter">Sök på versionsnummer, t.ex. 1.20 eller 21w, filtreras automatiskt när du skriver</system:String>
+    <system:String x:Key="Str_Ui_Server_Address_E_G_Play_Example_Com_Or_1">Serveradress, t.ex. play.example.com eller 1.2.3.4:25565</system:String>
+    <system:String x:Key="Str_Ui_Shader_Packs">Shaderpaket</system:String>
+    <system:String x:Key="Str_Ui_Show_Pre_Release_Resources">Visa förhandsversioner av resurser</system:String>
+    <system:String x:Key="Str_Ui_Snapshot">Snapshot</system:String>
+    <system:String x:Key="Str_Ui_Source">Källa</system:String>
+    <system:String x:Key="Str_Ui_Supports"> · Stöder: </system:String>
+    <system:String x:Key="Str_Ui_The_List_Refreshes_Automatically_Click_H">Listan uppdateras automatiskt; klicka här vid nätverksfel eller för att söka om direkt med aktuella filter</system:String>
+    <system:String x:Key="Str_Ui_The_List_Refreshes_Automatically_Use_Thi">Listan uppdateras automatiskt; försök igen manuellt här vid nätverksfel</system:String>
+    <system:String x:Key="Str_Ui_The_List_Refreshes_Automatically_Use_Thi_2">Listan uppdateras automatiskt; försök igen manuellt här vid nätverksfel eller efter källbyte</system:String>
+    <system:String x:Key="Str_Ui_Turn_On_Version_Isolation_Just_For_This_">Aktivera "versionsisolering" endast för denna version (mods/resurspaket/världar m.m. lagras separat)</system:String>
+    <system:String x:Key="Str_Ui_Type">Typ</system:String>
+    <system:String x:Key="Str_Ui_Type_Loader">Typ (loader)</system:String>
+    <system:String x:Key="Str_Ui_Unfavorite">Ta bort favorit</system:String>
+    <system:String x:Key="Str_Ui_Version">Version</system:String>
+    <system:String x:Key="Str_Ui_Versions">Versionslista</system:String>
+    <system:String x:Key="Str_Ui_View_Enable_Disable_And_Remove_Installed">Visa/aktivera/inaktivera/ta bort installerade lokala mods, importera/exportera modpaket</system:String>
+    <system:String x:Key="Str_Ui_When_Ticked_Search_Results_Include_Beta_">När ikryssad inkluderar sökresultaten beta-/alfaversioner som ännu inte officiellt släppts. Standard visar endast releaseversioner.</system:String>
 
 </ResourceDictionary>

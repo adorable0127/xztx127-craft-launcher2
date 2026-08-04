@@ -233,7 +233,7 @@ public partial class HomePage : UserControl
     /// </summary>
     private void TileQuickStart_Click(object sender, RoutedEventArgs e)
     {
-        var wizard = new QuickStartWizardWindow(_owner) { Owner = Window.GetWindow(this) };
+        var wizard = new QuickStartWizardWindow(_owner);
         wizard.ShowDialog();
     }
 

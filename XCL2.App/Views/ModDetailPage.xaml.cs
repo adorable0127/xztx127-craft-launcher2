@@ -60,7 +60,21 @@ public partial class ModDetailPage : UserControl
     /// <summary>"显示/隐藏预览版"按钮当前状态：true=预览版(beta/alpha)也显示在分组列表里，
     /// false=只显示正式版。默认 false（跟历史上"预览版默认隐藏"的设计一致），只有 _isMod 时
     /// 才会被按钮切换和 RebuildModGroups 用到，非 Mod 场景下这个字段不产生任何效果。</summary>
-    private bool _showPreview;
+    /// <summary>
+    /// 「显示预览版」的全局默认值，由「下载中心 - 社区资源」筛选栏里的勾选框写入
+    /// （见 DownloadCenterPage.ResourceShowPreview_Changed）。
+    ///
+    /// 用静态属性而不是在这里直接读 ConfigService：ModDetailPage 是个纯 UserControl，
+    /// 没有持有 MainWindow/ConfigService 的引用（ConfigService.Config 是实例属性不是静态的），
+    /// 为了读一个开关去给它接一条 owner 引用不划算。宿主页面本来就知道配置，
+    /// 由宿主推给它是最省事也最不容易出错的做法。
+    /// </summary>
+    public static bool DefaultShowPreview { get; set; }
+
+    /// <summary>本页当前的"显示/隐藏预览版"状态，初始值取上面的全局默认。
+    /// 这样用户在列表页勾了"显示预览版资源"之后，进任何资源详情页都已经是展开状态，
+    /// 不用每进一个资源再点一次按钮。详情页里再点按钮只改本页，不写回全局。</summary>
+    private bool _showPreview = DefaultShowPreview;
 
     private readonly Action<bool>? _onFavoriteToggle;
     private bool _isFavorite;
@@ -293,7 +307,7 @@ public partial class ModDetailPage : UserControl
         }
         catch (Exception ex)
         {
-            MessageBoxDialog.ShowError("无法打开浏览器：\n" + ex.Message, "错误");
+            MessageBoxDialog.ShowError(Loc.T("Str_Cs_Couldn_T_Open_Your_Browser_N", "无法打开浏览器：\n") + ex.Message, Loc.T("Str_Cs_Error", "错误"));
         }
     }
 
@@ -327,7 +341,7 @@ public partial class ModDetailPage : UserControl
 
         if (_isDataPack && string.IsNullOrEmpty(SelectedSaveName))
         {
-            MessageBoxDialog.ShowInfo("请先选择要安装到哪个存档（数据包必须放进具体存档才会生效）。",
+            MessageBoxDialog.ShowInfo(Loc.T("Str_Cs_Choose_Which_World_To_Install_Into_First", "请先选择要安装到哪个存档（数据包必须放进具体存档才会生效）。"),
                 "提示");
             return;
         }

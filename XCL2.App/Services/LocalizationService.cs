@@ -42,6 +42,7 @@ public static class LocalizationService
         new("zh-Hant", "繁體中文"),
         new("yue-Hant", "粵語（繁體）"),
         new("en-US", "English (United States)"),
+        new("en-GB", "English (United Kingdom)"),
         new("de-DE", "Deutsch (Deutschland)"),
         new("fr-FR", "Français (France)"),
         new("it-IT", "Italiano (Italia)"),
@@ -67,6 +68,9 @@ public static class LocalizationService
     /// 字符串资源的值（没有用 DynamicResource 绑定，而是手动 GetString 取了一次），
     /// 应该订阅这个事件、在回调里重新取值刷新自己缓存的那份。</summary>
     public static event Action? LanguageChanged;
+
+    /// <summary>兜底语言：任何语言缺 key 时都用英文补（见 Apply 里的回退链）。\n    /// 选英文而不是中文，是为了让非中文用户在遇到未翻译条目时至少能读懂。</summary>
+    private const string FallbackLanguageCode = "en-US";
 
     private const string DictPathPrefix = "/Resources/Lang/Lang.";
     private const string DictPathSuffix = ".xaml";
@@ -104,6 +108,57 @@ public static class LocalizationService
         }
 
         DebugValidateKeys(newDict, code);
+
+        // ===== 缺失 key 的回退链：目标语言 → 英文(en-US) → 简体中文 =====
+        // 全项目有 1700+ 条界面文案，翻译分批推进，非中文语言必然长期存在
+        // "某些 key 还没翻"的中间状态。不处理的话 DynamicResource 查不到 key，
+        // 界面上会直接显示成**空白**（比显示 key 名还糟——用户看到没字的按钮）。
+        //
+        // 回退顺序是有意这样排的（按用户要求：其他语言兜底用英文）：
+        //   1) 先铺简体中文做最底层——它是 key 集合的权威基准，保证任何 key 都有值，
+        //      永远不会出现空白控件；
+        //   2) 再铺英文覆盖上去——对一个看德语/日语界面的用户来说，
+        //      看到英文远比看到中文有用；
+        //   3) 最后铺目标语言覆盖——翻了的显示本语言。
+        // 结果：翻了→本语言，没翻但有英文→英文，英文也没有→中文。
+        //
+        // en-US 自己加载时跳过第 2 步（自己覆盖自己没意义）。
+        if (code != DefaultLanguageCode)
+        {
+            try
+            {
+                var mergedDict = new ResourceDictionary();
+
+                void Overlay(string langCode)
+                {
+                    try
+                    {
+                        var d = new ResourceDictionary
+                        {
+                            Source = new Uri($"{DictPathPrefix}{langCode}{DictPathSuffix}", UriKind.Relative)
+                        };
+                        foreach (var key in d.Keys) mergedDict[key] = d[key];
+                    }
+                    catch { /* 某一层读不到就跳过，不影响其它层 */ }
+                }
+
+                // 回退链自下而上：英文打底 → （仅中文变体额外铺简体中文）→ 目标语言覆盖。
+                //
+                // 为什么用英文而不是中文打底：一个德国/日本/瑞典用户碰到还没翻译的条目，
+                // 看到英文至少能猜出这个按钮干什么；看到中文完全无从下手。
+                // 繁体/粤语是例外——它们跟简体的重合度远高于英文，所以在英文之上
+                // 再铺一层简体，未翻条目显示简体中文比显示英文更贴近这批用户的习惯。
+                Overlay(FallbackLanguageCode);                                  // 1. 英文底
+                if (code is "zh-Hant" or "yue-Hant") Overlay(DefaultLanguageCode); // 2. 中文变体额外铺简体
+                foreach (var key in newDict.Keys) mergedDict[key] = newDict[key];  // 3. 目标语言
+
+                newDict = mergedDict;
+            }
+            catch
+            {
+                // 整个回退链构建失败就用原样的目标语言字典，不影响主流程。
+            }
+        }
 
         var merged = Application.Current.Resources.MergedDictionaries;
 
@@ -173,12 +228,23 @@ public static class LocalizationService
             return; // 基准语言都加载不出来，跳过这次校验（Apply 里对基准语言加载失败已经会直接抛出）
         }
 
+        // 现在只汇总一个数字，不再逐条 Debug.WriteLine。
+        // 原因：翻译是分批推进的，目前 8 种语言各只覆盖了 86/297 个 key，
+        // 逐条打印会在输出窗口刷出上千行，把真正有用的调试信息淹掉。
+        // 缺 key 本身不是 bug——Apply() 里的回退链会用英文补上（见那边的注释）。
+        var missing = 0;
         foreach (var key in baseline.Keys)
         {
-            if (key is string k && k != LangDictMarkerKey && !dict.Contains(k))
-            {
-                Debug.WriteLine($"[LocalizationService] 语言 '{code}' 缺少字符串资源 key：{k}（将在运行时 fallback 到简体中文）");
-            }
+            if (key is string k && k != LangDictMarkerKey && !dict.Contains(k)) missing++;
+        }
+
+        if (missing > 0)
+        {
+            var total = baseline.Count - 1; // 减掉 LangDictMarkerKey
+            Debug.WriteLine(
+                $"[LocalizationService] 语言 '{code}' 覆盖 {total - missing}/{total} 条，" +
+                $"缺 {missing} 条（运行时会自动回退到 {FallbackLanguageCode}）。" +
+                "补翻译流程见 Tools/extract-hardcoded-strings.py。");
         }
     }
 }

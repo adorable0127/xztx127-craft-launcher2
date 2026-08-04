@@ -9,23 +9,23 @@
             </Grid.RowDefinitions>
 
             <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="0,0,0,12">
-                <TextBlock Text="日志" FontSize="20" FontWeight="Bold" Foreground="{DynamicResource TextPrimaryBrush}" VerticalAlignment="Center"/>
-                <CheckBox x:Name="ShowLogCheck" Content="显示日志面板（默认不显示，勾选后小白模式也能查看）"
+                <TextBlock Text="{DynamicResource Str_Nav_Logs}" FontSize="20" FontWeight="Bold" Foreground="{DynamicResource TextPrimaryBrush}" VerticalAlignment="Center"/>
+                <CheckBox x:Name="ShowLogCheck" Content="{DynamicResource Str_Ui_Show_The_Log_Panel_Hidden_By_Default_Tic}"
                           Margin="20,0,0,0" VerticalAlignment="Center" Checked="ShowLogCheck_Changed" Unchecked="ShowLogCheck_Changed"/>
             </StackPanel>
 
             <TabControl x:Name="LogTabs" Grid.Row="1" Visibility="Collapsed">
-                <TabItem Header="🎮 游戏日志">
+                <TabItem Header="{DynamicResource Str_Ui_Game_Log}">
                     <Grid>
                         <Grid.RowDefinitions>
                             <RowDefinition Height="Auto"/>
                             <RowDefinition Height="*"/>
                         </Grid.RowDefinitions>
                         <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="0,8,0,8">
-                            <TextBlock Text="选择正在运行/最近的游戏进程：" VerticalAlignment="Center"/>
+                            <TextBlock Text="{DynamicResource Str_Ui_Choose_A_Running_Or_Recent_Game_Process}" VerticalAlignment="Center"/>
                             <ComboBox x:Name="ProcessCombo" Width="260" Margin="8,0,8,0"
                                       SelectionChanged="ProcessCombo_SelectionChanged"/>
-                            <Button Content="刷新" Style="{StaticResource SideNavButton}" Padding="10,4" Click="RefreshGameLog_Click"/>
+                            <Button Content="{DynamicResource Str_Common_Refresh}" Style="{StaticResource SideNavButton}" Padding="10,4" Click="RefreshGameLog_Click"/>
                         </StackPanel>
                         <TextBox x:Name="GameLogBox" Grid.Row="1" IsReadOnly="True" TextWrapping="NoWrap"
                                  FontFamily="Consolas" FontSize="12" VerticalScrollBarVisibility="Auto"
@@ -33,13 +33,13 @@
                     </Grid>
                 </TabItem>
 
-                <TabItem Header="🖥 启动器日志">
+                <TabItem Header="{DynamicResource Str_Ui_Launcher_Log}">
                     <Grid>
                         <Grid.RowDefinitions>
                             <RowDefinition Height="Auto"/>
                             <RowDefinition Height="*"/>
                         </Grid.RowDefinitions>
-                        <Button Grid.Row="0" Content="刷新" Style="{StaticResource SideNavButton}" Padding="10,4"
+                        <Button Grid.Row="0" Content="{DynamicResource Str_Common_Refresh}" Style="{StaticResource SideNavButton}" Padding="10,4"
                                 HorizontalAlignment="Left" Margin="0,8,0,8" Click="RefreshLauncherLog_Click"/>
                         <TextBox x:Name="LauncherLogBox" Grid.Row="1" IsReadOnly="True" TextWrapping="NoWrap"
                                  FontFamily="Consolas" FontSize="12" VerticalScrollBarVisibility="Auto"
@@ -47,7 +47,7 @@
                     </Grid>
                 </TabItem>
 
-                <TabItem Header="💥 崩溃报告分析">
+                <TabItem Header="{DynamicResource Str_Ui_Crash_Report_Analysis}">
                     <Grid>
                         <Grid.RowDefinitions>
                             <RowDefinition Height="Auto"/>
@@ -55,15 +55,15 @@
                             <RowDefinition Height="*"/>
                         </Grid.RowDefinitions>
                         <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="0,8,0,8">
-                            <TextBlock Text="崩溃文件：" VerticalAlignment="Center"/>
+                            <TextBlock Text="{DynamicResource Str_Ui_Crash_File}" VerticalAlignment="Center"/>
                             <ComboBox x:Name="CrashFileCombo" Width="360" Margin="8,0,8,0"
                                       SelectionChanged="CrashFileCombo_SelectionChanged"/>
-                            <Button Content="重新扫描" Style="{StaticResource SideNavButton}" Padding="10,4" Click="RescanCrash_Click"/>
+                            <Button Content="{DynamicResource Str_Ui_Rescan}" Style="{StaticResource SideNavButton}" Padding="10,4" Click="RescanCrash_Click"/>
                         </StackPanel>
                         <Border Grid.Row="1" Background="{DynamicResource WarningBannerBrush}" CornerRadius="6" Padding="10" Margin="0,0,0,8">
                             <TextBlock x:Name="CrashFindingsText" TextWrapping="Wrap" FontSize="13"
                                        Foreground="{DynamicResource TextPrimaryBrush}"
-                                       Text="选择上方的崩溃文件后，这里会显示自动分析出的中文提示。"/>
+                                       Text="{DynamicResource Str_Ui_Pick_A_Crash_File_Above_And_The_Automati}"/>
                         </Border>
                         <TextBox x:Name="CrashRawBox" Grid.Row="2" IsReadOnly="True" TextWrapping="NoWrap"
                                  FontFamily="Consolas" FontSize="12" VerticalScrollBarVisibility="Auto"
@@ -71,25 +71,25 @@
                     </Grid>
                 </TabItem>
 
-                <TabItem Header="🛡 注入检测">
+                <TabItem Header="{DynamicResource Str_Ui_Injection_Scan}">
                     <Grid>
                         <Grid.RowDefinitions>
                             <RowDefinition Height="Auto"/>
                             <RowDefinition Height="*"/>
                         </Grid.RowDefinitions>
                         <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="0,8,0,8">
-                            <TextBlock Text="选择正在运行的游戏进程：" VerticalAlignment="Center"/>
+                            <TextBlock Text="{DynamicResource Str_Ui_Select_A_Running_Game_Process}" VerticalAlignment="Center"/>
                             <ComboBox x:Name="ScanProcessCombo" Width="260" Margin="8,0,8,0"/>
-                            <Button Content="立即扫描" Style="{StaticResource PrimaryButton}" Padding="12,4" Click="ScanNow_Click"/>
+                            <Button Content="{DynamicResource Str_Ui_Scan_Now}" Style="{StaticResource PrimaryButton}" Padding="12,4" Click="ScanNow_Click"/>
                         </StackPanel>
                         <ListView x:Name="ModuleListView" Grid.Row="1">
                             <ListView.View>
                                 <GridView>
-                                    <GridViewColumn Header="风险" Width="70" DisplayMemberBinding="{Binding RiskLabel}"/>
-                                    <GridViewColumn Header="模块文件名" Width="180" DisplayMemberBinding="{Binding FileName}"/>
-                                    <GridViewColumn Header="命中规则" Width="200" DisplayMemberBinding="{Binding MatchedRule}"/>
-                                    <GridViewColumn Header="厂商" Width="120" DisplayMemberBinding="{Binding CompanyName}"/>
-                                    <GridViewColumn Header="路径" Width="260" DisplayMemberBinding="{Binding FullPath}"/>
+                                    <GridViewColumn Header="{DynamicResource Str_Ui_Risk}" Width="70" DisplayMemberBinding="{Binding RiskLabel}"/>
+                                    <GridViewColumn Header="{DynamicResource Str_Ui_Module_File}" Width="180" DisplayMemberBinding="{Binding FileName}"/>
+                                    <GridViewColumn Header="{DynamicResource Str_Ui_Matched_Rule}" Width="200" DisplayMemberBinding="{Binding MatchedRule}"/>
+                                    <GridViewColumn Header="{DynamicResource Str_Ui_Vendor}" Width="120" DisplayMemberBinding="{Binding CompanyName}"/>
+                                    <GridViewColumn Header="{DynamicResource Str_Ui_Path}" Width="260" DisplayMemberBinding="{Binding FullPath}"/>
                                 </GridView>
                             </ListView.View>
                         </ListView>
@@ -97,7 +97,7 @@
                 </TabItem>
             </TabControl>
 
-            <TextBlock x:Name="HiddenHint" Grid.Row="1" Text="日志面板当前已隐藏。勾选上方复选框可查看游戏日志、启动器日志、崩溃分析和注入检测。"
+            <TextBlock x:Name="HiddenHint" Grid.Row="1" Text="{DynamicResource Str_Ui_The_Log_Panel_Is_Hidden_Tick_The_Box_Abo}"
                        Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap" Margin="0,20,0,0"/>
         </Grid>
     </Border>

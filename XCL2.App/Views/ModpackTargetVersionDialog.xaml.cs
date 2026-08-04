@@ -1,6 +1,7 @@
 using System.IO;
 using System.Windows;
 using XCL2.App.Models;
+using XCL2.App.Services;   // Loc.T（代码内文案本地化，见 Services/Loc.cs）
 
 namespace XCL2.App.Views;
 
@@ -88,13 +89,13 @@ public partial class ModpackTargetVersionDialog : OverlayDialogControl
             var name = SanitizeForFolderName(NewNameBox.Text);
             if (string.IsNullOrWhiteSpace(name))
             {
-                NewNameErrorText.Text = "请输入版本目录名称。";
+                NewNameErrorText.Text = Loc.T("Str_Cs_Please_Enter_A_Version_Folder_Name", "请输入版本目录名称。");
                 NewNameErrorText.Visibility = Visibility.Visible;
                 return;
             }
             if (_existingVersions.Any(v => string.Equals(v.Id, name, StringComparison.OrdinalIgnoreCase)))
             {
-                NewNameErrorText.Text = "已经有一个同名的版本目录了，请换一个名称。";
+                NewNameErrorText.Text = Loc.T("Str_Cs_A_Version_Folder_With_That_Name_Already_", "已经有一个同名的版本目录了，请换一个名称。");
                 NewNameErrorText.Visibility = Visibility.Visible;
                 return;
             }
@@ -107,7 +108,7 @@ public partial class ModpackTargetVersionDialog : OverlayDialogControl
             if (ExistingVersionCombo.SelectedItem is not GameVersion selected)
             {
                 NewNameErrorText.Visibility = Visibility.Collapsed;
-                MessageBoxDialog.ShowInfo("请先选择一个已有的版本目录。");
+                MessageBoxDialog.ShowInfo(Loc.T("Str_Cs_Please_Choose_An_Existing_Version_Folder", "请先选择一个已有的版本目录。"));
                 return;
             }
 

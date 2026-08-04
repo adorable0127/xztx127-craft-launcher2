@@ -66,8 +66,80 @@
                  让所有未显式设置 Icon 的 Window 都自动套用同一个应用图标，
                  任务栏/Alt-Tab/标题栏左上角统一显示，而不是系统默认的白纸图标。
                  MainWindow.xaml 已经显式设置了同一个 Icon，不受影响。 -->
-            <Style TargetType="Window">
-                <Setter Property="Icon" Value="/Resources/app.ico"/>
+            <!-- 注意：这里**不再**用 Setter 写死 Icon。
+                 原因：深色/浅色模式要自动切换窗口图标（app.ico / app-dark.ico），
+                 而隐式 Style 的 Setter 属于"本地值"之上的样式值，一旦 AppIconService
+                 在运行时给 window.Icon 赋了本地值，这个 Setter 就再也不会生效；
+                 反过来如果保留 Setter，新开的窗口会先闪一下浅色图标再被改掉。
+                 统一交给 AppIconService.ApplyTo(window) 在窗口创建时和主题切换时赋值，
+                 只有一个真相来源，不会打架。见 Services/AppIconService.cs 类头注释。 -->
+            <Style TargetType="Window"/>
+
+            <!-- ===== 侧边栏导航矢量图标（Geometry）=====
+                 为什么不用 emoji：原来 11 个导航图标全是 emoji 文本（🏠📁⬇🌐🧩…），
+                 带来两个必现的显示 bug：
+
+                 1)「下载图标比别的小一像素」——🏠📁🌐🧩 这些是 emoji-presentation 字符，
+                    走 Segoe UI Emoji 彩色字体；而 ⬇ (U+2B07) 去掉变体选择符 U+FE0F 之后
+                    退回 text-presentation，落到 Segoe UI Symbol 这个**完全不同的字体**上，
+                    两套字体的字形设计尺寸(em box 占比)天生不一致，无论怎么调 FontSize
+                    都对不齐。上一版"去掉 U+FE0F"其实把问题改重了。
+
+                 2)「收起后图标只剩 1 像素」——收起态列宽 56，减去 SidebarPanel 的
+                    Margin=12 左右共 24、SideNavButton 的 Padding=10,10 共 20、
+                    模板 BorderThickness=2，真正留给图标的只有 10px，而 FontSize=14 的
+                    emoji 字形需要 17~18px，直接被裁成一条竖线。
+
+                 改成 Path 矢量图标后两个问题一起消失：图标尺寸由 Path 外层容器写死
+                 (固定 20×20)，不受字体回退影响；容器尺寸固定后收起态也不会被压缩，
+                 只要把 margin/padding 一起收掉留够 20px 即可（见 MainWindow.xaml.cs
+                 的 ApplySidebarCollapsedState）。矢量图标还能跟随主题变色、任意 DPI 下
+                 都清晰，这也是 PCL2/HMCL 的做法。
+
+                 全部图标统一按 24×24 的 viewBox 绘制，线条风格一致(描边式)。 -->
+            <Geometry x:Key="IconHome">M12 3 L21 10.5 V21 H14 V15 H10 V21 H3 V10.5 Z</Geometry>
+            <Geometry x:Key="IconFolder">M3 6 H10 L12 8.5 H21 V19 H3 Z</Geometry>
+            <Geometry x:Key="IconDownload">M12 3 V14 M12 14 L7.5 9.5 M12 14 L16.5 9.5 M4 17 V20 H20 V17</Geometry>
+            <Geometry x:Key="IconGlobe">M12 3 A9 9 0 1 0 12 21 A9 9 0 1 0 12 3 M3 12 H21 M12 3 A13 13 0 0 1 12 21 M12 3 A13 13 0 0 0 12 21</Geometry>
+            <Geometry x:Key="IconPuzzle">M9 4 H15 V7 A2 2 0 0 0 19 7 V13 H16 A2 2 0 0 0 16 17 H19 V20 H5 V7 H8 A2 2 0 0 0 9 4 Z</Geometry>
+            <Geometry x:Key="IconServer">M3 5 H21 V11 H3 Z M3 13 H21 V19 H3 Z M6.5 8 H7 M6.5 16 H7</Geometry>
+            <Geometry x:Key="IconToolbox">M3 9 H21 V20 H3 Z M9 9 V6 H15 V9 M3 14 H21</Geometry>
+            <Geometry x:Key="IconAccount">M12 4 A4 4 0 1 1 12 12 A4 4 0 1 1 12 4 M4.5 21 A7.5 7.5 0 0 1 19.5 21</Geometry>
+            <Geometry x:Key="IconSettings">M12 8.5 A3.5 3.5 0 1 1 12 15.5 A3.5 3.5 0 1 1 12 8.5 M12 2.5 V5 M12 19 V21.5 M21.5 12 H19 M5 12 H2.5 M18.7 5.3 L17 7 M7 17 L5.3 18.7 M18.7 18.7 L17 17 M7 7 L5.3 5.3</Geometry>
+            <Geometry x:Key="IconLogs">M6 3 H16 L19 6 V21 H6 Z M9 8 H16 M9 12 H16 M9 16 H13</Geometry>
+            <Geometry x:Key="IconFlask">M10 3 V9 L5 19 A1.5 1.5 0 0 0 6.5 21 H17.5 A1.5 1.5 0 0 0 19 19 L14 9 V3 M9 3 H15 M7.5 15 H16.5</Geometry>
+            <Geometry x:Key="IconMenu">M4 7 H20 M4 12 H20 M4 17 H20</Geometry>
+            <!-- 「鸣谢与帮助」导航图标：一个简化的心形，呼应"鸣谢/感谢"的语义，
+                 同时跟其它导航图标一样是单色线条风格，不引入实心填充打破视觉统一。 -->
+            <Geometry x:Key="IconHeart">M12 20 C12 20 4 14.5 4 9 A4 4 0 0 1 12 6.5 A4 4 0 0 1 20 9 C20 14.5 12 20 12 20 Z</Geometry>
+            <Geometry x:Key="IconDot">M12 8.5 A3.5 3.5 0 1 1 12 15.5 A3.5 3.5 0 1 1 12 8.5 Z</Geometry>
+
+            <!-- 导航图标统一样式：**尺寸写死在这里**，是上面两个 bug 不再复发的关键。
+                 Width/Height 固定 20，Stretch=Uniform 让 24 的 viewBox 等比缩到 20；
+                 UseLayoutRounding 保证描边落在整像素上、不同缩放比下不发虚。 -->
+            <Style TargetType="Path" x:Key="NavIconPath">
+                <Setter Property="Width" Value="20"/>
+                <Setter Property="Height" Value="20"/>
+                <Setter Property="Stretch" Value="Uniform"/>
+                <Setter Property="Stroke" Value="{DynamicResource TextPrimaryBrush}"/>
+                <Setter Property="StrokeThickness" Value="1.6"/>
+                <Setter Property="StrokeLineJoin" Value="Round"/>
+                <Setter Property="StrokeStartLineCap" Value="Round"/>
+                <Setter Property="StrokeEndLineCap" Value="Round"/>
+                <Setter Property="Fill" Value="Transparent"/>
+                <Setter Property="UseLayoutRounding" Value="True"/>
+                <Setter Property="SnapsToDevicePixels" Value="True"/>
+                <Setter Property="VerticalAlignment" Value="Center"/>
+                <Setter Property="HorizontalAlignment" Value="Center"/>
+            </Style>
+
+            <!-- 图标外层固定尺寸盒子：即使以后有人换了别的图标/字体，
+                 这个盒子也保证每一行图标占位完全一致，不会再出现"某一个小一像素"。 -->
+            <Style TargetType="Border" x:Key="NavIconBox">
+                <Setter Property="Width" Value="20"/>
+                <Setter Property="Height" Value="20"/>
+                <Setter Property="Background" Value="Transparent"/>
+                <Setter Property="VerticalAlignment" Value="Center"/>
             </Style>
 
             <!-- 修复"深色模式字体没跟着反转"：全项目 418 个 TextBlock 里有 271 个没有显式写
@@ -1005,13 +1077,13 @@
                 <Border Visibility="{Binding IsExpanded, Converter={StaticResource BoolToVis}}"
                         Background="{DynamicResource SideBrush}" CornerRadius="6" Margin="0,6,0,0" Padding="10">
                     <StackPanel>
-                        <TextBlock Text="正在加载版本列表..." FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}"
+                        <TextBlock Text="{DynamicResource Str_Ui_Loading_Versions}" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}"
                                    Visibility="{Binding IsLoadingVersions, Converter={StaticResource BoolToVis}}"/>
                         <StackPanel Visibility="{Binding IsDataPack, Converter={StaticResource BoolToVis}}" Margin="0,0,0,8">
-                            <TextBlock Text="安装到哪个存档：" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4"/>
+                            <TextBlock Text="{DynamicResource Str_Ui_Install_Into_Which_World}" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4"/>
                             <ComboBox ItemsSource="{Binding SaveNames}" SelectedItem="{Binding SelectedSaveName, Mode=TwoWay}"/>
                         </StackPanel>
-                        <TextBlock Text="没有找到匹配的版本（可能是筛选的游戏版本不匹配）。" FontSize="12"
+                        <TextBlock Text="{DynamicResource Str_Ui_No_Matching_Versions_Found_The_Game_Vers}" FontSize="12"
                                    Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,4"
                                    Visibility="{Binding HasNoResults, Converter={StaticResource BoolToVis}}"/>
                         <ItemsControl ItemsSource="{Binding Versions}">
@@ -1027,10 +1099,10 @@
                                                 <TextBlock Text="{Binding Name}" FontSize="13"/>
                                                 <TextBlock FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}">
                                                     <Run Text="{Binding VersionNumber, Mode=OneWay}"/>
-                                                    <Run Text=" · 支持: "/><Run Text="{Binding GameVersionsText, Mode=OneWay}"/>
+                                                    <Run Text="{DynamicResource Str_Ui_Supports}"/><Run Text="{Binding GameVersionsText, Mode=OneWay}"/>
                                                 </TextBlock>
                                             </StackPanel>
-                                            <Button Grid.Column="1" Content="下载" Style="{StaticResource PrimaryButton}"
+                                            <Button Grid.Column="1" Content="{DynamicResource Str_Common_Download}" Style="{StaticResource PrimaryButton}"
                                                     Padding="10,5" FontSize="13" Tag="{Binding}"/>
                                         </Grid>
                                     </Border>

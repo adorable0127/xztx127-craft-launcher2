@@ -129,7 +129,7 @@ public class DownloadService : IDisposable
             await DownloadAssetsAsync(minecraftDir, detail.AssetIndex, progress, ct);
         }
 
-        progress?.Report(new ProgressInfo("安装完成", 1, 1, entry.Id));
+        progress?.Report(new ProgressInfo(Loc.T("Str_Cs_Installation_Complete", "安装完成"), 1, 1, entry.Id));
     }
 
     /// <summary>
@@ -246,9 +246,10 @@ public class DownloadService : IDisposable
                 var dest = Path.Combine(objectsDir, prefix, obj.Hash);
                 if (!File.Exists(dest) || new FileInfo(dest).Length != obj.Size)
                 {
-                    var url = _source == DownloadSource.Official
-                        ? $"https://resources.download.minecraft.net/{prefix}/{obj.Hash}"
-                        : $"https://bmclapi2.bangbang93.com/assets/{prefix}/{obj.Hash}";
+                    // 统一传官方 URL，由 DownloadFileAsync 内部展开成候选池（官方+镜像）。
+                    // 之前这里按 _source 硬选一个源，assets 是数量最多的一批（成百上千个小文件），
+                    // 恰恰最需要自动切换——一个源抽风时这里的失败会被放大上千倍。
+                    var url = $"https://resources.download.minecraft.net/{prefix}/{obj.Hash}";
                     await DownloadFileAsync(url, dest, obj.Hash, ct, isSha1: true);
                 }
                 var d = Interlocked.Increment(ref done);
@@ -320,6 +321,12 @@ public class DownloadService : IDisposable
     /// </summary>
     private static readonly TimeSpan SingleAttemptTimeout = TimeSpan.FromSeconds(45);
 
+    /// <summary>单个分片的最小体积。小于这个值就不值得分片（分片本身有建连开销）。</summary>
+    private const long MinChunkSize = 4 * 1024 * 1024;   // 4 MB
+
+    /// <summary>超过这个体积的文件才考虑多线程分片下载。client.jar / 大 mod 属于这一类。</summary>
+    private const long MultiPartThreshold = 8 * 1024 * 1024;   // 8 MB
+
     private async Task DownloadFileAsync(string url, string destPath, string expectedSha1,
         CancellationToken ct, bool isSha1 = true)
     {
@@ -327,78 +334,243 @@ public class DownloadService : IDisposable
 
         Directory.CreateDirectory(Path.GetDirectoryName(destPath)!);
 
-        const int maxAttempts = 3;
+        // ===== 多源候选 =====
+        // 关键改动：不再只用 RemapUrl 算出的那**一个** URL，而是拿到一串候选
+        // （官方 + BMCLAPI，顺序按用户设置的偏好 + 各主机近期健康度排）。
+        // 旧行为下 BMCLAPI 一抽风，装一个版本几百个文件就会有文件三次重试全挂、
+        // 整个安装终止；而换个源明明就能下下来。这是"整合包装到一半失败"最主要的成因。
+        var candidates = DownloadEndpoints.Candidates(url, _source != DownloadSource.Official);
+
         Exception? lastError = null;
 
-        for (var attempt = 1; attempt <= maxAttempts; attempt++)
+        foreach (var candidate in candidates)
         {
-            var tmp = destPath + $".tmp{attempt}";
-            using var attemptCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            attemptCts.CancelAfter(SingleAttemptTimeout);
-            try
+            // 每个候选源各给 2 次机会：第 1 次可能续传，第 2 次从头来（排除 .part 本身损坏的情况）。
+            for (var attempt = 1; attempt <= 2; attempt++)
             {
-                using (var resp = await _http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, attemptCts.Token))
+                try
                 {
-                    resp.EnsureSuccessStatusCode();
-                    await using (var fs = File.Create(tmp))
-                    {
-                        // 限速/智能限速开启时，不能直接用一次性 CopyToAsync（那样整个文件瞬间灌进去，
-                        // 没有机会在中途插入限速等待）。改成手动分块读写，每读到一块就先向限速器
-                        // "买票"，买不到就异步等待，从而把吞吐量压到目标速率；同时把这一块的字节数
-                        // 上报给智能限速监控，供它估算"本程序自己消耗了多少流量"。
-                        // 不限速时 (_rateLimiter == null) 直接走原来的 CopyToAsync 快速路径，
-                        // 不引入任何额外开销。
-                        if (_rateLimiter == null)
-                        {
-                            await resp.Content.CopyToAsync(fs, attemptCts.Token);
-                        }
-                        else
-                        {
-                            var buffer = new byte[81920];
-                            await using var respStream = await resp.Content.ReadAsStreamAsync(attemptCts.Token);
-                            int read;
-                            while ((read = await respStream.ReadAsync(buffer, attemptCts.Token)) > 0)
-                            {
-                                await _rateLimiter.ConsumeAsync(read, attemptCts.Token);
-                                await fs.WriteAsync(buffer.AsMemory(0, read), attemptCts.Token);
-                                _bandwidthMonitor?.ReportSelfBytes(read);
-                            }
-                        }
-                    }
-                }
+                    await DownloadFromSingleUrlAsync(candidate, destPath, expectedSha1,
+                        allowResume: attempt == 1, ct);
 
-                // 关键修复点：下载完成后必须校验，不能假设"没抛异常=内容完整"。
-                if (!VerifySha1(tmp, expectedSha1))
+                    DownloadEndpoints.ReportSuccess(candidate);
+                    return;
+                }
+                catch (OperationCanceledException) when (ct.IsCancellationRequested)
                 {
-                    lastError = new IOException(
-                        $"文件校验失败(SHA1 不匹配)，可能是网络中途中断导致下载不完整: {url}");
-                    TryDelete(tmp);
-                    continue;
+                    throw;   // 用户真的取消了整个安装，直接往上抛
                 }
-
-                if (File.Exists(destPath)) File.Delete(destPath);
-                File.Move(tmp, destPath);
-                return;
-            }
-            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
-            {
-                // attemptCts 自己超时触发的取消（不是用户/外部真正取消整个安装），
-                // 视为这次尝试的一次可重试失败，而不是让 OperationCanceledException 原样冒泡出去
-                // 中断整个安装流程——外部调用方看到 OperationCanceledException 通常会当成"用户主动取消"处理。
-                lastError = new TimeoutException(
-                    $"下载单次尝试超时（{SingleAttemptTimeout.TotalSeconds:0}秒内无响应）: {url}");
-                TryDelete(tmp);
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException)
-            {
-                lastError = ex;
-                TryDelete(tmp);
+                catch (Exception ex)
+                {
+                    lastError = ex;
+                    DownloadEndpoints.ReportFailure(candidate);
+                }
             }
         }
 
-        // 三次都失败：不能把半成品/损坏文件留在原位当作"已安装"，
-        // 否则用户完全无法察觉某个资源实际是坏的（正是之前语言文件问题的根源）。
-        throw new IOException($"下载失败，已重试 {maxAttempts} 次仍未通过校验: {url}", lastError);
+        // 所有源都失败：不能把半成品留在原位当作"已安装"，否则用户完全无法察觉资源是坏的。
+        TryDelete(destPath + ".part");
+        var tried = string.Join(" / ", candidates.Select(c => { try { return new Uri(c).Host; } catch { return c; } }));
+        throw new IOException(
+            $"下载失败，已尝试全部下载源（{tried}）仍未成功：{Path.GetFileName(destPath)}", lastError);
+    }
+
+    /// <summary>
+    /// 从**单个** URL 下载到 destPath，带断点续传和大文件分片。
+    ///
+    /// ===== 断点续传 =====
+    /// 旧实现每次尝试都 File.Create(tmp)，从 0 字节重来。一个 25MB 的 client.jar 在
+    /// 下到 24MB 时断线，就白下 24MB；网络差的用户可能永远下不完。
+    /// 现在改成写 destPath + ".part"，失败时**保留**这个文件，下次带
+    /// Range: bytes=&lt;已有长度&gt;- 续着下。服务端不支持 Range（返回 200 而不是 206）时
+    /// 自动退回从头下载，不会写出错位的文件。
+    ///
+    /// ===== 分片并行 =====
+    /// 超过 8MB 且服务端支持 Range 的文件，切成若干片并行下。单连接受 TCP 慢启动和
+    /// 单流限速影响，实际带宽往往远低于线路上限；分片能把大文件的下载时间压下来一大截，
+    /// 这也是 PCL"下得快"的直接来源之一。
+    /// 分片只在**没有限速**时启用——开了限速还并行分片，等于绕过用户设定的速率上限。
+    /// </summary>
+    private async Task DownloadFromSingleUrlAsync(string url, string destPath, string expectedSha1,
+        bool allowResume, CancellationToken ct)
+    {
+        var part = destPath + ".part";
+
+        long existing = 0;
+        if (allowResume && File.Exists(part))
+        {
+            try { existing = new FileInfo(part).Length; }
+            catch { existing = 0; }
+        }
+        else
+        {
+            TryDelete(part);
+        }
+
+        // ---- 先探一次头，拿总长度和 Range 支持情况 ----
+        long totalLength = -1;
+        var acceptsRange = false;
+        try
+        {
+            using var headCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            headCts.CancelAfter(TimeSpan.FromSeconds(15));
+            using var headReq = new HttpRequestMessage(HttpMethod.Head, url);
+            using var headResp = await _http.SendAsync(headReq, HttpCompletionOption.ResponseHeadersRead, headCts.Token);
+            if (headResp.IsSuccessStatusCode)
+            {
+                totalLength = headResp.Content.Headers.ContentLength ?? -1;
+                acceptsRange = headResp.Headers.AcceptRanges.Contains("bytes");
+            }
+        }
+        catch
+        {
+            // HEAD 失败不是致命问题（有些 CDN 不支持 HEAD），退回普通 GET 流程。
+        }
+
+        // 已经下完了：直接改名验证
+        if (totalLength > 0 && existing == totalLength)
+        {
+            await FinalizePartAsync(part, destPath, expectedSha1);
+            return;
+        }
+        if (existing > 0 && totalLength > 0 && existing > totalLength)
+        {
+            // .part 比目标文件还大，说明这个残留文件跟当前 URL 对不上（可能换源了），丢掉重来。
+            TryDelete(part);
+            existing = 0;
+        }
+
+        // ---- 大文件 + 支持 Range + 没开限速 → 分片并行 ----
+        if (totalLength >= MultiPartThreshold && acceptsRange && _rateLimiter == null && existing == 0)
+        {
+            await DownloadInChunksAsync(url, part, totalLength, ct);
+            await FinalizePartAsync(part, destPath, expectedSha1);
+            return;
+        }
+
+        // ---- 单流下载（可能带续传）----
+        using var attemptCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        attemptCts.CancelAfter(SingleAttemptTimeout);
+
+        using var req = new HttpRequestMessage(HttpMethod.Get, url);
+        if (existing > 0 && acceptsRange)
+            req.Headers.Range = new System.Net.Http.Headers.RangeHeaderValue(existing, null);
+
+        using var resp = await _http.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, attemptCts.Token);
+        resp.EnsureSuccessStatusCode();
+
+        // 请求了 Range 但服务端返回 200（不支持）：必须从头写，否则会把整份内容追加到
+        // 已有数据后面，产出一个长度翻倍的坏文件——这是续传实现里最容易踩的坑。
+        var append = existing > 0 && resp.StatusCode == System.Net.HttpStatusCode.PartialContent;
+        if (existing > 0 && !append)
+        {
+            TryDelete(part);
+            existing = 0;
+        }
+
+        await using (var fs = new FileStream(part, append ? FileMode.Append : FileMode.Create,
+                         FileAccess.Write, FileShare.None))
+        {
+            if (_rateLimiter == null)
+            {
+                await resp.Content.CopyToAsync(fs, attemptCts.Token);
+            }
+            else
+            {
+                var buffer = new byte[81920];
+                await using var respStream = await resp.Content.ReadAsStreamAsync(attemptCts.Token);
+                int read;
+                while ((read = await respStream.ReadAsync(buffer, attemptCts.Token)) > 0)
+                {
+                    await _rateLimiter.ConsumeAsync(read, attemptCts.Token);
+                    await fs.WriteAsync(buffer.AsMemory(0, read), attemptCts.Token);
+                    _bandwidthMonitor?.ReportSelfBytes(read);
+                }
+            }
+        }
+
+        await FinalizePartAsync(part, destPath, expectedSha1);
+    }
+
+    /// <summary>把 .part 校验并改名成正式文件。校验不过就删掉 .part 并抛异常，
+    /// 让上层换下一个源重试——绝不让损坏文件蒙混过关（这是之前"语言文件下坏了却当成功"的教训）。</summary>
+    private static async Task FinalizePartAsync(string part, string destPath, string expectedSha1)
+    {
+        await Task.Yield();   // 让出一次，避免在高并发下长时间占住调用线程做同步哈希
+
+        if (!VerifySha1(part, expectedSha1))
+        {
+            TryDelete(part);
+            throw new IOException($"文件校验失败(SHA1 不匹配)：{Path.GetFileName(destPath)}");
+        }
+
+        if (File.Exists(destPath)) File.Delete(destPath);
+        File.Move(part, destPath);
+    }
+
+    /// <summary>
+    /// 分片并行下载：把 [0, total) 切成若干段，各自带 Range 头并行下，写进同一个稀疏文件的对应偏移。
+    /// 任何一片失败都直接抛出，由上层换源/重试（部分成功的 .part 会被丢弃，
+    /// 因为分片下载的中间态无法安全续传——不知道哪些区间已经写好了）。
+    /// </summary>
+    private async Task DownloadInChunksAsync(string url, string part, long total, CancellationToken ct)
+    {
+        // 分片数量跟并发上限挂钩，但不超过 8——再多收益会被建连开销吃掉，
+        // 而且对镜像站不礼貌（同一个文件开一堆连接容易被限流）。
+        var chunkCount = (int)Math.Min(8, Math.Max(2, total / MinChunkSize));
+        var chunkSize = total / chunkCount;
+
+        TryDelete(part);
+        // 预分配文件长度，让各分片能直接 Seek 到自己的偏移写入。
+        await using (var pre = new FileStream(part, FileMode.Create, FileAccess.Write, FileShare.None))
+            pre.SetLength(total);
+
+        var ranges = new List<(long From, long To)>();
+        for (var i = 0; i < chunkCount; i++)
+        {
+            var from = i * chunkSize;
+            var to = (i == chunkCount - 1) ? total - 1 : (from + chunkSize - 1);
+            ranges.Add((from, to));
+        }
+
+        var tasks = ranges.Select(async r =>
+        {
+            using var chunkCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            chunkCts.CancelAfter(SingleAttemptTimeout);
+
+            using var req = new HttpRequestMessage(HttpMethod.Get, url);
+            req.Headers.Range = new System.Net.Http.Headers.RangeHeaderValue(r.From, r.To);
+
+            using var resp = await _http.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, chunkCts.Token);
+            resp.EnsureSuccessStatusCode();
+
+            // 服务端如果无视 Range 返回整个文件（200），分片写入就会互相覆盖成一坨垃圾。
+            // 明确要求 206，不是就直接失败，让上层退回单流路径。
+            if (resp.StatusCode != System.Net.HttpStatusCode.PartialContent)
+                throw new IOException("服务端不支持分片下载（未返回 206），改用单线程下载。");
+
+            await using var fs = new FileStream(part, FileMode.Open, FileAccess.Write, FileShare.ReadWrite);
+            fs.Seek(r.From, SeekOrigin.Begin);
+
+            var buffer = new byte[81920];
+            await using var stream = await resp.Content.ReadAsStreamAsync(chunkCts.Token);
+            int read;
+            while ((read = await stream.ReadAsync(buffer, chunkCts.Token)) > 0)
+            {
+                await fs.WriteAsync(buffer.AsMemory(0, read), chunkCts.Token);
+                _bandwidthMonitor?.ReportSelfBytes(read);
+            }
+        });
+
+        try
+        {
+            await Task.WhenAll(tasks);
+        }
+        catch
+        {
+            TryDelete(part);   // 分片中间态无法续传，失败即丢弃
+            throw;
+        }
     }
 
     private static void TryDelete(string path)
@@ -420,7 +592,14 @@ public class DownloadService : IDisposable
         catch { return false; }
     }
 
-    /// <summary>将官方 URL 映射为 BMCLAPI 镜像 URL（当选择镜像源时）。</summary>
+    /// <summary>
+    /// 将官方 URL 映射为 BMCLAPI 镜像 URL（当选择镜像源时）。
+    ///
+    /// 注意适用范围已经变窄：走 DownloadFileAsync 的文件下载**不再依赖这个方法**，
+    /// 那条路径改用 DownloadEndpoints.Candidates 拿到官方+镜像的完整候选池并自动切换。
+    /// 这里只剩下少数直接 GetStringAsync 的元数据请求（version manifest、asset index）在用，
+    /// 那些是单次小请求，失败会立刻暴露给用户，不需要候选池。
+    /// </summary>
     private string RemapUrl(string officialUrl)
     {
         if (_source == DownloadSource.Official) return officialUrl;
