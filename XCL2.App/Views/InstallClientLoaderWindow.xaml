@@ -47,11 +47,21 @@
                 <StackPanel Grid.Column="2" x:Name="BuildVersionPanel">
                     <TextBlock x:Name="BuildVersionLabel" Text="{DynamicResource Str_Ui_Loader_Version}" FontSize="12"
                                Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4"/>
-                    <ComboBox x:Name="BuildVersionCombo" Style="{StaticResource FilterComboBox}" Height="34"/>
+                    <ComboBox x:Name="BuildVersionCombo" Style="{StaticResource FilterComboBox}" Height="34"
+                              SelectionChanged="BuildVersionCombo_SelectionChanged"/>
                 </StackPanel>
             </Grid>
 
             <!-- NeoForge 没有独立的 MC 版本列表，选中项本身就是完整版本号，不需要第二级下拉框 -->
+
+            <!-- 需求：下载游戏实例时可以自定义实例名，不再固定是"版本号+加载器+加载器版本"格式。
+                 默认值仍然是这个拼接格式（跟改造前完全一致），用户可以直接在这里改成自己想要的
+                 名字；留空则视为"不自定义"，安装时继续走各加载器各自的默认命名逻辑。 -->
+            <TextBlock Text="{DynamicResource Str_Ui_Instance_Name}" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4"/>
+            <TextBox x:Name="InstanceNameBox" Style="{StaticResource SearchTextBox}" Height="34" Margin="0,0,0,4"
+                     TextChanged="InstanceNameBox_TextChanged"/>
+            <TextBlock x:Name="InstanceNameHintText" FontSize="11" Margin="0,0,0,14" TextWrapping="Wrap"
+                       Foreground="{DynamicResource TextSecondaryBrush}"/>
 
             <StackPanel x:Name="JavaPathPanel">
                 <TextBlock Text="{DynamicResource Str_Ui_Java_Path}" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4"/>

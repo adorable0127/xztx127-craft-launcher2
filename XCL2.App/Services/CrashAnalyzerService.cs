@@ -115,6 +115,7 @@ public class CrashAnalyzerService
 
         result.AddRange(RunDependencyRules(text));
         result.AddRange(RunExitCodeRules(text));
+        result.AddRange(RunModuleSystemRules(text));
 
         // 原有启发式规则：整体归为 Likely（关键字匹配，比"猜"强，但不如日志明说可靠）。
         var heuristic = RunRules(text);
@@ -217,6 +218,50 @@ public class CrashAnalyzerService
             .Select(g => g.First())
             .Take(8)
             .ToList();
+    }
+
+    /// <summary>
+    /// Java 模块系统（JPMS）相关规则——覆盖 Forge/NeoForge 用 securejarhandler +
+    /// bootstraplauncher 启动时特有的一类崩溃，这类崩溃 JVM 本身能正常起来（早期显示窗口
+    /// 甚至会一闪而过），是在构建模块图（ModuleLayerHandler.buildLayer）这一步失败的，
+    /// 报错栈里全是 java.lang.module.* 而不是常见的 mod/mixin 异常，容易被误判成"未知崩溃"。
+    /// </summary>
+    private static List<CrashFinding> RunModuleSystemRules(string text)
+    {
+        var found = new List<CrashFinding>();
+
+        // "Module minecraft contains package X, module Y exports package X to minecraft"：
+        // vanilla client jar 和 Forge patched jar 被同时当成独立模块解析，两者都声称拥有
+        // 同一个包。根因是启动参数缺少 securejarhandler 认的 -DignoreList=/-DmergeModules=
+        // 这两个属性（详见 LauncherService.BuildArguments 里对应注释），不是库文件损坏，
+        // 也不是版本装坏了，重装/补全依赖库都无法解决，必须由启动器自己修正启动参数。
+        var dupPkgMatch = Regex.Match(text,
+            @"Module\s+(?<a>[\w.\-]+)\s+contains\s+package\s+(?<pkg>[\w.]+),\s*module\s+(?<b>[\w.\-]+)\s+exports\s+package\s+\k<pkg>\s+to\s+(?<a2>[\w.\-]+)",
+            RegexOptions.IgnoreCase);
+        if (dupPkgMatch.Success)
+        {
+            found.Add(new CrashFinding(
+                $"Java 模块系统冲突：模块「{dupPkgMatch.Groups["a"].Value}」和「{dupPkgMatch.Groups["b"].Value}」" +
+                $"都声称拥有包 {dupPkgMatch.Groups["pkg"].Value}。这是 Forge/NeoForge（新版 securejarhandler 启动方式）" +
+                "的一个已知启动参数问题：原版客户端 jar 和 Forge 打过补丁的 jar 被同时当成独立模块解析导致冲突，" +
+                "跟库文件是否完整、版本是否装坏无关。请更新到修复了该问题的启动器版本（需要在启动参数里补上 " +
+                "-DignoreList= 和 -DmergeModules= 这两个属性），普通重装/补全依赖库无法解决这个问题。",
+                CrashConfidence.Certain));
+        }
+
+        // 更泛化的 ResolutionException 兜底（同一根因的其它措辞，例如 "Two versions of module"
+        // 等），没有精确捕获到具体包名时也给出方向性提示，而不是完全沉默。
+        else if (Regex.IsMatch(text, "java.lang.module.ResolutionException", RegexOptions.IgnoreCase))
+        {
+            found.Add(new CrashFinding(
+                "Java 模块系统（JPMS）解析失败 (java.lang.module.ResolutionException)：多见于 Forge/NeoForge 用" +
+                "模块化方式启动时，classpath 上的某几个 jar 之间存在模块声明冲突（重复的包/重复的模块名）。" +
+                "跟库文件损坏无关，需要启动器在启动参数里正确设置 -DignoreList=/-DmergeModules= 来排除不该参与" +
+                "模块解析的 jar。",
+                CrashConfidence.Likely));
+        }
+
+        return found;
     }
 
     /// <summary>

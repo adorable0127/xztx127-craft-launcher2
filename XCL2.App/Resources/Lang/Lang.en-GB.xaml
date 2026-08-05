@@ -85,6 +85,7 @@
     <system:String x:Key="Str_Status_Confirm">Confirm</system:String>
     <system:String x:Key="Str_Status_Error">Something went wrong</system:String>
     <system:String x:Key="Str_Launch_Button">Launch Game</system:String>
+    <system:String x:Key="Str_Launch_Cancel">Cancel Launch</system:String>
     <system:String x:Key="Str_Launch_Started">Game launched</system:String>
     <system:String x:Key="Str_Launch_NoVersion">No version selected</system:String>
     <system:String x:Key="Str_Launch_NoAccount">No account selected</system:String>

@@ -89,6 +89,7 @@
     <system:String x:Key="Str_Status_Confirm">Confirmation</system:String>
     <system:String x:Key="Str_Status_Error">Un problème est survenu</system:String>
     <system:String x:Key="Str_Launch_Button">Lancer le jeu</system:String>
+    <system:String x:Key="Str_Launch_Cancel">Annuler le lancement</system:String>
     <system:String x:Key="Str_Launch_Started">Jeu lancé</system:String>
     <system:String x:Key="Str_Launch_NoVersion">Aucune version sélectionnée</system:String>
     <system:String x:Key="Str_Launch_NoAccount">Aucun compte sélectionné</system:String>

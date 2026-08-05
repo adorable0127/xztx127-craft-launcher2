@@ -89,6 +89,7 @@
     <system:String x:Key="Str_Status_Confirm">確認</system:String>
     <system:String x:Key="Str_Status_Error">問題が発生しました</system:String>
     <system:String x:Key="Str_Launch_Button">ゲームを起動</system:String>
+    <system:String x:Key="Str_Launch_Cancel">起動をキャンセル</system:String>
     <system:String x:Key="Str_Launch_Started">ゲームを起動しました</system:String>
     <system:String x:Key="Str_Launch_NoVersion">バージョン未選択</system:String>
     <system:String x:Key="Str_Launch_NoAccount">アカウント未選択</system:String>

@@ -58,6 +58,15 @@ public class Account
     /// </summary>
     public string? AuthServerClientToken { get; set; }
 
+    /// <summary>
+    /// 账户创建时间（UTC）。默认取对象构造的那一刻，只在"真正新建这个账户"的那次
+    /// AddOrUpdateAccount 调用里生效——见 ConfigService.AddOrUpdateAccount 的注释：
+    /// 微软账户静默刷新 token 时也会调用同一个方法，但走的是"更新已存在的账户"分支，
+    /// 会保留原有的 CreatedAtUtc，不会因为一次刷新就被误判成"刚刚创建"。
+    /// 用于账户选择弹窗"默认高亮最近创建的账户"这个需求。
+    /// </summary>
+    public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
+
     /// <summary>是否为当前选中使用的账户</summary>
     public bool IsSelected { get; set; }
 

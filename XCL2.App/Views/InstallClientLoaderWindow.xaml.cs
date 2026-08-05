@@ -43,6 +43,18 @@ public partial class InstallClientLoaderWindow : OverlayDialogControl
     /// <summary>安装完成后新版本的 id（供调用方刷新已安装版本列表/直接选中它）。</summary>
     public string? InstalledVersionId { get; private set; }
 
+    /// <summary>用户是否手动编辑过「实例名称」输入框。需求："默认还是版本号+加载器+加载器版本
+    /// 这个格式，但用户可以自定义"——默认值要随着 MC 版本/加载器类型/构建版本的选择实时刷新
+    /// （比如先选了 1.20.1 又改选 1.21，默认名字也要跟着变），但如果用户已经手动改过这个输入框，
+    /// 就不应该再用自动刷新的默认值覆盖用户自己敲的名字，那样用户输入到一半就会被强制清空，
+    /// 体验很糟。这个标志位就是用来区分"当前框里的内容是自动填的默认值"还是"用户自己改过"。</summary>
+    private bool _instanceNameUserEdited;
+
+    /// <summary>正在用代码往 InstanceNameBox 里写默认值，此时触发的 TextChanged 不应该被
+    /// 当成"用户编辑"计入 _instanceNameUserEdited——否则第一次自动填充默认值那一下就会
+    /// 立刻把标志位错误地置成 true，导致后续 MC 版本/加载器变化时默认值再也不会刷新。</summary>
+    private bool _isUpdatingInstanceNameProgrammatically;
+
     /// <summary>预选的加载器类型/MC 版本，来自"下载中心"的加载器筛选行（用户已经在那边选好了
     /// 加载器类型+具体 MC 版本，这里不需要用户重新选一遍，跳过这两步直接定位到"选构建版本"这一步）。
     /// 为 null 表示走原来"从头选择"的完整流程（比如从「版本选择」页的"➕ 安装新版本"按钮进来）。</summary>
@@ -109,6 +121,7 @@ public partial class InstallClientLoaderWindow : OverlayDialogControl
 
         _initialized = true;
         _ = LoadMcVersionsAsync();
+        UpdateDefaultInstanceName();
     }
 
     private async void LoaderType_Checked(object sender, RoutedEventArgs e)
@@ -145,6 +158,7 @@ public partial class InstallClientLoaderWindow : OverlayDialogControl
 
         await LoadMcVersionsAsync();
         UpdateJavaRequirementHint();
+        UpdateDefaultInstanceName();
     }
 
     private async Task LoadMcVersionsAsync()
@@ -201,6 +215,7 @@ public partial class InstallClientLoaderWindow : OverlayDialogControl
     {
         _buildVersions.Clear();
         UpdateJavaRequirementHint();
+        UpdateDefaultInstanceName();
         if (McVersionCombo.SelectedItem is not string mcVersion) return;
         if (_selectedLoaderType is ServerCoreType.NeoForge or ServerCoreType.Vanilla) return; // 没有独立的第二级下拉框
 
@@ -220,6 +235,7 @@ public partial class InstallClientLoaderWindow : OverlayDialogControl
             };
             foreach (var b in builds) _buildVersions.Add(b);
             BuildVersionCombo.SelectedItem = builds.FirstOrDefault(b => b.IsRecommended) ?? builds.FirstOrDefault();
+            UpdateDefaultInstanceName();
         }
         catch (InvalidOperationException ex)
         {
@@ -232,6 +248,64 @@ public partial class InstallClientLoaderWindow : OverlayDialogControl
         {
             ErrorPresenter.ShowFriendlyError(Loc.T("Str_Cs_Couldn_T_Fetch_The_Build_List_This_Is_Us", "获取构建版本列表失败，可能是网络连接问题或下载源暂时不可用，请检查网络后重试。"), $"[获取构建版本列表失败] {ex}", "获取构建版本列表失败");
         }
+    }
+
+    /// <summary>「构建/加载器版本」下拉框变化时，默认实例名要跟着刷新（同 MC 版本变化同理）。</summary>
+    private void BuildVersionCombo_SelectionChanged(object sender, SelectionChangedEventArgs e) => UpdateDefaultInstanceName();
+
+    private void InstanceNameBox_TextChanged(object sender, TextChangedEventArgs e)
+    {
+        if (_isUpdatingInstanceNameProgrammatically) return; // 代码自己写入默认值触发的，不算用户编辑
+        _instanceNameUserEdited = true;
+
+        var raw = InstanceNameBox.Text ?? "";
+        if (string.IsNullOrWhiteSpace(raw))
+        {
+            // 需求："默认还是这个格式，但用户可以自定义"——用户把框清空，视为"放弃自定义，
+            // 退回默认命名规则"，而不是硬要求用户必须填点什么才能继续安装。
+            InstanceNameHintText.Text = "留空：安装完成后使用默认命名（版本号+加载器+加载器版本）";
+            return;
+        }
+        var sanitized = ModpackInstallService.SanitizeInstanceName(raw);
+        InstanceNameHintText.Text = string.Equals(raw.Trim(), sanitized, StringComparison.Ordinal)
+            ? "会在 versions 文件夹下建一个同名目录（重名时自动加编号）"
+            : $"名称里有文件夹不允许的字符，实际会建成：{sanitized}";
+    }
+
+    /// <summary>
+    /// 用当前选中的 MC 版本/加载器类型/构建版本，计算并回填「实例名称」输入框的默认值。
+    /// 只有在用户还没手动编辑过这个框时才会覆盖已有内容——避免用户输入到一半突然被清空。
+    /// 默认格式跟改造前的"官方 id"风格保持一致（如 "fabric-loader-0.15.11-1.20.1"），
+    /// 只是现在允许用户在安装前直接在这里改掉。
+    /// </summary>
+    private void UpdateDefaultInstanceName()
+    {
+        if (_instanceNameUserEdited) return;
+        if (McVersionCombo.SelectedItem is not string mcVersion || string.IsNullOrWhiteSpace(mcVersion))
+        {
+            _isUpdatingInstanceNameProgrammatically = true;
+            InstanceNameBox.Text = "";
+            _isUpdatingInstanceNameProgrammatically = false;
+            return;
+        }
+
+        var buildVersion = (BuildVersionCombo.SelectedItem as ServerCoreBuild)?.DisplayVersion;
+        string suggested = _selectedLoaderType switch
+        {
+            ServerCoreType.Vanilla => mcVersion,
+            ServerCoreType.Fabric => string.IsNullOrEmpty(buildVersion) ? "" : $"fabric-loader-{buildVersion}-{mcVersion}",
+            ServerCoreType.Quilt => string.IsNullOrEmpty(buildVersion) ? "" : $"quilt-loader-{buildVersion}-{mcVersion}",
+            ServerCoreType.Forge => string.IsNullOrEmpty(buildVersion) ? "" : $"{mcVersion}-forge-{buildVersion}",
+            ServerCoreType.NeoForge => $"neoforge-{mcVersion}",
+            _ => mcVersion
+        };
+
+        _isUpdatingInstanceNameProgrammatically = true;
+        InstanceNameBox.Text = suggested;
+        _isUpdatingInstanceNameProgrammatically = false;
+        InstanceNameHintText.Text = string.IsNullOrEmpty(suggested)
+            ? "请先选择完整的版本信息"
+            : "默认命名（版本号+加载器+加载器版本），可以直接修改";
     }
 
     /// <summary>
@@ -319,6 +393,10 @@ public partial class InstallClientLoaderWindow : OverlayDialogControl
 
         try
         {
+            // 需求：下载游戏实例时可以自定义实例名。空字符串表示"不自定义，用默认命名"，
+            // 传给下面各安装方法的 customInstanceName 参数（vanilla 单独处理，见下方注释）。
+            var customName = string.IsNullOrWhiteSpace(InstanceNameBox.Text) ? null : InstanceNameBox.Text.Trim();
+
             string versionId;
             if (_selectedLoaderType == ServerCoreType.Vanilla)
             {
@@ -333,12 +411,27 @@ public partial class InstallClientLoaderWindow : OverlayDialogControl
                 }
                 await _vanillaDownloader.InstallVersionAsync(minecraftDir, entry, progress);
                 versionId = entry.Id;
+
+                // 原版默认直接落在 versions/{mcVersion}/ 下（entry.Id 就是 mcVersion），跟
+                // Fabric/Quilt/Forge/NeoForge 不同的是它没有独立的"加载器安装"步骤可以提前
+                // 指定目标目录名，只能在装完之后原地改名。改名逻辑复用 ClientLoaderInstallService
+                // 里 Forge/NeoForge 用的同一个重命名 helper（改成 internal 供这里调用），
+                // 保证"物理文件夹名 + json 内部 id + 主 jar/json 文件名"三者一起同步更新，
+                // 不会出现改完名字之后启动器反而找不到文件的问题。
+                if (!string.IsNullOrWhiteSpace(customName))
+                {
+                    var renamed = ClientLoaderInstallService.TryRenameInstalledInstance(
+                        minecraftDir, Path.Combine(minecraftDir, "versions", versionId), customName);
+                    if (renamed != null) versionId = renamed;
+                    // 失败就沿用默认的 mcVersion 作为目录名，不影响原版本身已经装好这个事实。
+                }
             }
             else if (_selectedLoaderType == ServerCoreType.Fabric)
             {
                 versionId = await _loaderService.InstallFabricClientAsync(
                     minecraftDir, mcVersion, buildVersion!, progress,
-                    installFabricApi: InstallFabricApiCheck.IsChecked == true);
+                    installFabricApi: InstallFabricApiCheck.IsChecked == true,
+                    customInstanceName: customName);
             }
             else if (_selectedLoaderType == ServerCoreType.Quilt)
             {
@@ -347,13 +440,15 @@ public partial class InstallClientLoaderWindow : OverlayDialogControl
                 // 走本地跑安装器那一套逻辑，Quilt 根本没有安装器 jar，会直接报错。
                 versionId = await _loaderService.InstallQuiltClientAsync(
                     minecraftDir, mcVersion, buildVersion!, progress,
-                    installQsl: InstallQslCheck.IsChecked == true);
+                    installQsl: InstallQslCheck.IsChecked == true,
+                    customInstanceName: customName);
             }
             else
             {
                 var fullVersion = _selectedLoaderType == ServerCoreType.NeoForge ? mcVersion : buildVersion!;
                 versionId = await _loaderService.InstallForgeOrNeoForgeClientAsync(
-                    minecraftDir, _selectedLoaderType, fullVersion, JavaPathBox.Text, progress);
+                    minecraftDir, _selectedLoaderType, fullVersion, JavaPathBox.Text, progress,
+                    customInstanceName: customName);
             }
 
             InstalledVersionId = versionId;

@@ -240,10 +240,26 @@ public class ConfigService
     public void AddOrUpdateAccount(Account account)
     {
         var existing = Accounts.FirstOrDefault(a => a.Id == account.Id);
-        if (existing != null) Accounts.Remove(existing);
+        if (existing != null)
+        {
+            // 更新已存在的账户（比如微软账户静默刷新 token 后整个替换成新对象）：
+            // 保留原来的 CreatedAtUtc，不能让"刷新 token"这种跟用户无感的后台动作
+            // 把这个账户的创建时间冲成"现在"，否则"默认高亮最近创建的账户"这个需求
+            // 会被每次自动刷新悄悄破坏——账户列表里最早创建的那个，只因为最近登录时
+            // 触发了一次静默刷新，就会被误判成"最新创建"。
+            account.CreatedAtUtc = existing.CreatedAtUtc;
+            Accounts.Remove(existing);
+        }
         Accounts.Add(account);
         SaveAccounts();
     }
+
+    /// <summary>
+    /// 取"最近创建"的账户（按 CreatedAtUtc 排序，不受列表存储顺序/刷新更新影响）。
+    /// 供账户选择弹窗默认高亮使用——没有账户时返回 null。
+    /// </summary>
+    public Account? GetMostRecentlyCreatedAccount() =>
+        Accounts.OrderByDescending(a => a.CreatedAtUtc).FirstOrDefault();
 
     public void RemoveAccount(string accountId)
     {

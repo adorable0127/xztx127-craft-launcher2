@@ -278,8 +278,14 @@ public class ClientLoaderInstallService : IDisposable
     /// </summary>
     /// <param name="installFabricApi">true 时额外从 Modrinth 下载安装 Fabric API（可选步骤，
     /// 失败不影响 Fabric Loader 本身的安装结果——见方法内部注释）。</param>
+    /// <param name="customInstanceName">用户自定义的实例名（对应 versions/ 下的文件夹名）。
+    /// 传 null 或空字符串时退回默认格式（Fabric Meta 返回的 "fabric-loader-{loader}-{mc}" 风格 id），
+    /// 跟这个方法改造前的行为完全一致，不影响没有用到这个新参数的旧调用方。传了值时会经过
+    /// SanitizeInstanceName/MakeUniqueInstanceName 规整+去重（同「导入整合包」流程复用同一套
+    /// 命名规则，保证两处生成的实例文件夹命名风格一致）。</param>
     public async Task<string> InstallFabricClientAsync(string minecraftDir, string mcVersion, string loaderVersion,
-        IProgress<ProgressInfo>? progress, CancellationToken ct = default, bool installFabricApi = false)
+        IProgress<ProgressInfo>? progress, CancellationToken ct = default, bool installFabricApi = false,
+        string? customInstanceName = null)
     {
         // 1. 确保原版父版本已装好（Fabric 客户端启动需要原版 client.jar + assets）
         var parentVersionDir = Path.Combine(minecraftDir, "versions", mcVersion);
@@ -327,7 +333,12 @@ public class ClientLoaderInstallService : IDisposable
 
         // Fabric Meta 返回的 json 里 id 字段形如 "fabric-loader-0.15.11-1.20.1"，直接采用官方给的命名，
         // 与其它主流启动器保持一致，方便用户在多个启动器之间识别是同一个版本。
-        var versionId = string.IsNullOrEmpty(detail.Id) ? $"fabric-loader-{loaderVersion}-{mcVersion}" : detail.Id;
+        // 用户自定义了实例名时优先用用户给的名字（同「导入整合包」一样做合法化 + 去重），
+        // 不传就还是原来的默认格式，行为不变。
+        var defaultVersionId = string.IsNullOrEmpty(detail.Id) ? $"fabric-loader-{loaderVersion}-{mcVersion}" : detail.Id;
+        var versionId = string.IsNullOrWhiteSpace(customInstanceName)
+            ? defaultVersionId
+            : ModpackInstallService.MakeUniqueInstanceName(minecraftDir, customInstanceName);
         var versionDir = Path.Combine(minecraftDir, "versions", versionId);
         Directory.CreateDirectory(versionDir);
 
@@ -436,8 +447,11 @@ public class ClientLoaderInstallService : IDisposable
     /// </summary>
     /// <param name="installQsl">true 时额外从 Modrinth 下载安装 QSL（可选步骤，失败不影响
     /// Quilt Loader 本身的安装结果——见方法内部注释）。</param>
+    /// <param name="customInstanceName">用户自定义的实例名，语义跟 InstallFabricClientAsync 的
+    /// 同名参数完全一致（见其上方注释），传空/null 退回默认命名。</param>
     public async Task<string> InstallQuiltClientAsync(string minecraftDir, string mcVersion, string loaderVersion,
-        IProgress<ProgressInfo>? progress, CancellationToken ct = default, bool installQsl = false)
+        IProgress<ProgressInfo>? progress, CancellationToken ct = default, bool installQsl = false,
+        string? customInstanceName = null)
     {
         // 1. 确保原版父版本已装好（Quilt 客户端启动同样需要原版 client.jar + assets）
         var parentVersionDir = Path.Combine(minecraftDir, "versions", mcVersion);
@@ -464,7 +478,11 @@ public class ClientLoaderInstallService : IDisposable
             ?? throw new InvalidOperationException("Quilt 返回的版本信息解析失败。");
 
         // Quilt Meta 返回的 json 里 id 字段形如 "quilt-loader-0.24.0-1.20.1"，直接采用官方给的命名。
-        var versionId = string.IsNullOrEmpty(detail.Id) ? $"quilt-loader-{loaderVersion}-{mcVersion}" : detail.Id;
+        // 命名优先级同 InstallFabricClientAsync：用户自定义优先，不传退回默认格式。
+        var defaultVersionId = string.IsNullOrEmpty(detail.Id) ? $"quilt-loader-{loaderVersion}-{mcVersion}" : detail.Id;
+        var versionId = string.IsNullOrWhiteSpace(customInstanceName)
+            ? defaultVersionId
+            : ModpackInstallService.MakeUniqueInstanceName(minecraftDir, customInstanceName);
         var versionDir = Path.Combine(minecraftDir, "versions", versionId);
         Directory.CreateDirectory(versionDir);
 
@@ -551,8 +569,14 @@ public class ClientLoaderInstallService : IDisposable
     /// 这里独立实现（而不是直接调用服务端那个方法）是因为服务端版本的参数/异常信息文案是按
     /// "服务端安装"场景写的，混用会让客户端场景下的报错提示文不对题。
     /// </summary>
+    /// <param name="customInstanceName">用户自定义的实例名，语义同 InstallFabricClientAsync 的
+    /// 同名参数（见其上方注释）。跟 Fabric/Quilt 不同的是：Forge/NeoForge 的目标文件夹名是官方
+    /// 安装器自己决定、写死在它内部逻辑里的，我们没法提前告诉安装器"用这个名字"，只能等安装器
+    /// 跑完之后，把它生成的文件夹重命名成用户想要的名字（同时把 json/jar 文件名、json 内部 id
+    /// 字段都同步改掉，否则 LauncherService 会因为"文件夹名跟 json id 对不上"而找不到主 jar）。</param>
     public async Task<string> InstallForgeOrNeoForgeClientAsync(string minecraftDir, ServerCoreType coreType,
-        string fullVersion, string javaExePath, IProgress<ProgressInfo>? progress, CancellationToken ct = default)
+        string fullVersion, string javaExePath, IProgress<ProgressInfo>? progress, CancellationToken ct = default,
+        string? customInstanceName = null)
     {
         if (coreType is not (ServerCoreType.Forge or ServerCoreType.NeoForge))
             throw new ArgumentException("只支持 Forge/NeoForge。", nameof(coreType));
@@ -713,8 +737,72 @@ public class ClientLoaderInstallService : IDisposable
             }
         }
 
+        // 用户自定义了实例名：把安装器自己生成的文件夹重命名成用户想要的名字。放在"独立实例化"
+        // （拷贝原版 jar、去掉 inheritsFrom）之后做，理由是重命名只是"换个文件夹名+同步 json 里的
+        // id/文件名"，不影响上面已经完成的独立化处理，顺序对调也没问题，但放在后面逻辑更直观
+        // （先把内容做对，再决定叫什么名字）。
+        if (candidate != null && !string.IsNullOrWhiteSpace(customInstanceName))
+        {
+            var renamed = TryRenameInstalledInstance(minecraftDir, candidate, customInstanceName!);
+            if (renamed != null) return renamed;
+            // 重命名失败（比如目标名冲突、文件被占用）不应该让整个安装被判定为失败——
+            // 加载器本身已经装好、能用默认生成的名字正常启动，重命名只是锦上添花，
+            // 大不了退回默认名字，游戏依然能用。
+        }
+
         progress?.Report(new ProgressInfo(Loc.T("Str_Cs_Installation_Complete", "安装完成"), 2, 2, fileName));
         return candidate != null ? Path.GetFileName(candidate) : fullVersion;
+    }
+
+    /// <summary>
+    /// 把一个已安装版本的文件夹重命名成用户自定义的实例名（供 Forge/NeoForge 客户端安装、以及
+    /// 原版直装两处复用——原版没有独立的"加载器安装"步骤能提前指定目标目录名，只能装完之后
+    /// 原地改名，跟 Forge/NeoForge 官方安装器自己决定文件夹名、装完再改名是同一种局面）：
+    /// 1) 用 MakeUniqueInstanceName 规整 + 去重得到目标文件夹名；
+    /// 2) 物理重命名整个版本目录；
+    /// 3) 目录内跟旧文件夹名同名的 .json/.jar（LauncherService 靠"文件名跟版本 id 一致"
+    ///    去定位主 jar，见 ResolveVersionFile 的改名容错查找逻辑）同步改名成新文件夹名；
+    /// 4) json 内部的 "id" 字段同步改成新名字，保持文件名和 json 内容一致。
+    /// 任何一步失败都直接返回 null，交给调用方回退到默认名字，不让重命名失败拖累整个安装结果。
+    /// </summary>
+    public static string? TryRenameInstalledInstance(string minecraftDir, string oldDir, string customInstanceName)
+    {
+        try
+        {
+            var oldName = Path.GetFileName(oldDir);
+            var versionsDir = Path.Combine(minecraftDir, "versions");
+            var newName = ModpackInstallService.MakeUniqueInstanceName(minecraftDir, customInstanceName);
+            if (string.Equals(newName, oldName, StringComparison.Ordinal)) return oldName; // 没有实际变化
+
+            var newDir = Path.Combine(versionsDir, newName);
+            Directory.Move(oldDir, newDir);
+
+            var oldJsonPath = Path.Combine(newDir, $"{oldName}.json");
+            var oldJarPath = Path.Combine(newDir, $"{oldName}.jar");
+            var newJsonPath = Path.Combine(newDir, $"{newName}.json");
+            var newJarPath = Path.Combine(newDir, $"{newName}.jar");
+
+            if (File.Exists(oldJsonPath))
+            {
+                var detail = JsonSerializer.Deserialize<VersionDetail>(File.ReadAllText(oldJsonPath));
+                if (detail != null)
+                {
+                    detail.Id = newName;
+                    var updatedJson = JsonSerializer.Serialize(detail,
+                        new JsonSerializerOptions { WriteIndented = true, DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull });
+                    File.WriteAllText(oldJsonPath, updatedJson);
+                }
+                File.Move(oldJsonPath, newJsonPath, overwrite: true);
+            }
+            if (File.Exists(oldJarPath))
+                File.Move(oldJarPath, newJarPath, overwrite: true);
+
+            return newName;
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     /// <summary>

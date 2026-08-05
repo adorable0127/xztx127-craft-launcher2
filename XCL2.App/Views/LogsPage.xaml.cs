@@ -27,6 +27,24 @@ public partial class LogsPage : UserControl
     // 游戏日志 Tab：记录当前订阅了 OutputReceived 事件的进程，切换选择时需要先取消订阅旧的。
     private GameProcessInfo? _subscribedProcess;
 
+    // 需求：游戏崩溃退出后，这个 Tab 不应该瞬间"空屏"——用户往往就是想在崩溃那一刻
+    // 立刻看最后几行输出来定位问题，日志一闪而空对排错完全没有帮助。
+    // 用户手动点"清空本视图内的日志"按钮之前，都不应该清空。
+    //
+    // 之前的实现完全没有这个考虑：ReloadProcessCombos 每次进程列表变化（包括进程退出后
+    // 从"运行中列表"移除）都会重新绑定 ProcessCombo.ItemsSource，一旦当前选中的进程不在
+    // 新列表里了，SelectionChanged 触发 LoadGameLog()，走到 "else" 分支直接把
+    // GameLogBox.Text 整个替换成"当前没有正在运行的游戏进程"提示语——玩家刚看到的崩溃输出
+    // 瞬间被这句提示覆盖掉，等于自己伸手把最有用的信息删了。
+    //
+    // 修复方式：额外记一份"这个进程退出前最后订阅到的完整日志文本"快照 (_lastKnownLogSnapshot)，
+    // 在 LoadGameLog() 因为找不到匹配进程要显示占位提示时，如果这份快照非空，
+    // 优先继续展示快照内容（并追加一行明显的分隔提示，说明"进程已结束，以下为退出前的日志"），
+    // 而不是清空。只有用户主动点了"清空本视图内的日志"按钮，或者选中了一个新的、
+    // 确实在运行的进程时，才会真正替换/清空这份快照。
+    private string? _lastKnownLogSnapshot;
+    private string? _lastKnownLogVersionId;
+
     // 启动器日志 Tab：文件不会主动推送变化事件，改用轻量轮询定时器实现"自动刷新"。
     private readonly DispatcherTimer _launcherLogTimer;
     private DateTime _launcherLogLastWrite = DateTime.MinValue;
@@ -108,6 +126,22 @@ public partial class LogsPage : UserControl
 
             _subscribedProcess = info;
             info.OutputReceived += OnGameLogLineReceived;
+
+            // 记下这份快照：万一这个进程接下来崩溃/退出、从"运行中列表"里消失，
+            // 下次 LoadGameLog 找不到匹配进程时还能回退展示这份内容，而不是清空。
+            lock (info.OutputBuffer) _lastKnownLogSnapshot = info.OutputBuffer.ToString();
+            _lastKnownLogVersionId = info.VersionId;
+        }
+        else if (!string.IsNullOrEmpty(_lastKnownLogSnapshot))
+        {
+            // 找不到匹配的运行中进程（通常是游戏刚崩溃/退出，进程从列表里被移除了），
+            // 但我们手上还留着它退出前的日志快照——继续展示这份内容，不清空，
+            // 并且在末尾加一行明显的提示，说明这是"进程已结束时的最后日志"而不是实时输出，
+            // 避免用户误以为游戏还在运行。
+            GameLogBox.Text = _lastKnownLogSnapshot.TrimEnd('\r', '\n') + Environment.NewLine +
+                Environment.NewLine +
+                $"==== [{_lastKnownLogVersionId}] 进程已退出，以上为退出前的最后日志（点击上方\"清空本视图内的日志\"可清空此视图） ====";
+            GameLogBox.ScrollToEnd();
         }
         else
         {
@@ -123,7 +157,21 @@ public partial class LogsPage : UserControl
             if (!ReferenceEquals(ProcessCombo.SelectedItem, _subscribedProcess)) return;
             GameLogBox.AppendText(line + Environment.NewLine);
             GameLogBox.ScrollToEnd();
+            // 快照跟着实时输出同步更新，保证进程真退出的那一刻快照是完整的（含最后一行）。
+            if (_subscribedProcess != null)
+                lock (_subscribedProcess.OutputBuffer) _lastKnownLogSnapshot = _subscribedProcess.OutputBuffer.ToString();
         });
+    }
+
+    /// <summary>"清空本视图内的日志"按钮：只清空这个 Tab 当前显示的文本和内部快照，
+    /// 不影响 GameProcessInfo.OutputBuffer（进程管理等其它地方还依赖它），也不删磁盘上的
+    /// latest.log/crash.log。清空后如果选中的进程仍在运行，会继续正常实时追加新日志——
+    /// 只是清掉了"清空这一刻之前"的历史内容。</summary>
+    private void ClearGameLogView_Click(object sender, RoutedEventArgs e)
+    {
+        GameLogBox.Text = Loc.T("Str_Cs_No_Output_Yet", "(暂无输出)");
+        _lastKnownLogSnapshot = null;
+        _lastKnownLogVersionId = null;
     }
 
     // --- 启动器日志 Tab ---

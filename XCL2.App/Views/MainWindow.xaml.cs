@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
@@ -59,6 +60,32 @@ public partial class MainWindow : Window
 
     /// <summary>启动按钮的冷却时长。1 秒足够挡住手滑连点，又不会让正常用户感觉卡顿。</summary>
     private static readonly TimeSpan LaunchClickCooldown = TimeSpan.FromSeconds(1);
+
+    /// <summary>
+    /// 需求："点击'启动游戏'到等待游戏窗口出现的间隙，把按钮改成'取消启动'；
+    /// 点击'取消启动'不弹出账户选择框，直接中止本次启动流程"。
+    /// 这个 CancellationTokenSource 在 Launch_Click 进入"处理中"状态时创建，
+    /// LaunchInternalAsync 内部所有可以安全中止的等待点（下载/安装、等待游戏窗口出现的轮询）
+    /// 都会传入它的 Token；用户点"取消启动"时调用它的 Cancel()，流程在下一个检查点
+    /// 自行退出，不需要真的杀掉刚拉起的游戏进程（进程可能已经起来了，取消只是让启动器
+    /// 不再继续等待/不再弹出后续确认框，不影响已经拉起的进程本身）。
+    /// </summary>
+    private CancellationTokenSource? _launchCts;
+
+    /// <summary>
+    /// "启动游戏"→"取消启动"→"启动游戏" 之间来回切换的最短间隔。
+    /// 需求明确要求保留 1~2 秒，避免用户在两个状态之间快速连点造成
+    /// "启动-取消-启动-取消"的死循环（比如手滑连点，或者误以为没点中而反复点）。
+    /// 取区间中点 1.5 秒：比 LaunchClickCooldown 的 1 秒稍宽松一点，因为这里挡的是
+    /// "点了取消/点了启动"这种状态切换动作本身，而不是同一个按钮的连续误触。
+    /// </summary>
+    private static readonly TimeSpan LaunchStateSwitchGuard = TimeSpan.FromSeconds(1.5);
+
+    /// <summary>上一次"启动游戏"⇄"取消启动"两个状态之间切换的时间，配合 LaunchStateSwitchGuard 使用。</summary>
+    private DateTime _lastLaunchStateSwitchAtUtc = DateTime.MinValue;
+
+    /// <summary>当前是否处于"取消启动"可点击状态（即已经在启动流程中，按钮显示为取消）。</summary>
+    private bool _isCancelLaunchState;
 
     /// <summary>记录窗口最近一次处于"非最小化"状态时的 WindowState(Normal 或 Maximized)。
     /// 修复"启动/下载成功弹窗出现时启动器窗口会自动最小化"：如果窗口在弹窗前已经被系统
@@ -976,6 +1003,17 @@ public partial class MainWindow : Window
     /// </summary>
     public async void Launch_Click(object sender, RoutedEventArgs e, bool skipAccountConfirm)
     {
+        // 需求："从点击'启动游戏'到等待游戏窗口出现的间隙，按钮变成'取消启动'；
+        // 点击'取消启动'时不再弹出选择账户的界面（也不弹任何其它确认框），直接中止本次启动"。
+        // 这里复用同一个 Click 处理器：当前处于"取消启动"状态时，这次点击是"取消"动作，
+        // 跟下面"启动"分支完全分开处理，不走冷却判断（冷却是为了防止连续点"启动"，
+        // 取消操作本身应该能立刻响应）。
+        if (_isCancelLaunchState)
+        {
+            HandleCancelLaunchClick();
+            return;
+        }
+
         // 防手滑冷却：必须放在方法最开头、任何 await 之前的同步代码里判断，
         // 否则连续点击会在第一次点击的 await 还没跑完时就又进来一次，冷却形同虚设。
         // DateTime.UtcNow 的读取+比较+写回虽然不是原子操作，但 WPF 的事件处理器
@@ -990,29 +1028,100 @@ public partial class MainWindow : Window
             // 提示框，那只会制造更多需要用户点掉的窗口，适得其反。
             return;
         }
+        // 状态切换保护：即使冷却已过，也要求距离上一次"启动⇄取消"状态切换至少
+        // LaunchStateSwitchGuard（1.5 秒）才允许再次切换。冷却挡的是"同一个状态下的
+        // 连续误触"，这里挡的是"启动→取消→启动→取消"这种在两个状态之间来回跳的死循环——
+        // 二者场景不同，缺一都可能被绕过（比如冷却时间一到，用户立刻点取消再点启动，
+        // 没有这层保护冷却形同虚设）。
+        if (now - _lastLaunchStateSwitchAtUtc < LaunchStateSwitchGuard)
+            return;
         _lastLaunchClickAtUtc = now;
+        _lastLaunchStateSwitchAtUtc = now;
 
         // 立刻把按钮置灰：这是给用户最直观的反馈——"已经收到你的点击了，正在处理，
         // 不需要再点"。比单纯静默吞掉后续点击更清楚，用户能看到按钮变灰就知道发生了什么，
         // 不会怀疑是不是自己没点到。finally 里保证无论方法从哪个分支退出都会恢复。
+        // 收起态侧边栏用的是另一个按钮 LaunchGameBtnCollapsed（同一个 Click 处理器），
+        // 之前这里只置灰了展开态的 LaunchGameBtn，收起态按钮视觉上一直是可点状态——
+        // 冷却判断本身读的是 LaunchGameBtn.IsEnabled，点了不会真的触发第二次启动，
+        // 但按钮看起来"没有被禁用"，用户会怀疑点击没生效，跟需求里"窗口出现之前不可以
+        // 重复点击启动游戏"的意图不符（应该是视觉上也能看出正在处理，而不只是点了没反应）。
+        // 两个按钮的 IsEnabled 现在统一置灰/恢复。
         LaunchGameBtn.IsEnabled = false;
+        LaunchGameBtnCollapsed.IsEnabled = false;
+
+        // 进入"取消启动"状态：按钮文字/ToolTip 切到 Str_Launch_Cancel，但先保持置灰
+        // LaunchStateSwitchGuard 的时长，避免刚点完"启动"手指还没抬起就又按到了
+        // "取消"（两者在屏幕上是同一个按钮位置，切换太快等于给了一个"连点死循环"的窗口）。
+        // 这段置灰单独用 Task.Delay 而不是复用下面 finally 里的冷却等待，是因为
+        // 这里保护的是"进入取消态"这一下，跟"启动流程整体结束后恢复成启动态"是两件事，
+        // 分开表达更清楚，也避免后面改动其中一处误伤另一处。
+        _isCancelLaunchState = true;
+        SetLaunchButtonContent(cancel: true);
+        _launchCts = new CancellationTokenSource();
+        var launchCts = _launchCts;
+        _ = Task.Delay(LaunchStateSwitchGuard).ContinueWith(_ =>
+        {
+            if (launchCts == _launchCts && _isCancelLaunchState)
+            {
+                LaunchGameBtn.IsEnabled = true;
+                LaunchGameBtnCollapsed.IsEnabled = true;
+            }
+        }, TaskScheduler.FromCurrentSynchronizationContext());
+
         try
         {
-            await LaunchInternalAsync(sender, e, skipAccountConfirm);
+            await LaunchInternalAsync(sender, e, skipAccountConfirm, launchCts.Token);
         }
         finally
         {
-            // 至少等满冷却时长再真正把按钮恢复可点：如果账户校验/Java 检测很快就失败
-            // 返回（比如根本没联网，几十毫秒就抛异常），不加这一步的话按钮会几乎瞬间
-            // 重新可点，用户还没反应过来上一次点击发生了什么，又忙不迭点了第二下，
-            // 体验上跟没做冷却差不多。用剩余冷却时间兜底，保证"点一下之后最少 1 秒
-            // 按钮都摸不到"，真正达到防手滑的效果。
-            var elapsed = DateTime.UtcNow - _lastLaunchClickAtUtc;
-            var remaining = LaunchClickCooldown - elapsed;
+            // 流程结束（成功/失败/被取消）：切回"启动游戏"状态。跟进入取消态时一样，
+            // 状态切换本身也要受 LaunchStateSwitchGuard 保护——如果流程几乎瞬间结束
+            // （比如账户校验直接失败 return），"取消启动"文字一闪而过又变回"启动游戏"，
+            // 用户这时候如果正好又点了一下，很容易触发"上一次启动的收尾"和"这一次新的
+            // 启动"前后脚发生的时序问题。用剩余的保护时长兜底，保证"取消启动"这个状态
+            // 至少完整展示 LaunchStateSwitchGuard 那么久，再恢复成可点的"启动游戏"。
+            var elapsed = DateTime.UtcNow - _lastLaunchStateSwitchAtUtc;
+            var remaining = LaunchStateSwitchGuard - elapsed;
             if (remaining > TimeSpan.Zero)
                 await Task.Delay(remaining);
+
+            _isCancelLaunchState = false;
+            _launchCts = null;
+            SetLaunchButtonContent(cancel: false);
+            _lastLaunchStateSwitchAtUtc = DateTime.UtcNow;
+
             LaunchGameBtn.IsEnabled = true;
+            LaunchGameBtnCollapsed.IsEnabled = true;
         }
+    }
+
+    /// <summary>
+    /// 处理"取消启动"按钮的点击：只中止 CancellationTokenSource，让 LaunchInternalAsync
+    /// 内部的等待点自行感知到取消并退出，不弹任何确认框（需求明确要求"点击取消启动
+    /// 不弹出选择账户的界面"——取消本身就是一次明确、无需二次确认的操作）。
+    /// 如果游戏进程这时候已经真的拉起来了，取消只是让启动器不再继续等待"窗口出现"，
+    /// 不会去杀掉已经在运行的游戏进程——那是"关闭游戏"按钮的职责，不是这里的。
+    /// </summary>
+    private void HandleCancelLaunchClick()
+    {
+        // 同样受状态切换保护：防止用户在"取消"这个按钮刚出现的一瞬间因为手滑/连点
+        // 又立刻点了一次（这里本身不做任何事，但避免重复调用 Cancel() 造成不必要的
+        // ObjectDisposedException 之类的边界问题）。
+        var now = DateTime.UtcNow;
+        if (now - _lastLaunchStateSwitchAtUtc < LaunchStateSwitchGuard || !LaunchGameBtn.IsEnabled)
+            return;
+
+        _launchCts?.Cancel();
+    }
+
+    /// <summary>统一设置展开态/收起态两个启动按钮的文字和 ToolTip，在"启动游戏"和"取消启动"之间切换。</summary>
+    private void SetLaunchButtonContent(bool cancel)
+    {
+        var resourceKey = cancel ? "Str_Launch_Cancel" : "Str_Launch_Button";
+        var text = Loc.T(resourceKey, cancel ? "取消启动" : "启动游戏");
+        LaunchGameBtn.Content = text;
+        LaunchGameBtnCollapsed.ToolTip = text;
     }
 
     /// <summary>
@@ -1020,7 +1129,7 @@ public partial class MainWindow : Window
     /// try/finally 包裹，避免把冷却相关代码和原有的一大段启动流程混在一起、
     /// 显得臃肿难读。
     /// </summary>
-    private async Task LaunchInternalAsync(object sender, RoutedEventArgs e, bool skipAccountConfirm = false)
+    private async Task LaunchInternalAsync(object sender, RoutedEventArgs e, bool skipAccountConfirm = false, CancellationToken cancelToken = default)
     {
         var cfg = ConfigService.Config;
         var account = ConfigService.GetSelectedAccount();
@@ -1065,6 +1174,14 @@ public partial class MainWindow : Window
                 RefreshSidebar();
             }
         }
+
+        // 需求："点击'取消启动'不弹出选择账户的界面"。账户确认框本身已经在上面处理完了
+        // （要么用户确认了账户，要么在弹框里点了取消已经 return），这里检查的是：用户在
+        // 账户确认框弹出**之前**（比如账户框还没来得及显示、或者根本不需要账户确认——
+        // 单账户/访客模式）就已经点了"取消启动"。此时不应该再走下面 Java 检测/下载等
+        // 任何后续流程，也不应该再弹任何提示框——静默退出，跟用户主动点取消的直觉一致。
+        if (cancelToken.IsCancellationRequested)
+            return;
 
         if (account == null)
         {
@@ -1122,6 +1239,13 @@ public partial class MainWindow : Window
                 // 旧 token 短期内应该仍然有效，容许继续启动，避免因为一次偶发的网络抖动
                 // 就完全无法进游戏。
             }
+
+            // 账户刷新（可能有一次网络请求）之后、Java 检测/下载安装这段可能耗时较久的流程
+            // 开始之前，再检查一次取消状态：用户可能就是在等 token 刷新的这几百毫秒到几秒里
+            // 点的"取消启动"。这里静默 return，不弹任何提示——跟需求"点取消不弹账户选择框"
+            // 是同一个原则的延伸：取消操作本身不需要任何确认/告知。
+            if (cancelToken.IsCancellationRequested)
+                return;
 
             var javaService = new JavaService();
 
@@ -1492,19 +1616,59 @@ public partial class MainWindow : Window
                 });
             }
 
-            // "进程启动成功" 不等于 "游戏真的跑起来了"：Java 可能在几百毫秒内因为参数错误/
-            // 版本文件损坏等原因直接崩溃退出，之前这里不等待就直接弹"启动成功"，会让用户
-            // 误以为游戏在运行，实际上窗口根本不会出现。这里等待最多 3 秒，观察进程是否
-            // 提前退出，提前退出就直接把已经捕获到的输出显示出来，而不是撒谎说启动成功。
-            var exitedEarly = await Task.Run(async () =>
+            // 需求："不要在刚开始启动的时候就说游戏启动成功，要在游戏窗口出现之后才说成功"。
+            // 之前这里只是等固定 3 秒观察进程有没有提前退出，进程没退出就直接判定"成功"——
+            // 但"进程还活着"不等于"游戏窗口已经出现"：Forge/NeoForge 这类加载器安装器阶段、
+            // 或者 JVM 正在下载/校验资源文件的这几秒到几十秒里，进程确实还活着，用户却看不到
+            // 任何窗口，此时弹"启动成功"是在撒谎。改成轮询 Process.MainWindowHandle：句柄非零
+            // 就是 Win32 意义上"这个进程已经创建了一个可见主窗口"，用它作为"游戏窗口出现"的
+            // 判定依据，比固定等 3 秒更贴近真实状态。
+            //
+            // 轮询上限放宽到 2 分钟（跟旧的 3 秒相比宽松很多）：Forge/NeoForge 首次启动常见的
+            // "下载/合并 mod 依赖" FML 处理阶段，在网络一般的环境下花十几秒到一两分钟都不算
+            // 罕见，不能照抄原型时的 3 秒观察窗口，否则大量正常启动会被误判成"提前退出"而报错。
+            // 轮询期间同步更新 LaunchStatusText，让用户知道当前处于"等待窗口出现"而不是卡死。
+            ShowLaunchStatus("正在启动游戏进程…");
+            var exitedEarly = false;
+            var windowAppeared = false;
+            var waitCancelled = false;
+            await Task.Run(async () =>
             {
-                for (var i = 0; i < 30; i++)
+                for (var i = 0; i < 1200; i++) // 1200 * 100ms = 2 分钟
                 {
-                    if (processInfo.HasExited) return true;
+                    // 需求：点"取消启动"要能中断"等待游戏窗口出现"这个轮询。这里只是让
+                    // 启动器停止继续等待/不再把这次启动算作"成功"，不会去杀掉进程——
+                    // 游戏进程如果已经拉起来了，用户之后仍然能在"关闭所选的游戏"里看到它、
+                    // 手动结束；取消动作本身只表达"我不想再等/不想继续这次启动确认流程了"。
+                    if (cancelToken.IsCancellationRequested) { waitCancelled = true; return; }
+                    if (processInfo.HasExited) { exitedEarly = true; return; }
+                    try
+                    {
+                        processInfo.Process.Refresh();
+                        if (processInfo.Process.MainWindowHandle != IntPtr.Zero)
+                        {
+                            windowAppeared = true;
+                            return;
+                        }
+                    }
+                    catch { /* 进程可能正好在这一瞬间退出，下一轮循环会被上面的 HasExited 捕获到 */ }
+
+                    if (i == 5) // 前 0.5 秒过后再切文案，避免"秒切"看起来像没变化
+                        Dispatcher.Invoke(() => ShowLaunchStatus("等待游戏窗口出现…"));
                     await Task.Delay(100);
                 }
-                return false;
             });
+            // 轮询 2 分钟仍未见到窗口、进程也没退出：不判定为失败（有些环境窗口创建确实很慢，
+            // 强行判失败反而会打断真正还在正常加载的游戏），但也不该继续用"等待"文案卡住不动，
+            // 交还给下面 windowAppeared==false 且 exitedEarly==false 的分支处理。
+
+            if (waitCancelled)
+            {
+                // 用户主动取消：跟需求一致，不弹任何提示框（不是"失败"，是用户自己叫停的），
+                // 用 Toast 轻量告知一下就好，游戏进程本身留给用户在进程列表里自行处理。
+                ToastService.ShowSuccess(Loc.T("Str_Cs_Launch_Cancelled", "已取消启动。"));
+                return;
+            }
 
             // 修复"启动成功/启动异常弹窗出现时启动器窗口会自动最小化"：上面等待最多 3 秒观察
             // 游戏进程是否提前退出的这段时间里，刚拉起的 Java/游戏窗口很容易抢到前台焦点，
@@ -1538,23 +1702,54 @@ public partial class MainWindow : Window
             }
             else
             {
-                // 「百宝箱」-「查看启动计数」：只在真正判定为启动成功（没有提前退出）时计数，
-                // 累计值持久化进 config.json，跟版本/账户切换无关。
+                // 「百宝箱」-「查看启动计数」：只在真正判定为启动成功（窗口出现，或至少没有
+                // 提前退出）时计数，累计值持久化进 config.json，跟版本/账户切换无关。
                 cfg.GameLaunchSuccessCount++;
                 ConfigService.Save();
 
-                // 需求："让所有弹窗提示均在窗口内内嵌，不弹出新窗口，就像 PCL 一样"。
-                // "游戏启动成功"是纯告知性提示，用户不需要做任何决定——做成必须点"确定"的
-                // 模态框，等于在游戏起来之后还要求用户回来点一下，是纯多余的一步。
-                // 改成右下角 Toast，几秒后自己消失，不阻塞任何操作（PCL 就是这个体验）。
-                // 判断标准见 ToastService 类头注释：需要决定的才用模态，只是告知的一律 Toast。
-                ToastService.ShowSuccess($"游戏已启动：{account.DisplayLabel} - {cfg.SelectedVersionId}");
+                // 需求："在游戏窗口出现之后才会说启动成功"。windowAppeared==true 是真正观察到
+                // Win32 主窗口句柄出现的情况，文案照常；windowAppeared==false 但进程也没退出，
+                // 属于"轮询 2 分钟仍未见到窗口、但进程还活着"的边界情况（极少数环境下窗口创建
+                // confirm 得比 2 分钟还慢，或者是没有可见窗口的服务端/无头场景），不应该武断地
+                // 说"启动成功"，改用更谨慎的措辞，明确告诉用户"进程仍在运行、窗口还没等到"。
+                if (windowAppeared)
+                {
+                    // 需求："让所有弹窗提示均在窗口内内嵌，不弹出新窗口，就像 PCL 一样"。
+                    // "游戏启动成功"是纯告知性提示，用户不需要做任何决定——做成必须点"确定"的
+                    // 模态框，等于在游戏起来之后还要求用户回来点一下，是纯多余的一步。
+                    // 改成右下角 Toast，几秒后自己消失，不阻塞任何操作（PCL 就是这个体验）。
+                    // 判断标准见 ToastService 类头注释：需要决定的才用模态，只是告知的一律 Toast。
+                    ToastService.ShowSuccess($"游戏已启动：{account.DisplayLabel} - {cfg.SelectedVersionId}");
+                }
+                else
+                {
+                    ToastService.ShowSuccess($"游戏进程仍在运行（尚未检测到窗口）：{account.DisplayLabel} - {cfg.SelectedVersionId}");
+                }
             }
         }
         catch (Exception ex)
         {
             ErrorPresenter.ShowFriendlyError(Loc.T("Str_Cs_Launch_Failed_Check_That_Java_And_The_Ga", "启动失败，请检查 Java、游戏文件是否完整，或查看「日志」页面获取更多信息。"), $"[启动失败] {ex}", "启动失败");
         }
+        finally
+        {
+            // 不管走成功/崩溃/异常哪条分支，等待过程结束后都要把状态提示收起来，
+            // 不能让"等待游戏窗口出现…"这行字永久挂在侧边栏上。
+            HideLaunchStatus();
+        }
+    }
+
+    /// <summary>在侧边栏"启动游戏"按钮上方显示一行启动状态提示文字。</summary>
+    private void ShowLaunchStatus(string text)
+    {
+        LaunchStatusText.Text = text;
+        LaunchStatusText.Visibility = Visibility.Visible;
+    }
+
+    /// <summary>收起侧边栏的启动状态提示。</summary>
+    private void HideLaunchStatus()
+    {
+        LaunchStatusText.Visibility = Visibility.Collapsed;
     }
 
     /// <summary>一键关闭游戏：结束所有正在运行的游戏进程。</summary>

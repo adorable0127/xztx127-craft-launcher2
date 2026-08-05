@@ -89,6 +89,7 @@
     <system:String x:Key="Str_Status_Confirm">Bestätigen</system:String>
     <system:String x:Key="Str_Status_Error">Es ist ein Fehler aufgetreten</system:String>
     <system:String x:Key="Str_Launch_Button">Spiel starten</system:String>
+    <system:String x:Key="Str_Launch_Cancel">Start abbrechen</system:String>
     <system:String x:Key="Str_Launch_Started">Spiel gestartet</system:String>
     <system:String x:Key="Str_Launch_NoVersion">Keine Version ausgewählt</system:String>
     <system:String x:Key="Str_Launch_NoAccount">Kein Konto ausgewählt</system:String>

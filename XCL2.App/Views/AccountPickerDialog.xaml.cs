@@ -45,17 +45,33 @@ public partial class AccountPickerDialog : OverlayDialogControl
     }
 
     /// <summary>
-    /// 刷新账户列表；currentlySelectedId 为空（比如"添加账户"新建/登录完成之后）时，
-    /// 需求变更：新建/登录出来的账户不再自动选中列表项——列表选中状态保持"没有选中任何一项"，
-    /// 由用户自己点选，避免用户以为点了「添加」就等于自动确认要用这个新账户启动。
+    /// 刷新账户列表。
+    /// 需求变更（本轮）：弹窗默认高亮的账户改成"最近创建的账户"，而不是"什么都不选"——
+    /// 之前 currentlySelectedId 为空时（比如从来没有过显式选择、或者上面"添加账户"三个
+    /// 入口成功后传 null）列表直接不选中任何一项，用户还得自己在一堆账户里找到刚创建
+    /// 的那个才能点确定；现在 currentlySelectedId 为空时改为回退到 GetMostRecentlyCreatedAccount()，
+    /// 对大多数场景（尤其是刚创建完账户）来说这就是用户想要的那个，省掉一步手动查找。
+    /// 三个"添加账户"入口成功后仍然显式传 account.Id（更精确、不依赖时间戳排序结果跟
+    /// 刚创建的账户一致），这里的回退只覆盖"一开始打开弹窗、且从未有过显式选择"这一种情况。
+    /// 已经有过显式选择（currentlySelectedId 非空，即 cfg.LastSelectedAccountId 有值）时
+    /// 行为不变——不会用"最近创建"覆盖用户之前手动做过的选择，避免账户列表里新增了
+    /// 别的账户就意外改变了下次启动默认用的账户。
     /// </summary>
     private void RefreshList(string? currentlySelectedId)
     {
         var accounts = _configService.Accounts.ToList();
         AccountListBox.ItemsSource = accounts;
-        AccountListBox.SelectedItem = string.IsNullOrEmpty(currentlySelectedId)
-            ? null
-            : accounts.FirstOrDefault(a => a.Id == currentlySelectedId);
+
+        Account? toSelect;
+        if (!string.IsNullOrEmpty(currentlySelectedId))
+        {
+            toSelect = accounts.FirstOrDefault(a => a.Id == currentlySelectedId);
+        }
+        else
+        {
+            toSelect = _configService.GetMostRecentlyCreatedAccount();
+        }
+        AccountListBox.SelectedItem = toSelect;
     }
 
     private void Confirm_Click(object sender, RoutedEventArgs e) => AcceptSelection();
@@ -89,8 +105,8 @@ public partial class AccountPickerDialog : OverlayDialogControl
         var name = string.IsNullOrWhiteSpace(OfflineNameBox.Text) ? "Player" : OfflineNameBox.Text.Trim();
         var account = OfflineAuthService.CreateOfflineAccount(name);
         _configService.AddOrUpdateAccount(account);
-        RefreshList(currentlySelectedId: null);
-        AddAccountStatusText.Text = $"离线账户「{name}」已添加，请在上面的列表中选中它。";
+        RefreshList(currentlySelectedId: account.Id);
+        AddAccountStatusText.Text = $"离线账户「{name}」已添加并选中，可直接点击「确定」使用。";
     }
 
     private async void AddMicrosoft_Click(object sender, RoutedEventArgs e)
@@ -132,8 +148,8 @@ public partial class AccountPickerDialog : OverlayDialogControl
                 return;
             }
             _configService.AddOrUpdateAccount(account);
-            RefreshList(currentlySelectedId: null);
-            AddAccountStatusText.Text = $"微软账户「{account.Username}」登录成功，请在上面的列表中选中它。";
+            RefreshList(currentlySelectedId: account.Id);
+            AddAccountStatusText.Text = $"微软账户「{account.Username}」登录成功并已选中，可直接点击「确定」使用。";
         }
         catch (OperationCanceledException)
         {
@@ -225,8 +241,8 @@ public partial class AccountPickerDialog : OverlayDialogControl
                 return;
             }
             _configService.AddOrUpdateAccount(account);
-            RefreshList(currentlySelectedId: null);
-            AddAccountStatusText.Text = $"微软账户「{account.Username}」登录成功，请在上面的列表中选中它。";
+            RefreshList(currentlySelectedId: account.Id);
+            AddAccountStatusText.Text = $"微软账户「{account.Username}」登录成功并已选中，可直接点击「确定」使用。";
         }
         catch (AuthStepException ex)
         {

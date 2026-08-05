@@ -89,6 +89,7 @@
     <system:String x:Key="Str_Status_Confirm">확인</system:String>
     <system:String x:Key="Str_Status_Error">문제가 발생했습니다</system:String>
     <system:String x:Key="Str_Launch_Button">게임 시작</system:String>
+    <system:String x:Key="Str_Launch_Cancel">시작 취소</system:String>
     <system:String x:Key="Str_Launch_Started">게임이 시작되었습니다</system:String>
     <system:String x:Key="Str_Launch_NoVersion">버전이 선택되지 않음</system:String>
     <system:String x:Key="Str_Launch_NoAccount">계정이 선택되지 않음</system:String>

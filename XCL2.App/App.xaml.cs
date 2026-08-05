@@ -40,6 +40,50 @@ public partial class App : Application
     {
         base.OnStartup(e);
 
+        // 兜底：DispatcherUnhandledException 只能捕获"已经进入 WPF 消息循环之后、
+        // 在 UI 线程上抛出"的异常。OnStartup 方法体自身在调用 base.OnStartup(e) 之后、
+        // 消息循环真正跑起来之前的这一段（包括下面 earlyConfig.Load()、ThemeService/
+        // LocalizationService 应用、new Views.MainWindow() 构造函数执行的全过程）
+        // 严格来说也是在这同一次同步调用栈里跑的，正常应该也能被 DispatcherUnhandledException
+        // 捕获——但如果背后触发了某个后台线程（比如某个服务的静态构造函数里起了
+        // Task.Run 且没有 await/awaited 的异常没有被 catch，变成未观察的 Task 异常）、
+        // 或者异常是从 StackOverflowException 等 CLR 直接终止进程的极端情况来的，
+        // DispatcherUnhandledException 覆盖不到，进程会直接静默退出——用户看到的现象
+        // 就是"exe 一闪而过或者压根不出现任何窗口/提示框，双击也好、命令行跑也好都
+        // 没有任何可见反馈"，且不会写入下面 DispatcherUnhandledException 里的 crash.log。
+        // 这里额外注册 AppDomain.CurrentDomain.UnhandledException 作为最后一道防线：
+        // 它能捕获包括非 UI 线程在内的、真正会导致进程终止的未处理异常，把异常信息
+        // 落盘到同一份 crash.log，方便排查"启动器完全没反应"这类难以复现的问题。
+        // 同时注册 TaskScheduler.UnobservedTaskException：项目里大量用了
+        // "_ = SomeAsyncMethod()"这种不等待结果的 fire-and-forget 调用模式（比如
+        // MainWindow 构造函数里的 ScanMinecraftFoldersInBackgroundAsync／
+        // ScanJavaInBackgroundAsync），如果这类方法内部有没被 catch 的异常，
+        // 默认情况下只会在这个 Task 被垃圾回收时才通过这个事件"迟报"出来，
+        // 且默认不会终止进程、也不会有任何界面提示——用户完全不知道发生了什么。
+        // 这里同样落盘到 crash.log，并显式标记为已观察（e.SetObserved()），避免这类
+        // 迟报异常在终结器线程上被重新抛出导致进程终止。
+        AppDomain.CurrentDomain.UnhandledException += (_, args) =>
+        {
+            try
+            {
+                var ex = args.ExceptionObject as Exception;
+                File.AppendAllText(Path.Combine(DataDir, "logs", "crash.log"),
+                    $"[{DateTime.Now}] [AppDomain 未处理异常，IsTerminating={args.IsTerminating}] " +
+                    $"{ex?.ToString() ?? args.ExceptionObject}\n\n");
+            }
+            catch { /* 落盘失败时也不能再抛异常，否则会在异常处理器里再触发一次异常 */ }
+        };
+        System.Threading.Tasks.TaskScheduler.UnobservedTaskException += (_, args) =>
+        {
+            try
+            {
+                File.AppendAllText(Path.Combine(DataDir, "logs", "crash.log"),
+                    $"[{DateTime.Now}] [未观察的后台 Task 异常] {args.Exception}\n\n");
+            }
+            catch { /* 同上 */ }
+            args.SetObserved();
+        };
+
         if (!IsRunningOnNet8Desktop())
         {
             // 这里**必须**用系统原生 MessageBox，不能换成内嵌的 MessageBoxDialog：
@@ -59,6 +103,47 @@ public partial class App : Application
             return;
         }
 
+        // 需求排查："exe 完全没有任何反馈——不弹窗口、不弹错误提示，只是生成了 xcl2 目录/
+        // config.json 就没有下文了"。这类问题的关键线索是：DispatcherUnhandledException
+        // 处理器要到 RunStartupSequence 内部才注册，而在它注册之前，earlyConfig.Load()／
+        // ThemeService.ApplyForCurrentState／LocalizationService.ApplyForCurrentState／
+        // LauncherLogService.BeginSession 这几行已经先跑了——如果异常恰好发生在这些
+        // "处理器还没来得及注册"的语句里，就完全不会被 DispatcherUnhandledException
+        // 捕获到，表现正是"config.json 已经生成（说明 earlyConfig.Load()/EnsureDefaultFolder
+        // 跑过了），但异常来自它之后、DispatcherUnhandledException 注册之前的某一行"。
+        // 用一个显式 try/catch 包住从这里到窗口创建为止的全过程，任何异常都立刻落盘 +
+        // 弹出原生 MessageBox，不依赖任何还没来得及注册的事件处理器，也不用等到
+        // "进程静默退出"这种用户完全看不出发生了什么的结局。
+        try
+        {
+            RunStartupSequence();
+        }
+        catch (Exception ex)
+        {
+            try
+            {
+                Directory.CreateDirectory(DataDir);
+                Directory.CreateDirectory(Path.Combine(DataDir, "logs"));
+                File.AppendAllText(Path.Combine(DataDir, "logs", "crash.log"),
+                    $"[{DateTime.Now}] [启动阶段异常，发生在主窗口创建/显示完成之前] {ex}\n\n");
+            }
+            catch { /* 落盘失败也不能再抛，见下面的原生 MessageBox 兜底 */ }
+
+            MessageBox.Show(
+                "启动器在初始化阶段发生异常，无法继续启动：\n\n" + GetFullExceptionMessage(ex) +
+                "\n\n详细堆栈已写入 xcl2\\logs\\crash.log，可以把这个文件发给开发者排查。",
+                "XCL2 启动失败", MessageBoxButton.OK, MessageBoxImage.Error);
+            Shutdown(1);
+        }
+    }
+
+    /// <summary>
+    /// OnStartup 的主体逻辑抽成独立方法，纯粹是为了让上面那层 try/catch 能完整覆盖
+    /// "从读配置到窗口创建完成"的全过程，而不需要把 try/catch 的缩进套进整个方法体里
+    /// 让本来就很长的 OnStartup 变得更难读。行为跟原来完全一致，只是外层多包了一层。
+    /// </summary>
+    private void RunStartupSequence()
+    {
         // 修复"切换页面后才会变黑/侧边栏和底部账户区一直是浅色"：必须在 MainWindow 构造
         // 之前完成"读配置 + 应用主题/语言"，让 MainWindow.xaml 第一次 InitializeComponent()
         // 时资源字典里就已经是正确的皮肤颜色和语言，不需要任何事后刷新。这里单独 new 一个

@@ -613,6 +613,94 @@ public class LauncherService
         if (parent?.Arguments?.Jvm != null) jvmArgsFromJson.AddRange(ParseArgumentEntries(parent.Arguments.Jvm));
         if (detail.Arguments?.Jvm != null) jvmArgsFromJson.AddRange(ParseArgumentEntries(detail.Arguments.Jvm));
 
+        // 根因（"java.lang.module.ResolutionException: Module minecraft contains package
+        // com.mojang.blaze3d.systems, module xxx exports package com.mojang.blaze3d.systems to
+        // minecraft" —— Forge/NeoForge 用 securejarhandler+bootstraplauncher 的新版本
+        // 一律必现，1.20.1 Forge 及以后普遍中招）：
+        //
+        // 这类 loader 的官方 version json 在 arguments.jvm 里声明了
+        // "--add-modules" "ALL-MODULE-PATH"，让 JVM 把 --module-path/-p 底下所有 jar
+        // 都当模块解析。但 bootstraplauncher 真正启动时，vanilla client jar（模块名
+        // "minecraft"）和 Forge 的 "patched" client jar（同样打包了一份被 patch 过的
+        // com.mojang.blaze3d.systems 等包）会被 securejarhandler 同时扫描到——两者都在
+        // module-info 里"导出"同一个包给 "minecraft" 这个模块消费，JPMS resolver 判定
+        // 这是非法的重复导出，直接在 ModuleLayerHandler.buildLayer 这一步炸掉，
+        // 游戏窗口能起一瞬间（早期显示窗口先起来了）随即抛异常退出，正是"一闪而过"的表现。
+        //
+        // 官方启动器（PCL/HMCL/官方 Launcher）都不会遇到这个问题，因为它们都会额外拼接两个
+        // securejarhandler/bootstraplauncher 自己认的 -D 系统属性，让底层扫描时提前排除掉
+        // 不该参与模块解析的那批 jar：
+        //   -DignoreList=<以逗号分隔的一批 jar 文件名片段，用"包含"匹配>
+        //   -DmergeModules=<需要合并成同一个模块的 jar 文件名，用分号或逗号分隔均可>
+        // 这两个属性不是 version json 里会写的字段（Mojang/Forge 的 json 里根本没有这两个
+        // key），是 bootstraplauncher/securejarhandler 这两个库自己读取的、只在启动参数
+        // 里靠约定生成的 -D 属性；PCL/HMCL 都是在本地按 classpath 里实际存在的 jar 文件名
+        // 现算出来的，不是从网络下载或写死在某个版本号对应表里的固定值——这样才能对任意
+        // Forge/NeoForge 版本通用，不需要为每个新版本号单独维护一份忽略列表。
+        //
+        // 计算规则（对照真实抓包到的官方 PCL 启动命令行核对过）：
+        //   ignoreList: securejarhandler/bootstraplauncher/asm 系列(asm, asm-commons,
+        //     asm-util, asm-analysis, asm-tree)/JarJarFileSystems/client-extra/
+        //     fmlcore/javafmllanguage/lowcodelanguage/mclanguage/"forge-"(前缀片段，
+        //     匹配所有 forge-<mc版本>-<forge版本>-xxx.jar)/当前版本主 jar 文件名本身。
+        //     这批 jar 要么是 bootstrap 阶段之前就已经手动加载过的启动器自身依赖，要么是
+        //     会被 FML 自己的 JarInJarDependencyLocator 在运行时以 union classloader
+        //     方式重新处理的语言适配层 jar，不应该被 securejarhandler 当独立模块解析。
+        //   mergeModules: classpath 里所有 jna / jna-platform 的 jar（不论具体版本号），
+        //     因为 oshi-core 依赖的 jna 版本和 Mojang 官方库列表里独立声明的 jna 版本
+        //     经常不一致，两份都在 classpath 上时会被当成同一个模块名的两个不同版本，
+        //     同样触发 JPMS 冲突，需要显式告诉 securejarhandler 把它们合并成一个模块处理。
+        //
+        // 只在这是一个走 bootstraplauncher/securejarhandler 模块化启动的 Forge/NeoForge
+        // 版本时才生成——纯原版、Fabric、Quilt 走传统 -cp 全类路径加载，从不使用
+        // --add-modules，不需要也不应该加这两个属性。
+        //
+        // 判断依据改成 mainClass 而不是 InheritsFrom：早先这里用 "detail.InheritsFrom 是否非空"
+        // 来判断"是不是 loader 版本"，隐含假设是"loader 版本都有 inheritsFrom 指向原版"。
+        // 但 ClientLoaderInstallService 为了实现"完全隔离/独立实例"，会在装完 Forge/NeoForge
+        // 之后把版本 json 里的 inheritsFrom 主动置空（把原版 jar 拷贝进 loader 自己的版本文件夹，
+        // 不再依赖父版本文件夹），这导致同一份代码在"隔离模式"下失去了 InheritsFrom 这个信号，
+        // ignoreList/mergeModules 两个关键属性不会被加进启动参数，于是每次都必现这里注释里
+        // 描述的 ResolutionException("Module minecraft contains package ... exports package ...
+        // to minecraft")——本次用户贴的崩溃日志就是这个问题，游戏窗口刚起来就直接退出。
+        //
+        // mainClass 是更可靠的信号：不管 inheritsFrom 是否被置空，只要这是 Forge/NeoForge 的
+        // bootstraplauncher 启动方式，detail.MainClass（或继承自父版本的 mainClass）就一定是
+        // "cpw.mods.bootstraplauncher.BootstrapLauncher"（对照本次用户日志里
+        // "cpw.mods.bootstraplauncher@1.1.2/cpw.mods.bootstraplauncher.BootstrapLauncher.main"
+        // 这一行确认），这是官方安装器生成 json 时写死的类名，不会因为我们后处理 json（去掉
+        // inheritsFrom、补字段）而改变，因此拿它做判断依据比 InheritsFrom 更稳。
+        var isBootstrapLauncherModular = string.Equals(
+            mainClass, "cpw.mods.bootstraplauncher.BootstrapLauncher", StringComparison.Ordinal);
+        if (isBootstrapLauncherModular)
+        {
+            var ignoreListFragments = new List<string>
+            {
+                "bootstraplauncher", "securejarhandler",
+                "asm-commons", "asm-util", "asm-analysis", "asm-tree", "asm",
+                "JarJarFileSystems", "client-extra",
+                "fmlcore", "javafmllanguage", "lowcodelanguage", "mclanguage",
+                "forge-",
+            };
+            // 当前版本主 jar 的文件名片段（不含扩展名即可，ignoreList 是"包含"匹配）：
+            // 用 clientJarBaseName 而不是 opts.VersionId，因为文件夹可能被改过名，
+            // 真正参与 classpath/模块扫描的是 json 内部 id 对应的那个物理文件名。
+            if (!string.IsNullOrEmpty(clientJarBaseName))
+                ignoreListFragments.Add(clientJarBaseName);
+
+            var mergeModuleJars = classpath
+                .Select(Path.GetFileName)
+                .Where(f => f != null &&
+                            (f.StartsWith("jna-", StringComparison.OrdinalIgnoreCase) ||
+                             f.StartsWith("jna-platform-", StringComparison.OrdinalIgnoreCase)))
+                .Distinct()
+                .ToList();
+
+            jvmArgsFromJson.Add($"-DignoreList={string.Join(",", ignoreListFragments)}");
+            if (mergeModuleJars.Count > 0)
+                jvmArgsFromJson.Add($"-DmergeModules={string.Join(",", mergeModuleJars)}");
+        }
+
         var variables = new Dictionary<string, string>
         {
             ["natives_directory"] = nativesDir,

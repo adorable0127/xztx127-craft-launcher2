@@ -89,6 +89,7 @@
     <system:String x:Key="Str_Status_Confirm">确认</system:String>
     <system:String x:Key="Str_Status_Error">出了点问题</system:String>
     <system:String x:Key="Str_Launch_Button">启动游戏</system:String>
+    <system:String x:Key="Str_Launch_Cancel">取消启动</system:String>
     <system:String x:Key="Str_Launch_Started">游戏已启动</system:String>
     <system:String x:Key="Str_Launch_NoVersion">未选择版本</system:String>
     <system:String x:Key="Str_Launch_NoAccount">未选择账户</system:String>
@@ -147,6 +148,7 @@
     <system:String x:Key="Str_Ui_Snapshot">快照版</system:String>
     <system:String x:Key="Str_Ui_Resource_Packs_2">资源包</system:String>
     <system:String x:Key="Str_Ui_Rescan">重新扫描</system:String>
+    <system:String x:Key="Str_Ui_Clear_This_View">清空本视图内的日志</system:String>
     <system:String x:Key="Str_Ui_Scan_Now">立即扫描</system:String>
     <system:String x:Key="Str_Ui_Matched_Rule">命中规则</system:String>
     <system:String x:Key="Str_Ui_Redstone_Lan">红石联机</system:String>

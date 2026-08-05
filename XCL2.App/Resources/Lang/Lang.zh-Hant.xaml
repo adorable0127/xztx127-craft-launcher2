@@ -73,6 +73,7 @@
     <system:String x:Key="Str_Status_Confirm">確認</system:String>
     <system:String x:Key="Str_Status_Error">出咗啲問題</system:String>
     <system:String x:Key="Str_Launch_Button">啟動遊戲</system:String>
+    <system:String x:Key="Str_Launch_Cancel">取消啟動</system:String>
     <system:String x:Key="Str_Launch_Started">遊戲已啟動</system:String>
     <system:String x:Key="Str_Launch_NoVersion">未選擇版本</system:String>
     <system:String x:Key="Str_Launch_NoAccount">未選擇帳戶</system:String>

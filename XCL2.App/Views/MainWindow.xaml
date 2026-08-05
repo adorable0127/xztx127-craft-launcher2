@@ -68,6 +68,12 @@
                             HorizontalContentAlignment="Center" Click="CloseSelectedGame_Click"
                             ToolTip="{DynamicResource Str_Ui_Close_A_Specific_Game_Pick_A_Running_Gam}"/>
 
+                    <!-- 启动状态提示：从点击「启动游戏」到游戏窗口真正出现之间的过程展示
+                         （"正在启动进程…"→"等待游戏窗口出现…"），默认隐藏，只在这段时间内可见。
+                         收起态侧边栏太窄放不下这行文字，所以只在展开态显示。 -->
+                    <TextBlock x:Name="LaunchStatusText" FontSize="11" Margin="6,0,0,4" TextWrapping="Wrap"
+                               Foreground="{DynamicResource TextSecondaryBrush}" Visibility="Collapsed"/>
+
                     <!-- 展开态：跟原来一样的长条"启动游戏"按钮。
                          收起态：改成一个圆形的、里面是圆形图案的按钮（▶ 播放符号），
                          Visibility 二选一联动，两者共享同一个 Launch_Click 处理器。 -->
