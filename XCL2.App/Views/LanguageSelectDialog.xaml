@@ -1,0 +1,61 @@
+<local:OverlayDialogControl x:Class="XCL2.App.Views.LanguageSelectDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="clr-namespace:XCL2.App.Views"
+        Width="420">
+    <!--
+        迁移自原 LanguageSelectWindow（独立 Window），改造成进程内 Overlay 弹窗，
+        见 IOverlayDialog.cs / OverlayDialogService.cs 顶部注释。原来的 Width/Height/
+        WindowStartupLocation/ResizeMode/Background 这些"窗口级"属性全部不需要了——
+        居中/圆角卡片背景/阴影都是 OverlayCard 统一提供的。
+
+        样式仿照系统语言选择器那种简单列表——每一行是语言的"本地拼写名"（NativeName，
+        不做二次翻译，见 LocalizationService.SupportedLanguages 上的注释），当前选中项
+        右侧打勾。点击某一行立即切换语言并保存配置、立即关闭弹窗，不需要额外的"确定"
+        按钮再点一次——参照系统语言选择器的交互习惯：选完就是选完，不需要二次确认。
+
+        原来靠外层 Window Height="520" 天然限制列表高度，Overlay 弹窗没有固定窗口高度了，
+        给内部 ScrollViewer 显式加 MaxHeight="380"，避免语言列表变长后卡片撑得比
+        MainWindow 还高。
+    -->
+    <DockPanel Margin="0">
+        <TextBlock DockPanel.Dock="Top" Text="{DynamicResource Str_Lang_DialogTitle}"
+                   FontSize="18" FontWeight="Bold" Margin="20,20,20,4"/>
+
+        <!-- 实验性功能提示条：常驻显示在列表上方，不管当前选的是不是简体中文都显示，
+             提前告知用户"切走了会看到实验性功能消失"，避免用户切换语言后找不到入口
+             以为是 bug。 -->
+        <Border DockPanel.Dock="Top" Background="{DynamicResource WarningBannerBrush}" CornerRadius="6"
+                Margin="20,8,20,12" Padding="10,8">
+            <TextBlock Text="{DynamicResource Str_Lang_ExperimentalNotice}"
+                       FontSize="11" TextWrapping="Wrap" Foreground="{DynamicResource WarningTextBrush}"/>
+        </Border>
+
+        <Button DockPanel.Dock="Bottom" x:Name="CancelBtn" Content="{DynamicResource Str_Lang_Cancel}"
+                HorizontalAlignment="Right" Margin="0,0,20,20" Padding="16,8" Click="Cancel_Click"/>
+
+        <ScrollViewer MaxHeight="380" VerticalScrollBarVisibility="Auto" Margin="20,0,20,0">
+            <ItemsControl x:Name="LanguageList">
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate>
+                        <Button Click="LanguageItem_Click" Tag="{Binding Code}"
+                                HorizontalContentAlignment="Stretch" Padding="4,12" Margin="0,0,0,2"
+                                Background="Transparent" BorderThickness="0" Cursor="Hand">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0" Text="{Binding NativeName}" FontSize="15"
+                                           Foreground="{DynamicResource TextPrimaryBrush}" VerticalAlignment="Center"/>
+                                <TextBlock Grid.Column="1" Text="&#10003;" FontSize="15" FontWeight="Bold"
+                                           Foreground="{DynamicResource AccentBrush}" VerticalAlignment="Center"
+                                           Visibility="{Binding IsCurrentVisibility}"/>
+                            </Grid>
+                        </Button>
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
+        </ScrollViewer>
+    </DockPanel>
+</local:OverlayDialogControl>

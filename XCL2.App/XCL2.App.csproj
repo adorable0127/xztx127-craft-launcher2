@@ -1,0 +1,96 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <UseWPF>true</UseWPF>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>XCL2</AssemblyName>
+    <RootNamespace>XCL2.App</RootNamespace>
+    <Platforms>AnyCPU</Platforms>
+    <LangVersion>latest</LangVersion>
+    <!-- 离线/受限网络环境下，NuGet restore 会因无法访问漏洞审计源反复输出 NU1900。
+         项目依赖版本固定，日常本地构建不需要联网审计；发布前可在 CI 或联网环境单独开启审计。 -->
+    <NuGetAudit>false</NuGetAudit>
+    <!-- 应用图标：编译出的 .exe 文件图标来源，Resources/app.ico 是用户提供的成品图标。 -->
+    <ApplicationIcon>Resources\app.ico</ApplicationIcon>
+    <!-- 需求："如果用户电脑上没有安装 .NET，就在启动的前面加上：你需要安装 .NET8 运行时
+         才可以继续使用本程序。"
+         这个项目是框架依赖发布(不是自包含/单文件)，意味着 .exe 本身的启动就需要 .NET8
+         Desktop Runtime 已经安装——如果完全没装，操作系统层面的 apphost 会在我们任何代码
+         跑起来之前就弹出系统自带的英文"未找到运行时"对话框，这一步是 apphost 原生行为，
+         没有托管代码执行的机会去插入自定义中文提示，这是 .NET 框架依赖部署模式的固有限制
+         (自包含部署可以绕开，但会让安装包体积暴涨几十 MB，且用户已经普遍装有 .NET 运行时，
+         没必要为这一种边缘情况牺牲所有用户的下载体积)。
+         这里改用 GenerateErrorReport=true 让 apphost 至少走"生成错误报告链接"这条相对
+         友好一些的路径。真正的中文提示逻辑在 App.xaml.cs 的 OnStartup 最前面（见该文件
+         顶部注释）——对于"装了某个版本但版本不匹配/roll-forward 失败"这种能被托管代码
+         捕获到的场景(比如只装了 .NET 6，或者装的 Desktop Runtime 版本被回退策略排除)，
+         能在真正创建任何窗口之前用中文 MessageBox 提示；对于"完全一个 .NET 运行时都没装"
+         这种最极端的场景，操作系统原生对话框仍然会先弹出，这是框架依赖部署模式下无法
+         绕过的边界，但绝大多数"缺少正确版本"的实际案例都能被 OnStartup 里的检测覆盖到。 -->
+    <GenerateErrorReport>true</GenerateErrorReport>
+    <!-- 关闭"次要版本自动前滚"限制得更严格一些：只允许同一 major(8.x)内前滚，不静默滚到
+         未来的 net9/net10 桌面运行时——避免"看起来能跑但实际上从没验证过的运行时组合"，
+         同时这个限制也让"确实没有任何兼容 .NET8 运行时"的情况更容易在托管代码里被
+         RuntimeInformation 检测到并提示，而不是被更高版本悄悄顺带跑起来、用户永远不知道
+         其实该装 8.0。 -->
+    <RollForward>LatestMinor</RollForward>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="System.Text.Json" Version="8.0.5" />
+    <!-- 用于"内嵌浏览器窗口直接登录"(免复制验证码)：托管一个现代 Edge 内核的网页控件。
+         需要用户机器已安装 WebView2 Runtime——Windows 10 1803+/Windows 11 默认随 Edge 预装，
+         绝大多数机器无需额外安装；如未安装，首次使用时 WebView2 控件会自动提示下载。 -->
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.2792.45" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- 让 WPF 在运行时也能通过 pack URI "/Resources/app.ico" 找到这个文件
+         （ApplicationIcon 只决定编译出的 .exe 文件本身的图标，不会让 Window.Icon 这种
+         运行时资源引用生效，两者要分开配置）。 -->
+    <Resource Include="Resources\app.ico" />
+    <!-- 深色模式窗口图标。把你为深色模式做的那张 1.ico 改名成 app-dark.ico 放到
+         Resources/ 下即可，代码会自动在深浅色切换时挑对应那张（见
+         Services/AppIconService.cs）。这个文件**可以先不放**：找不到时会自动
+         回退用 app.ico，不会编译失败也不会运行时报错。
+         注意 exe 本身的文件图标（上面的 ApplicationIcon）依然只能是一张，
+         那是编译期烧进二进制的，Windows 不会随主题变化。 -->
+    <Resource Include="Resources\app-dark.ico" Condition="Exists('Resources\app-dark.ico')" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- 内置陶瓦联机(Terracotta)可执行文件：编译成 EmbeddedResource(直接打进程序集内部，
+         不是普通的 Resource/Content 松散文件)，运行时通过
+         Assembly.GetManifestResourceStream 读取字节流后自行写到本地磁盘再运行。
+         用 EmbeddedResource 而不是 Resource 的原因：这是一个完整的第三方可执行程序，
+         不是图片/图标这种 WPF UI 资源，不需要走 pack URI 这套机制，
+         EmbeddedResource 更直接、语义上也更准确(“这是一份内嵌数据”而不是“这是一个UI素材”)。
+         逻辑实现见 TerracottaService.EnsureExtracted。 -->
+    <EmbeddedResource Include="Resources\Terracotta\terracotta-0.4.2-windows-x86_64.exe">
+      <LogicalName>XCL2.App.Resources.Terracotta.terracotta-0.4.2-windows-x86_64.exe</LogicalName>
+    </EmbeddedResource>
+    <!-- 中文搜索用的 MC 百科 Mod 中文名数据库（移植自 PCL2 的 WikiEntries.txt，近 3 万条），
+         见 Services/WikiEntry.cs 的加载逻辑与文件头署名说明。跟上面的 Terracotta 同理，
+         这是一份纯数据文件，用 EmbeddedResource 直接打进程序集，不走 Content/pack URI，
+         避免用户漏拷贝松散文件导致中文搜索在发布后失效。 -->
+    <EmbeddedResource Include="Resources\Data\WikiEntries.txt">
+      <LogicalName>XCL2.App.Resources.Data.WikiEntries.txt</LogicalName>
+    </EmbeddedResource>
+  </ItemGroup>
+
+  <!-- 说明：不再使用自定义 Main / $(StartupObject)。之前两版尝试（先是把 App.xaml 的生成
+       操作从 ApplicationDefinition 改成 Page，后来改成用 StartupObject 指向手写的
+       Program.Main）都会跟 WPF SDK 的两阶段编译（当项目里的 XAML 存在本地类型引用时，
+       SDK 会先生成一个 XCL2.App_xxxxxxxx_wpftmp 临时项目跑一遍 markup 编译）产生冲突，
+       导致临时项目自己编译失败（CS0117/CS0246 等，连 Window/TextBlock 这些基础 WPF
+       类型都解析不出来）。
+       正确做法：App.xaml 保持 SDK 完全默认的 ApplicationDefinition（不作任何改动），继续
+       用 WPF SDK 自动生成的隐藏 Main() 作为唯一入口——这是兼容性最好、不会触发上述临时
+       项目坑的标准路径。原来 Program.cs 里"运行时前置检测 + 启动前预加载主题/语言 +
+       创建 MainWindow"这些逻辑，现在都合并进了 App.xaml.cs 的 OnStartup 里，效果完全等价
+       （OnStartup 同样在任何窗口创建之前执行），详见 App.xaml.cs 顶部注释。 -->
+
+</Project>

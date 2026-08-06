@@ -1,0 +1,125 @@
+<UserControl x:Class="XCL2.App.Views.LogsPage"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <Border Background="{DynamicResource PanelBrush}" CornerRadius="10" Padding="20">
+        <Grid>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="*"/>
+            </Grid.RowDefinitions>
+
+            <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="0,0,0,12">
+                <TextBlock Text="{DynamicResource Str_Nav_Logs}" FontSize="20" FontWeight="Bold" Foreground="{DynamicResource TextPrimaryBrush}" VerticalAlignment="Center"/>
+                <CheckBox x:Name="ShowLogCheck" Content="{DynamicResource Str_Ui_Show_The_Log_Panel_Hidden_By_Default_Tic}"
+                          Margin="20,0,0,0" VerticalAlignment="Center" Checked="ShowLogCheck_Changed" Unchecked="ShowLogCheck_Changed"/>
+            </StackPanel>
+
+            <Grid Grid.Row="1" Visibility="{Binding Visibility, ElementName=LogTabs}">
+                <TabControl x:Name="LogTabs" Visibility="Collapsed">
+                    <TabItem Header="{DynamicResource Str_Ui_Game_Log}">
+                        <Grid>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="*"/>
+                            </Grid.RowDefinitions>
+                            <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="0,8,0,8">
+                                <TextBlock Text="{DynamicResource Str_Ui_Choose_A_Running_Or_Recent_Game_Process}" VerticalAlignment="Center"/>
+                                <ComboBox x:Name="ProcessCombo" Width="260" Margin="8,0,8,0"
+                                          SelectionChanged="ProcessCombo_SelectionChanged"/>
+                                <Button Content="{DynamicResource Str_Common_Refresh}" Style="{StaticResource SideNavButton}" Padding="10,4" Click="RefreshGameLog_Click"/>
+                                <!-- 需求：游戏崩溃后日志不应该瞬间清空/消失，要保留到用户自己点这个按钮手动清空为止。
+                                 这个按钮只清空"当前这个视图里显示的文本"，不会动 GameProcessInfo.OutputBuffer
+                                 本身（那份缓冲区是进程管理/其它面板还要用的底层数据），也不会影响磁盘上的
+                                 latest.log —— 纯粹是这一个 TextBox 的可见内容归零，语义上等价于"清屏"。 -->
+                                <Button Content="{DynamicResource Str_Ui_Clear_This_View}" Style="{StaticResource SideNavButton}" Padding="10,4" Margin="8,0,0,0" Click="ClearGameLogView_Click"/>
+                            </StackPanel>
+                            <TextBox x:Name="GameLogBox" Grid.Row="1" IsReadOnly="True" TextWrapping="NoWrap"
+                                     FontFamily="Consolas" FontSize="12" VerticalScrollBarVisibility="Auto"
+                                     HorizontalScrollBarVisibility="Auto" Background="#1E1E1E" Foreground="#D4D4D4"/>
+                        </Grid>
+                    </TabItem>
+
+                    <TabItem Header="{DynamicResource Str_Ui_Launcher_Log}">
+                        <Grid>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="*"/>
+                            </Grid.RowDefinitions>
+                            <Button Grid.Row="0" Content="{DynamicResource Str_Common_Refresh}" Style="{StaticResource SideNavButton}" Padding="10,4"
+                                    HorizontalAlignment="Left" Margin="0,8,0,8" Click="RefreshLauncherLog_Click"/>
+                            <TextBox x:Name="LauncherLogBox" Grid.Row="1" IsReadOnly="True" TextWrapping="NoWrap"
+                                     FontFamily="Consolas" FontSize="12" VerticalScrollBarVisibility="Auto"
+                                     HorizontalScrollBarVisibility="Auto" Background="#1E1E1E" Foreground="#D4D4D4"/>
+                        </Grid>
+                    </TabItem>
+
+                <TabItem Header="{DynamicResource Str_Ui_Crash_Report_Analysis}">
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="*"/>
+                        </Grid.RowDefinitions>
+                        <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="0,8,0,8">
+                            <TextBlock Text="{DynamicResource Str_Ui_Crash_File}" VerticalAlignment="Center"/>
+                            <ComboBox x:Name="CrashFileCombo" Width="360" Margin="8,0,8,0"
+                                      SelectionChanged="CrashFileCombo_SelectionChanged"/>
+                            <Button Content="{DynamicResource Str_Ui_Rescan}" Style="{StaticResource SideNavButton}" Padding="10,4" Click="RescanCrash_Click"/>
+                        </StackPanel>
+                        <Border Grid.Row="1" Background="{DynamicResource WarningBannerBrush}" CornerRadius="6" Padding="10" Margin="0,0,0,8">
+                            <TextBlock x:Name="CrashFindingsText" TextWrapping="Wrap" FontSize="13"
+                                       Foreground="{DynamicResource TextPrimaryBrush}"
+                                       Text="{DynamicResource Str_Ui_Pick_A_Crash_File_Above_And_The_Automati}"/>
+                        </Border>
+                        <TextBox x:Name="CrashRawBox" Grid.Row="2" IsReadOnly="True" TextWrapping="NoWrap"
+                                 FontFamily="Consolas" FontSize="12" VerticalScrollBarVisibility="Auto"
+                                 HorizontalScrollBarVisibility="Auto" Background="#1E1E1E" Foreground="#D4D4D4"/>
+                    </Grid>
+                </TabItem>
+
+                <TabItem Header="{DynamicResource Str_Ui_Injection_Scan}">
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="*"/>
+                        </Grid.RowDefinitions>
+                        <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="0,8,0,8">
+                            <TextBlock Text="{DynamicResource Str_Ui_Select_A_Running_Game_Process}" VerticalAlignment="Center"/>
+                            <ComboBox x:Name="ScanProcessCombo" Width="260" Margin="8,0,8,0"/>
+                            <Button Content="{DynamicResource Str_Ui_Scan_Now}" Style="{StaticResource PrimaryButton}" Padding="12,4" Click="ScanNow_Click"/>
+                        </StackPanel>
+                        <ListView x:Name="ModuleListView" Grid.Row="1">
+                            <ListView.View>
+                                <GridView>
+                                    <GridViewColumn Header="{DynamicResource Str_Ui_Risk}" Width="70" DisplayMemberBinding="{Binding RiskLabel}"/>
+                                    <GridViewColumn Header="{DynamicResource Str_Ui_Module_File}" Width="180" DisplayMemberBinding="{Binding FileName}"/>
+                                    <GridViewColumn Header="{DynamicResource Str_Ui_Matched_Rule}" Width="200" DisplayMemberBinding="{Binding MatchedRule}"/>
+                                    <GridViewColumn Header="{DynamicResource Str_Ui_Vendor}" Width="120" DisplayMemberBinding="{Binding CompanyName}"/>
+                                    <GridViewColumn Header="{DynamicResource Str_Ui_Path}" Width="260" DisplayMemberBinding="{Binding FullPath}"/>
+                                </GridView>
+                            </ListView.View>
+                        </ListView>
+                    </Grid>
+                </TabItem>
+
+                <TabItem Header="{DynamicResource Str_Ui_Full_Launcher_Log}">
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="*"/>
+                        </Grid.RowDefinitions>
+                        <Button Grid.Row="0" Content="{DynamicResource Str_Common_Refresh}" Style="{StaticResource SideNavButton}" Padding="10,4"
+                                HorizontalAlignment="Left" Margin="0,8,0,8" Click="RefreshFullLauncherLog_Click"/>
+                        <TextBox x:Name="FullLauncherLogBox" Grid.Row="1" IsReadOnly="True" TextWrapping="NoWrap"
+                                 FontFamily="Consolas" FontSize="12" VerticalScrollBarVisibility="Auto"
+                                 HorizontalScrollBarVisibility="Auto" Background="#1E1E1E" Foreground="#D4D4D4"/>
+                    </Grid>
+                </TabItem>
+                </TabControl>
+            </Grid>
+
+            <TextBlock x:Name="HiddenHint" Grid.Row="1" Text="{DynamicResource Str_Ui_The_Log_Panel_Is_Hidden_Tick_The_Box_Abo}"
+                       Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap" Margin="0,20,0,0"/>
+        </Grid>
+    </Border>
+</UserControl>

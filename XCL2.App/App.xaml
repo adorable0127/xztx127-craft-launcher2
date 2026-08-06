@@ -1,0 +1,1162 @@
+<Application x:Class="XCL2.App.App"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:models="clr-namespace:XCL2.App.Models">
+    <!-- StartupUri 移除：改由 Program.cs 里自定义的 Main 入口先做 .NET8 运行时前置检测，
+         检测通过后才 new App().Run(new MainWindow())，保证"你需要安装 .NET8 运行时才可以
+         继续使用本程序"这句中文提示能在窗口真正创建前弹出，而不是等 WPF 初始化过程中途
+         才失败。 -->
+    <Application.Resources>
+        <ResourceDictionary>
+            <!-- 科技感配色：冷调主蓝 + 青色高亮，白底不变。
+                 AccentBrush 从原来偏暖的 #2F76E0 换成更冷更亮的 #1868E8，
+                 新增 GlowBrush(#00D4FF 青) 用于 focus/hover 发光描边和数据强调色，
+                 边框从纯灰 #DCE2EA 换成半透明蓝灰，让描边看起来像"电路线"而不是普通表单框线。 -->
+            <SolidColorBrush x:Key="AccentBrush" Color="#1868E8"/>
+            <SolidColorBrush x:Key="AccentHoverBrush" Color="#0F52C4"/>
+            <!-- 按钮背景专用的浅蓝色：之前所有按钮（PrimaryButton + 隐式默认 Button 样式）
+                 都直接拿 AccentBrush(#1868E8，深蓝) 当背景 + 白字，界面上大片按钮堆在一起
+                 视觉很扎眼、压得慌。这里单独拆出一组"浅蓝底 + 深色字"的按钮专用配色，
+                 不动 AccentBrush 本身——AccentBrush 还继续用作强调文字色/描边色/焦点色等
+                 场景（SecondaryButton 文字、输入框光标、选中态描边等），只有按钮的背景
+                 换成这一套更柔和的浅色，两者互不影响。 -->
+            <SolidColorBrush x:Key="ButtonBackgroundBrush" Color="#D3E6FC"/>
+            <SolidColorBrush x:Key="ButtonHoverBackgroundBrush" Color="#B9D8FA"/>
+            <SolidColorBrush x:Key="ButtonForegroundBrush" Color="#0F3F8C"/>
+            <SolidColorBrush x:Key="GlowBrush" Color="#00C2E8"/>
+            <SolidColorBrush x:Key="GlowSoftBrush" Color="#E3F7FC"/>
+            <SolidColorBrush x:Key="PanelBrush" Color="#FFFFFF"/>
+            <SolidColorBrush x:Key="SideBrush" Color="#F4F7FB"/>
+            <SolidColorBrush x:Key="BorderBrush2" Color="#D6E2F0"/>
+            <SolidColorBrush x:Key="BorderHoverBrush" Color="#9DC0EC"/>
+            <SolidColorBrush x:Key="TextPrimaryBrush" Color="#151B26"/>
+            <SolidColorBrush x:Key="TextSecondaryBrush" Color="#6B7686"/>
+
+            <!-- 首页磁贴图标底色 + 少数状态色，之前是每个磁贴直接写死的浅色 hex（比如
+                 Background="#E3F7FC"），只在白色系皮肤下好看，切到黑色皮肤后这些色块
+                 完全不跟着变，变成一堆刺眼的浅色色块糊在深色背景上——这是"深色模式很丑"
+                 的主要原因之一。现在把它们提成具名资源，交给 ThemeService 按皮肤重新计算
+                 （深色皮肤下用低饱和度的深色调，不是直接把浅色糊上去）。 -->
+            <SolidColorBrush x:Key="TileBadgeBlueBrush" Color="#E3F7FC"/>
+            <SolidColorBrush x:Key="TileBadgeIndigoBrush" Color="#EAF1FF"/>
+            <SolidColorBrush x:Key="TileBadgeGreenBrush" Color="#E7F6EC"/>
+            <SolidColorBrush x:Key="TileBadgeOrangeBrush" Color="#FFF1E3"/>
+            <SolidColorBrush x:Key="TileBadgePurpleBrush" Color="#F1E9FF"/>
+            <SolidColorBrush x:Key="SuccessTextBrush" Color="#1E9E4F"/>
+            <SolidColorBrush x:Key="WarningTextBrush" Color="#D9822B"/>
+            <SolidColorBrush x:Key="WarningBannerBrush" Color="#FFF7E6"/>
+            <SolidColorBrush x:Key="DangerBrush" Color="#D64545"/>
+            <!-- 细分隔线/步骤圆点用的中性灰边框，之前很多地方直接写死 #DDDDDD/#E0E0E0/#EEEEEE，
+                 同样的"只在白皮肤下能看清"问题，改成跟随皮肤的资源。 -->
+            <SolidColorBrush x:Key="DividerBrush" Color="#E0E0E0"/>
+            <FontFamily x:Key="MonoFontFamily">Consolas</FontFamily>
+
+            <!-- 卡片内联展开（仿 PCL）通用：IsExpanded/IsLoadingVersions 都是 bool，
+                 直接用 WPF 内置转换器绑定到 Visibility，不需要自己写 IValueConverter。 -->
+            <BooleanToVisibilityConverter x:Key="BoolToVis"/>
+            <models:ScreenHeightFractionConverter x:Key="ScreenHeightFractionConverter"/>
+
+            <!-- 通用 focus/hover 发光效果：细而亮的青色描边光晕，替代原来大面积色块高亮，
+                 科技感界面里更常见"边缘发光"而不是"整块填色"。控件模板里用
+                 <Border.Effect><StaticResource GlowEffect"/></Border.Effect> 引用。 -->
+            <DropShadowEffect x:Key="GlowEffect" Color="#00C2E8" BlurRadius="10" ShadowDepth="0" Opacity="0.55"/>
+
+            <!-- 全局窗口图标：不需要挨个给 20 多个弹窗窗口（AccountPickerWindow、
+                 CreateServerWindow 等）单独写 Icon="..."，用不带 x:Key 的隐式 Style
+                 让所有未显式设置 Icon 的 Window 都自动套用同一个应用图标，
+                 任务栏/Alt-Tab/标题栏左上角统一显示，而不是系统默认的白纸图标。
+                 MainWindow.xaml 已经显式设置了同一个 Icon，不受影响。 -->
+            <!-- 注意：这里**不再**用 Setter 写死 Icon。
+                 原因：深色/浅色模式要自动切换窗口图标（app.ico / app-dark.ico），
+                 而隐式 Style 的 Setter 属于"本地值"之上的样式值，一旦 AppIconService
+                 在运行时给 window.Icon 赋了本地值，这个 Setter 就再也不会生效；
+                 反过来如果保留 Setter，新开的窗口会先闪一下浅色图标再被改掉。
+                 统一交给 AppIconService.ApplyTo(window) 在窗口创建时和主题切换时赋值，
+                 只有一个真相来源，不会打架。见 Services/AppIconService.cs 类头注释。 -->
+            <Style TargetType="Window"/>
+
+            <!-- 修复"深色模式下鼠标悬停按钮上方的提示条(ToolTip)显示纯白、没有任何文字"：
+                 之前项目里从来没有给 ToolTip 定义过任何样式，全部用的是 WPF 默认的系统主题外观。
+                 根因是 WindowChromeService 会给每个窗口的 HWND 打开
+                 DWMWA_USE_IMMERSIVE_DARK_MODE（深色标题栏），这个标记同时会影响系统原生控件
+                 （包括 ToolTip 借助的 Win32 uxtheme 提示条视觉），但 WPF 默认 ToolTip 模板画的
+                 文字内容并不会跟着这个系统级深色标记自动换色——结果就是"提示条外壳被系统判定成
+                 深色/异常混合渲染出一片空白，文字却还是按老逻辑画（或者压根没画出来）"，
+                 视觉上就是截图里那种"一条白条，看不出上面写了什么字"。
+                 解决方式是不再依赖系统原生 ToolTip 外观，改成完全由 WPF 自己画的模板：
+                 背景/边框/文字全部走本项目已有的主题画刷（PanelBrush/BorderBrush2/TextPrimaryBrush），
+                 这些画刷本身已经会跟随 ThemeService 的深色/浅色切换重新着色，不再有任何系统原生
+                 渲染层参与，从根上避免"系统深色标记 vs WPF 默认模板"这种不同步。 -->
+            <Style TargetType="ToolTip">
+                <Setter Property="Background" Value="{StaticResource PanelBrush}"/>
+                <Setter Property="Foreground" Value="{StaticResource TextPrimaryBrush}"/>
+                <Setter Property="BorderBrush" Value="{StaticResource BorderBrush2}"/>
+                <Setter Property="BorderThickness" Value="1"/>
+                <Setter Property="Padding" Value="10,6"/>
+                <Setter Property="FontSize" Value="12"/>
+                <Setter Property="HasDropShadow" Value="True"/>
+                <!-- 显式关掉系统主题外观：不这样设的话，即使下面自定义了 Template，
+                     部分 Windows 版本仍然会在 Popup 外层套一层系统 uxtheme 边框/背景，
+                     跟自定义模板的圆角描边叠在一起显得双重描边。 -->
+                <Setter Property="OverridesDefaultStyle" Value="True"/>
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="ToolTip">
+                            <Border Background="{TemplateBinding Background}"
+                                    BorderBrush="{TemplateBinding BorderBrush}"
+                                    BorderThickness="{TemplateBinding BorderThickness}"
+                                    CornerRadius="6"
+                                    Padding="{TemplateBinding Padding}"
+                                    MaxWidth="360">
+                                <Border.Effect>
+                                    <DropShadowEffect Color="#000000" BlurRadius="12" ShadowDepth="2" Opacity="0.25"/>
+                                </Border.Effect>
+                                <ContentPresenter TextBlock.Foreground="{TemplateBinding Foreground}"
+                                                   TextBlock.FontSize="{TemplateBinding FontSize}"
+                                                   TextElement.Foreground="{TemplateBinding Foreground}"/>
+                            </Border>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+            </Style>
+
+            <!-- ===== 侧边栏导航矢量图标（Geometry）=====
+                 为什么不用 emoji：原来 11 个导航图标全是 emoji 文本（🏠📁⬇🌐🧩…），
+                 带来两个必现的显示 bug：
+
+                 1)「下载图标比别的小一像素」——🏠📁🌐🧩 这些是 emoji-presentation 字符，
+                    走 Segoe UI Emoji 彩色字体；而 ⬇ (U+2B07) 去掉变体选择符 U+FE0F 之后
+                    退回 text-presentation，落到 Segoe UI Symbol 这个**完全不同的字体**上，
+                    两套字体的字形设计尺寸(em box 占比)天生不一致，无论怎么调 FontSize
+                    都对不齐。上一版"去掉 U+FE0F"其实把问题改重了。
+
+                 2)「收起后图标只剩 1 像素」——收起态列宽 56，减去 SidebarPanel 的
+                    Margin=12 左右共 24、SideNavButton 的 Padding=10,10 共 20、
+                    模板 BorderThickness=2，真正留给图标的只有 10px，而 FontSize=14 的
+                    emoji 字形需要 17~18px，直接被裁成一条竖线。
+
+                 改成 Path 矢量图标后两个问题一起消失：图标尺寸由 Path 外层容器写死
+                 (固定 20×20)，不受字体回退影响；容器尺寸固定后收起态也不会被压缩，
+                 只要把 margin/padding 一起收掉留够 20px 即可（见 MainWindow.xaml.cs
+                 的 ApplySidebarCollapsedState）。矢量图标还能跟随主题变色、任意 DPI 下
+                 都清晰，这也是 PCL2/HMCL 的做法。
+
+                 全部图标统一按 24×24 的 viewBox 绘制，线条风格一致(描边式)。 -->
+            <Geometry x:Key="IconHome">M12 3 L21 10.5 V21 H14 V15 H10 V21 H3 V10.5 Z</Geometry>
+            <Geometry x:Key="IconFolder">M3 6 H10 L12 8.5 H21 V19 H3 Z</Geometry>
+            <Geometry x:Key="IconDownload">M12 3 V14 M12 14 L7.5 9.5 M12 14 L16.5 9.5 M4 17 V20 H20 V17</Geometry>
+            <Geometry x:Key="IconGlobe">M12 3 A9 9 0 1 0 12 21 A9 9 0 1 0 12 3 M3 12 H21 M12 3 A13 13 0 0 1 12 21 M12 3 A13 13 0 0 0 12 21</Geometry>
+            <Geometry x:Key="IconPuzzle">M9 4 H15 V7 A2 2 0 0 0 19 7 V13 H16 A2 2 0 0 0 16 17 H19 V20 H5 V7 H8 A2 2 0 0 0 9 4 Z</Geometry>
+            <Geometry x:Key="IconServer">M3 5 H21 V11 H3 Z M3 13 H21 V19 H3 Z M6.5 8 H7 M6.5 16 H7</Geometry>
+            <Geometry x:Key="IconToolbox">M3 9 H21 V20 H3 Z M9 9 V6 H15 V9 M3 14 H21</Geometry>
+            <Geometry x:Key="IconAccount">M12 4 A4 4 0 1 1 12 12 A4 4 0 1 1 12 4 M4.5 21 A7.5 7.5 0 0 1 19.5 21</Geometry>
+            <Geometry x:Key="IconSettings">M12 8.5 A3.5 3.5 0 1 1 12 15.5 A3.5 3.5 0 1 1 12 8.5 M12 2.5 V5 M12 19 V21.5 M21.5 12 H19 M5 12 H2.5 M18.7 5.3 L17 7 M7 17 L5.3 18.7 M18.7 18.7 L17 17 M7 7 L5.3 5.3</Geometry>
+            <Geometry x:Key="IconLogs">M6 3 H16 L19 6 V21 H6 Z M9 8 H16 M9 12 H16 M9 16 H13</Geometry>
+            <Geometry x:Key="IconFlask">M10 3 V9 L5 19 A1.5 1.5 0 0 0 6.5 21 H17.5 A1.5 1.5 0 0 0 19 19 L14 9 V3 M9 3 H15 M7.5 15 H16.5</Geometry>
+            <Geometry x:Key="IconMenu">M4 7 H20 M4 12 H20 M4 17 H20</Geometry>
+            <!-- 「鸣谢与帮助」导航图标：一个简化的心形，呼应"鸣谢/感谢"的语义，
+                 同时跟其它导航图标一样是单色线条风格，不引入实心填充打破视觉统一。 -->
+            <Geometry x:Key="IconHeart">M12 20 C12 20 4 14.5 4 9 A4 4 0 0 1 12 6.5 A4 4 0 0 1 20 9 C20 14.5 12 20 12 20 Z</Geometry>
+            <Geometry x:Key="IconDot">M12 8.5 A3.5 3.5 0 1 1 12 15.5 A3.5 3.5 0 1 1 12 8.5 Z</Geometry>
+
+            <!-- 导航图标统一样式：**尺寸写死在这里**，是上面两个 bug 不再复发的关键。
+                 Width/Height 固定 20，Stretch=Uniform 让 24 的 viewBox 等比缩到 20；
+                 UseLayoutRounding 保证描边落在整像素上、不同缩放比下不发虚。 -->
+            <Style TargetType="Path" x:Key="NavIconPath">
+                <Setter Property="Width" Value="20"/>
+                <Setter Property="Height" Value="20"/>
+                <Setter Property="Stretch" Value="Uniform"/>
+                <Setter Property="Stroke" Value="{DynamicResource TextPrimaryBrush}"/>
+                <Setter Property="StrokeThickness" Value="1.6"/>
+                <Setter Property="StrokeLineJoin" Value="Round"/>
+                <Setter Property="StrokeStartLineCap" Value="Round"/>
+                <Setter Property="StrokeEndLineCap" Value="Round"/>
+                <Setter Property="Fill" Value="Transparent"/>
+                <Setter Property="UseLayoutRounding" Value="True"/>
+                <Setter Property="SnapsToDevicePixels" Value="True"/>
+                <Setter Property="VerticalAlignment" Value="Center"/>
+                <Setter Property="HorizontalAlignment" Value="Center"/>
+            </Style>
+
+            <!-- 图标外层固定尺寸盒子：即使以后有人换了别的图标/字体，
+                 这个盒子也保证每一行图标占位完全一致，不会再出现"某一个小一像素"。 -->
+            <Style TargetType="Border" x:Key="NavIconBox">
+                <Setter Property="Width" Value="20"/>
+                <Setter Property="Height" Value="20"/>
+                <Setter Property="Background" Value="Transparent"/>
+                <Setter Property="VerticalAlignment" Value="Center"/>
+            </Style>
+
+            <!-- 修复"深色模式字体没跟着反转"：全项目 418 个 TextBlock 里有 271 个没有显式写
+                 Foreground，WPF 对没设置 Foreground 的 TextBlock 默认用 Brushes.Black，这批文字
+                 在深色皮肤下依然是黑的，糊在深色背景（PanelBrush/SideBrush）上完全看不清。
+                 之前只有大约 1/3 的 TextBlock 显式绑定了 {DynamicResource TextPrimaryBrush}，
+                 剩下 2/3 全靠 WPF 默认黑色，不会跟着 ThemeService 切换皮肤变化。
+                 不是去改这 271 处 XAML（改动量大、容易漏改、以后新增页面还是会踩同样的坑），
+                 而是加一个不带 x:Key 的隐式 TextBlock/Label 样式，把 Foreground 兜底设成
+                 TextPrimaryBrush；这样"没写 Foreground"的文字默认就会跟随主题色，深色皮肤下
+                 自动变成浅色文字。已经显式指定了 Foreground（包括 TextSecondaryBrush、
+                 SuccessTextBrush 等特殊颜色）的 TextBlock 不受影响，因为显式设置的属性值
+                 优先级高于 Style 里的 Setter，不会被这个隐式样式覆盖掉。 -->
+            <Style TargetType="TextBlock">
+                <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}"/>
+            </Style>
+            <Style TargetType="Label">
+                <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}"/>
+            </Style>
+
+            <Style TargetType="Button" x:Key="PrimaryButton">
+                <Setter Property="Background" Value="{DynamicResource ButtonBackgroundBrush}"/>
+                <Setter Property="Foreground" Value="{DynamicResource ButtonForegroundBrush}"/>
+                <Setter Property="FontSize" Value="15"/>
+                <Setter Property="Padding" Value="12,8"/>
+                <Setter Property="BorderThickness" Value="1"/>
+                <Setter Property="BorderBrush" Value="{DynamicResource ButtonBackgroundBrush}"/>
+                <Setter Property="Cursor" Value="Hand"/>
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="Button">
+                            <Border x:Name="bd" Background="{TemplateBinding Background}"
+                                    BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}"
+                                    CornerRadius="4" Padding="{TemplateBinding Padding}">
+                                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                            </Border>
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="IsMouseOver" Value="True">
+                                    <Setter TargetName="bd" Property="Effect" Value="{StaticResource GlowEffect}"/>
+                                </Trigger>
+                            </ControlTemplate.Triggers>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+                <Style.Triggers>
+                    <Trigger Property="IsMouseOver" Value="True">
+                        <Setter Property="Background" Value="{DynamicResource ButtonHoverBackgroundBrush}"/>
+                    </Trigger>
+                    <Trigger Property="IsEnabled" Value="False">
+                        <Setter Property="Opacity" Value="0.5"/>
+                    </Trigger>
+                </Style.Triggers>
+            </Style>
+
+            <!-- 隐式默认按钮样式：项目里有一批按钮（取消、浏览、删除等）没有显式设置
+                 Style，之前会退化成 WPF 默认的灰色系统按钮，跟其它按钮风格不统一。
+                 这里加一个不带 x:Key 的 Button 样式，效果与 PrimaryButton 一致，
+                 所有未显式指定 Style 的 Button 会自动套用，不用逐个改 XAML。
+                 已经显式引用 PrimaryButton / SideNavButton / TileButton 等具名样式的
+                 按钮不受影响。 -->
+            <Style TargetType="Button">
+                <Setter Property="Background" Value="{DynamicResource ButtonBackgroundBrush}"/>
+                <Setter Property="Foreground" Value="{DynamicResource ButtonForegroundBrush}"/>
+                <Setter Property="FontSize" Value="15"/>
+                <Setter Property="Padding" Value="12,8"/>
+                <Setter Property="BorderThickness" Value="1"/>
+                <Setter Property="BorderBrush" Value="{DynamicResource ButtonBackgroundBrush}"/>
+                <Setter Property="Cursor" Value="Hand"/>
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="Button">
+                            <Border x:Name="bd" Background="{TemplateBinding Background}"
+                                    BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}"
+                                    CornerRadius="4" Padding="{TemplateBinding Padding}">
+                                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                            </Border>
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="IsMouseOver" Value="True">
+                                    <Setter TargetName="bd" Property="Effect" Value="{StaticResource GlowEffect}"/>
+                                </Trigger>
+                            </ControlTemplate.Triggers>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+                <Style.Triggers>
+                    <Trigger Property="IsMouseOver" Value="True">
+                        <Setter Property="Background" Value="{DynamicResource ButtonHoverBackgroundBrush}"/>
+                    </Trigger>
+                    <Trigger Property="IsEnabled" Value="False">
+                        <Setter Property="Opacity" Value="0.5"/>
+                    </Trigger>
+                </Style.Triggers>
+            </Style>
+
+            <!-- 描边按钮：仿 PCL 筛选栏里"重置条件"那种样式——跟 PrimaryButton 的实心强调色不同，
+                 这里是透明背景 + 边框，用在"次要操作"上（重置筛选条件），避免跟"搜索"这个主操作
+                 抢视觉焦点。结构基本照抄 PrimaryButton，只是配色反过来。 -->
+            <Style TargetType="Button" x:Key="SecondaryButton">
+                <Setter Property="Background" Value="Transparent"/>
+                <Setter Property="Foreground" Value="{DynamicResource AccentBrush}"/>
+                <Setter Property="FontSize" Value="15"/>
+                <Setter Property="Padding" Value="12,8"/>
+                <Setter Property="BorderThickness" Value="1"/>
+                <Setter Property="BorderBrush" Value="{DynamicResource BorderBrush2}"/>
+                <Setter Property="Cursor" Value="Hand"/>
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="Button">
+                            <Border x:Name="bd" Background="{TemplateBinding Background}"
+                                    BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}"
+                                    CornerRadius="4" Padding="{TemplateBinding Padding}">
+                                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                            </Border>
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="IsMouseOver" Value="True">
+                                    <Setter TargetName="bd" Property="BorderBrush" Value="{DynamicResource GlowBrush}"/>
+                                    <Setter TargetName="bd" Property="Effect" Value="{StaticResource GlowEffect}"/>
+                                </Trigger>
+                            </ControlTemplate.Triggers>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+                <Style.Triggers>
+                    <Trigger Property="IsEnabled" Value="False">
+                        <Setter Property="Opacity" Value="0.5"/>
+                    </Trigger>
+                </Style.Triggers>
+            </Style>
+
+            <!-- 版本快捷选择条用的小胶囊按钮，仿截图里"全部 26.2 26.1 1.21..."那种圆角条样式。
+                 跟 SecondaryButton 的区别：更小、更紧凑（这里是一整排要放六七个），默认状态
+                 更"轻"（没有边框，靠 Padding+圆角背景色区分），不需要 SecondaryButton 那种
+                 明显的描边——一排选择按钮如果每个都描边会显得拥挤，这里改成"默认几乎不可见的
+                 浅色背景块 + 悬停/选中时才显现强调色背景"的轻量视觉，跟 PCL 截图的观感一致。 -->
+            <Style TargetType="Button" x:Key="VersionChipButton">
+                <Setter Property="Background" Value="{DynamicResource PanelBrush}"/>
+                <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}"/>
+                <Setter Property="FontSize" Value="12"/>
+                <Setter Property="Padding" Value="12,5"/>
+                <Setter Property="Margin" Value="0,0,6,6"/>
+                <Setter Property="BorderThickness" Value="0"/>
+                <Setter Property="Cursor" Value="Hand"/>
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="Button">
+                            <Border x:Name="bd" Background="{TemplateBinding Background}"
+                                    CornerRadius="12" Padding="{TemplateBinding Padding}">
+                                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                            </Border>
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="IsMouseOver" Value="True">
+                                    <Setter TargetName="bd" Property="Background" Value="{DynamicResource AccentBrush}"/>
+                                    <Setter Property="Foreground" Value="White"/>
+                                </Trigger>
+                            </ControlTemplate.Triggers>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+            </Style>
+
+            <!-- 仿截图5/6/7顶部"全部 26.2 26.1 1.21 1.20..."那种筛选 Tab 条：未选中是纯文字
+                 蓝色，选中态是一整块圆角实心蓝底+白字胶囊，跟版本分组列表(GroupsList)配合，
+                 点哪个 Tab 就只显示对应游戏版本的分组。用 RadioButton 而不是普通 Button，
+                 同一个 GroupName 下天然互斥单选，不需要在代码里手动把其它按钮的选中态复位。 -->
+            <Style TargetType="RadioButton" x:Key="GameVersionTabRadioButton">
+                <Setter Property="Background" Value="Transparent"/>
+                <Setter Property="Foreground" Value="{DynamicResource AccentBrush}"/>
+                <Setter Property="FontSize" Value="13"/>
+                <Setter Property="Padding" Value="14,7"/>
+                <Setter Property="Margin" Value="0,0,8,8"/>
+                <Setter Property="Cursor" Value="Hand"/>
+                <Setter Property="Focusable" Value="False"/>
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="RadioButton">
+                            <Border x:Name="bd" Background="{TemplateBinding Background}"
+                                    CornerRadius="16" Padding="{TemplateBinding Padding}">
+                                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                            </Border>
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="IsChecked" Value="True">
+                                    <Setter TargetName="bd" Property="Background" Value="{DynamicResource AccentBrush}"/>
+                                    <Setter Property="Foreground" Value="White"/>
+                                    <Setter Property="FontWeight" Value="SemiBold"/>
+                                </Trigger>
+                                <Trigger Property="IsMouseOver" Value="True">
+                                    <Setter TargetName="bd" Property="Background" Value="{DynamicResource GlowSoftBrush}"/>
+                                </Trigger>
+                                <MultiTrigger>
+                                    <MultiTrigger.Conditions>
+                                        <Condition Property="IsMouseOver" Value="True"/>
+                                        <Condition Property="IsChecked" Value="True"/>
+                                    </MultiTrigger.Conditions>
+                                    <Setter TargetName="bd" Property="Background" Value="{DynamicResource AccentBrush}"/>
+                                </MultiTrigger>
+                            </ControlTemplate.Triggers>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+            </Style>
+
+            <Style TargetType="Button" x:Key="SideNavButton">
+                <Setter Property="Background" Value="Transparent"/>
+                <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}"/>
+                <Setter Property="HorizontalContentAlignment" Value="Left"/>
+                <Setter Property="Padding" Value="10,10"/>
+                <Setter Property="FontSize" Value="14"/>
+                <Setter Property="BorderThickness" Value="0"/>
+                <Setter Property="Cursor" Value="Hand"/>
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="Button">
+                            <Border x:Name="bd" Background="{TemplateBinding Background}" CornerRadius="4"
+                                    BorderThickness="2,0,0,0" BorderBrush="Transparent">
+                                <ContentPresenter HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
+                                                  VerticalAlignment="Center" Margin="{TemplateBinding Padding}"/>
+                            </Border>
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="IsMouseOver" Value="True">
+                                    <Setter TargetName="bd" Property="Background" Value="{DynamicResource GlowSoftBrush}"/>
+                                    <Setter TargetName="bd" Property="BorderBrush" Value="{DynamicResource GlowBrush}"/>
+                                </Trigger>
+                            </ControlTemplate.Triggers>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+            </Style>
+
+            <!-- 搜索/筛选输入框：圆角卡片风格，与整体白底蓝色主题保持一致（原先用系统默认方框样式，视觉割裂）。
+                 焦点态用主色描边，给"正在输入会触发自动刷新"一个轻微的视觉反馈。 -->
+            <!-- 全局 TextBox 外观：系统默认的白底方角+蓝色焦点框在深色皮肤下尤其突兀
+                （截图反馈的"白色框框"其中一大来源）。这里统一改成跟其它输入控件一致的
+                圆角卡片风格，背景/边框都走皮肤画刷，焦点态用发光边框代替系统默认蓝色描边。
+                不加 x:Key，作为全应用默认样式自动套用到所有 TextBox（包括多行的
+                AcceptsReturn 文本框，PART_ContentHost 本身就支持内部换行/滚动，不需要
+                额外处理）。SearchTextBox 这个 key 继续保留、内容与全局默认一致，
+                避免删掉后所有显式 Style="{StaticResource SearchTextBox}" 的引用处报错。 -->
+            <Style TargetType="TextBox">
+                <Setter Property="Background" Value="{DynamicResource SideBrush}"/>
+                <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}"/>
+                <Setter Property="BorderBrush" Value="{DynamicResource BorderBrush2}"/>
+                <Setter Property="BorderThickness" Value="1"/>
+                <Setter Property="CaretBrush" Value="{DynamicResource AccentBrush}"/>
+                <Setter Property="SelectionBrush" Value="{DynamicResource GlowSoftBrush}"/>
+                <Setter Property="VerticalContentAlignment" Value="Center"/>
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="TextBox">
+                            <Border x:Name="bd" Background="{TemplateBinding Background}"
+                                    BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}"
+                                    CornerRadius="4">
+                                <ScrollViewer x:Name="PART_ContentHost" Margin="{TemplateBinding Padding}"/>
+                            </Border>
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="IsFocused" Value="True">
+                                    <Setter TargetName="bd" Property="BorderBrush" Value="{DynamicResource GlowBrush}"/>
+                                </Trigger>
+                                <Trigger Property="IsMouseOver" Value="True">
+                                    <Setter TargetName="bd" Property="BorderBrush" Value="{DynamicResource BorderHoverBrush}"/>
+                                </Trigger>
+                                <Trigger Property="IsEnabled" Value="False">
+                                    <Setter TargetName="bd" Property="Opacity" Value="0.6"/>
+                                </Trigger>
+                            </ControlTemplate.Triggers>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+            </Style>
+
+            <Style TargetType="TextBox" x:Key="SearchTextBox" BasedOn="{StaticResource {x:Type TextBox}}"/>
+
+            <!-- PasswordBox：跟 TextBox 走同一套外观逻辑（系统默认同样是白底方角），
+                 项目里唯一一处密码框(认证服务器登录)不应该是唯一一个还留着系统默认样式的
+                 输入控件。ControlTemplate 结构跟 TextBox 完全一致，只是 PART_ContentHost
+                 是 PasswordBox 专属的模板部件名。 -->
+            <Style TargetType="PasswordBox">
+                <Setter Property="Background" Value="{DynamicResource SideBrush}"/>
+                <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}"/>
+                <Setter Property="BorderBrush" Value="{DynamicResource BorderBrush2}"/>
+                <Setter Property="BorderThickness" Value="1"/>
+                <Setter Property="CaretBrush" Value="{DynamicResource AccentBrush}"/>
+                <Setter Property="SelectionBrush" Value="{DynamicResource GlowSoftBrush}"/>
+                <Setter Property="VerticalContentAlignment" Value="Center"/>
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="PasswordBox">
+                            <Border x:Name="bd" Background="{TemplateBinding Background}"
+                                    BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}"
+                                    CornerRadius="4">
+                                <ScrollViewer x:Name="PART_ContentHost" Margin="{TemplateBinding Padding}"/>
+                            </Border>
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="IsFocused" Value="True">
+                                    <Setter TargetName="bd" Property="BorderBrush" Value="{DynamicResource GlowBrush}"/>
+                                </Trigger>
+                                <Trigger Property="IsMouseOver" Value="True">
+                                    <Setter TargetName="bd" Property="BorderBrush" Value="{DynamicResource BorderHoverBrush}"/>
+                                </Trigger>
+                                <Trigger Property="IsEnabled" Value="False">
+                                    <Setter TargetName="bd" Property="Opacity" Value="0.6"/>
+                                </Trigger>
+                            </ControlTemplate.Triggers>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+            </Style>
+
+
+            <!-- 分类/来源筛选下拉框：同样统一成圆角卡片风格，去掉系统默认灰色外观。
+                 不加 x:Key，作为 ComboBox 的默认样式，让全应用所有下拉框（包括"下载源选择"这类
+                 之前完全没套样式、直接用系统默认灰色外观的控件）统一变成现代化的圆角卡片风格，
+                 不需要每个 XAML 逐个手动加 Style="{StaticResource FilterComboBox}"。 -->
+            <Style TargetType="ComboBox">
+                <Setter Property="Background" Value="{DynamicResource SideBrush}"/>
+                <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}"/>
+                <Setter Property="BorderBrush" Value="{DynamicResource BorderBrush2}"/>
+                <Setter Property="BorderThickness" Value="1"/>
+                <Setter Property="Padding" Value="8,6"/>
+                <Setter Property="VerticalContentAlignment" Value="Center"/>
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="ComboBox">
+                            <Grid>
+                                <ToggleButton x:Name="toggle" Background="{TemplateBinding Background}"
+                                              BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}"
+                                              IsChecked="{Binding IsDropDownOpen, Mode=TwoWay, RelativeSource={RelativeSource TemplatedParent}}"
+                                              Focusable="False" ClickMode="Press">
+                                    <ToggleButton.Template>
+                                        <ControlTemplate TargetType="ToggleButton">
+                                            <Border Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}"
+                                                    BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="4">
+                                                <Grid>
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="*"/>
+                                                        <ColumnDefinition Width="20"/>
+                                                    </Grid.ColumnDefinitions>
+                                                    <TextBlock Grid.Column="1" Text="▾" FontSize="10" HorizontalAlignment="Center"
+                                                               VerticalAlignment="Center" Foreground="{DynamicResource TextSecondaryBrush}"/>
+                                                </Grid>
+                                            </Border>
+                                        </ControlTemplate>
+                                    </ToggleButton.Template>
+                                </ToggleButton>
+                                <ContentPresenter x:Name="content" IsHitTestVisible="False" Margin="{TemplateBinding Padding}"
+                                                   HorizontalAlignment="Left" VerticalAlignment="Center"
+                                                   Content="{TemplateBinding SelectionBoxItem}"
+                                                   ContentTemplate="{TemplateBinding SelectionBoxItemTemplate}"
+                                                   ContentTemplateSelector="{TemplateBinding ItemTemplateSelector}"
+                                                   ContentStringFormat="{TemplateBinding SelectionBoxItemStringFormat}"/>
+                                <Popup x:Name="popup" IsOpen="{TemplateBinding IsDropDownOpen}" Placement="Bottom"
+                                       AllowsTransparency="True" Focusable="False" PopupAnimation="Fade">
+                                    <Border Background="{DynamicResource PanelBrush}" BorderBrush="{DynamicResource BorderBrush2}" BorderThickness="1"
+                                            CornerRadius="4" MinWidth="{TemplateBinding ActualWidth}" MaxHeight="260">
+                                        <ScrollViewer>
+                                            <ItemsPresenter/>
+                                        </ScrollViewer>
+                                    </Border>
+                                </Popup>
+                            </Grid>
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="IsMouseOver" Value="True">
+                                    <Setter TargetName="toggle" Property="BorderBrush" Value="{DynamicResource BorderHoverBrush}"/>
+                                </Trigger>
+                                <Trigger Property="IsDropDownOpen" Value="True">
+                                    <Setter TargetName="toggle" Property="BorderBrush" Value="{DynamicResource GlowBrush}"/>
+                                    <Setter TargetName="toggle" Property="Effect" Value="{StaticResource GlowEffect}"/>
+                                </Trigger>
+                            </ControlTemplate.Triggers>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+            </Style>
+
+            <!-- 兼容旧代码：部分 XAML 显式写了 Style="{StaticResource FilterComboBox}"，
+                 保留这个 key 名并直接复用上面的默认样式，避免逐个改动引用处。 -->
+            <Style TargetType="ComboBox" x:Key="FilterComboBox" BasedOn="{StaticResource {x:Type ComboBox}}"/>
+
+            <!-- 修复"配色皮肤"下拉框（紫色/粉色/银色/金色/绿宝石绿/下界红/末地石/暖黄色/亮橙色…
+                 共 9+ 项）展开后被默认 ComboBox 样式里写死的 MaxHeight=260 卡住，只能露出
+                 五六项、其余要滚动才能看到的问题。这里单独复制一份默认 ComboBox 模板，
+                 只把弹层的 MaxHeight 换成绑定当前屏幕高度的比例（约 0.55，落在需求的
+                 4/7≈0.571~3/5=0.6 区间内），在任意分辨率下都能一次性展开更多选项，
+                 不影响其它 ComboBox 的默认 260px 高度。 -->
+            <Style TargetType="ComboBox" x:Key="TallPopupComboBox">
+                <Setter Property="Background" Value="{DynamicResource SideBrush}"/>
+                <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}"/>
+                <Setter Property="BorderBrush" Value="{DynamicResource BorderBrush2}"/>
+                <Setter Property="BorderThickness" Value="1"/>
+                <Setter Property="Padding" Value="8,6"/>
+                <Setter Property="VerticalContentAlignment" Value="Center"/>
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="ComboBox">
+                            <Grid>
+                                <ToggleButton x:Name="toggle" Background="{TemplateBinding Background}"
+                                              BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}"
+                                              IsChecked="{Binding IsDropDownOpen, Mode=TwoWay, RelativeSource={RelativeSource TemplatedParent}}"
+                                              Focusable="False" ClickMode="Press">
+                                    <ToggleButton.Template>
+                                        <ControlTemplate TargetType="ToggleButton">
+                                            <Border Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}"
+                                                    BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="4">
+                                                <Grid>
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="*"/>
+                                                        <ColumnDefinition Width="20"/>
+                                                    </Grid.ColumnDefinitions>
+                                                    <TextBlock Grid.Column="1" Text="▾" FontSize="10" HorizontalAlignment="Center"
+                                                               VerticalAlignment="Center" Foreground="{DynamicResource TextSecondaryBrush}"/>
+                                                </Grid>
+                                            </Border>
+                                        </ControlTemplate>
+                                    </ToggleButton.Template>
+                                </ToggleButton>
+                                <ContentPresenter x:Name="content" IsHitTestVisible="False" Margin="{TemplateBinding Padding}"
+                                                   HorizontalAlignment="Left" VerticalAlignment="Center"
+                                                   Content="{TemplateBinding SelectionBoxItem}"
+                                                   ContentTemplate="{TemplateBinding SelectionBoxItemTemplate}"
+                                                   ContentTemplateSelector="{TemplateBinding ItemTemplateSelector}"
+                                                   ContentStringFormat="{TemplateBinding SelectionBoxItemStringFormat}"/>
+                                <Popup x:Name="popup" IsOpen="{TemplateBinding IsDropDownOpen}" Placement="Bottom"
+                                       AllowsTransparency="True" Focusable="False" PopupAnimation="Fade">
+                                    <!-- 关键改动：MaxHeight 从固定的 260 换成屏幕高度的 0.55 倍，
+                                         其余（背景/圆角/滚动条）跟默认 ComboBox 模板保持一致。 -->
+                                    <Border Background="{DynamicResource PanelBrush}" BorderBrush="{DynamicResource BorderBrush2}" BorderThickness="1"
+                                            CornerRadius="4" MinWidth="{TemplateBinding ActualWidth}"
+                                            MaxHeight="{Binding Source={x:Static SystemParameters.PrimaryScreenHeight}, Converter={StaticResource ScreenHeightFractionConverter}, ConverterParameter=0.55}">
+                                        <ScrollViewer>
+                                            <ItemsPresenter/>
+                                        </ScrollViewer>
+                                    </Border>
+                                </Popup>
+                            </Grid>
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="IsMouseOver" Value="True">
+                                    <Setter TargetName="toggle" Property="BorderBrush" Value="{DynamicResource BorderHoverBrush}"/>
+                                </Trigger>
+                                <Trigger Property="IsDropDownOpen" Value="True">
+                                    <Setter TargetName="toggle" Property="BorderBrush" Value="{DynamicResource GlowBrush}"/>
+                                    <Setter TargetName="toggle" Property="Effect" Value="{StaticResource GlowEffect}"/>
+                                </Trigger>
+                            </ControlTemplate.Triggers>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+            </Style>
+
+            <!-- 下拉框展开后每一项的外观：默认系统样式选中态是刺眼的蓝色系统高亮条，
+                 这里统一换成跟其它控件一致的浅蓝高亮 + 圆角，避免打开下拉框那一下突然
+                 冒出一块跟整体风格不搭的系统原生蓝条。 -->
+            <!-- PCL 风格隐形滚动条：默认几乎不可见（细窄轨道、透明拇指），只有鼠标悬停在
+                 滚动条区域时拇指才淡入变得清晰可见、可拖动。避免像系统默认滚动条那样常驻
+                 一条灰色宽轨道，视觉上更干净，也是 PCL/HMCL 这类启动器的通用做法。
+                 拇指(Thumb)颜色用 TextSecondaryBrush：在深色/浅色任意皮肤下都有基本可辨识度，
+                 平时(未悬停)完全透明不占视觉空间，悬停时才淡入到半透明可见。 -->
+            <Style x:Key="HiddenScrollBarPageButton" TargetType="RepeatButton">
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="RepeatButton">
+                            <Border Background="Transparent"/>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+            </Style>
+
+            <Style TargetType="ScrollBar">
+                <Setter Property="Width" Value="10"/>
+                <Setter Property="MinWidth" Value="10"/>
+                <Setter Property="Background" Value="Transparent"/>
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="ScrollBar">
+                            <Grid Background="Transparent">
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="0"/>
+                                    <RowDefinition Height="*"/>
+                                    <RowDefinition Height="0"/>
+                                </Grid.RowDefinitions>
+                                <Track x:Name="PART_Track" Grid.Row="1" IsDirectionReversed="True">
+                                    <Track.DecreaseRepeatButton>
+                                        <RepeatButton Command="ScrollBar.PageUpCommand" Style="{StaticResource HiddenScrollBarPageButton}"/>
+                                    </Track.DecreaseRepeatButton>
+                                    <Track.IncreaseRepeatButton>
+                                        <RepeatButton Command="ScrollBar.PageDownCommand" Style="{StaticResource HiddenScrollBarPageButton}"/>
+                                    </Track.IncreaseRepeatButton>
+                                    <Track.Thumb>
+                                        <Thumb x:Name="PART_Thumb" Width="6" Opacity="0">
+                                            <Thumb.Template>
+                                                <ControlTemplate TargetType="Thumb">
+                                                    <Border Background="{DynamicResource TextSecondaryBrush}" CornerRadius="3"/>
+                                                </ControlTemplate>
+                                            </Thumb.Template>
+                                        </Thumb>
+                                    </Track.Thumb>
+                                </Track>
+                            </Grid>
+                            <ControlTemplate.Triggers>
+                                <!-- 鼠标悬停在滚动条整个区域(包括轨道空白处，不需要精确点在窄窄的
+                                     拇指上)时，拇指从完全透明淡入到半透明可见，拖动区域同时略微
+                                     变宽，方便精确拖拽；离开后自动淡回透明，符合 PCL 那种
+                                     "划到边上才有反馈、平时几乎看不见"的手感。 -->
+                                <Trigger Property="IsMouseOver" Value="True">
+                                    <Setter TargetName="PART_Thumb" Property="Opacity" Value="0.6"/>
+                                    <Setter TargetName="PART_Thumb" Property="Width" Value="8"/>
+                                </Trigger>
+                            </ControlTemplate.Triggers>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+            </Style>
+
+            <!-- 全局 ListBox 外观：默认系统样式会带一圈刺眼的白色/系统主题描边和方角，
+                 这里统一换成跟其它输入控件一致的圆角卡片风格，滚动条替换成上面定义的
+                 隐形滚动条(ScrollViewer 内嵌 PART_ScrollBar 会自动套用上面 ScrollBar 的全局样式，
+                 不需要在这里重复写)。不加 x:Key，作为全应用默认样式自动套用到所有 ListBox。 -->
+            <Style TargetType="ListBox">
+                <Setter Property="Background" Value="{DynamicResource SideBrush}"/>
+                <Setter Property="BorderBrush" Value="{DynamicResource DividerBrush}"/>
+                <Setter Property="BorderThickness" Value="1"/>
+                <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}"/>
+                <Setter Property="Padding" Value="4"/>
+                <Setter Property="ScrollViewer.HorizontalScrollBarVisibility" Value="Disabled"/>
+                <Setter Property="ScrollViewer.VerticalScrollBarVisibility" Value="Auto"/>
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="ListBox">
+                            <Border x:Name="bd" Background="{TemplateBinding Background}"
+                                    BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}"
+                                    CornerRadius="6" Padding="{TemplateBinding Padding}">
+                                <ScrollViewer Focusable="False" Padding="{TemplateBinding Padding}">
+                                    <ItemsPresenter/>
+                                </ScrollViewer>
+                            </Border>
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="IsEnabled" Value="False">
+                                    <Setter TargetName="bd" Property="Opacity" Value="0.6"/>
+                                </Trigger>
+                            </ControlTemplate.Triggers>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+            </Style>
+
+            <!-- 全局 ListBoxItem：去掉系统默认的蓝色选中框/虚线焦点框，改成跟 ComboBoxItem
+                 一致的圆角高亮，未选中时完全透明、hover 时浅色底、选中时主色调底+强调色文字。
+                 不加 x:Key，自动套用到所有未显式指定 Style/ItemContainerStyle 的 ListBox 条目
+                 （DownloadListItem 等显式 x:Key 引用的地方不受影响）。 -->
+            <Style TargetType="ListBoxItem">
+                <Setter Property="Padding" Value="8,6"/>
+                <Setter Property="Margin" Value="0,1"/>
+                <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="ListBoxItem">
+                            <Border x:Name="bd" Background="Transparent" BorderThickness="1" BorderBrush="Transparent"
+                                    CornerRadius="4" Padding="{TemplateBinding Padding}">
+                                <ContentPresenter/>
+                            </Border>
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="IsMouseOver" Value="True">
+                                    <Setter TargetName="bd" Property="Background" Value="{DynamicResource GlowSoftBrush}"/>
+                                </Trigger>
+                                <Trigger Property="IsSelected" Value="True">
+                                    <Setter TargetName="bd" Property="Background" Value="{DynamicResource GlowSoftBrush}"/>
+                                    <Setter TargetName="bd" Property="BorderBrush" Value="{DynamicResource AccentBrush}"/>
+                                    <Setter Property="Foreground" Value="{DynamicResource AccentBrush}"/>
+                                    <Setter Property="FontWeight" Value="SemiBold"/>
+                                </Trigger>
+                                <Trigger Property="IsEnabled" Value="False">
+                                    <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}"/>
+                                    <Setter Property="Opacity" Value="0.55"/>
+                                </Trigger>
+                            </ControlTemplate.Triggers>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+            </Style>
+
+            <Style TargetType="ComboBoxItem">
+                <Setter Property="Padding" Value="8,6"/>
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="ComboBoxItem">
+                            <Border x:Name="bd" Background="Transparent" CornerRadius="4" Padding="{TemplateBinding Padding}">
+                                <ContentPresenter/>
+                            </Border>
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="IsHighlighted" Value="True">
+                                    <Setter TargetName="bd" Property="Background" Value="{DynamicResource GlowSoftBrush}"/>
+                                </Trigger>
+                                <Trigger Property="IsSelected" Value="True">
+                                    <Setter TargetName="bd" Property="Background" Value="{DynamicResource GlowSoftBrush}"/>
+                                    <Setter Property="Foreground" Value="{DynamicResource AccentBrush}"/>
+                                    <Setter Property="FontWeight" Value="SemiBold"/>
+                                </Trigger>
+                                <!-- "开发中"的锁定项（比如蓝色/黄色配色皮肤）IsEnabled=False，
+                                     用半透明+次要文字色显示为灰置状态，让用户一眼看出这项现在点不了，
+                                     而不是误以为下拉框卡住了或者是 bug。 -->
+                                <Trigger Property="IsEnabled" Value="False">
+                                    <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}"/>
+                                    <Setter Property="Opacity" Value="0.55"/>
+                                </Trigger>
+                            </ControlTemplate.Triggers>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+            </Style>
+
+            <!-- 下载中心列表项外层卡片：hover 时轻微高亮，视觉上明确"这是一个可交互的条目"。 -->
+            <Style TargetType="ListBoxItem" x:Key="DownloadListItem">
+                <Setter Property="Padding" Value="0"/>
+                <Setter Property="Margin" Value="0,2"/>
+                <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="ListBoxItem">
+                            <Border x:Name="bd" Background="Transparent" BorderThickness="1" BorderBrush="Transparent" CornerRadius="4" Padding="4">
+                                <ContentPresenter/>
+                            </Border>
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="IsMouseOver" Value="True">
+                                    <Setter TargetName="bd" Property="Background" Value="{DynamicResource GlowSoftBrush}"/>
+                                    <Setter TargetName="bd" Property="BorderBrush" Value="{DynamicResource BorderBrush2}"/>
+                                </Trigger>
+                            </ControlTemplate.Triggers>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+            </Style>
+
+            <!-- 全局 CheckBox / RadioButton 样式：之前只有 ComboBox 套了科技感圆角风格，
+                 CheckBox/RadioButton 在各个页面（SettingsPage、ServerPropertiesWindow、
+                 SkinSelectWindow 等）还是系统默认的方框/圆点勾选框，跟其它控件视觉割裂。
+                 这里不加 x:Key，作为全应用默认样式，自动套用到所有未显式设置 Style 的
+                 CheckBox / RadioButton 上，配色跟 ComboBox/PrimaryButton 保持一致：
+                 未选中=浅色描边，hover=浅蓝底+蓝描边，选中=主色描边+青色对勾/圆点+发光。
+                 注意：DownloadCategoryButton 是显式 x:Key 引用，不受这个隐式默认样式影响。 -->
+            <!-- 全局 ProgressBar：系统默认是一条绿色渐变进度条 + 灰色轨道，跟整体配色完全
+                 不搭（尤其在深色皮肤下，灰色轨道在深色背景上显得像一块"没渲染出来的白块"）。
+                 这里统一改成扁平的圆角胶囊样式：轨道用 SideBrush，进度用 AccentBrush，
+                 跟按钮/强调色保持一致。不确定态(IsIndeterminate)保留系统默认动画行为，
+                 只换配色，不重写动画模板。 -->
+            <Style TargetType="ProgressBar">
+                <Setter Property="Background" Value="{DynamicResource SideBrush}"/>
+                <Setter Property="BorderBrush" Value="{DynamicResource DividerBrush}"/>
+                <Setter Property="BorderThickness" Value="1"/>
+                <Setter Property="Foreground" Value="{DynamicResource AccentBrush}"/>
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="ProgressBar">
+                            <Grid>
+                                <Border x:Name="TrackBg" Background="{TemplateBinding Background}"
+                                        BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}"
+                                        CornerRadius="6"/>
+                                <Border x:Name="PART_Track" Margin="{TemplateBinding BorderThickness}" Background="Transparent" ClipToBounds="True">
+                                    <Border x:Name="PART_Indicator" Background="{TemplateBinding Foreground}"
+                                            HorizontalAlignment="Left" CornerRadius="6"/>
+                                </Border>
+                            </Grid>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+            </Style>
+
+            <!-- 全局 TabControl / TabItem：系统默认标签页是灰白背景 + 立体边框，同样跟
+                 整体扁平化配色不搭。TabItem 未选中态用次要文字色+透明背景，选中态用
+                 强调色文字+底部一条高亮线，内容区背景用 PanelBrush，跟其它卡片容器统一。 -->
+            <Style TargetType="TabItem">
+                <Setter Property="Padding" Value="14,8"/>
+                <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}"/>
+                <Setter Property="FontSize" Value="13"/>
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="TabItem">
+                            <Border x:Name="bd" Background="Transparent" BorderThickness="0,0,0,2" BorderBrush="Transparent"
+                                    Padding="{TemplateBinding Padding}">
+                                <ContentPresenter ContentSource="Header" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                            </Border>
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="IsSelected" Value="True">
+                                    <Setter TargetName="bd" Property="BorderBrush" Value="{DynamicResource AccentBrush}"/>
+                                    <Setter Property="Foreground" Value="{DynamicResource AccentBrush}"/>
+                                    <Setter Property="FontWeight" Value="SemiBold"/>
+                                </Trigger>
+                                <Trigger Property="IsMouseOver" Value="True">
+                                    <Setter TargetName="bd" Property="Background" Value="{DynamicResource GlowSoftBrush}"/>
+                                </Trigger>
+                            </ControlTemplate.Triggers>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+            </Style>
+
+            <Style TargetType="TabControl">
+                <Setter Property="Background" Value="Transparent"/>
+                <Setter Property="BorderThickness" Value="0"/>
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="TabControl">
+                            <Grid>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto"/>
+                                    <RowDefinition Height="*"/>
+                                </Grid.RowDefinitions>
+                                <Border Grid.Row="0" BorderThickness="0,0,0,1" BorderBrush="{DynamicResource DividerBrush}">
+                                    <TabPanel IsItemsHost="True" HorizontalAlignment="Left"/>
+                                </Border>
+                                <Border Grid.Row="1" Background="{DynamicResource PanelBrush}">
+                                    <ContentPresenter ContentSource="SelectedContent" Margin="0,10,0,0"/>
+                                </Border>
+                            </Grid>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+            </Style>
+
+            <Style TargetType="CheckBox">
+                <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}"/>
+                <Setter Property="FontSize" Value="14"/>
+                <Setter Property="Cursor" Value="Hand"/>
+                <Setter Property="VerticalContentAlignment" Value="Center"/>
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="CheckBox">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+                                <Border x:Name="box" Grid.Column="0" Width="18" Height="18" CornerRadius="4"
+                                        Background="{DynamicResource PanelBrush}" BorderBrush="{DynamicResource BorderBrush2}"
+                                        BorderThickness="1.5" VerticalAlignment="Center">
+                                    <Path x:Name="check" Data="M 2,8 L 6,12 L 14,3" Stroke="White" StrokeThickness="2"
+                                          StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round"
+                                          Opacity="0" Stretch="Uniform" Margin="2"/>
+                                </Border>
+                                <ContentPresenter x:Name="contentPresenter" Grid.Column="1" Margin="8,0,0,0"
+                                                  VerticalAlignment="Center" HorizontalAlignment="Left"
+                                                  RecognizesAccessKey="True"/>
+                            </Grid>
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="IsMouseOver" Value="True">
+                                    <Setter TargetName="box" Property="BorderBrush" Value="{DynamicResource BorderHoverBrush}"/>
+                                </Trigger>
+                                <Trigger Property="IsChecked" Value="True">
+                                    <Setter TargetName="box" Property="Background" Value="{DynamicResource AccentBrush}"/>
+                                    <Setter TargetName="box" Property="BorderBrush" Value="{DynamicResource AccentBrush}"/>
+                                    <Setter TargetName="box" Property="Effect" Value="{StaticResource GlowEffect}"/>
+                                    <Setter TargetName="check" Property="Opacity" Value="1"/>
+                                </Trigger>
+                                <Trigger Property="IsChecked" Value="{x:Null}">
+                                    <Setter TargetName="box" Property="Background" Value="{DynamicResource BorderBrush2}"/>
+                                    <Setter TargetName="check" Property="Opacity" Value="1"/>
+                                    <Setter TargetName="check" Property="Data" Value="M 3,7 L 15,7"/>
+                                </Trigger>
+                                <Trigger Property="IsEnabled" Value="False">
+                                    <Setter Property="Opacity" Value="0.5"/>
+                                </Trigger>
+                            </ControlTemplate.Triggers>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+            </Style>
+
+            <Style TargetType="RadioButton">
+                <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}"/>
+                <Setter Property="FontSize" Value="14"/>
+                <Setter Property="Cursor" Value="Hand"/>
+                <Setter Property="VerticalContentAlignment" Value="Center"/>
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="RadioButton">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+                                <Border x:Name="circle" Grid.Column="0" Width="18" Height="18" CornerRadius="9"
+                                        Background="{DynamicResource PanelBrush}" BorderBrush="{DynamicResource BorderBrush2}"
+                                        BorderThickness="1.5" VerticalAlignment="Center">
+                                    <Ellipse x:Name="dot" Width="8" Height="8" Fill="{DynamicResource AccentBrush}" Opacity="0"/>
+                                </Border>
+                                <ContentPresenter x:Name="contentPresenter" Grid.Column="1" Margin="8,0,0,0"
+                                                  VerticalAlignment="Center" HorizontalAlignment="Left"
+                                                  RecognizesAccessKey="True"/>
+                            </Grid>
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="IsMouseOver" Value="True">
+                                    <Setter TargetName="circle" Property="BorderBrush" Value="{DynamicResource BorderHoverBrush}"/>
+                                </Trigger>
+                                <Trigger Property="IsChecked" Value="True">
+                                    <Setter TargetName="circle" Property="BorderBrush" Value="{DynamicResource AccentBrush}"/>
+                                    <Setter TargetName="circle" Property="Effect" Value="{StaticResource GlowEffect}"/>
+                                    <Setter TargetName="dot" Property="Opacity" Value="1"/>
+                                </Trigger>
+                                <Trigger Property="IsEnabled" Value="False">
+                                    <Setter Property="Opacity" Value="0.5"/>
+                                </Trigger>
+                            </ControlTemplate.Triggers>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+            </Style>
+
+            <Style TargetType="RadioButton" x:Key="DownloadCategoryButton">
+                <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}"/>
+                <Setter Property="Padding" Value="10,10"/>
+                <Setter Property="FontSize" Value="14"/>
+                <Setter Property="Cursor" Value="Hand"/>
+                <Setter Property="Margin" Value="0,2"/>
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="RadioButton">
+                            <Border x:Name="bd" Background="Transparent" CornerRadius="4"
+                                    BorderThickness="2,0,0,0" BorderBrush="Transparent" Padding="{TemplateBinding Padding}">
+                                <ContentPresenter HorizontalAlignment="Left" VerticalAlignment="Center"/>
+                            </Border>
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="IsMouseOver" Value="True">
+                                    <Setter TargetName="bd" Property="Background" Value="{DynamicResource GlowSoftBrush}"/>
+                                </Trigger>
+                                <Trigger Property="IsChecked" Value="True">
+                                    <Setter TargetName="bd" Property="Background" Value="{DynamicResource GlowSoftBrush}"/>
+                                    <Setter TargetName="bd" Property="BorderBrush" Value="{DynamicResource GlowBrush}"/>
+                                    <Setter Property="Foreground" Value="{DynamicResource AccentBrush}"/>
+                                    <Setter Property="FontWeight" Value="SemiBold"/>
+                                </Trigger>
+                            </ControlTemplate.Triggers>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+            </Style>
+
+            <!-- GridViewColumnHeader：ListView + GridView（比如"注入检测"页的模块列表）
+                 表头默认是一排系统灰色 3D 立体按钮，跟应用整体扁平化风格格格不入，也是
+                 反馈里"部分白色/灰色突兀区域"的来源之一。改成扁平底色 + 底部分隔线，
+                 hover 时轻微高亮，不再有系统按钮的立体边框和渐变。 -->
+            <Style TargetType="GridViewColumnHeader">
+                <Setter Property="Padding" Value="8,6"/>
+                <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}"/>
+                <Setter Property="FontSize" Value="12"/>
+                <Setter Property="FontWeight" Value="SemiBold"/>
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="GridViewColumnHeader">
+                            <Border x:Name="bd" Background="{DynamicResource SideBrush}"
+                                    BorderBrush="{DynamicResource DividerBrush}" BorderThickness="0,0,0,1"
+                                    Padding="{TemplateBinding Padding}">
+                                <ContentPresenter HorizontalAlignment="Left" VerticalAlignment="Center"/>
+                            </Border>
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="IsMouseOver" Value="True">
+                                    <Setter TargetName="bd" Property="Background" Value="{DynamicResource GlowSoftBrush}"/>
+                                </Trigger>
+                            </ControlTemplate.Triggers>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+            </Style>
+
+            <!-- 修复"更多"菜单(如服务器卡片右上角 ... 按钮弹出的 ContextMenu)在深色/非白色皮肤下
+                 看不清的问题：WPF 的 ContextMenu/MenuItem 在没有显式样式时会回退到系统默认外观
+                 (白底黑字)，而这批菜单是在 code-behind 里用 `new ContextMenu`/`new MenuItem` 纯代码
+                 构造的(见 ServerManagerPage.ShowInstanceMoreMenu 等)，之前完全没有套用任何应用内样式，
+                 只在白色系皮肤下碰巧能看清，切到其它色系/深色模式后菜单背景仍是系统白、跟周围深色
+                 界面格格不入，文字也可能因为都是深色而看不清。这里统一用 DynamicResource 绑定当前
+                 皮肤的 PanelBrush/TextPrimaryBrush/BorderBrush2/GlowSoftBrush，跟随 ThemeService
+                 切换皮肤时自动刷新，不需要 code-behind 那边做任何改动——纯代码 new 出来的
+                 ContextMenu/MenuItem 只要没有显式设置 Style，就会自动应用这里的隐式类型样式。 -->
+            <Style TargetType="ContextMenu">
+                <Setter Property="Background" Value="{DynamicResource PanelBrush}"/>
+                <Setter Property="BorderBrush" Value="{DynamicResource BorderBrush2}"/>
+                <Setter Property="BorderThickness" Value="1"/>
+                <Setter Property="Padding" Value="4"/>
+                <Setter Property="HasDropShadow" Value="True"/>
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="ContextMenu">
+                            <Border Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}"
+                                    BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="6" Padding="{TemplateBinding Padding}">
+                                <StackPanel IsItemsHost="True" KeyboardNavigation.DirectionalNavigation="Cycle"/>
+                            </Border>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+            </Style>
+
+            <Style TargetType="MenuItem">
+                <Setter Property="Background" Value="Transparent"/>
+                <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}"/>
+                <Setter Property="Padding" Value="12,7"/>
+                <Setter Property="FontSize" Value="13"/>
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="MenuItem">
+                            <Border x:Name="bd" Background="{TemplateBinding Background}" CornerRadius="4" Padding="{TemplateBinding Padding}">
+                                <ContentPresenter ContentSource="Header" RecognizesAccessKey="True"
+                                                   HorizontalAlignment="Left" VerticalAlignment="Center"/>
+                            </Border>
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="IsHighlighted" Value="True">
+                                    <Setter TargetName="bd" Property="Background" Value="{DynamicResource GlowSoftBrush}"/>
+                                </Trigger>
+                                <Trigger Property="IsEnabled" Value="False">
+                                    <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}"/>
+                                    <Setter Property="Opacity" Value="0.5"/>
+                                </Trigger>
+                            </ControlTemplate.Triggers>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+            </Style>
+
+            <!-- ContextMenu 里的 Separator：默认系统样式是一条几乎看不见的浅灰细线(在深色皮肤下
+                 更是完全隐形)，改成跟随皮肤的 DividerBrush，保证分组间隔在任何色系下都清晰可辨。 -->
+            <Style TargetType="Separator">
+                <Setter Property="Background" Value="{DynamicResource DividerBrush}"/>
+                <Setter Property="Height" Value="1"/>
+                <Setter Property="Margin" Value="4,4"/>
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="Separator">
+                            <Border Background="{TemplateBinding Background}" Height="{TemplateBinding Height}"/>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+            </Style>
+
+            <!-- [已废弃，仅作参照，无任何引用] 资源面板(材质包/数据包/光影包/服务端插件等)版本：
+                 比 Mod 那份多一个"数据包安装到哪个存档"的下拉框，其余结构一致。已被
+                 ServerManagerPage 的"整页跳转详情"(ModDetailPage，见 OpenServerResourceDetailAsync)
+                 取代，服务端插件/资源包面板不再使用这份卡片内联展开模板，跟客户端
+                 InlineVersionExpandPanel_Mod 被 ModDetailPage 取代是同一次改动。保留只作参照。 -->
+            <DataTemplate x:Key="InlineVersionExpandPanel_Resource" DataType="{x:Type models:UnifiedResourceItem}">
+                <Border Visibility="{Binding IsExpanded, Converter={StaticResource BoolToVis}}"
+                        Background="{DynamicResource SideBrush}" CornerRadius="6" Margin="0,6,0,0" Padding="10">
+                    <StackPanel>
+                        <TextBlock Text="{DynamicResource Str_Ui_Loading_Versions}" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}"
+                                   Visibility="{Binding IsLoadingVersions, Converter={StaticResource BoolToVis}}"/>
+                        <StackPanel Visibility="{Binding IsDataPack, Converter={StaticResource BoolToVis}}" Margin="0,0,0,8">
+                            <TextBlock Text="{DynamicResource Str_Ui_Install_Into_Which_World}" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4"/>
+                            <ComboBox ItemsSource="{Binding SaveNames}" SelectedItem="{Binding SelectedSaveName, Mode=TwoWay}"/>
+                        </StackPanel>
+                        <TextBlock Text="{DynamicResource Str_Ui_No_Matching_Versions_Found_The_Game_Vers}" FontSize="12"
+                                   Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,4"
+                                   Visibility="{Binding HasNoResults, Converter={StaticResource BoolToVis}}"/>
+                        <ItemsControl ItemsSource="{Binding Versions}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate DataType="{x:Type models:InlineVersionEntry}">
+                                    <Border Background="{DynamicResource PanelBrush}" CornerRadius="4" Margin="0,3" Padding="8">
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="Auto"/>
+                                            </Grid.ColumnDefinitions>
+                                            <StackPanel>
+                                                <TextBlock Text="{Binding Name}" FontSize="13"/>
+                                                <TextBlock FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}">
+                                                    <Run Text="{Binding VersionNumber, Mode=OneWay}"/>
+                                                    <Run Text="{DynamicResource Str_Ui_Supports}"/><Run Text="{Binding GameVersionsText, Mode=OneWay}"/>
+                                                </TextBlock>
+                                            </StackPanel>
+                                            <Button Grid.Column="1" Content="{DynamicResource Str_Common_Download}" Style="{StaticResource PrimaryButton}"
+                                                    Padding="10,5" FontSize="13" Tag="{Binding}"/>
+                                        </Grid>
+                                    </Border>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </StackPanel>
+                </Border>
+            </DataTemplate>
+        </ResourceDictionary>
+    </Application.Resources>
+</Application>

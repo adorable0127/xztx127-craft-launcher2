@@ -1,0 +1,26 @@
+<local:OverlayDialogControl x:Class="XCL2.App.Views.MicrosoftLoginWindow"
+                            xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                            xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                            xmlns:local="clr-namespace:XCL2.App.Views"
+                            xmlns:wv2="clr-namespace:Microsoft.Web.WebView2.Wpf;assembly=Microsoft.Web.WebView2.Wpf"
+                            MinWidth="480"
+                            MaxWidth="480"
+                            MinHeight="640"
+                            MaxHeight="640">
+    <!-- 由独立 Window 迁移为进程内 Overlay 弹窗（见 IOverlayDialog.cs /
+         OverlayDialogService.cs 顶部注释）。Title/WindowStartupLocation/ResizeMode/
+         Background 这些"窗口级"属性已全部移除——居中、圆角卡片背景、阴影都由
+         MainWindow.xaml 里的 OverlayCard 统一提供，弹窗自己只关心内部布局。
+         原来的 Width/Height 转成了 MinWidth/MaxWidth/MaxHeight：Overlay 是按内容
+         自适应的，写死 Height 会把内容截断。 -->
+    <!-- MinHeight 必须显式给：WebView2 是个原生 HWND 宿主控件，**没有任何期望尺寸**
+         （不像 TextBlock 会按文字算出高度）。原来是 Window 且写了 Height="640" 时它能撑满，
+         迁到自适应的 OverlayCard 之后如果不给高度，它会直接测量成 0 —— 表现就是
+         点了「内嵌登录」弹出一个空白框，微软登录页根本看不见，登不进去。
+         这是本次 Window→Overlay 迁移里最容易踩的一个坑，其它带 WebView2/空列表的弹窗同理。 -->
+    <Grid>
+        <wv2:WebView2 x:Name="Browser" MinHeight="600"/>
+        <TextBlock x:Name="FallbackText" Visibility="Collapsed" Margin="24" TextWrapping="Wrap"
+                   Text="{DynamicResource Str_Ui_The_Embedded_Sign_In_Component_Failed_To}"/>
+    </Grid>
+</local:OverlayDialogControl>

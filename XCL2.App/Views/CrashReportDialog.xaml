@@ -1,0 +1,32 @@
+<local:OverlayDialogControl x:Class="XCL2.App.Views.CrashReportDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="clr-namespace:XCL2.App.Views"
+        MinWidth="420" MaxWidth="560">
+    <!-- 游戏崩溃提示弹窗：跟通用的 MessageBoxDialog 分开单独做一个，是因为这个场景
+         比普通提示多两个专属动作——"查看日志"（跳转到日志页对应标签）和"导出完整日志"
+         （把启动器日志+游戏崩溃前输出+游戏日志文件合并成一个文件另存），这两个按钮塞进
+         通用 MessageBoxDialog 的按钮方案（OK/OKCancel/YesNo/YesNoCancel）里都不合适，
+         硬塞进去只会让那个通用类变得更难维护，所以单独建一个。-->
+    <StackPanel Margin="24" MaxWidth="520">
+        <StackPanel Orientation="Horizontal" Margin="0,0,0,14">
+            <TextBlock Text="✖" FontSize="26" FontFamily="Segoe UI Emoji" VerticalAlignment="Top"
+                       Margin="0,0,12,0" Foreground="{DynamicResource DangerBrush}"/>
+            <TextBlock x:Name="TitleText" Text="游戏崩溃了" FontSize="16" FontWeight="Bold"
+                       VerticalAlignment="Center" TextWrapping="Wrap"/>
+        </StackPanel>
+
+        <ScrollViewer MaxHeight="300" VerticalScrollBarVisibility="Auto">
+            <TextBlock x:Name="MessageText" FontSize="13" TextWrapping="Wrap" LineHeight="20"/>
+        </ScrollViewer>
+
+        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,20,0,0">
+            <Button x:Name="ViewLogButton" Content="查看日志" Padding="20,8" Margin="0,0,8,0"
+                    Style="{DynamicResource SecondaryButton}" Click="ViewLog_Click"/>
+            <Button x:Name="ExportLogButton" Content="导出完整日志" Padding="20,8" Margin="0,0,8,0"
+                    Style="{DynamicResource SecondaryButton}" Click="ExportLog_Click"/>
+            <Button Content="关闭" Padding="20,8" IsDefault="True"
+                    Style="{DynamicResource PrimaryButton}" Click="Close_Click"/>
+        </StackPanel>
+    </StackPanel>
+</local:OverlayDialogControl>

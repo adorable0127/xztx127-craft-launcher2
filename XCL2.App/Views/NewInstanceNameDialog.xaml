@@ -1,0 +1,37 @@
+<local:OverlayDialogControl x:Class="XCL2.App.Views.NewInstanceNameDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="clr-namespace:XCL2.App.Views"
+        MinWidth="440" MaxWidth="540">
+    <!-- 内嵌 Overlay 弹窗，由 OverlayDialogService 显示在主窗口内部（不弹独立窗口）。 -->
+    <StackPanel Margin="24">
+        <TextBlock Text="{DynamicResource Str_Ui_New_Modpack_Instance}" FontSize="18" FontWeight="Bold"/>
+
+        <TextBlock Margin="0,8,0,0" FontSize="12" TextWrapping="Wrap"
+                   Foreground="{DynamicResource TextSecondaryBrush}"
+                   Text="{DynamicResource Str_Ui_Builds_A_Separate_Instance_From_Scratch_}"/>
+
+        <Border Margin="0,14,0,0" CornerRadius="6" Padding="12,10"
+                Background="{DynamicResource TileBadgeIndigoBrush}">
+            <StackPanel>
+                <TextBlock Text="{DynamicResource Str_Ui_This_Modpack_Requires}" FontSize="11"
+                           Foreground="{DynamicResource TextSecondaryBrush}"/>
+                <TextBlock x:Name="RequirementText" FontSize="14" FontWeight="SemiBold" Margin="0,3,0,0"
+                           TextWrapping="Wrap"/>
+            </StackPanel>
+        </Border>
+
+        <TextBlock Text="{DynamicResource Str_Ui_Instance_Name}" Margin="0,16,0,6" FontSize="12"
+                   Foreground="{DynamicResource TextSecondaryBrush}"/>
+        <TextBox x:Name="NameBox" Padding="8,6" FontSize="14" TextChanged="NameBox_TextChanged"/>
+
+        <TextBlock x:Name="NameHint" FontSize="11" Margin="0,6,0,0" TextWrapping="Wrap"
+                   Foreground="{DynamicResource TextSecondaryBrush}"/>
+
+        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,20,0,0">
+            <Button Content="{DynamicResource Str_Common_Cancel}" Style="{StaticResource SecondaryButton}" Padding="18,7" Click="Cancel_Click"/>
+            <Button x:Name="OkButton" Content="{DynamicResource Str_Ui_Start_Install}" Style="{StaticResource PrimaryButton}"
+                    Padding="24,7" Margin="10,0,0,0" Click="Ok_Click" IsDefault="True"/>
+        </StackPanel>
+    </StackPanel>
+</local:OverlayDialogControl>
