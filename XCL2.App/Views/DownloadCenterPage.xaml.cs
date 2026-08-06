@@ -653,7 +653,14 @@ public partial class DownloadCenterPage : UserControl
             if (loaderWindow.ShowDialog() == true && loaderWindow.InstalledVersionId != null)
             {
                 _owner.EnsureVisibleForDialog();
-                MessageBoxDialog.ShowSuccess($"版本「{loaderWindow.InstalledVersionId}」安装完成！可以在「版本选择」页选中它。");
+                // 需求："在安装完一个版本后，默认选择到那个版本"。之前这里只弹一句"可以在
+                // 「版本选择」页选中它"，等于把"选中"这个本该顺手做掉的动作丢给用户自己再跑一趟
+                // 页面手动点——这个安装动作本身发生在"当前选中的文件夹"下，装完之后没有理由
+                // 不直接把它设为选中版本，跟"新建了什么就默认用它"是同一种直觉。
+                _owner.ConfigService.Config.SelectedVersionId = loaderWindow.InstalledVersionId;
+                _owner.ConfigService.Save();
+                _owner.RefreshSidebar();
+                MessageBoxDialog.ShowSuccess($"版本「{loaderWindow.InstalledVersionId}」安装完成，已自动选中。");
             }
             return;
         }
@@ -667,7 +674,18 @@ public partial class DownloadCenterPage : UserControl
             using var svc = DownloadService.CreateFromConfig(_owner.ConfigService.Config);
             await svc.InstallVersionAsync(folder.Path, entry, progressWin.Progress);
             _owner.EnsureVisibleForDialog();
-            MessageBoxDialog.ShowSuccess($"{entry.Id} 安装完成！");
+            // 同上：原版直装完成后同样默认选中这个刚装好的版本，不需要用户再跑去「版本选择」页手动点一次。
+            // 只有安装的目标文件夹正好是当前选中文件夹时才自动切选中版本——如果用户是往一个
+            // 未被选中的文件夹里装版本（folder 变量取的是"当前选中文件夹"回退到"第一个文件夹"，
+            // 两者可能不是同一个），贸然把 SelectedVersionId 改掉会打乱用户当前正在用的另一个文件夹
+            // 下的版本选择，超出"装完自动选中"这个需求本身的意图。
+            if (folder.Path == _owner.ConfigService.Config.SelectedFolderPath)
+            {
+                _owner.ConfigService.Config.SelectedVersionId = entry.Id;
+                _owner.ConfigService.Save();
+                _owner.RefreshSidebar();
+            }
+            MessageBoxDialog.ShowSuccess($"{entry.Id} 安装完成" + (folder.Path == _owner.ConfigService.Config.SelectedFolderPath ? "，已自动选中。" : "！"));
         }
         catch (Exception ex)
         {

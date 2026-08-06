@@ -84,10 +84,13 @@ public class DownloadService : IDisposable
 
     public async Task<VersionManifestRoot> GetVersionManifestAsync(CancellationToken ct = default)
     {
-        var url = _source == DownloadSource.Official ? OfficialManifestUrl : BmclManifestUrl;
-        var resp = await _http.GetAsync(url, ct);
-        resp.EnsureSuccessStatusCode();
-        var json = await resp.Content.ReadAsStringAsync(ct);
+        // 修复：之前这里按 _source 硬选一个 URL，选了镜像源就永远只请求镜像，官方一旦同一时刻
+        // 镜像抽风(BMCLAPI 偶发不同步/超时是常态)就直接报错，完全没有"换源重试一次"的机会。
+        // 现在改用 DownloadEndpoints 的候选池：按用户偏好排第一，另一个源作为兜底，
+        // 跟文件下载(DownloadFileAsync)已经在用的回退逻辑保持一致。
+        var json = await DownloadEndpoints.GetStringWithFallbackAsync(
+            _http, OfficialManifestUrl, _source != DownloadSource.Official,
+            "无法获取 Minecraft 版本清单，请检查网络连接或稍后重试。", ct);
         return JsonSerializer.Deserialize<VersionManifestRoot>(json) ?? new VersionManifestRoot();
     }
 
@@ -99,9 +102,14 @@ public class DownloadService : IDisposable
         Directory.CreateDirectory(versionDir);
 
         // 1. version json
+        // 修复"Fabric/原版安装 404"：这是 Fabric 安装第一步"装原版父版本"实际发起的第一个网络
+        // 请求，之前用 RemapUrl 只算出唯一一个 URL(镜像源用户就只请求镜像)，镜像对这个具体版本
+        // 短暂不同步时直接 404 到底、异常原样抛给用户。改成 Candidates 回退：镜像不行立刻退回官方，
+        // 顺序仍然尊重用户在设置里选的源。
         progress?.Report(new ProgressInfo("下载版本信息", 0, 1, entry.Id));
-        var versionJsonUrl = RemapUrl(entry.Url);
-        var versionJsonText = await _http.GetStringAsync(versionJsonUrl, ct);
+        var versionJsonText = await DownloadEndpoints.GetStringWithFallbackAsync(
+            _http, entry.Url, _source != DownloadSource.Official,
+            $"无法获取版本 {entry.Id} 的版本信息，请检查网络连接或稍后重试。", ct);
         var versionJsonPath = Path.Combine(versionDir, $"{entry.Id}.json");
         await File.WriteAllTextAsync(versionJsonPath, versionJsonText, ct);
 
@@ -117,7 +125,14 @@ public class DownloadService : IDisposable
         {
             progress?.Report(new ProgressInfo("下载客户端主程序", 0, 1, $"{entry.Id}.jar"));
             var jarPath = Path.Combine(versionDir, $"{entry.Id}.jar");
-            await DownloadFileAsync(RemapUrl(clientArtifact.Url), jarPath, clientArtifact.Sha1, ct);
+            // 修复：不要在这里先用 RemapUrl 把 URL 换成镜像——DownloadFileAsync 内部的
+            // DownloadEndpoints.Candidates() 会自己根据"官方 URL"算出镜像+官方两个候选并按健康度
+            // 回退。如果这里先手动换成了镜像 URL 再传进去，Candidates() 面对的就已经是一个镜像域名，
+            // 匹配不上 BmclMap 里的任何"官方前缀"，ToMirror() 返回 null，实际上只剩镜像这一个候选，
+            // 官方源的回退能力被这一层"提前 remap"悄悄吃掉了——镜像对某个具体文件缺失/损坏时
+            // （Forge 库文件里偶尔会有个别 jar 在镜像上缺失，log4j 这类基础库尤其常被引用到但
+            // 未必每次都同步及时），完全没有退路，直接下载失败/下到损坏文件。
+            await DownloadFileAsync(clientArtifact.Url, jarPath, clientArtifact.Sha1, ct);
         }
 
         // 3. libraries + natives
@@ -174,7 +189,12 @@ public class DownloadService : IDisposable
                 if (lib.Downloads?.Artifact is { } art && !string.IsNullOrEmpty(art.Path))
                 {
                     var dest = Path.Combine(librariesDir, art.Path.Replace('/', Path.DirectorySeparatorChar));
-                    await DownloadFileAsync(RemapUrl(art.Url), dest, art.Sha1, ct);
+                    // 同上：不预先 RemapUrl，让 DownloadFileAsync 自己拿到官方 URL 去算候选池，
+                    // 保留"镜像缺这个库就自动回退官方"的能力——这正是 Forge 装完却在启动时报
+                    // "Module ... log4j not found" 的根因之一：库文件下载阶段镜像没有回退，
+                    // 某个库（哪怕只有 log4j 这一个）下载失败/下到空文件，装的时候没有强校验，
+                    // 结果是"看起来装完了"，直到真正启动、JPMS 解析模块时才暴露出这个库缺失。
+                    await DownloadFileAsync(art.Url, dest, art.Sha1, ct);
                 }
                 else if (!string.IsNullOrEmpty(lib.Url))
                 {
@@ -199,7 +219,7 @@ public class DownloadService : IDisposable
                     if (lib.Downloads?.Classifiers != null && lib.Downloads.Classifiers.TryGetValue(key, out var nativeArt))
                     {
                         var tmp = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".jar");
-                        await DownloadFileAsync(RemapUrl(nativeArt.Url), tmp, nativeArt.Sha1, ct);
+                        await DownloadFileAsync(nativeArt.Url, tmp, nativeArt.Sha1, ct);
                         ExtractNatives(tmp, nativesDir);
                         File.Delete(tmp);
                     }
@@ -224,7 +244,10 @@ public class DownloadService : IDisposable
         Directory.CreateDirectory(indexesDir);
         var indexPath = Path.Combine(indexesDir, $"{assetIndexRef.Id}.json");
 
-        var indexJson = await _http.GetStringAsync(RemapUrl(assetIndexRef.Url), ct);
+        // 同上：资源索引也是单次小请求，同样享受候选池回退，不再是"镜像不行就直接失败"。
+        var indexJson = await DownloadEndpoints.GetStringWithFallbackAsync(
+            _http, assetIndexRef.Url, _source != DownloadSource.Official,
+            "无法获取资源索引文件，请检查网络连接或稍后重试。", ct);
         await File.WriteAllTextAsync(indexPath, indexJson, ct);
         var index = JsonSerializer.Deserialize<AssetIndexFile>(indexJson) ?? new AssetIndexFile();
 

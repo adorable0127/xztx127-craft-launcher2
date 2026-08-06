@@ -144,6 +144,7 @@
     <system:String x:Key="Str_Ui_Snapshot">Snapshot</system:String>
     <system:String x:Key="Str_Ui_Resource_Packs_2">Resource packs</system:String>
     <system:String x:Key="Str_Ui_Rescan">Rescan</system:String>
+    <system:String x:Key="Str_Ui_Clear_This_View">Clear this view</system:String>
     <system:String x:Key="Str_Ui_Scan_Now">Scan now</system:String>
     <system:String x:Key="Str_Ui_Matched_Rule">Matched rule</system:String>
     <system:String x:Key="Str_Ui_Redstone_Lan">Redstone LAN</system:String>

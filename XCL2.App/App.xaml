@@ -75,6 +75,51 @@
                  只有一个真相来源，不会打架。见 Services/AppIconService.cs 类头注释。 -->
             <Style TargetType="Window"/>
 
+            <!-- 修复"深色模式下鼠标悬停按钮上方的提示条(ToolTip)显示纯白、没有任何文字"：
+                 之前项目里从来没有给 ToolTip 定义过任何样式，全部用的是 WPF 默认的系统主题外观。
+                 根因是 WindowChromeService 会给每个窗口的 HWND 打开
+                 DWMWA_USE_IMMERSIVE_DARK_MODE（深色标题栏），这个标记同时会影响系统原生控件
+                 （包括 ToolTip 借助的 Win32 uxtheme 提示条视觉），但 WPF 默认 ToolTip 模板画的
+                 文字内容并不会跟着这个系统级深色标记自动换色——结果就是"提示条外壳被系统判定成
+                 深色/异常混合渲染出一片空白，文字却还是按老逻辑画（或者压根没画出来）"，
+                 视觉上就是截图里那种"一条白条，看不出上面写了什么字"。
+                 解决方式是不再依赖系统原生 ToolTip 外观，改成完全由 WPF 自己画的模板：
+                 背景/边框/文字全部走本项目已有的主题画刷（PanelBrush/BorderBrush2/TextPrimaryBrush），
+                 这些画刷本身已经会跟随 ThemeService 的深色/浅色切换重新着色，不再有任何系统原生
+                 渲染层参与，从根上避免"系统深色标记 vs WPF 默认模板"这种不同步。 -->
+            <Style TargetType="ToolTip">
+                <Setter Property="Background" Value="{StaticResource PanelBrush}"/>
+                <Setter Property="Foreground" Value="{StaticResource TextPrimaryBrush}"/>
+                <Setter Property="BorderBrush" Value="{StaticResource BorderBrush2}"/>
+                <Setter Property="BorderThickness" Value="1"/>
+                <Setter Property="Padding" Value="10,6"/>
+                <Setter Property="FontSize" Value="12"/>
+                <Setter Property="HasDropShadow" Value="True"/>
+                <!-- 显式关掉系统主题外观：不这样设的话，即使下面自定义了 Template，
+                     部分 Windows 版本仍然会在 Popup 外层套一层系统 uxtheme 边框/背景，
+                     跟自定义模板的圆角描边叠在一起显得双重描边。 -->
+                <Setter Property="OverridesDefaultStyle" Value="True"/>
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="ToolTip">
+                            <Border Background="{TemplateBinding Background}"
+                                    BorderBrush="{TemplateBinding BorderBrush}"
+                                    BorderThickness="{TemplateBinding BorderThickness}"
+                                    CornerRadius="6"
+                                    Padding="{TemplateBinding Padding}"
+                                    MaxWidth="360">
+                                <Border.Effect>
+                                    <DropShadowEffect Color="#000000" BlurRadius="12" ShadowDepth="2" Opacity="0.25"/>
+                                </Border.Effect>
+                                <ContentPresenter TextBlock.Foreground="{TemplateBinding Foreground}"
+                                                   TextBlock.FontSize="{TemplateBinding FontSize}"
+                                                   TextElement.Foreground="{TemplateBinding Foreground}"/>
+                            </Border>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+            </Style>
+
             <!-- ===== 侧边栏导航矢量图标（Geometry）=====
                  为什么不用 emoji：原来 11 个导航图标全是 emoji 文本（🏠📁⬇🌐🧩…），
                  带来两个必现的显示 bug：

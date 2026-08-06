@@ -1491,12 +1491,36 @@ public partial class MainWindow : Window
                     $"[{DateTime.Now}] 导出启动脚本失败(不影响启动): {exportEx}\n\n");
             }
 
+            // 需求修复："点击'取消启动'还会让游戏窗口弹出"。根因：在这之前的 Java 检测/下载、
+            // 皮肤补丁下载、以及上面几个"是否继续"确认框，都可能耗时很久（下载要等网络，
+            // 确认框要等用户交互），期间用户完全可能已经点了"取消启动"——但这些步骤都没有
+            // 检查 cancelToken，导致哪怕已经取消，代码仍然会往下走到 launcher.Launch(options)
+            // 真正拉起游戏进程，用户点"取消"之后过一会儿窗口还是弹出来了，跟点击本身的直觉完全
+            // 相反。这里在真正执行 Launch 之前补上最后一次检查：如果这时候已经被取消，直接
+            // 静默退出，不再启动进程——不弹任何提示框，跟"点取消不弹确认框"的既有原则一致。
+            if (cancelToken.IsCancellationRequested)
+            {
+                ToastService.ShowSuccess(Loc.T("Str_Cs_Launch_Cancelled", "已取消启动。"));
+                return;
+            }
+
             LauncherLogService.AppendLine($"[启动游戏] 账户={account.DisplayLabel} 版本={cfg.SelectedVersionId}");
 
             GameProcessInfo processInfo;
             try
             {
                 processInfo = launcher.Launch(options);
+
+                // Launch() 本身是同步阻塞调用（拼参数+起进程），中间没有 await 让出线程，
+                // 理论上不会跟"点取消"这个 UI 事件真正并发；但保留这一步兜底检查——万一
+                // 用户点击恰好落在 Launch() 刚返回、还没执行到下面这行代码的极短窗口内，
+                // 也要把已经拉起来的进程立刻结束掉，而不是任由它继续运行、弹出窗口。
+                if (cancelToken.IsCancellationRequested)
+                {
+                    processInfo.ForceKill();
+                    ToastService.ShowSuccess(Loc.T("Str_Cs_Launch_Cancelled", "已取消启动。"));
+                    return;
+                }
             }
             catch (MissingLibrariesException mle)
             {
@@ -1555,8 +1579,24 @@ public partial class MainWindow : Window
                 }
                 repairWin.Close();
 
+                // 补全依赖库同样是一段可能耗时不短的下载，期间用户也可能点了"取消启动"——
+                // 跟上面主流程一样，重试启动之前必须重新检查一次 cancelToken，否则会重演
+                // 同一个"点了取消，窗口还是弹出来"的问题。
+                if (cancelToken.IsCancellationRequested)
+                {
+                    ToastService.ShowSuccess(Loc.T("Str_Cs_Launch_Cancelled", "已取消启动。"));
+                    return;
+                }
+
                 // 补库之后原地重试一次启动，不需要用户再点一次"启动游戏"按钮。
                 processInfo = launcher.Launch(options);
+
+                if (cancelToken.IsCancellationRequested)
+                {
+                    processInfo.ForceKill();
+                    ToastService.ShowSuccess(Loc.T("Str_Cs_Launch_Cancelled", "已取消启动。"));
+                    return;
+                }
             }
             ProcessManager.Register(processInfo);
             RefreshSidebar();
@@ -1636,11 +1676,18 @@ public partial class MainWindow : Window
             {
                 for (var i = 0; i < 1200; i++) // 1200 * 100ms = 2 分钟
                 {
-                    // 需求：点"取消启动"要能中断"等待游戏窗口出现"这个轮询。这里只是让
-                    // 启动器停止继续等待/不再把这次启动算作"成功"，不会去杀掉进程——
-                    // 游戏进程如果已经拉起来了，用户之后仍然能在"关闭所选的游戏"里看到它、
-                    // 手动结束；取消动作本身只表达"我不想再等/不想继续这次启动确认流程了"。
-                    if (cancelToken.IsCancellationRequested) { waitCancelled = true; return; }
+                    // 需求修复："点击'取消启动'时，游戏窗口仍然会弹出"。根因：这里之前只是
+                    // 中断轮询本身（不再等待/不再判定为"启动成功"），但并没有真正杀掉已经
+                    // 拉起来的 openjdk(java) 进程——进程继续在后台跑，该弹的游戏窗口还是会
+                    // 弹出来，跟用户点"取消"的直觉完全相反。现在改成：一旦检测到取消，
+                    // 立即整棵进程树 Kill 掉，从根上清除掉这个 java 进程，而不只是停止等待/
+                    // 停止刷文案。
+                    if (cancelToken.IsCancellationRequested)
+                    {
+                        processInfo.ForceKill();
+                        waitCancelled = true;
+                        return;
+                    }
                     if (processInfo.HasExited) { exitedEarly = true; return; }
                     try
                     {
@@ -1665,7 +1712,9 @@ public partial class MainWindow : Window
             if (waitCancelled)
             {
                 // 用户主动取消：跟需求一致，不弹任何提示框（不是"失败"，是用户自己叫停的），
-                // 用 Toast 轻量告知一下就好，游戏进程本身留给用户在进程列表里自行处理。
+                // 用 Toast 轻量告知一下就好；对应的 java 进程在上面轮询循环里已经被
+                // Kill(entireProcessTree: true) 彻底清掉了，这里不需要也不应该再留给用户
+                // 去进程列表里手动结束。
                 ToastService.ShowSuccess(Loc.T("Str_Cs_Launch_Cancelled", "已取消启动。"));
                 return;
             }

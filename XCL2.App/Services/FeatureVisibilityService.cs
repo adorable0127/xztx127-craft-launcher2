@@ -53,36 +53,91 @@ public static class FeatureVisibilityService
     public const string FeatureModUpdate = "Feature.ModUpdate";
     public const string FeatureHideToggleItself = "Feature.HideToggleItself";
 
+    /// <summary>功能隐藏面板里单个可勾选项：一个功能 key 对应界面上显示的中文名。
+    /// 必须是带真实属性的类而不是 ValueTuple——WPF 的 {Binding Key}/{Binding Label}
+    /// 靠反射按属性名取值，ValueTuple 的元素名（Key/Label）只是编译期元数据，运行时
+    /// 实际字段名是 Item1/Item2，绑定会静默失败，导致面板渲染出来是空的（看起来"没做"）。</summary>
+    public sealed class FeatureItem
+    {
+        public string Key { get; init; } = "";
+        public string Label { get; init; } = "";
+    }
+
+    /// <summary>功能隐藏面板里的一个分组：一个分组标题 + 一批 <see cref="FeatureItem"/>。
+    /// 同样必须用真实属性的类，理由见 <see cref="FeatureItem"/> 上的注释。</summary>
+    public sealed class FeatureGroup
+    {
+        public string GroupLabel { get; init; } = "";
+        public FeatureItem[] Items { get; init; } = System.Array.Empty<FeatureItem>();
+    }
+
     /// <summary>分组展示用：设置页"功能隐藏"面板按这个结构渲染勾选框，
     /// 跟 Views/SettingsPage.xaml 里手写的复选框一一对应，改这里同时要改那边的 XAML。</summary>
-    public static readonly (string GroupLabel, (string Key, string Label)[] Items)[] Groups =
+    public static readonly FeatureGroup[] Groups =
     {
-        ("主页面", new[]
+        new FeatureGroup
         {
-            (NavDownload, "下载"), (NavSettings, "设置"), (NavToolbox, "工具"),
-        }),
-        ("子页面 设置", new[]
+            GroupLabel = "主页面",
+            Items = new[]
+            {
+                new FeatureItem { Key = NavDownload, Label = "下载" },
+                new FeatureItem { Key = NavSettings, Label = "设置" },
+                new FeatureItem { Key = NavToolbox, Label = "工具" },
+            }
+        },
+        new FeatureGroup
         {
-            (SettingsLaunch, "启动"), (SettingsJava, "Java"), (SettingsManage, "管理"),
-            (SettingsMultiplayer, "联机"), (SettingsPersonalize, "个性化"), (SettingsLanguage, "语言"),
-            (SettingsMisc, "杂项"), (SettingsUpdate, "软件更新"), (SettingsAbout, "关于"),
-            (SettingsFeedback, "反馈"), (SettingsViewLogs, "查看日志"),
-        }),
-        ("子页面 工具", new[]
+            GroupLabel = "子页面 设置",
+            Items = new[]
+            {
+                new FeatureItem { Key = SettingsLaunch, Label = "启动" },
+                new FeatureItem { Key = SettingsJava, Label = "Java" },
+                new FeatureItem { Key = SettingsManage, Label = "管理" },
+                new FeatureItem { Key = SettingsMultiplayer, Label = "联机" },
+                new FeatureItem { Key = SettingsPersonalize, Label = "个性化" },
+                new FeatureItem { Key = SettingsLanguage, Label = "语言" },
+                new FeatureItem { Key = SettingsMisc, Label = "杂项" },
+                new FeatureItem { Key = SettingsUpdate, Label = "软件更新" },
+                new FeatureItem { Key = SettingsAbout, Label = "关于" },
+                new FeatureItem { Key = SettingsFeedback, Label = "反馈" },
+                new FeatureItem { Key = SettingsViewLogs, Label = "查看日志" },
+            }
+        },
+        new FeatureGroup
         {
-            (ToolMultiplayer, "联机"), (ToolToolbox, "百宝箱"),
-        }),
-        ("子页面 实例设置", new[]
+            GroupLabel = "子页面 工具",
+            Items = new[]
+            {
+                new FeatureItem { Key = ToolMultiplayer, Label = "联机" },
+                new FeatureItem { Key = ToolToolbox, Label = "百宝箱" },
+            }
+        },
+        new FeatureGroup
         {
-            (InstanceEdit, "修改"), (InstanceExport, "导出"), (InstanceSaves, "存档"),
-            (InstanceScreenshots, "截图"), (InstanceMods, "Mod"), (InstanceResourcePacks, "资源包"),
-            (InstanceShaderPacks, "光影包"), (InstanceSchematics, "投影原理图"), (InstanceServers, "服务器"),
-        }),
-        ("特定功能", new[]
+            GroupLabel = "子页面 实例设置",
+            Items = new[]
+            {
+                new FeatureItem { Key = InstanceEdit, Label = "修改" },
+                new FeatureItem { Key = InstanceExport, Label = "导出" },
+                new FeatureItem { Key = InstanceSaves, Label = "存档" },
+                new FeatureItem { Key = InstanceScreenshots, Label = "截图" },
+                new FeatureItem { Key = InstanceMods, Label = "Mod" },
+                new FeatureItem { Key = InstanceResourcePacks, Label = "资源包" },
+                new FeatureItem { Key = InstanceShaderPacks, Label = "光影包" },
+                new FeatureItem { Key = InstanceSchematics, Label = "投影原理图" },
+                new FeatureItem { Key = InstanceServers, Label = "服务器" },
+            }
+        },
+        new FeatureGroup
         {
-            (FeatureInstanceManage, "实例管理"), (FeatureModUpdate, "Mod 更新"),
-            (FeatureHideToggleItself, "功能隐藏"),
-        }),
+            GroupLabel = "特定功能",
+            Items = new[]
+            {
+                new FeatureItem { Key = FeatureInstanceManage, Label = "实例管理" },
+                new FeatureItem { Key = FeatureModUpdate, Label = "Mod 更新" },
+                new FeatureItem { Key = FeatureHideToggleItself, Label = "功能隐藏" },
+            }
+        },
     };
 
     /// <summary>F12 临时显示是否生效（进程内状态，不持久化）。</summary>

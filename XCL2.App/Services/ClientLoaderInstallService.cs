@@ -57,6 +57,10 @@ public class ClientLoaderInstallService : IDisposable
     private readonly HttpClient _http = new() { Timeout = TimeSpan.FromMinutes(15) };
     private readonly DownloadService _vanillaDownloader;
 
+    /// <summary>用户在设置里选的下载源，供 DownloadFileNoHashCheckAsync/post-install 库补全复用
+    /// DownloadEndpoints 的镜像回退逻辑（构造函数里保存一份，避免每处都要多传一个参数）。</summary>
+    private readonly bool _preferMirror;
+
     /// <summary>Fabric API 走 Modrinth 下载（Fabric API 本身就是发布在 Modrinth 上的普通 mod，
     /// 复用现成的 ModrinthService 搜索+下载逻辑，不用重新实现一遍 Modrinth API 调用。</summary>
     private readonly ModrinthService _modrinth = new();
@@ -77,6 +81,7 @@ public class ClientLoaderInstallService : IDisposable
     public ClientLoaderInstallService(DownloadSource source)
     {
         _vanillaDownloader = new DownloadService(source);
+        _preferMirror = source != DownloadSource.Official;
         _http.DefaultRequestHeaders.UserAgent.Clear();
         _http.DefaultRequestHeaders.UserAgent.Add(new ProductInfoHeaderValue("XCL2Launcher", "1.0"));
     }
@@ -675,6 +680,20 @@ public class ClientLoaderInstallService : IDisposable
 
         try { Directory.Delete(tempDir, recursive: true); } catch { /* 清理失败不影响安装已经完成这个事实 */ }
 
+        // 修复"Forge 装完之后启动报 Module ... log4j not found"：安装器 --installClient 这一步
+        // 自己内部还会再联网下载一批库文件（见上面第 638 行注释），这部分下载完全在安装器自己的
+        // 进程里发生，走的是它内置的下载逻辑，既不经过我们的 DownloadService，也就享受不到
+        // DownloadEndpoints 的镜像回退——如果这批库里恰好有一两个文件（哪怕只是 log4j-core 这种
+        // 基础库）因为网络问题下载失败/下到损坏文件，安装器有时仍然会以退出码 0 结束（比如日志里
+        // 只是打印了一条 WARN 而不是真的 FAIL），我们只看退出码的话完全感知不到这个"看起来装完了，
+        // 其实缺库"的情况，直到用户真正启动游戏、JPMS 在解析模块时才报错暴露出来。
+        //
+        // 这里在安装器退出码为 0、成功定位到生成的版本目录之后，主动读一遍它生成的 version json，
+        // 用我们自己的 DownloadLibrariesOnlyAsync 把 json 里列出的所有 libraries 重新过一遍——
+        // 该方法内部对每个文件都会先做 sha1 校验，已经存在且校验通过的文件直接跳过、不会重新下载，
+        // 只有真正缺失/损坏的文件才会补下，且现在已经具备镜像↔官方自动回退能力（见 DownloadService
+        // 里的改动），相当于给安装器自己下载的这批库文件做一次"体检+补漏"，从根源上避免缺库启动失败。
+        //
         // 安装器会自己在 versions/ 下生成形如 "{mcVersion}-{prefix}-{loaderVersion}" 的版本目录，
         // 这里在 versions/ 下找一个最近创建、名字包含加载器前缀的目录作为安装结果返回给调用方，
         // 不同 Forge/NeoForge 版本生成的确切目录命名格式有细微差异，用"最近修改时间"比精确拼字符串更稳妥。
@@ -685,6 +704,32 @@ public class ClientLoaderInstallService : IDisposable
                 .OrderByDescending(Directory.GetLastWriteTimeUtc)
                 .FirstOrDefault()
             : null;
+
+        if (candidate != null)
+        {
+            try
+            {
+                var repairVersionId = Path.GetFileName(candidate);
+                var repairJsonPath = ResolveVersionFile(candidate, repairVersionId, "json");
+                if (repairJsonPath != null)
+                {
+                    var repairDetail = JsonSerializer.Deserialize<VersionDetail>(File.ReadAllText(repairJsonPath));
+                    if (repairDetail != null)
+                    {
+                        repairDetail.Id = repairVersionId;
+                        progress?.Report(new ProgressInfo("校验并补全依赖库", 1, 2, fileName));
+                        await _vanillaDownloader.DownloadLibrariesOnlyAsync(minecraftDir, repairDetail, progress, ct);
+                    }
+                }
+            }
+            catch (OperationCanceledException) { throw; }
+            catch
+            {
+                // 补库本身失败（比如两个源都连不上）不应该让整个 Forge/NeoForge 安装被判定为失败——
+                // 安装器至少已经跑完了，能不能启动最终由用户实际点"启动游戏"来验证，这里只是
+                // "尽力而为"的一次额外体检，不是安装成功与否的判定依据。
+            }
+        }
 
         // Forge/NeoForge 官方安装器生成的 version json 默认也是靠 inheritsFrom 指向原版文件夹
         // （跟 Fabric/Quilt 改造前的行为一样），同一份原版 jar 被多个加载器实例共用。这里同样把它
@@ -903,40 +948,51 @@ public class ClientLoaderInstallService : IDisposable
         const int maxAttempts = 3;
         Exception? lastError = null;
 
-        for (var attempt = 1; attempt <= maxAttempts; attempt++)
+        // 修复：Forge/NeoForge 安装器 jar 本身之前永远只请求 Maven 官方地址（国内直连经常很慢/超时），
+        // 完全没有走 DownloadEndpoints 的镜像候选池——即使用户在设置里选择了"使用镜像源"，这里也
+        // 感知不到、依旧死磕官方地址。现在改成跟 DownloadService.DownloadFileAsync 一致的策略：
+        // 按用户偏好把候选 URL 排好序，每个候选源都给足 maxAttempts 次机会，前一个源多次失败再换下一个。
+        var candidates = DownloadEndpoints.Candidates(url, _preferMirror);
+
+        foreach (var candidateUrl in candidates)
         {
-            var tmp = destPath + $".tmp{attempt}";
-            using var attemptCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            attemptCts.CancelAfter(SingleAttemptTimeout);
-            try
+            for (var attempt = 1; attempt <= maxAttempts; attempt++)
             {
-                using (var resp = await _http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, attemptCts.Token))
+                var tmp = destPath + $".tmp{attempt}";
+                using var attemptCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                attemptCts.CancelAfter(SingleAttemptTimeout);
+                try
                 {
-                    resp.EnsureSuccessStatusCode();
-                    await using var fs = File.Create(tmp);
-                    await resp.Content.CopyToAsync(fs, attemptCts.Token);
+                    using (var resp = await _http.GetAsync(candidateUrl, HttpCompletionOption.ResponseHeadersRead, attemptCts.Token))
+                    {
+                        resp.EnsureSuccessStatusCode();
+                        await using var fs = File.Create(tmp);
+                        await resp.Content.CopyToAsync(fs, attemptCts.Token);
+                    }
+                    if (new FileInfo(tmp).Length == 0)
+                    {
+                        lastError = new IOException($"下载得到空文件: {candidateUrl}");
+                        TryDelete(tmp);
+                        continue;
+                    }
+                    if (File.Exists(destPath)) File.Delete(destPath);
+                    File.Move(tmp, destPath);
+                    DownloadEndpoints.ReportSuccess(candidateUrl);
+                    return;
                 }
-                if (new FileInfo(tmp).Length == 0)
+                catch (OperationCanceledException) when (!ct.IsCancellationRequested)
                 {
-                    lastError = new IOException($"下载得到空文件: {url}");
+                    lastError = new TimeoutException(
+                        $"下载单次尝试超时（{SingleAttemptTimeout.TotalSeconds:0}秒内无响应）: {candidateUrl}");
                     TryDelete(tmp);
-                    continue;
                 }
-                if (File.Exists(destPath)) File.Delete(destPath);
-                File.Move(tmp, destPath);
-                return;
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    lastError = ex;
+                    TryDelete(tmp);
+                }
             }
-            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
-            {
-                lastError = new TimeoutException(
-                    $"下载单次尝试超时（{SingleAttemptTimeout.TotalSeconds:0}秒内无响应）: {url}");
-                TryDelete(tmp);
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException)
-            {
-                lastError = ex;
-                TryDelete(tmp);
-            }
+            DownloadEndpoints.ReportFailure(candidateUrl);
         }
         // 友好化报错：如果最后一次失败是 404（安装器文件在 Maven 上找不到，常见于这个具体版本号
         // 已经被下架/移除），额外提示"换一个版本试试"，而不是只甩一个裸的 URL 让用户自己猜原因。
@@ -945,7 +1001,7 @@ public class ClientLoaderInstallService : IDisposable
         var hint = is404
             ? "\n这通常是因为该版本的安装器已从官方仓库下架，建议在版本列表里换一个相近的版本重试。"
             : "";
-        throw new IOException($"下载失败（已重试 {maxAttempts} 次）: {url}{hint}", lastError);
+        throw new IOException($"下载失败（已尝试所有可用源）: {url}{hint}", lastError);
     }
 
     private static void TryDelete(string path)

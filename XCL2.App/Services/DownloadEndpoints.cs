@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Net.Http;
 
 namespace XCL2.App.Services;
 
@@ -153,4 +154,42 @@ public static class DownloadEndpoints
 
     /// <summary>重置所有健康度记录（切换下载源、用户手动重试时调用）。</summary>
     public static void ResetHealth() => Health.Clear();
+
+    /// <summary>
+    /// 修复"Fabric 安装 404"类问题的根因：GetVersionManifestAsync/InstallVersionAsync 的
+    /// version json、asset index，以及 ClientLoaderInstallService 里 Fabric/Quilt/Forge Meta
+    /// 的 GetStringAsync 调用，之前全部是"单 URL、不回退"——用户选了镜像源(BMCLAPI)时，
+    /// 一旦镜像对这个具体版本/接口正好没同步好(镜像抽风是常态，尤其是新版本刚发布的头几天)，
+    /// 直接 404 到底，用户看到一句原始的 HttpRequestException，完全不知道换源就能解决。
+    /// 而同样是这个源的**文件**下载(DownloadFileAsync)其实早就有 Candidates() 多候选回退，
+    /// 只有这几个"单次小请求"的元数据接口没享受到——这个方法就是把同样的回退能力补给它们：
+    /// 依次尝试 Candidates() 给出的候选 URL(顺序按用户偏好+主机健康度)，某个 404/失败就换下一个，
+    /// 全部试完还失败才把最后一次的异常包成对用户友好的提示抛出去。
+    /// </summary>
+    public static async Task<string> GetStringWithFallbackAsync(
+        HttpClient http, string officialUrl, bool preferMirror, string friendlyMessage, CancellationToken ct = default)
+    {
+        var candidates = Candidates(officialUrl, preferMirror);
+        Exception? lastError = null;
+
+        foreach (var url in candidates)
+        {
+            try
+            {
+                var result = await http.GetStringAsync(url, ct);
+                ReportSuccess(url);
+                return result;
+            }
+            catch (OperationCanceledException) { throw; }
+            catch (Exception ex)
+            {
+                ReportFailure(url);
+                lastError = ex;
+                // 换下一个候选继续试，不立刻抛出——这正是"回退"的核心。
+            }
+        }
+
+        // 所有候选都失败了：包一句人话，但保留原始异常做 InnerException，方便崩溃日志排查。
+        throw new InvalidOperationException(friendlyMessage, lastError);
+    }
 }
