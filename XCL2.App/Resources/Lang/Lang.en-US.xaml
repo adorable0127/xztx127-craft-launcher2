@@ -46,6 +46,8 @@
     <system:String x:Key="Str_Nav_Experimental">Experimental Features</system:String>
     <system:String x:Key="Str_Nav_Toolbox">Toolbox</system:String>
     <system:String x:Key="Str_Nav_AboutHelp">Credits &amp; Help</system:String>
+    <system:String x:Key="Str_Nav_Bedrock">Experimental – Bedrock</system:String>
+    <system:String x:Key="Str_Ui_Bedrock_Page_Subtitle">Launch the Bedrock client, import content, and manage the Bedrock dedicated server.</system:String>
 
     <system:String x:Key="Str_Settings_LanguageSection_Title">Launcher UI Language</system:String>
     <system:String x:Key="Str_Settings_LanguageSection_Hint">Takes effect immediately, no restart needed. This sets the language of the launcher UI itself — it's separate from the "in-game language" setting below.</system:String>
@@ -300,6 +302,14 @@
     <system:String x:Key="Str_Ui_Bedrock_Dedicated_Server">Bedrock Dedicated Server</system:String>
     <system:String x:Key="Str_Ui_Optimise_Memory_Allocation_Before_">Optimise memory allocation before launch</system:String>
     <system:String x:Key="Str_Ui_Download_Bedrock_Server">Download Bedrock server...</system:String>
+    <system:String x:Key="Str_Ui_Default_Download_Folder">Default download folder</system:String>
+    <system:String x:Key="Str_Ui_Not_Set_Will_Ask_Every_Time">Not set (will ask every time)</system:String>
+    <system:String x:Key="Str_Ui_Clear">Clear</system:String>
+    <system:String x:Key="Str_Ui_Channel">Channel</system:String>
+    <system:String x:Key="Str_Ui_Stable">Stable</system:String>
+    <system:String x:Key="Str_Ui_Preview">Preview</system:String>
+    <system:String x:Key="Str_Ui_Launch_Server">Launch server</system:String>
+    <system:String x:Key="Str_Ui_Installed_Instances">Installed instances</system:String>
     <system:String x:Key="Str_Ui_Java_Version">Java version</system:String>
     <system:String x:Key="Str_Ui_Loading_Versions">Loading versions...</system:String>
     <system:String x:Key="Str_Ui_Bmclapi_Mirror">BMCLAPI mirror</system:String>
@@ -884,4 +894,30 @@
     <system:String x:Key="Str_Cs_Import_Complete_2">Import complete</system:String>
 
     <system:String x:Key="Str_Ui_Full_Launcher_Log">Full launcher log</system:String>
+    <system:String x:Key="Str_Ui_Open_In_Independent_Window">Open in independent window</system:String>
+    <system:String x:Key="Str_Ui_Bedrock_Client_Download">Bedrock Client Download</system:String>
+    <system:String x:Key="Str_Ui_Bedrock_Client_Download_Desc">Download multiple historical versions from the community version database and launch them directly. Requires network access to GitHub and Microsoft update servers.</system:String>
+    <system:String x:Key="Str_Ui_Default_Download_Folder_Client">Default download folder (client)</system:String>
+    <system:String x:Key="Str_Ui_Version_Select">Select version:</system:String>
+    <system:String x:Key="Str_Ui_Refresh_Version_List">Refresh list</system:String>
+    <system:String x:Key="Str_Ui_Bedrock_Server_Version_Tip">All historical versions of the Bedrock dedicated server (from the community archive). If no version is selected, the latest version of the channel is downloaded.</system:String>
+    <system:String x:Key="Str_Ui_Download_Bedrock_Client">Download client</system:String>
+    <system:String x:Key="Str_Ui_Launch_Downloaded_Client">Launch downloaded client</system:String>
+    <system:String x:Key="Str_Ui_Installed_Client_Instances">Downloaded client instances</system:String>
+
+    <system:String x:Key="Str_Cs_Loading_Version_List">Loading version list...</system:String>
+    <system:String x:Key="Str_Cs_No_Versions_Available">Unable to get version list</system:String>
+    <system:String x:Key="Str_Cs_Version_List_Load_Failed">Failed to load version list</system:String>
+    <system:String x:Key="Str_Cs_No_Version_Selected">No version selected</system:String>
+    <system:String x:Key="Str_Cs_No_Version_Selected_Body">Please select a version from the dropdown first.</system:String>
+    <system:String x:Key="Str_Cs_Choose_Bedrock_Client_Default_Dir">Choose the default download folder for Bedrock client</system:String>
+    <system:String x:Key="Str_Cs_Choose_Bedrock_Client_Install_Dir">Choose the installation location for Bedrock client</system:String>
+    <system:String x:Key="Str_Cs_Downloading_Bedrock_Client">Downloading Bedrock client</system:String>
+    <system:String x:Key="Str_Cs_Bedrock_Client_Download_Failed">Failed to download Bedrock client. This may be a network issue or the selected version has no download link available.</system:String>
+    <system:String x:Key="Str_Cs_No_Client_Instance_Selected">No client instance selected</system:String>
+    <system:String x:Key="Str_Cs_No_Client_Instance_Selected_Body">Please select a downloaded Bedrock client instance from the list below.</system:String>
+    <system:String x:Key="Str_Cs_Bedrock_Client_Launch_Failed">Failed to launch Bedrock client.</system:String>
+
+    <system:String x:Key="Str_Ui_Channel_Client">Channel:</system:String>
+
 </ResourceDictionary>

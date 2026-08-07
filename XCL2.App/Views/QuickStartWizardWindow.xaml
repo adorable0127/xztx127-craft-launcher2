@@ -215,6 +215,16 @@
                         <Button Grid.Column="1" Content="{DynamicResource Str_Ui_Browse}" Margin="8,0,0,0" Padding="12,8" Click="BrowseFolder_Click"/>
                     </Grid>
 
+                    <!-- 需求修复："在一键启动游戏页面里没法显示自定义设置实例名"。
+                         InstallClientLoaderWindow（下载中心里单独安装加载器的窗口）早就支持
+                         自定义实例名（customInstanceName 参数，见 InstanceNameBox），但"一键启动"
+                         这个向导页面之前完全没有暴露对应的输入框，用户没有任何地方能在一键流程里
+                         设置实例名，装完只能拿到默认命名（比如 "fabric-loader-xxx-1.20.1"）。
+                         这里补上同样的输入框，留空表示不自定义、退回默认命名，跟原有行为完全兼容。 -->
+                    <TextBlock Text="{DynamicResource Str_Ui_Instance_Name}" FontSize="12"
+                               Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4"/>
+                    <TextBox x:Name="QuickStartInstanceNameBox" Style="{StaticResource SearchTextBox}" Height="34" Margin="0,0,0,14"/>
+
                     <TextBlock Text="{DynamicResource Str_Ui_Loader}" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4"/>
                     <StackPanel Orientation="Horizontal" Margin="0,0,0,14">
                         <RadioButton x:Name="LoaderVanilla" Style="{StaticResource DownloadCategoryButton}" IsChecked="True"

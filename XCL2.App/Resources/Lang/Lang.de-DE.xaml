@@ -46,6 +46,8 @@
     <system:String x:Key="Str_Nav_Experimental">Experimentelle Funktionen</system:String>
     <system:String x:Key="Str_Nav_Toolbox">Werkzeugkiste</system:String>
     <system:String x:Key="Str_Nav_AboutHelp">Danksagung &amp; Hilfe</system:String>
+    <system:String x:Key="Str_Nav_Bedrock">Experimentell – Bedrock</system:String>
+    <system:String x:Key="Str_Ui_Bedrock_Page_Subtitle">Client öffnen, Inhalte importieren und den dedizierten Bedrock-Server verwalten.</system:String>
     <system:String x:Key="Str_Ui_Account_Version_Loader_And_Mods_In_One_P">Konto, Version, Loader und Mods in einem Schritt</system:String>
     <system:String x:Key="Str_Ui_Changes_The_Launcher_S_Language_Only_The">Ändert nur die Sprache der Launcher-Oberfläche (wirkt sich nicht auf die Sprache im Spiel aus; diese wird separat auf der Seite „Einstellungen“ festgelegt)</system:String>
     <system:String x:Key="Str_Ui_Download_Game_Versions_Mods_Maps_Resourc">Spielkern, Mods, Karten, Ressourcenpakete und Modpacks herunterladen</system:String>
@@ -876,4 +878,5 @@
     <system:String x:Key="Str_Cs_Import_Complete_2">Import abgeschlossen</system:String>
 
     <system:String x:Key="Str_Ui_Full_Launcher_Log">Vollst?ndiges Launcher-Protokoll</system:String>
+    <system:String x:Key="Str_Ui_Open_In_Independent_Window">In eigenem Fenster öffnen</system:String>
 </ResourceDictionary>

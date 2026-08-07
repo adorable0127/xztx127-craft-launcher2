@@ -42,6 +42,8 @@
     <system:String x:Key="Str_Nav_Experimental">Funzionalità sperimentali</system:String>
     <system:String x:Key="Str_Nav_Toolbox">Cassetta degli attrezzi</system:String>
     <system:String x:Key="Str_Nav_AboutHelp">Ringraziamenti e aiuto</system:String>
+    <system:String x:Key="Str_Nav_Bedrock">Sperimentale – Bedrock</system:String>
+    <system:String x:Key="Str_Ui_Bedrock_Page_Subtitle">Avvia il client Bedrock, importa contenuti e gestisci il server dedicato Bedrock.</system:String>
     <system:String x:Key="Str_Settings_LanguageSection_Title">Lingua dell'interfaccia del launcher</system:String>
     <system:String x:Key="Str_Settings_LanguageSection_Hint">Applicato immediatamente, senza riavvio. Imposta la lingua dell'interfaccia del launcher — indipendente dalla "lingua di gioco" qui sotto.</system:String>
     <system:String x:Key="Str_Settings_LanguageSection_OpenPicker">🌐 Seleziona lingua</system:String>
@@ -859,4 +861,5 @@
     <system:String x:Key="Str_Cs_No_Data_Folder_Yet">No data folder yet</system:String>
     <system:String x:Key="Str_Cs_Import_Complete_2">Import complete</system:String>
     <system:String x:Key="Str_Ui_Full_Launcher_Log">Registro completo del launcher</system:String>
+    <system:String x:Key="Str_Ui_Open_In_Independent_Window">Apri in una finestra indipendente</system:String>
 </ResourceDictionary>

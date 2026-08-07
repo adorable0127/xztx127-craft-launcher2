@@ -186,6 +186,19 @@
                                            VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
                             </StackPanel>
                         </Button>
+                        <!-- 新增「基岩版启动」导航入口，跳到 BedrockPage。原来分散在「百宝箱」的
+                             一个 Tab（内容管理/服务端下载）和「实验性功能」弹窗（唤起本机基岩版
+                             客户端）两处的基岩版相关功能，现在整合进这一个独立侧边栏页面，
+                             不用再去两个不相关的地方分别找。 -->
+                        <Button x:Name="NavBedrockButton" Style="{StaticResource SideNavButton}" Click="NavBedrock_Click" Margin="0,4,0,0" ToolTip="{DynamicResource Str_Nav_Bedrock}">
+                            <StackPanel x:Name="NavBedrockIconRow" Orientation="Horizontal">
+                                <Border x:Name="NavBedrockIcon" Style="{StaticResource NavIconBox}">
+                                    <Path Style="{StaticResource NavIconPath}" Data="{StaticResource IconBedrock}"/>
+                                </Border>
+                                <TextBlock x:Name="NavBedrockLabel" Text="{DynamicResource Str_Nav_Bedrock}" Margin="8,0,0,0"
+                                           VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
+                            </StackPanel>
+                        </Button>
                         <!-- 新增「鸣谢与帮助」导航入口，跳到 AboutHelpPage（登录/购买/新手/报错帮助
                              + 作者赞助信息/开源仓库/感谢名单/赞助榜/哔哩哔哩粉丝墙）。 -->
                         <Button x:Name="NavAboutHelpButton" Style="{StaticResource SideNavButton}" Click="NavAboutHelp_Click" Margin="0,4,0,0" ToolTip="{DynamicResource Str_Nav_AboutHelp}">

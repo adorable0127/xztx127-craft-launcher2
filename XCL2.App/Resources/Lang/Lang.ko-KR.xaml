@@ -42,6 +42,8 @@
     <system:String x:Key="Str_Nav_Experimental">실험적 기능</system:String>
     <system:String x:Key="Str_Nav_Toolbox">도구 상자</system:String>
     <system:String x:Key="Str_Nav_AboutHelp">감사 인사 &amp; 도움말</system:String>
+    <system:String x:Key="Str_Nav_Bedrock">실험적 기능 - 베드락</system:String>
+    <system:String x:Key="Str_Ui_Bedrock_Page_Subtitle">베드락 클라이언트 실행, 콘텐츠 가져오기, 베드락 전용 서버 관리를 한곳에서.</system:String>
     <system:String x:Key="Str_Settings_LanguageSection_Title">런처 UI 언어</system:String>
     <system:String x:Key="Str_Settings_LanguageSection_Hint">즉시 적용되며 재시작이 필요 없습니다. 여기서 선택하는 것은 "런처 UI" 언어이며, 아래의 "게임 내 언어"와는 별개입니다.</system:String>
     <system:String x:Key="Str_Settings_LanguageSection_OpenPicker">🌐 언어 선택</system:String>
@@ -859,4 +861,5 @@
     <system:String x:Key="Str_Cs_No_Data_Folder_Yet">No data folder yet</system:String>
     <system:String x:Key="Str_Cs_Import_Complete_2">Import complete</system:String>
     <system:String x:Key="Str_Ui_Full_Launcher_Log">?? ?? ??</system:String>
+    <system:String x:Key="Str_Ui_Open_In_Independent_Window">독립 창에서 열기</system:String>
 </ResourceDictionary>

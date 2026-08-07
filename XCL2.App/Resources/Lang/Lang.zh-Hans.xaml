@@ -52,6 +52,8 @@
     <system:String x:Key="Str_Nav_Experimental">实验性功能</system:String>
     <system:String x:Key="Str_Nav_Toolbox">百宝箱</system:String>
     <system:String x:Key="Str_Nav_AboutHelp">鸣谢与帮助</system:String>
+    <system:String x:Key="Str_Nav_Bedrock">实验-基岩版</system:String>
+    <system:String x:Key="Str_Ui_Bedrock_Page_Subtitle">在这里启动基岩版客户端、导入内容，并管理基岩版专用服务端。</system:String>
 
     <!-- ============ 设置页新增的"启动器界面语言"区块 ============ -->
     <system:String x:Key="Str_Settings_LanguageSection_Title">启动器界面语言</system:String>
@@ -307,6 +309,14 @@
     <system:String x:Key="Str_Ui_Bedrock_Dedicated_Server">基岩版服务端（BDS）</system:String>
     <system:String x:Key="Str_Ui_Optimise_Memory_Allocation_Before_">启动前自动优化内存分配</system:String>
     <system:String x:Key="Str_Ui_Download_Bedrock_Server">下载基岩版服务端...</system:String>
+    <system:String x:Key="Str_Ui_Default_Download_Folder">默认下载文件夹</system:String>
+    <system:String x:Key="Str_Ui_Not_Set_Will_Ask_Every_Time">未设置（每次下载都会询问）</system:String>
+    <system:String x:Key="Str_Ui_Clear">清除</system:String>
+    <system:String x:Key="Str_Ui_Channel">渠道</system:String>
+    <system:String x:Key="Str_Ui_Stable">正式版</system:String>
+    <system:String x:Key="Str_Ui_Preview">预览版</system:String>
+    <system:String x:Key="Str_Ui_Launch_Server">启动服务端</system:String>
+    <system:String x:Key="Str_Ui_Installed_Instances">已安装的实例</system:String>
     <system:String x:Key="Str_Ui_Java_Version">Java 版本（普通）</system:String>
     <system:String x:Key="Str_Ui_Loading_Versions">正在加载版本列表...</system:String>
     <system:String x:Key="Str_Ui_Bmclapi_Mirror">BMCLAPI 镜像源</system:String>
@@ -891,4 +901,30 @@
     <system:String x:Key="Str_Cs_Import_Complete_2">导入完成</system:String>
 
     <system:String x:Key="Str_Ui_Full_Launcher_Log">完整启动器日志</system:String>
+    <system:String x:Key="Str_Ui_Open_In_Independent_Window">独立窗口打开</system:String>
+    <system:String x:Key="Str_Ui_Bedrock_Client_Download">基岩版客户端下载</system:String>
+    <system:String x:Key="Str_Ui_Bedrock_Client_Download_Desc">支持从社区版本数据库获取多个历史版本并下载，下载后可直接启动。需要网络访问 GitHub 和微软更新服务器。</system:String>
+    <system:String x:Key="Str_Ui_Default_Download_Folder_Client">默认下载文件夹（客户端）</system:String>
+    <system:String x:Key="Str_Ui_Version_Select">选择版本：</system:String>
+    <system:String x:Key="Str_Ui_Refresh_Version_List">刷新列表</system:String>
+    <system:String x:Key="Str_Ui_Bedrock_Server_Version_Tip">基岩版服务端全部历史版本（来自社区归档）。不选时下载该渠道的最新版。</system:String>
+    <system:String x:Key="Str_Ui_Download_Bedrock_Client">下载客户端</system:String>
+    <system:String x:Key="Str_Ui_Launch_Downloaded_Client">启动已下载客户端</system:String>
+    <system:String x:Key="Str_Ui_Installed_Client_Instances">已下载的客户端实例</system:String>
+
+    <system:String x:Key="Str_Cs_Loading_Version_List">正在加载版本列表...</system:String>
+    <system:String x:Key="Str_Cs_No_Versions_Available">无法获取版本列表</system:String>
+    <system:String x:Key="Str_Cs_Version_List_Load_Failed">版本列表加载失败</system:String>
+    <system:String x:Key="Str_Cs_No_Version_Selected">未选择版本</system:String>
+    <system:String x:Key="Str_Cs_No_Version_Selected_Body">请先从下拉框中选择一个要下载的版本。</system:String>
+    <system:String x:Key="Str_Cs_Choose_Bedrock_Client_Default_Dir">选择基岩版客户端的默认下载文件夹</system:String>
+    <system:String x:Key="Str_Cs_Choose_Bedrock_Client_Install_Dir">选择基岩版客户端的安装位置</system:String>
+    <system:String x:Key="Str_Cs_Downloading_Bedrock_Client">正在下载基岩版客户端</system:String>
+    <system:String x:Key="Str_Cs_Bedrock_Client_Download_Failed">下载基岩版客户端失败，可能是网络问题或该版本暂无下载链接。</system:String>
+    <system:String x:Key="Str_Cs_No_Client_Instance_Selected">还没有选中客户端实例</system:String>
+    <system:String x:Key="Str_Cs_No_Client_Instance_Selected_Body">请先在下面的列表里选中一个已下载的基岩版客户端实例。</system:String>
+    <system:String x:Key="Str_Cs_Bedrock_Client_Launch_Failed">启动基岩版客户端失败。</system:String>
+
+    <system:String x:Key="Str_Ui_Channel_Client">渠道：</system:String>
+
 </ResourceDictionary>

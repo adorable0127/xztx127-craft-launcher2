@@ -429,6 +429,36 @@ public class AppConfig
     /// 只影响当前这一次显示）把它们都显示出来，方便用户自己手滑隐藏后还能找回来改设置。
     /// </summary>
     public List<string> HiddenFeatureKeys { get; set; } = new();
+
+    // ===== 基岩版客户端 =====
+
+    /// <summary>
+    /// 基岩版客户端（Bedrock Edition Windows Client）下载时的默认安装文件夹。
+    /// null/空 = 每次下载都弹文件夹选择框。
+    /// </summary>
+    public string? BedrockClientDefaultDownloadDir { get; set; }
+
+    /// <summary>
+    /// 已下载的基岩版客户端实例列表（每个实例对应一个独立目录）。
+    /// </summary>
+    public List<BedrockClientRecord> BedrockClients { get; set; } = new();
+
+    // ===== 基岩版专用服务端（BDS） =====
+
+    /// <summary>
+    /// 基岩版服务端（Bedrock Dedicated Server）下载时的默认安装文件夹。
+    /// null/空 = 每次下载都弹文件夹选择框（旧行为）；设置了这个值之后，下载按钮默认直接用
+    /// 这个文件夹（用户仍可以点"选择其他文件夹"临时改一次，不影响这里保存的默认值）。
+    /// 跟 GameFolder（Java 版 .minecraft 多目录）是完全独立的两个概念，不要混用。
+    /// </summary>
+    public string? BedrockServerDefaultDownloadDir { get; set; }
+
+    /// <summary>
+    /// 已下载安装的基岩版服务端实例列表（每个实例对应一个独立目录，互不覆盖），
+    /// 用于"下载完之后原地启动"、以及下次回到这个页面时能看到之前装过哪些版本。
+    /// 存放位置：跟随 xcl2/config.json 一起持久化。
+    /// </summary>
+    public List<BedrockServerRecord> BedrockServers { get; set; } = new();
 }
 
 /// <summary>拖入 .zip 且内容特征不明确时的默认处理方式。</summary>

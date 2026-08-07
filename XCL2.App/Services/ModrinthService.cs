@@ -98,7 +98,8 @@ public class ModrinthService
     /// 下载完成后校验 SHA1（若 Modrinth 返回了 hash），避免和游戏本体下载一样出现"看似下载成功实际是坏文件"的问题。
     /// </summary>
     public async Task<string> DownloadResourceAsync(string minecraftDir, ModrinthResourceType type,
-        ModrinthVersion version, IProgress<string>? progress, string? saveName = null, CancellationToken ct = default)
+        ModrinthVersion version, IProgress<string>? progress, string? saveName = null, CancellationToken ct = default,
+        bool appendCategorySubdir = true)
     {
         var file = version.Files.FirstOrDefault(f => f.Primary) ?? version.Files.FirstOrDefault();
         if (file == null) throw new InvalidOperationException("这个版本没有可下载的文件。");
@@ -111,7 +112,13 @@ public class ModrinthService
             throw new InvalidOperationException("整合包不支持这种下载方式，请使用整合包专用的安装流程。");
 
         string destDir;
-        if (type == ModrinthResourceType.DataPack)
+        if (!appendCategorySubdir)
+        {
+            // 调用方已经给了最终落点（比如用户在资源管理器里亲手选的目录）：文件直接存进
+            // 这个目录，不再拼接 mods/saves/resourcepacks 等分类子目录——选哪里存哪里，所见即所得。
+            destDir = minecraftDir;
+        }
+        else if (type == ModrinthResourceType.DataPack)
         {
             if (string.IsNullOrWhiteSpace(saveName))
                 throw new InvalidOperationException("数据包必须安装到具体的存档里，请先选择一个存档。");

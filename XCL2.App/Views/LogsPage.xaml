@@ -108,8 +108,16 @@
                             <RowDefinition Height="Auto"/>
                             <RowDefinition Height="*"/>
                         </Grid.RowDefinitions>
-                        <Button Grid.Row="0" Content="{DynamicResource Str_Common_Refresh}" Style="{StaticResource SideNavButton}" Padding="10,4"
-                                HorizontalAlignment="Left" Margin="0,8,0,8" Click="RefreshFullLauncherLog_Click"/>
+                        <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="0,8,0,8">
+                            <Button Content="{DynamicResource Str_Common_Refresh}" Style="{StaticResource SideNavButton}" Padding="10,4"
+                                    Click="RefreshFullLauncherLog_Click"/>
+                            <!-- 需求："在选择完整启动器日志的页面，加入一个按钮，可以独立出一个启动器日志，
+                                 不依附于咱们的进程。这样的话，就可以在进行启动器操作的时候查看日志"。
+                                 见 LauncherLogWindowService 类头注释：这里弹出的是一个真正独立的 cmd 进程，
+                                 不是同进程内的第二个 WPF 窗口，主窗口卡死/被关闭都不会影响它。 -->
+                            <Button Content="{DynamicResource Str_Ui_Open_In_Independent_Window}" Style="{StaticResource SideNavButton}" Padding="10,4"
+                                    Margin="10,0,0,0" Click="OpenLauncherLogInIndependentWindow_Click"/>
+                        </StackPanel>
                         <TextBox x:Name="FullLauncherLogBox" Grid.Row="1" IsReadOnly="True" TextWrapping="NoWrap"
                                  FontFamily="Consolas" FontSize="12" VerticalScrollBarVisibility="Auto"
                                  HorizontalScrollBarVisibility="Auto" Background="#1E1E1E" Foreground="#D4D4D4"/>

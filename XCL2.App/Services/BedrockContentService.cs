@@ -1,7 +1,10 @@
+using System.Diagnostics;
 using System.IO;
 using System.IO.Compression;
 using System.Net.Http;
+using System.Text.Json;
 using System.Text.RegularExpressions;
+using XCL2.App.Models;
 
 namespace XCL2.App.Services;
 
@@ -253,49 +256,217 @@ public class BedrockContentService
     // ==================== Bedrock Dedicated Server ====================
 
     /// <summary>
-    /// Mojang 的 BDS 下载页。BDS **完全公开免费**，不需要账号也不需要许可证，
-    /// 这也是"下载基岩版"这个需求里唯一能被完整实现的部分。
+    /// BDS **完全公开免费**，不需要账号也不需要许可证，这也是"下载基岩版"这个需求里
+    /// 唯一能被完整实现的部分（跟客户端不同，见类头注释）。
     ///
-    /// 不把下载直链写死在代码里的原因：Mojang 的 BDS 直链带版本号
-    /// （形如 .../bin-win/bedrock-server-1.21.44.01.zip），每次更新都变，
-    /// 写死必然很快失效。改成从下载页里正则抓当前直链。
+    /// 之前直接抓 minecraft.net 下载页 HTML 正则找直链的方式会 404/找不到链接——
+    /// 那个下载页现在是前端 JS 渲染出按钮的，服务端直接返回的 HTML 里根本没有直链，
+    /// 正则永远匹配不到，抛的"没找到下载链接"异常在 UI 上看起来就像下载失败/404。
+    ///
+    /// 改用 Mojang 官方自己那个下载页按钮背后调用的链接追踪接口
+    /// （net-secondary.web.minecraft-services.net），这是一个纯 JSON 接口、不依赖任何
+    /// 页面 HTML 结构，返回当前"正式版"和"预览版"服务端各平台的直链，是官网按钮本身在用的
+    /// 同一个数据源，比爬 HTML 稳得多。HTML 正则仍然保留一份作为这个接口万一失效时的兜底。
     /// </summary>
+    private const string BdsLinksApiUrl = "https://net-secondary.web.minecraft-services.net/api/v1.0/download/links";
     private const string BdsPageUrl = "https://www.minecraft.net/en-us/download/server/bedrock";
 
     private static readonly Regex BdsLinkPattern = new(
         @"https://[^\s""']*bin-win/bedrock-server-[\d.]+\.zip",
         RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
-    public sealed record BdsInfo(string Url, string Version);
+    private static readonly Regex BdsPreviewLinkPattern = new(
+        @"https://[^\s""']*bin-win-preview/bedrock-server-[\d.]+\.zip",
+        RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
-    /// <summary>抓当前 BDS 的下载直链和版本号。</summary>
-    public async Task<BdsInfo> ResolveDedicatedServerUrlAsync(CancellationToken ct = default)
+    // ===== BDS 历史版本归档：Bedrock-OSS/BDS-Versions =====
+    // 除了官方接口只给的最新版，这里能拿到全部历史版本的直链与 SHA1（windows/{version}.json）。
+    private const string BdsVersionsListUrl = "https://cdn.jsdelivr.net/gh/Bedrock-OSS/BDS-Versions@main/versions.json";
+
+    private static readonly string[] BdsVersionsListMirrorUrls = new[]
     {
-        using var http = new HttpClient { Timeout = TimeSpan.FromMinutes(2) };
-        // Mojang 的下载页对无 UA 的请求会返回 403，带一个正常浏览器 UA。
-        http.DefaultRequestHeaders.UserAgent.ParseAdd(
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) XCL2-Launcher/1.0");
+        "https://fastly.jsdelivr.net/gh/Bedrock-OSS/BDS-Versions@main/versions.json",
+        "https://gcore.jsdelivr.net/gh/Bedrock-OSS/BDS-Versions@main/versions.json",
+        "https://raw.githubusercontent.com/Bedrock-OSS/BDS-Versions/main/versions.json",
+        "https://ghp.ci/https://raw.githubusercontent.com/Bedrock-OSS/BDS-Versions/main/versions.json",
+        "https://ghproxy.com/https://raw.githubusercontent.com/Bedrock-OSS/BDS-Versions/main/versions.json",
+        "https://mirror.ghproxy.com/https://raw.githubusercontent.com/Bedrock-OSS/BDS-Versions/main/versions.json",
+    };
 
-        var html = await http.GetStringAsync(BdsPageUrl, ct);
-        var m = BdsLinkPattern.Match(html);
-        if (!m.Success)
-            throw new InvalidOperationException(
-                "没能从 Minecraft 官网找到基岩版服务端的下载链接。\n" +
-                "可能是官网改版了，或者当前网络访问不到 minecraft.net。可以稍后重试，或手动去官网下载。");
+    private static string BdsVersionMetaUrl(string version) => $"https://cdn.jsdelivr.net/gh/Bedrock-OSS/BDS-Versions@main/windows/{version}.json";
 
-        var url = m.Value;
-        var ver = Regex.Match(url, @"bedrock-server-([\d.]+)\.zip").Groups[1].Value;
-        return new BdsInfo(url, string.IsNullOrEmpty(ver) ? "未知" : ver);
+    private static IEnumerable<string> BdsVersionMetaMirrorUrls(string version)
+    {
+        yield return $"https://fastly.jsdelivr.net/gh/Bedrock-OSS/BDS-Versions@main/windows/{version}.json";
+        yield return $"https://gcore.jsdelivr.net/gh/Bedrock-OSS/BDS-Versions@main/windows/{version}.json";
+        yield return $"https://raw.githubusercontent.com/Bedrock-OSS/BDS-Versions/main/windows/{version}.json";
+        yield return $"https://ghp.ci/https://raw.githubusercontent.com/Bedrock-OSS/BDS-Versions/main/windows/{version}.json";
+        yield return $"https://ghproxy.com/https://raw.githubusercontent.com/Bedrock-OSS/BDS-Versions/main/windows/{version}.json";
+        yield return $"https://mirror.ghproxy.com/https://raw.githubusercontent.com/Bedrock-OSS/BDS-Versions/main/windows/{version}.json";
+    }
+
+    private static async Task<string?> FetchJsonWithMirrorsAsync(string primary, IEnumerable<string> mirrors, CancellationToken ct)
+    {
+        foreach (var url in new[] { primary }.Concat(mirrors))
+        {
+            try
+            {
+                using var http = CreateHttp();
+                var json = await http.GetStringAsync(url, ct);
+                if (!string.IsNullOrWhiteSpace(json)) return json;
+            }
+            catch
+            {
+                // 试下一个源
+            }
+        }
+        return null;
+    }
+
+    /// <summary>拉取 BDS 历史版本归档里的版本列表（归档是升序：老→新，这里反转成新→老）。</summary>
+    public async Task<List<string>> GetDedicatedServerVersionsAsync(BdsChannel channel, CancellationToken ct = default)
+    {
+        var json = await FetchJsonWithMirrorsAsync(BdsVersionsListUrl, BdsVersionsListMirrorUrls, ct);
+        if (json == null) return new List<string>();
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            // versions.json 结构：{ "linux": {"stable":..., "preview":..., "versions":[...], "preview_versions":[...]}, "windows": {...} }
+            if (!doc.RootElement.TryGetProperty("windows", out var win)) return new List<string>();
+            var prop = channel == BdsChannel.Preview ? "preview_versions" : "versions";
+            if (!win.TryGetProperty(prop, out var arr) || arr.ValueKind != JsonValueKind.Array) return new List<string>();
+
+            var list = arr.EnumerateArray()
+                .Select(v => v.GetString())
+                .Where(s => !string.IsNullOrWhiteSpace(s))
+                .Cast<string>()
+                .ToList();
+            list.Reverse();
+            return list;
+        }
+        catch { return new List<string>(); }
     }
 
     /// <summary>
-    /// 下载并解压 BDS 到指定目录。
+    /// 按指定版本号解析 BDS 下载直链：优先归档的单版本元数据（windows/{version}.json，
+    /// 内含官方 download_url + SHA1），归档没收录时按官方 CDN 路径规则直接拼。
     /// </summary>
-    public async Task<string> DownloadDedicatedServerAsync(string targetDir,
+    public async Task<BdsInfo> ResolveDedicatedServerVersionAsync(string version, BdsChannel channel, CancellationToken ct = default)
+    {
+        var meta = await FetchJsonWithMirrorsAsync(BdsVersionMetaUrl(version), BdsVersionMetaMirrorUrls(version), ct);
+        if (meta != null)
+        {
+            try
+            {
+                using var doc = JsonDocument.Parse(meta);
+                if (doc.RootElement.TryGetProperty("download_url", out var du))
+                {
+                    var url = du.GetString();
+                    if (!string.IsNullOrEmpty(url))
+                        return new BdsInfo(url, version, channel);
+                }
+            }
+            catch { /* 元数据格式异常就按 CDN 规则兜底 */ }
+        }
+
+        var cdnDir = channel == BdsChannel.Preview ? "bin-win-preview" : "bin-win";
+        return new BdsInfo($"https://www.minecraft.net/bedrockdedicatedserver/{cdnDir}/bedrock-server-{version}.zip", version, channel);
+    }
+
+    public sealed record BdsInfo(string Url, string Version, BdsChannel Channel);
+
+    private static HttpClient CreateHttp()
+    {
+        var http = new HttpClient { Timeout = TimeSpan.FromMinutes(2) };
+        http.DefaultRequestHeaders.UserAgent.ParseAdd(
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) XCL2-Launcher/1.0");
+        return http;
+    }
+
+    /// <summary>抓当前 BDS（指定渠道）的下载直链和版本号。</summary>
+    public async Task<BdsInfo> ResolveDedicatedServerUrlAsync(BdsChannel channel = BdsChannel.Stable, CancellationToken ct = default)
+    {
+        // 优先走官方 JSON 接口。
+        try
+        {
+            using var http = CreateHttp();
+            var json = await http.GetStringAsync(BdsLinksApiUrl, ct);
+            using var doc = JsonDocument.Parse(json);
+            var wantType = channel == BdsChannel.Preview ? "serverBedrockPreviewWindows" : "serverBedrockWindows";
+            if (doc.RootElement.TryGetProperty("result", out var result) &&
+                result.TryGetProperty("links", out var links))
+            {
+                foreach (var link in links.EnumerateArray())
+                {
+                    if (link.TryGetProperty("downloadType", out var dt) &&
+                        string.Equals(dt.GetString(), wantType, StringComparison.OrdinalIgnoreCase) &&
+                        link.TryGetProperty("downloadUrl", out var du))
+                    {
+                        var apiUrl = du.GetString();
+                        if (!string.IsNullOrEmpty(apiUrl))
+                        {
+                            var apiVer = Regex.Match(apiUrl, @"bedrock-server-([\d.]+)\.zip").Groups[1].Value;
+                            return new BdsInfo(apiUrl, string.IsNullOrEmpty(apiVer) ? "未知" : apiVer, channel);
+                        }
+                    }
+                }
+            }
+        }
+        catch
+        {
+            // 接口这次不通就落到下面的 HTML 兜底，不在这里直接失败。
+        }
+
+        // 兜底：从下载页正则抓（如果官网哪天又改回服务端渲染，这条路还能用）。
+        using var htmlHttp = CreateHttp();
+        var html = await htmlHttp.GetStringAsync(BdsPageUrl, ct);
+        var pattern = channel == BdsChannel.Preview ? BdsPreviewLinkPattern : BdsLinkPattern;
+        var m = pattern.Match(html);
+        if (!m.Success)
+            throw new InvalidOperationException(
+                "没能找到基岩版服务端的下载链接（官方接口和网页兜底都没拿到）。\n" +
+                "可能是官方接口临时不可用，或者当前网络访问不到 minecraft-services.net / minecraft.net。" +
+                "可以稍后重试，或手动去官网下载。");
+
+        var url = m.Value;
+        var ver = Regex.Match(url, @"bedrock-server-([\d.]+)\.zip").Groups[1].Value;
+        return new BdsInfo(url, string.IsNullOrEmpty(ver) ? "未知" : ver, channel);
+    }
+
+    /// <summary>
+    /// 下载并解压 BDS 到指定目录。targetDir 完全由调用方决定（工具箱页面里由用户选择的
+    /// 文件夹，或者 AppConfig.BedrockServerDefaultDownloadDir 里保存的默认下载文件夹），
+    /// 本方法不会自己拼一个"默认位置"。
+    /// </summary>
+    public async Task<string> DownloadDedicatedServerAsync(string targetDir, BdsChannel channel,
         IProgress<ProgressInfo>? progress, CancellationToken ct = default)
     {
         progress?.Report(new ProgressInfo("正在查询服务端版本", 0, 1, ""));
-        var info = await ResolveDedicatedServerUrlAsync(ct);
+        var info = await ResolveDedicatedServerUrlAsync(channel, ct);
+        return await DownloadDedicatedServerCoreAsync(targetDir, info, progress, ct);
+    }
+
+    /// <summary>
+    /// 按指定版本号下载 BDS（走 BDS-Versions 归档拿直链）；version 为空时回退到最新版路径。
+    /// </summary>
+    public async Task<string> DownloadDedicatedServerAsync(string targetDir, BdsChannel channel,
+        string? version, IProgress<ProgressInfo>? progress, CancellationToken ct = default)
+    {
+        progress?.Report(new ProgressInfo("正在查询服务端版本", 0, 1, ""));
+        var info = string.IsNullOrWhiteSpace(version)
+            ? await ResolveDedicatedServerUrlAsync(channel, ct)
+            : await ResolveDedicatedServerVersionAsync(version, channel, ct);
+        return await DownloadDedicatedServerCoreAsync(targetDir, info, progress, ct);
+    }
+
+    /// <summary>旧签名保留（默认正式版），避免其它调用点跟着改。</summary>
+    public Task<string> DownloadDedicatedServerAsync(string targetDir,
+        IProgress<ProgressInfo>? progress, CancellationToken ct = default)
+        => DownloadDedicatedServerAsync(targetDir, BdsChannel.Stable, progress, ct);
+
+    private async Task<string> DownloadDedicatedServerCoreAsync(string targetDir, BdsInfo info,
+        IProgress<ProgressInfo>? progress, CancellationToken ct)
+    {
 
         Directory.CreateDirectory(targetDir);
         var zipPath = Path.Combine(Path.GetTempPath(), $"bedrock-server-{info.Version}.zip");
@@ -356,5 +527,28 @@ public class BedrockContentService
 
         progress?.Report(new ProgressInfo(Loc.T("Str_Common_Finish", "完成"), 1, 1, info.Version));
         return info.Version;
+    }
+
+    /// <summary>
+    /// 启动一个已下载好的基岩版服务端实例。bedrock_server.exe 本身就是一个控制台程序，
+    /// 直接起进程、不接管它的控制台（不像 Java 版那样走 ServerProcessManager 接管
+    /// stdin/stdout 做进程内控制台窗口）——BDS 自己弹出的控制台窗口就是标准用法，
+    /// 保持这个行为对熟悉"手动跑 bedrock_server.exe"的用户来说最不意外。
+    /// </summary>
+    public static Process LaunchDedicatedServer(string installDir)
+    {
+        var exe = Path.Combine(installDir, "bedrock_server.exe");
+        if (!File.Exists(exe))
+            throw new InvalidOperationException(
+                $"在这个目录下没有找到 bedrock_server.exe：\n{installDir}\n" +
+                "可能是安装目录选错了，或者这个实例还没下载完成。");
+
+        var psi = new ProcessStartInfo(exe)
+        {
+            WorkingDirectory = installDir,   // bedrock_server.exe 按相对路径读 server.properties/世界数据，必须在这里起
+            UseShellExecute = true,
+        };
+        var proc = Process.Start(psi);
+        return proc ?? throw new InvalidOperationException("启动基岩版服务端进程失败。");
     }
 }

@@ -149,6 +149,9 @@
             <Geometry x:Key="IconPuzzle">M9 4 H15 V7 A2 2 0 0 0 19 7 V13 H16 A2 2 0 0 0 16 17 H19 V20 H5 V7 H8 A2 2 0 0 0 9 4 Z</Geometry>
             <Geometry x:Key="IconServer">M3 5 H21 V11 H3 Z M3 13 H21 V19 H3 Z M6.5 8 H7 M6.5 16 H7</Geometry>
             <Geometry x:Key="IconToolbox">M3 9 H21 V20 H3 Z M9 9 V6 H15 V9 M3 14 H21</Geometry>
+            <!-- 基岩版启动导航图标：简化的方块/砖块堆叠图案，呼应"基岩版"的方块主题，
+                 跟其它导航图标一样是单色线框风格（NavIconPath 统一描边，不填色）。 -->
+            <Geometry x:Key="IconBedrock">M3 4 H11 V10 H3 Z M13 4 H21 V10 H13 Z M3 12 H11 V18 H3 Z M13 12 H21 V18 H13 Z</Geometry>
             <Geometry x:Key="IconAccount">M12 4 A4 4 0 1 1 12 12 A4 4 0 1 1 12 4 M4.5 21 A7.5 7.5 0 0 1 19.5 21</Geometry>
             <Geometry x:Key="IconSettings">M12 8.5 A3.5 3.5 0 1 1 12 15.5 A3.5 3.5 0 1 1 12 8.5 M12 2.5 V5 M12 19 V21.5 M21.5 12 H19 M5 12 H2.5 M18.7 5.3 L17 7 M7 17 L5.3 18.7 M18.7 18.7 L17 17 M7 7 L5.3 5.3</Geometry>
             <Geometry x:Key="IconLogs">M6 3 H16 L19 6 V21 H6 Z M9 8 H16 M9 12 H16 M9 16 H13</Geometry>

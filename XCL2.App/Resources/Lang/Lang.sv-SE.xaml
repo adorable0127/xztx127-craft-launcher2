@@ -46,6 +46,8 @@
     <system:String x:Key="Str_Nav_Experimental">Experimentella funktioner</system:String>
     <system:String x:Key="Str_Nav_Toolbox">Verktygslåda</system:String>
     <system:String x:Key="Str_Nav_AboutHelp">Tack &amp; hjälp</system:String>
+    <system:String x:Key="Str_Nav_Bedrock">Experimentell – Bedrock</system:String>
+    <system:String x:Key="Str_Ui_Bedrock_Page_Subtitle">Starta Bedrock-klienten, importera innehåll och hantera den dedikerade Bedrock-servern.</system:String>
     <system:String x:Key="Str_Ui_Account_Version_Loader_And_Mods_In_One_P">Konto, version, loader och mods i ett svep</system:String>
     <system:String x:Key="Str_Ui_Changes_The_Launcher_S_Language_Only_The">Ändrar endast språket i launcherns gränssnitt (påverkar inte språket i spelet, som ställs in separat på sidan „Inställningar”)</system:String>
     <system:String x:Key="Str_Ui_Download_Game_Versions_Mods_Maps_Resourc">Ladda ner spelkärna, mods, kartor, resurspaket och modpaket</system:String>
@@ -878,4 +880,5 @@
     <system:String x:Key="Str_Cs_Import_Complete_2">Import klar</system:String>
 
     <system:String x:Key="Str_Ui_Full_Launcher_Log">Fullst?ndig startprogramslogg</system:String>
+    <system:String x:Key="Str_Ui_Open_In_Independent_Window">Öppna i eget fönster</system:String>
 </ResourceDictionary>

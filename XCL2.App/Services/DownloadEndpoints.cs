@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.IO;
 using System.Net.Http;
 
 namespace XCL2.App.Services;
@@ -96,9 +97,29 @@ public static class DownloadEndpoints
         ("https://resources.download.minecraft.net",   "https://bmclapi2.bangbang93.com/assets"),
         ("https://maven.fabricmc.net",                 "https://bmclapi2.bangbang93.com/maven"),
         ("https://meta.fabricmc.net",                  "https://bmclapi2.bangbang93.com/fabric-meta"),
+        // Quilt Meta（/v2、/v3 接口都同步）——实测 BMCLAPI 有对应的 quilt-meta 镜像。
+        ("https://meta.quiltmc.org",                   "https://bmclapi2.bangbang93.com/quilt-meta"),
         ("https://maven.neoforged.net/releases",       "https://bmclapi2.bangbang93.com/maven"),
         ("https://files.minecraftforge.net/maven",     "https://bmclapi2.bangbang93.com/maven"),
         ("https://maven.minecraftforge.net",           "https://bmclapi2.bangbang93.com/maven"),
+    };
+
+    // ===== GitHub 前缀代理（ghproxy 系）=====
+    // 处理 GitHub 直连（release 资产、raw 文件）在部分网络下不可达的问题：
+    // 镜像 URL = 代理前缀 + 完整官方 URL。跟 BMCLAPI 的"前缀替换"规则不同，
+    // 所以单独一张表。LoaderJarDownloadService（Cleanroom 等 GitHub Releases 发布的
+    // 加载器）和基岩版服务端归档都靠它拿备选源。
+    private static readonly string[] GhProxyPrefixes =
+    {
+        "https://ghp.ci/",
+        "https://ghproxy.com/",
+        "https://mirror.ghproxy.com/",
+    };
+
+    private static readonly string[] GithubHosts =
+    {
+        "https://github.com",
+        "https://raw.githubusercontent.com",
     };
 
     /// <summary>
@@ -109,7 +130,7 @@ public static class DownloadEndpoints
     /// </summary>
     public static IReadOnlyList<string> Candidates(string officialUrl, bool preferMirror)
     {
-        var list = new List<string>(2);
+        var list = new List<string>(4);
 
         var mirror = ToMirror(officialUrl);
 
@@ -135,7 +156,10 @@ public static class DownloadEndpoints
             .ToList();
     }
 
-    /// <summary>官方 URL → BMCLAPI 镜像 URL；没有对应规则时返回 null。</summary>
+    /// <summary>
+    /// 官方 URL → 镜像 URL（BMCLAPI 前缀替换 + GitHub 前缀代理两类规则）；
+    /// 没有对应规则时返回 null。
+    /// </summary>
     public static string? ToMirror(string officialUrl)
     {
         if (string.IsNullOrWhiteSpace(officialUrl)) return null;
@@ -145,7 +169,42 @@ public static class DownloadEndpoints
             if (officialUrl.StartsWith(official, StringComparison.OrdinalIgnoreCase))
                 return mirrorPrefix + officialUrl[official.Length..];
         }
+
+        foreach (var host in GithubHosts)
+        {
+            if (officialUrl.StartsWith(host, StringComparison.OrdinalIgnoreCase))
+            {
+                // 返回第一个代理前缀即可：多个 ghproxy 之间由健康度机制互相回退。
+                // （Candidates 的调用方拿到的是一个 URL，多个代理走不到；所以这里只回一个，
+                //   剩下的在下方 AllMirrors 里给 DownloadFileWithFallbackAsync 用。）
+                return GhProxyPrefixes[0] + officialUrl;
+            }
+        }
         return null;
+    }
+
+    /// <summary>某个 URL 的全部候选（含所有 ghproxy 前缀），给批量下载回退逻辑用。</summary>
+    public static IReadOnlyList<string> AllCandidates(string officialUrl, bool preferMirror)
+    {
+        var list = new List<string>(6);
+        foreach (var url in Candidates(officialUrl, preferMirror))
+        {
+            if (!list.Contains(url, StringComparer.OrdinalIgnoreCase))
+                list.Add(url);
+        }
+
+        foreach (var host in GithubHosts)
+        {
+            if (!officialUrl.StartsWith(host, StringComparison.OrdinalIgnoreCase)) continue;
+            foreach (var prefix in GhProxyPrefixes.Skip(1))
+            {
+                var proxy = prefix + officialUrl;
+                if (!list.Contains(proxy, StringComparer.OrdinalIgnoreCase))
+                    list.Add(proxy);
+            }
+            break;
+        }
+        return list;
     }
 
     /// <summary>调试/界面展示用：当前被判定为"不健康"的主机列表。</summary>
@@ -190,6 +249,67 @@ public static class DownloadEndpoints
         }
 
         // 所有候选都失败了：包一句人话，但保留原始异常做 InnerException，方便崩溃日志排查。
+        throw new InvalidOperationException(friendlyMessage, lastError);
+    }
+
+    /// <summary>
+    /// 带多候选回退的**文件**下载：跟 GetStringWithFallbackAsync 同一套思路，
+    /// 给"加载器 Jar / 服务端归档"这类二进制文件下载用。所有候选源依次尝试，
+    /// 失败自动换下一个，全部失败才把最后一次异常包装成用户友好的提示抛出
+    /// （**不会**为镜像失败弹窗——换源本来就是自动的）。
+    ///
+    /// 进度单位跟 DownloadService 保持一致：current/total 都是 KB。
+    /// </summary>
+    public static async Task<string> DownloadFileWithFallbackAsync(
+        HttpClient http, string officialUrl, bool preferMirror, string destPath,
+        string friendlyMessage, IProgress<ProgressInfo>? progress = null, CancellationToken ct = default)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(destPath)!);
+        var candidates = AllCandidates(officialUrl, preferMirror);
+        Exception? lastError = null;
+
+        foreach (var url in candidates)
+        {
+            var tmpPath = destPath + ".fbpart";
+            try
+            {
+                using var resp = await http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, ct);
+                resp.EnsureSuccessStatusCode();
+
+                var total = resp.Content.Headers.ContentLength ?? 0;
+                await using var src = await resp.Content.ReadAsStreamAsync(ct);
+                await using var dst = File.Create(tmpPath);
+
+                var buffer = new byte[81920];
+                long done = 0;
+                int read;
+                var fileName = Path.GetFileName(destPath);
+                while ((read = await src.ReadAsync(buffer, ct)) > 0)
+                {
+                    await dst.WriteAsync(buffer.AsMemory(0, read), ct);
+                    done += read;
+                    if (progress != null && total > 0)
+                        progress.Report(new ProgressInfo("正在下载 " + fileName,
+                            (int)(done / 1024), (int)(total / 1024),
+                            $"{done / 1048576} MB / {total / 1048576} MB"));
+                }
+                await dst.DisposeAsync();
+
+                if (File.Exists(destPath)) File.Delete(destPath);
+                File.Move(tmpPath, destPath);
+
+                ReportSuccess(url);
+                return destPath;
+            }
+            catch (OperationCanceledException) { throw; }
+            catch (Exception ex)
+            {
+                ReportFailure(url);
+                lastError = ex;
+                try { if (File.Exists(tmpPath)) File.Delete(tmpPath); } catch { /* 忽略清理失败 */ }
+            }
+        }
+
         throw new InvalidOperationException(friendlyMessage, lastError);
     }
 }

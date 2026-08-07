@@ -54,6 +54,11 @@ public partial class LogsPage : UserControl
     // 所以直接每秒无条件读一次（内存操作，开销可忽略），而不是像上面文件轮询那样先判断有没有变化。
     private readonly DispatcherTimer _fullLauncherLogTimer;
 
+    // 独立启动器日志窗口：见 LauncherLogWindowService 类头注释。只在用户点了"独立窗口"按钮
+    // 之后才会创建；可以重复点击复用同一个实例（Open() 内部每次都会弹一个新窗口+新同步定时器，
+    // 这里只是持有引用方便页面卸载时统一 Dispose 掉同步定时器）。
+    private LauncherLogWindowService? _launcherLogWindowService;
+
     public LogsPage(MainWindow owner)
     {
         _owner = owner;
@@ -87,6 +92,9 @@ public partial class LogsPage : UserControl
             _launcherLogTimer.Stop();
             _fullLauncherLogTimer.Stop();
             if (_subscribedProcess != null) _subscribedProcess.OutputReceived -= OnGameLogLineReceived;
+            // 只停掉我们进程内的同步定时器；已经弹出的独立日志窗口本身不受影响，继续独立存在
+            // （见 LauncherLogWindowService.Dispose 的注释：这正是"不依附于咱们的进程"的应有之义）。
+            _launcherLogWindowService?.Dispose();
         };
     }
 
@@ -196,6 +204,22 @@ public partial class LogsPage : UserControl
     // 显示的是"当前会话"的内存日志（LauncherLogService.Buffer），不是磁盘上的历史 .log/crash.log 文件，
     // 所以每次刷新都是纯内存读取，没有磁盘 IO，可以放心每秒自动刷新一次。
     private void RefreshFullLauncherLog_Click(object sender, RoutedEventArgs e) => LoadFullLauncherLog();
+
+    /// <summary>需求："加入一个按钮，可以独立出一个启动器日志，不依附于咱们的进程"。
+    /// 见 LauncherLogWindowService 类头注释：弹出一个真正独立的 cmd 进程持续 tail 日志文件，
+    /// 不是同进程内的第二个 WPF 窗口。每次点击都弹一个新窗口——用户可能想同时开好几个
+    /// （比如一个专门盯着看，一个截图存档），不做"只能开一个"的限制，跟大多数支持多开
+    /// 日志窗口的工具（比如各类 tail 工具）的习惯一致。</summary>
+    private void OpenLauncherLogInIndependentWindow_Click(object sender, RoutedEventArgs e)
+    {
+        // 复用同一个字段持有"最近一次"打开的实例，页面 Unloaded 时统一 Dispose 掉同步定时器；
+        // 旧实例（如果还在）先 Dispose 一次，避免两个同步定时器同时写同一批新增内容造成浪费
+        // ——不影响旧窗口本身的显示，旧窗口对应的文件已经写好的内容还在，只是不再收到新的
+        // 增量更新（用户如果还想继续看最新日志，重新点一次这个按钮弹新窗口即可）。
+        _launcherLogWindowService?.Dispose();
+        _launcherLogWindowService = new LauncherLogWindowService();
+        _launcherLogWindowService.Open();
+    }
 
     /// <summary>由 _fullLauncherLogTimer 每秒调用一次。</summary>
     private void AutoRefreshFullLauncherLog() => LoadFullLauncherLog();

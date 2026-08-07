@@ -790,6 +790,14 @@ public partial class MainWindow : Window
     /// <summary>供其他页面/窗口调用的公开导航方法，跳转到「百宝箱」页。</summary>
     public void NavigateToToolbox() => SetMainContent(new ToolboxPage(this));
 
+    private void NavBedrock_Click(object sender, RoutedEventArgs e)
+    {
+        SetMainContent(new BedrockPage(this));
+    }
+
+    /// <summary>供其他页面/窗口调用的公开导航方法，跳转到「基岩版启动」页。</summary>
+    public void NavigateToBedrock() => SetMainContent(new BedrockPage(this));
+
     private void NavAboutHelp_Click(object sender, RoutedEventArgs e)
     {
         SetMainContent(new AboutHelpPage(this));
@@ -870,6 +878,7 @@ public partial class MainWindow : Window
                      (NavModManagerButton, NavModManagerIcon, NavModManagerLabel),
                      (NavServerManagerButton, NavServerManagerIcon, NavServerManagerLabel),
                      (NavToolboxButton, NavToolboxIcon, NavToolboxLabel),
+                     (NavBedrockButton, NavBedrockIcon, NavBedrockLabel),
                      (NavAccountsButton, NavAccountsIcon, NavAccountsLabel),
                      (NavSettingsButton, NavSettingsIcon, NavSettingsLabel),
                      (NavLogsButton, NavLogsIcon, NavLogsLabel),
@@ -1050,28 +1059,32 @@ public partial class MainWindow : Window
         LaunchGameBtn.IsEnabled = false;
         LaunchGameBtnCollapsed.IsEnabled = false;
 
-        // 进入"取消启动"状态：按钮文字/ToolTip 切到 Str_Launch_Cancel，但先保持置灰
-        // LaunchStateSwitchGuard 的时长，避免刚点完"启动"手指还没抬起就又按到了
-        // "取消"（两者在屏幕上是同一个按钮位置，切换太快等于给了一个"连点死循环"的窗口）。
-        // 这段置灰单独用 Task.Delay 而不是复用下面 finally 里的冷却等待，是因为
-        // 这里保护的是"进入取消态"这一下，跟"启动流程整体结束后恢复成启动态"是两件事，
-        // 分开表达更清楚，也避免后面改动其中一处误伤另一处。
+        // 需求修复："点击'取消启动'的时候，游戏界面也会正常弹出来"。
+        //
+        // 根因：这里原来会把按钮持续禁用 LaunchStateSwitchGuard(1.5 秒)，直到下面的
+        // Task.Delay(...).ContinueWith 才恢复 IsEnabled=true。但 WPF 里 Button.IsEnabled=false
+        // 的按钮完全不会触发 Click 事件——如果用户点"启动游戏"之后，恰好在最初这 1.5 秒
+        // 保护期内（账户校验/Java 检测这些前置步骤经常正好卡在这个时间窗口里）就想点
+        // "取消启动"，这次点击的鼠标事件根本到不了 Launch_Click/HandleCancelLaunchClick，
+        // 取消请求从未真正发出，LaunchInternalAsync 完全不知道用户点过取消，流程照常往下走、
+        // 游戏窗口正常弹出——这正是本问题的直接原因。
+        //
+        // 现在改成：按钮只在"启动"这个动作本身处理期间（进入取消态之前的这一小段同步代码）
+        // 短暂置灰防手滑连点；一旦进入"取消启动"状态（下一行 _isCancelLaunchState = true 之后），
+        // 立刻把两个按钮重新启用，让"取消"从它出现的那一刻起就始终可点。不再需要底部
+        // Task.Delay(...).ContinueWith 这段延迟恢复逻辑——HandleCancelLaunchClick 内部
+        // 调用的 CancellationTokenSource.Cancel() 本身是幂等的，重复点"取消"没有任何副作用，
+        // 不需要靠禁用按钮来"防重复点击"。
         _isCancelLaunchState = true;
         SetLaunchButtonContent(cancel: true);
         _launchCts = new CancellationTokenSource();
-        var launchCts = _launchCts;
-        _ = Task.Delay(LaunchStateSwitchGuard).ContinueWith(_ =>
-        {
-            if (launchCts == _launchCts && _isCancelLaunchState)
-            {
-                LaunchGameBtn.IsEnabled = true;
-                LaunchGameBtnCollapsed.IsEnabled = true;
-            }
-        }, TaskScheduler.FromCurrentSynchronizationContext());
+        LaunchGameBtn.IsEnabled = true;
+        LaunchGameBtnCollapsed.IsEnabled = true;
+
 
         try
         {
-            await LaunchInternalAsync(sender, e, skipAccountConfirm, launchCts.Token);
+            await LaunchInternalAsync(sender, e, skipAccountConfirm, _launchCts!.Token);
         }
         finally
         {
@@ -1100,18 +1113,26 @@ public partial class MainWindow : Window
     /// 处理"取消启动"按钮的点击：只中止 CancellationTokenSource，让 LaunchInternalAsync
     /// 内部的等待点自行感知到取消并退出，不弹任何确认框（需求明确要求"点击取消启动
     /// 不弹出选择账户的界面"——取消本身就是一次明确、无需二次确认的操作）。
-    /// 如果游戏进程这时候已经真的拉起来了，取消只是让启动器不再继续等待"窗口出现"，
-    /// 不会去杀掉已经在运行的游戏进程——那是"关闭游戏"按钮的职责，不是这里的。
+    ///
+    /// ===== 修复"点击取消启动，游戏界面还是会正常弹出来" =====
+    /// 根因：这里之前复用了跟"启动"按钮一样的 LaunchStateSwitchGuard(1.5 秒) 冷却判断——
+    /// `now - _lastLaunchStateSwitchAtUtc < LaunchStateSwitchGuard || !LaunchGameBtn.IsEnabled`
+    /// 一旦命中就直接 return，连 `_launchCts?.Cancel()` 都不会执行。而 Launch_Click 在刚进入
+    /// "取消启动"状态的这 1.5 秒保护期内，恰恰会把 LaunchGameBtn.IsEnabled 保持在 false
+    /// （见 Launch_Click 里 1050/1063-1070 行），这意味着：用户点"启动游戏"之后，如果在
+    /// 最初这 1.5 秒内就手快点了"取消启动"（账户校验/Java 检测这些前置步骤经常正好卡在
+    /// 这个时间窗口里），这次点击会被本方法开头的冷却判断直接吞掉——取消请求从未真正
+    /// 发出，LaunchInternalAsync 完全不知道用户点过取消，流程照常往下走、游戏窗口正常弹出，
+    /// 跟用户"已经点了取消"的直觉完全相反。
+    ///
+    /// 冷却判断本身要挡的是"连续点击很多次取消导致 Cancel() 被重复调用"这种无害但没必要的
+    /// 重复调用，不应该连累"取消"这个动作彻底不生效。这里去掉整段冷却/IsEnabled 检查，
+    /// 只保留一个防御性判断：_launchCts 不为 null 才调用 Cancel()——CancellationTokenSource
+    /// 本身的 Cancel() 是幂等的（重复调用不会抛异常、也没有副作用），不需要额外的时间窗口
+    /// 去防重复点击。
     /// </summary>
     private void HandleCancelLaunchClick()
     {
-        // 同样受状态切换保护：防止用户在"取消"这个按钮刚出现的一瞬间因为手滑/连点
-        // 又立刻点了一次（这里本身不做任何事，但避免重复调用 Cancel() 造成不必要的
-        // ObjectDisposedException 之类的边界问题）。
-        var now = DateTime.UtcNow;
-        if (now - _lastLaunchStateSwitchAtUtc < LaunchStateSwitchGuard || !LaunchGameBtn.IsEnabled)
-            return;
-
         _launchCts?.Cancel();
     }
 

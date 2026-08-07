@@ -310,6 +310,8 @@
                                     <Run Text="• Modrinth 和 CurseForge 模组平台"/><LineBreak/>
                                     <Run Text="• 各种社区资源的创作者们"/><LineBreak/>
                                     <Run Text="• Claude（Anthropic）—— 协助完成了本启动器的多语言翻译工作"/>
+                                       <Run Text="• ChatGPT（OpenAi）—— 协助完成了本启动器的多语言翻译工作"/>
+                                          <Run Text="• Kimi（月之暗面）—— 修复了一些雷霆bug"/>
                                 </TextBlock>
                             </StackPanel>
                         </Border>

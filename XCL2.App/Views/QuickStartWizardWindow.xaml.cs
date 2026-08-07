@@ -974,6 +974,12 @@ public partial class QuickStartWizardWindow : OverlayDialogControl
                 if (McVersionCombo.SelectedItem is not string mcVersion)
                     throw new CriticalStepFailedException("选择版本", new InvalidOperationException("没有选中 Minecraft 版本。"));
 
+                // 需求修复："在一键启动游戏页面里没法显示自定义设置实例名"。
+                // 空字符串表示"不自定义，用默认命名"，跟 InstallClientLoaderWindow 里
+                // customName 的处理方式完全一致（见该文件 Install_Click 里的同名变量）。
+                var customInstanceName = string.IsNullOrWhiteSpace(QuickStartInstanceNameBox.Text)
+                    ? null : QuickStartInstanceNameBox.Text.Trim();
+
                 // 2) 装版本/加载器。Forge/NeoForge 安装器需要本地 Java 才能跑，必须先确保 Java 就绪，
                 //    不能像原计划那样等到"启动前"才检测——这是 Round 11 交接文档里明确指出的顺序依赖问题。
                 string? javaPath = null;
@@ -995,13 +1001,26 @@ public partial class QuickStartWizardWindow : OverlayDialogControl
                             ?? throw new InvalidOperationException($"在版本清单中找不到 {mcVersion}。");
                         await downloader.InstallVersionAsync(folderPath, entry, progress);
                         versionId = mcVersion;
+
+                        // 原版没有独立的"安装时指定目标目录名"入口（entry.Id 就是 mcVersion，
+                        // 目录名由版本清单决定），只能跟 InstallClientLoaderWindow 一样，装完后
+                        // 原地重命名——复用同一个 TryRenameInstalledInstance，保证"物理文件夹名 +
+                        // json 内部 id + 主 jar/json 文件名"三者一起同步更新。
+                        if (!string.IsNullOrWhiteSpace(customInstanceName))
+                        {
+                            var renamed = ClientLoaderInstallService.TryRenameInstalledInstance(
+                                folderPath, Path.Combine(folderPath, "versions", versionId), customInstanceName);
+                            if (renamed != null) versionId = renamed;
+                            // 失败就沿用默认的 mcVersion 作为目录名，不影响原版本身已经装好这个事实。
+                        }
                     }
                     else if (_selectedLoaderType == ServerCoreType.Fabric)
                     {
                         var buildVersion = (BuildVersionCombo.SelectedItem as ServerCoreBuild)?.DisplayVersion
                             ?? throw new InvalidOperationException("没有选中 Fabric Loader 版本。");
                         versionId = await GetLoaderService().InstallFabricClientAsync(folderPath, mcVersion, buildVersion,
-                            progress, installFabricApi: InstallFabricApiCheck.IsChecked == true);
+                            progress, installFabricApi: InstallFabricApiCheck.IsChecked == true,
+                            customInstanceName: customInstanceName);
                     }
                     else
                     {
@@ -1011,7 +1030,8 @@ public partial class QuickStartWizardWindow : OverlayDialogControl
                             : (BuildVersionCombo.SelectedItem as ServerCoreBuild)?.DisplayVersion
                                 ?? throw new InvalidOperationException("没有选中安装器版本。");
                         versionId = await GetLoaderService().InstallForgeOrNeoForgeClientAsync(
-                            folderPath, _selectedLoaderType, fullVersion, javaPath, progress);
+                            folderPath, _selectedLoaderType, fullVersion, javaPath, progress,
+                            customInstanceName: customInstanceName);
                     }
                 }
                 catch (Exception ex) when (ex is not CriticalStepFailedException)

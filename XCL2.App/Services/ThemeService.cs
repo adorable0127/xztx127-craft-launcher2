@@ -97,6 +97,14 @@ public static class ThemeService
     /// 已经拆到 IsDarkMode 独立控制，不需要再单独占一个"色系"位置。</summary>
     public const string SkinDark = "Dark";
 
+    // ===== 彩蛋皮肤：不在 AllSkins 中列出，仅用于实验性功能区的彩蛋按钮 =====
+    public const string SkinEggNote = "EggNote";
+    public const string SkinEggDisco = "EggDisco";
+    public const string SkinEggWheelchair = "EggWheelchair";
+    public const string SkinEggDance = "EggDance";
+    public const string SkinEggCantWin = "EggCantWin";
+    public const string SkinEggBug = "EggBug";
+
     /// <summary>提供给设置页"色系"下拉框遍历用的可选值，不包含 SkinDark（见上面注释，
     /// 深色已经拆成 IsDarkMode 独立维度，不再是一个单独的色系选项）。</summary>
     public static readonly string[] AllSkins = { SkinWhite, SkinBlue, SkinYellow, SkinPurple, SkinPink, SkinSilver, SkinGold, SkinEmerald, SkinNether, SkinEndStone, SkinWarmYellow, SkinOrange, SkinObsidian, SkinFrostglass, SkinChampagneFrost, SkinPearl, SkinAlabaster, SkinGlacier };
@@ -119,26 +127,31 @@ public static class ThemeService
     /// <summary>Key 是 (色系, 是否深色) 的组合；每个色系都各自有浅色版和深色版，
     /// 深色版只调整背景/文字/边框这些跟"看不看得清"直接相关的层次，强调色(Accent)/
     /// 光晕色(Glow)尽量保留原色相的辨识度，让人一眼看出"这仍然是蓝色系，只是深色模式"。</summary>
+    // 白色系配色方案（复用给彩蛋皮肤）
+    private static readonly Palette WhiteLight = new(
+        Accent: "#5B9BF2", AccentHover: "#4488EB", Glow: "#00C2E8", GlowSoft: "#E3F7FC",
+        Panel: "#FFFFFF", Side: "#F4F7FB", Border: "#D6E2F0", BorderHover: "#9DC0EC",
+        TextPrimary: "#151B26", TextSecondary: "#6B7686",
+        TileBlue: "#E3F7FC", TileIndigo: "#EAF1FF", TileGreen: "#E7F6EC", TileOrange: "#FFF1E3", TilePurple: "#F1E9FF",
+        SuccessText: "#1E9E4F", WarningText: "#D9822B", WarningBanner: "#FFF7E6", Danger: "#D64545", Divider: "#E0E0E0",
+        ButtonBackground: "#D3E6FC", ButtonHoverBackground: "#B9D8FA", ButtonForeground: "#0F3F8C");
+
+    private static readonly Palette WhiteDark = new(
+        Accent: "#4C9AFF", AccentHover: "#6BAEFF", Glow: "#22D3F5", GlowSoft: "#1E3A4A",
+        Panel: "#20242B", Side: "#16191E", Border: "#454C57", BorderHover: "#5D6675",
+        TextPrimary: "#F2F4F8", TextSecondary: "#B7C0CC",
+        TileBlue: "#1C3547", TileIndigo: "#212D4A", TileGreen: "#1B4230", TileOrange: "#45311A", TilePurple: "#2E2448",
+        SuccessText: "#5FE092", WarningText: "#F5B565", WarningBanner: "#3D3220", Danger: "#F0716F", Divider: "#454C57",
+        ButtonBackground: "#2F4E70", ButtonHoverBackground: "#3C6088", ButtonForeground: "#E3F0FF");
+
     private static readonly Dictionary<(string Hue, bool Dark), Palette> Palettes = new()
     {
         // ------- 白色系：浅色版是原来 App.xaml 里写死的"科技感冷蓝"配色，原样保留 -------
-        [(SkinWhite, false)] = new Palette(
-            Accent: "#5B9BF2", AccentHover: "#4488EB", Glow: "#00C2E8", GlowSoft: "#E3F7FC",
-            Panel: "#FFFFFF", Side: "#F4F7FB", Border: "#D6E2F0", BorderHover: "#9DC0EC",
-            TextPrimary: "#151B26", TextSecondary: "#6B7686",
-            TileBlue: "#E3F7FC", TileIndigo: "#EAF1FF", TileGreen: "#E7F6EC", TileOrange: "#FFF1E3", TilePurple: "#F1E9FF",
-            SuccessText: "#1E9E4F", WarningText: "#D9822B", WarningBanner: "#FFF7E6", Danger: "#D64545", Divider: "#E0E0E0",
-            ButtonBackground: "#D3E6FC", ButtonHoverBackground: "#B9D8FA", ButtonForeground: "#0F3F8C"),
+        [(SkinWhite, false)] = WhiteLight,
 
         // 白色系-深：也就是原来独立的"黑色皮肤"，色相定位为中性/无色相的深色背景，
         // 跟"白色系"配对最自然（白色系本身强调色也是偏中性的科技蓝）。
-        [(SkinWhite, true)] = new Palette(
-            Accent: "#4C9AFF", AccentHover: "#6BAEFF", Glow: "#22D3F5", GlowSoft: "#1E3A4A",
-            Panel: "#20242B", Side: "#16191E", Border: "#454C57", BorderHover: "#5D6675",
-            TextPrimary: "#F2F4F8", TextSecondary: "#B7C0CC",
-            TileBlue: "#1C3547", TileIndigo: "#212D4A", TileGreen: "#1B4230", TileOrange: "#45311A", TilePurple: "#2E2448",
-            SuccessText: "#5FE092", WarningText: "#F5B565", WarningBanner: "#3D3220", Danger: "#F0716F", Divider: "#454C57",
-            ButtonBackground: "#2F4E70", ButtonHoverBackground: "#3C6088", ButtonForeground: "#E3F0FF"),
+        [(SkinWhite, true)] = WhiteDark,
 
         // ------- 蓝色系：浅色版比白色系更蓝一些，卡片背景带一点蓝灰而不是纯白 -------
         [(SkinBlue, false)] = new Palette(
@@ -482,6 +495,14 @@ public static class ThemeService
             TileBlue: "#1E3440", TileIndigo: "#20293E", TileGreen: "#1C2E28", TileOrange: "#2A2620", TilePurple: "#242238",
             SuccessText: "#5FE092", WarningText: "#F0B368", WarningBanner: "#2A2620", Danger: "#EE7E7C", Divider: "#374854",
             ButtonBackground: "#28404C", ButtonHoverBackground: "#345060", ButtonForeground: "#DCEEF6"),
+
+        // ------- 彩蛋皮肤：全部复用白色系配色 -------
+        [(SkinEggNote, false)] = WhiteLight,      [(SkinEggNote, true)] = WhiteDark,
+        [(SkinEggDisco, false)] = WhiteLight,     [(SkinEggDisco, true)] = WhiteDark,
+        [(SkinEggWheelchair, false)] = WhiteLight,[(SkinEggWheelchair, true)] = WhiteDark,
+        [(SkinEggDance, false)] = WhiteLight,     [(SkinEggDance, true)] = WhiteDark,
+        [(SkinEggCantWin, false)] = WhiteLight,   [(SkinEggCantWin, true)] = WhiteDark,
+        [(SkinEggBug, false)] = WhiteLight,       [(SkinEggBug, true)] = WhiteDark,
     };
 
     /// <summary>
@@ -658,6 +679,12 @@ public static class ThemeService
         SkinAlabaster => "云杉白（高级）",
         SkinGlacier => "冰晶白（高级）",
         SkinDark => "黑色",
+        SkinEggNote => "注意：此按钮以及以下的按钮均为彩蛋，均为白色系",
+        SkinEggDisco => "(彩蛋)雷霆动物集体蹦迪",
+        SkinEggWheelchair => "(彩蛋)轮椅老头鬼火漂移",
+        SkinEggDance => "(彩蛋)隔壁的正太靠扭腰吸引了很多**",
+        SkinEggCantWin => "(彩蛋)我们都扭不过他",
+        SkinEggBug => "(彩蛋)（正在被bug改疯）",
         _ => skin
     };
 }

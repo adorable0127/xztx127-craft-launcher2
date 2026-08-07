@@ -273,6 +273,70 @@ public class ClientLoaderInstallService : IDisposable
     }
 
     /// <summary>
+    /// 修复"安装 Fabric/Quilt 报 404"的第二处根因（第一处是 GetFabricLoaderVersionsAsync 已经
+    /// 修过的"全量列表 vs 按版本查交集"）：即使下拉框当时给的是正确的交集列表，UI 层仍然可能把
+    /// 一个跟当前 mcVersion 不匹配的 loaderVersion 传进安装方法——常见诱因包括用户切换 MC 版本后
+    /// 下拉框没来得及刷新就点了安装、缓存的旧选择、或者手动传参调用。旧实现对这种情况完全不做
+    /// 校验，直接拿 (mcVersion, loaderVersion) 去拼 profile/json，遇到不存在的交集就是日志里那条
+    /// "Fabric 没有这个组合的安装信息" 404。
+    ///
+    /// 这里加一层自动匹配兜底：先按 mcVersion 查一次真正的 loader 交集列表，如果调用方传入的版本
+    /// 不在里面，不再直接报错，而是自动换成交集列表里最新的稳定版（找不到稳定版就退到列表第一项，
+    /// 即 Meta 按新到旧排序的最新构建）重试，并通过 progress 告知用户发生了自动切换——用户仍然
+    /// 能看到实际装的是哪个版本，而不是静默换掉又不说一声。
+    /// </summary>
+    /// <param name="metaBase">Fabric 用 FabricMetaBase，Quilt 用 QuiltMetaBase。</param>
+    /// <param name="loaderLabel">仅用于进度提示文案，"Fabric" 或 "Quilt"。</param>
+    private async Task<string> ResolveLoaderVersionOrAutoMatchAsync(string metaBase, string loaderLabel,
+        string mcVersion, string requestedLoaderVersion, IProgress<ProgressInfo>? progress, CancellationToken ct)
+    {
+        var url = $"{metaBase}/versions/loader/{Uri.EscapeDataString(mcVersion.Trim())}";
+        string json;
+        try
+        {
+            json = await _http.GetStringAsync(url, ct);
+        }
+        catch (HttpRequestException ex) when (ex.StatusCode == System.Net.HttpStatusCode.NotFound)
+        {
+            // 这个 MC 版本在该加载器那边压根没有任何交集条目，自动匹配也无从谈起，
+            // 直接给出跟 GetFabricLoaderVersionsAsync 一致的友好提示。
+            throw new InvalidOperationException(
+                $"{loaderLabel} 目前还没有为 Minecraft {mcVersion} 发布 Loader，无法安装。\n" +
+                "可以换一个 MC 版本，或者过几天等官方更新后再试。", ex);
+        }
+
+        using var doc = JsonDocument.Parse(json);
+        // (版本号, 是否稳定版) 的有序列表——Meta 接口本身就按新到旧排序，这里保持原始顺序，
+        // "取第一个稳定版" 天然就是"支持这个 MC 版本的最高稳定版"，不需要额外做版本号比较。
+        var candidates = new List<(string Version, bool Stable)>();
+        foreach (var v in doc.RootElement.EnumerateArray())
+        {
+            var node = v.TryGetProperty("loader", out var loaderNode) ? loaderNode : v;
+            if (!node.TryGetProperty("version", out var verEl)) continue;
+            var ver = verEl.GetString();
+            if (string.IsNullOrEmpty(ver)) continue;
+            var stable = node.TryGetProperty("stable", out var stableEl) && stableEl.GetBoolean();
+            candidates.Add((ver, stable));
+        }
+
+        if (candidates.Count == 0)
+            throw new InvalidOperationException(
+                $"{loaderLabel} 没有返回任何适用于 Minecraft {mcVersion} 的 Loader 版本，无法继续安装。");
+
+        if (candidates.Any(c => c.Version == requestedLoaderVersion))
+            return requestedLoaderVersion;
+
+        // 请求的版本不在当前 MC 版本的交集里——自动换成最高的稳定版（拿不到稳定版就退到列表
+        // 第一项）。不直接抛异常，这正是"自动匹配功能：自动安装适合版本的最高版本"这个需求要的行为。
+        var fallback = candidates.FirstOrDefault(c => c.Stable).Version ?? candidates[0].Version;
+        progress?.Report(new ProgressInfo(
+            $"{loaderLabel} Loader {requestedLoaderVersion} 不支持 Minecraft {mcVersion}，" +
+            $"已自动改用兼容的最高版本 {fallback}",
+            0, 1, fallback));
+        return fallback;
+    }
+
+    /// <summary>
     /// 安装 Fabric 客户端到 .minecraft/versions/{versionId}/。
     /// 步骤：1) 先确保原版父版本已安装（Fabric json 靠 inheritsFrom 引用它，父版本缺失会导致启动失败）；
     /// 2) 直接下载 Fabric Meta 提供的现成客户端 profile json；3) 按 json 里的 libraries 列表补下依赖库
@@ -302,6 +366,12 @@ public class ClientLoaderInstallService : IDisposable
                 ?? throw new InvalidOperationException($"在版本清单中找不到 MC 版本 {mcVersion}，无法安装 Fabric 所需的原版父版本。");
             await _vanillaDownloader.InstallVersionAsync(minecraftDir, entry, progress, ct);
         }
+
+        // 1.5 校验 loaderVersion 是否真的支持这个 mcVersion，不支持就自动换成兼容的最高版本
+        //     （见 ResolveLoaderVersionOrAutoMatchAsync 注释：修复"选了不兼容的 Loader 版本导致
+        //     profile/json 404"）。这一步必须在下面拼 profile url 之前做，否则还是会 404。
+        loaderVersion = await ResolveLoaderVersionOrAutoMatchAsync(
+            FabricMetaBase, "Fabric", mcVersion, loaderVersion, progress, ct);
 
         // 2. 拉取 installer 版本（取最新稳定版，用户不需要关心这个号）
         progress?.Report(new ProgressInfo("查询 Fabric installer 版本", 0, 1, loaderVersion));
@@ -468,6 +538,11 @@ public class ClientLoaderInstallService : IDisposable
                 ?? throw new InvalidOperationException($"在版本清单中找不到 MC 版本 {mcVersion}，无法安装 Quilt 所需的原版父版本。");
             await _vanillaDownloader.InstallVersionAsync(minecraftDir, entry, progress, ct);
         }
+
+        // 1.5 同 InstallFabricClientAsync：校验 loaderVersion 是否真的支持这个 mcVersion，
+        //     不支持就自动换成兼容的最高版本，避免下面拼 profile url 时 404。
+        loaderVersion = await ResolveLoaderVersionOrAutoMatchAsync(
+            QuiltMetaBase, "Quilt", mcVersion, loaderVersion, progress, ct);
 
         // 2. 下载现成的客户端 profile json（Quilt Meta 直接给完整 json，跟 Fabric 一样不需要
         // 本地跑安装器；路径里没有 installer 版本这一段，见方法上方注释）。

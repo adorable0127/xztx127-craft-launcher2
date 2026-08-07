@@ -302,8 +302,51 @@ public partial class App : Application
             string s => $" -> \"{s}\"",
             ComboBoxItem { Content: string s } => $" -> \"{s}\"",
             FrameworkElement fe when !string.IsNullOrWhiteSpace(fe.Name) => $" -> {fe.GetType().Name}#{fe.Name}",
-            _ => $" -> {selector.SelectedItem.GetType().Name}"
+            // 匿名类型（例如 ComboBox 里装 new { Label, Version } 的选项）没有有意义的 ToString，
+            // 默认反射显示它的真实属性名，比 GetType().Name 那种 <>f__AnonymousType 有用得多。
+            _ => $" -> {DescribeAnonymousType(selector.SelectedItem)}"
         };
+    }
+
+    /// <summary>反射列出匿名类型的属性，形如 { Label = xxx, Version = ... }；普通类型则显示类型名。</summary>
+    private static string DescribeAnonymousType(object item)
+    {
+        var t = item.GetType();
+        if (!IsAnonymousType(t))
+            return t.Name;
+
+        var props = t.GetProperties();
+        if (props.Length == 0) return t.Name;
+
+        var parts = props.Select(p =>
+        {
+            try
+            {
+                var v = p.GetValue(item);
+                return $"{p.Name} = {DescribeValue(v)}";
+            }
+            catch { return $"{p.Name} = <获取失败>"; }
+        });
+        return $"{{ {string.Join(", ", parts)} }}";
+    }
+
+    private static string DescribeValue(object? value)
+    {
+        return value switch
+        {
+            null => "null",
+            string s => $"\"{s}\"",
+            Selector sel => DescribeSelectedValue(sel),
+            _ => value.ToString() ?? ""
+        };
+    }
+
+    private static bool IsAnonymousType(Type t)
+    {
+        // 编译器生成的匿名类型：C# 是 <>f__AnonymousType...，VB 是 VB$AnonymousType...
+        return t.IsGenericType
+            && (t.Name.StartsWith("<>f__AnonymousType", StringComparison.Ordinal)
+                || t.Name.StartsWith("VB$AnonymousType", StringComparison.Ordinal));
     }
 
     /// <summary>

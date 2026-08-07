@@ -1292,8 +1292,11 @@ public partial class DownloadCenterPage : UserControl
             string path;
             if (entry.Source == ModSource.Modrinth)
             {
+                // 用户已选定最终目录（数据包不弹选目录、必须留在存档 datapacks 下，保持拼接）；
+                // 材质包/光影包选了别的目录就直接落进那个目录，不再套一层分类子文件夹。
                 path = await _modrinth.DownloadResourceAsync(effectiveDir, _currentResourceType,
-                    (ModrinthVersion)entry.RawVersion, progress, item.IsDataPack ? item.SelectedSaveName : null);
+                    (ModrinthVersion)entry.RawVersion, progress, item.IsDataPack ? item.SelectedSaveName : null,
+                    appendCategorySubdir: !item.IsDataPack);
             }
             else
             {
@@ -1305,7 +1308,8 @@ public partial class DownloadCenterPage : UserControl
                     _ => throw new ArgumentOutOfRangeException()
                 };
                 path = await GetCurseForge().DownloadResourceAsync(effectiveDir, kind,
-                    (CurseForgeFile)entry.RawVersion, progress, item.IsDataPack ? item.SelectedSaveName : null);
+                    (CurseForgeFile)entry.RawVersion, progress, item.IsDataPack ? item.SelectedSaveName : null,
+                    appendCategorySubdir: !item.IsDataPack);
             }
             _owner.EnsureVisibleForDialog();
             MessageBoxDialog.ShowSuccess($"下载完成：\n{path}");
@@ -1815,9 +1819,11 @@ public partial class DownloadCenterPage : UserControl
             var progress = new Progress<string>(msg => progressWin.Progress.Report(new ProgressInfo(Loc.T("Str_Cs_Downloading", "下载中"), 0, 1, msg)));
             string path;
             if (entry.Source == ModSource.Modrinth)
-                path = await _modrinth.DownloadResourceAsync(targetDir, ModrinthResourceType.Mod, (ModrinthVersion)entry.RawVersion, progress);
+                path = await _modrinth.DownloadResourceAsync(targetDir, ModrinthResourceType.Mod, (ModrinthVersion)entry.RawVersion, progress,
+                    appendCategorySubdir: false);
             else
-                path = await GetCurseForge().DownloadModAsync(targetDir, (CurseForgeFile)entry.RawVersion, progress);
+                path = await GetCurseForge().DownloadModAsync(targetDir, (CurseForgeFile)entry.RawVersion, progress,
+                    appendCategorySubdir: false);
             _owner.EnsureVisibleForDialog();
             MessageBoxDialog.ShowSuccess($"Mod 已安装到：\n{path}");
         }
@@ -1994,7 +2000,10 @@ public partial class DownloadCenterPage : UserControl
         try
         {
             var progress = new Progress<string>(msg => progressWin.Progress.Report(new ProgressInfo(Loc.T("Str_Cs_Downloading", "下载中"), 0, 1, msg)));
-            var path = await GetCurseForge().DownloadMapAsync(folderPath, (CurseForgeFile)entry.RawVersion, progress);
+            // 用户选定的目录就是最终落点：地图压缩包直接解压进这个目录（zip 内世界文件夹就地展开），
+            // 不再在所选目录下套一层 saves/（见 CurseForgeService.DownloadMapAsync 的 appendCategorySubdir 参数）。
+            var path = await GetCurseForge().DownloadMapAsync(folderPath, (CurseForgeFile)entry.RawVersion, progress,
+                appendCategorySubdir: false);
             _owner.EnsureVisibleForDialog();
             MessageBoxDialog.ShowSuccess($"地图已下载到：\n{path}");
         }

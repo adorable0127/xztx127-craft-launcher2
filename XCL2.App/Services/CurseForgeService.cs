@@ -173,10 +173,12 @@ public class CurseForgeService
     /// 不需要像数据包那样指定目标存档（地图本身就是新建一个独立存档）。
     /// </summary>
     public async Task<string> DownloadMapAsync(string minecraftDir, CurseForgeFile file,
-        IProgress<string>? progress, CancellationToken ct = default)
+        IProgress<string>? progress, CancellationToken ct = default, bool appendCategorySubdir = true)
     {
-        var savesDir = Path.Combine(minecraftDir, "saves");
-        Directory.CreateDirectory(savesDir);
+        // appendCategorySubdir=false：调用方（下载中心的"选择保存目录"）给的目录就是最终落点，
+        // 地图压缩包直接解压到这个目录里（zip 内的世界文件夹就地展开），不再拼接 saves/ 子目录。
+        var targetDir = appendCategorySubdir ? Path.Combine(minecraftDir, "saves") : minecraftDir;
+        Directory.CreateDirectory(targetDir);
 
         var tmpZip = Path.Combine(Path.GetTempPath(), $"xcl2_map_{Guid.NewGuid():N}.zip");
         try
@@ -189,9 +191,9 @@ public class CurseForgeService
             }
 
             progress?.Report("解压存档 ...");
-            System.IO.Compression.ZipFile.ExtractToDirectory(tmpZip, savesDir, overwriteFiles: true);
+            System.IO.Compression.ZipFile.ExtractToDirectory(tmpZip, targetDir, overwriteFiles: true);
             progress?.Report("安装完成");
-            return savesDir;
+            return targetDir;
         }
         finally
         {
@@ -204,9 +206,9 @@ public class CurseForgeService
     /// 不需要解压，原样放进 mods 目录即可。
     /// </summary>
     public async Task<string> DownloadModAsync(string minecraftDir, CurseForgeFile file,
-        IProgress<string>? progress, CancellationToken ct = default)
+        IProgress<string>? progress, CancellationToken ct = default, bool appendCategorySubdir = true)
     {
-        var modsDir = Path.Combine(minecraftDir, "mods");
+        var modsDir = appendCategorySubdir ? Path.Combine(minecraftDir, "mods") : minecraftDir;
         Directory.CreateDirectory(modsDir);
         var destPath = Path.Combine(modsDir, file.FileName);
         var tmp = destPath + ".tmp";
@@ -239,10 +241,16 @@ public class CurseForgeService
     /// 文件本身直接落地，不解压。
     /// </summary>
     public async Task<string> DownloadResourceAsync(string minecraftDir, CurseForgeResourceKind kind,
-        CurseForgeFile file, IProgress<string>? progress, string? saveName = null, CancellationToken ct = default)
+        CurseForgeFile file, IProgress<string>? progress, string? saveName = null, CancellationToken ct = default,
+        bool appendCategorySubdir = true)
     {
         string destDir;
-        if (kind == CurseForgeResourceKind.DataPack)
+        if (!appendCategorySubdir)
+        {
+            // 用户已指定最终目录（下载中心"选择保存目录"）：文件直接存进该目录，不拼接分类子目录。
+            destDir = minecraftDir;
+        }
+        else if (kind == CurseForgeResourceKind.DataPack)
         {
             if (string.IsNullOrWhiteSpace(saveName))
                 throw new InvalidOperationException("数据包必须安装到具体的存档里，请先选择一个存档。");

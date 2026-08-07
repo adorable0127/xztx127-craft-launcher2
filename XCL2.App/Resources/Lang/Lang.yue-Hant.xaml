@@ -47,6 +47,8 @@
     <system:String x:Key="Str_Nav_Experimental">實驗性功能</system:String>
     <system:String x:Key="Str_Nav_Toolbox">百寶箱</system:String>
     <system:String x:Key="Str_Nav_AboutHelp">鳴謝與幫助</system:String>
+    <system:String x:Key="Str_Nav_Bedrock">實驗-基巖版</system:String>
+    <system:String x:Key="Str_Ui_Bedrock_Page_Subtitle">喺呢度啟動基巖版客戶端、匯入內容，同管理基巖版專用伺服器。</system:String>
     <system:String x:Key="Str_Settings_LanguageSection_Title">啟動器介面語言</system:String>
     <system:String x:Key="Str_Settings_LanguageSection_Hint">揀完即刻生效，唔使重新啟動啟動器；呢度揀嘅係「啟動器介面」用嘅語言，同下面「遊戲內語言」係兩回事。</system:String>
     <system:String x:Key="Str_Settings_LanguageSection_OpenPicker">🌐 揀語言</system:String>
@@ -864,4 +866,5 @@
     <system:String x:Key="Str_Cs_No_Data_Folder_Yet">還沒有資料目錄</system:String>
     <system:String x:Key="Str_Cs_Import_Complete_2">匯入完成</system:String>
     <system:String x:Key="Str_Ui_Full_Launcher_Log">完整啟動器日誌</system:String>
+    <system:String x:Key="Str_Ui_Open_In_Independent_Window">喺獨立視窗開啟</system:String>
 </ResourceDictionary>
