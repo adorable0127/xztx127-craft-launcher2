@@ -40,15 +40,37 @@ public partial class VersionSelectPage : UserControl
     {
         _installed.Clear();
         var folder = FolderListBox.SelectedItem as GameFolder;
-        if (folder == null || string.IsNullOrEmpty(folder.Path) || !Directory.Exists(folder.Path)) return;
+        if (folder == null || string.IsNullOrEmpty(folder.Path) || !Directory.Exists(folder.Path))
+        {
+            ShowHiddenInstancesBtn.Visibility = Visibility.Collapsed;
+            return;
+        }
         try
         {
-            foreach (var v in _folderService.ScanVersions(folder.Path)) _installed.Add(v);
+            var cfg = _owner.ConfigService.Config;
+            foreach (var v in _folderService.ScanVersions(folder.Path))
+            {
+                // "从列表中删除"的实例：文件还在磁盘上，只是不出现在这个列表里。
+                if (InstanceDeletionService.IsHidden(cfg, folder.Path, v.Id)) continue;
+                _installed.Add(v);
+            }
         }
         catch (Exception ex)
         {
             MessageBoxDialog.ShowWarning("扫描已安装版本失败：\n" + ex.Message, Loc.T("Str_Cs_Error", "错误"));
         }
+
+        RefreshHiddenInstancesButtonVisibility(folder.Path);
+    }
+
+    /// <summary>当前文件夹下只要有一个隐藏实例，就显示"已隐藏的实例..."入口，否则收起来，
+    /// 避免大多数从没用过这个功能的用户平时也要看到一个大概率用不上的按钮。</summary>
+    private void RefreshHiddenInstancesButtonVisibility(string folderPath)
+    {
+        var cfg = _owner.ConfigService.Config;
+        var prefix = InstanceDeletionService.BuildKey(folderPath, "");
+        var hasHidden = cfg.HiddenInstanceKeys.Any(k => k.StartsWith(prefix, StringComparison.OrdinalIgnoreCase));
+        ShowHiddenInstancesBtn.Visibility = hasHidden ? Visibility.Visible : Visibility.Collapsed;
     }
 
     private void FolderListBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -128,6 +150,148 @@ public partial class VersionSelectPage : UserControl
         }
     }
 
+    /// <summary>拿到 .minecraft 根目录路径：优先用当前选中的 GameFolder（左侧列表选中项），
+    /// 是当前页面里唯一的"当前文件夹"来源。</summary>
+    private string? GetSelectedFolderPath() => (FolderListBox.SelectedItem as GameFolder)?.Path;
+
+    /// <summary>右键菜单"重命名..."：本质是把 versions/&lt;旧id&gt; 目录改名，
+    /// 详见 InstanceDeletionService.Rename 的注释。</summary>
+    private void RenameInstance_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not MenuItem { Tag: GameVersion v }) return;
+        RenameInstance(v);
+    }
+
+    private void RenameInstance(GameVersion v)
+    {
+        var folderPath = GetSelectedFolderPath();
+        if (string.IsNullOrEmpty(folderPath)) return;
+
+        var dlg = new RenameInstanceDialog(
+            v.Id,
+            isNameTaken: candidate => candidate != v.Id &&
+                _installed.Any(other => other.Id != v.Id && string.Equals(other.Id, candidate, StringComparison.OrdinalIgnoreCase)),
+            title: "重命名实例");
+
+        if (OverlayDialogService.ShowModal(dlg) != true) return;
+
+        try
+        {
+            InstanceDeletionService.Rename(_owner.ConfigService.Config, folderPath, v.Id, dlg.NewName);
+            _owner.ConfigService.Save();
+            RefreshInstalledVersions();
+            var renamed = _installed.FirstOrDefault(i => string.Equals(i.Id, dlg.NewName, StringComparison.OrdinalIgnoreCase));
+            if (renamed != null) InstalledListBox.SelectedItem = renamed;
+        }
+        catch (Exception ex)
+        {
+            MessageBoxDialog.ShowError("重命名失败：\n" + ex.Message);
+        }
+    }
+
+    /// <summary>⚙️ 二级菜单 / 右键菜单"删除..."：先弹选择方式的弹窗(DeleteInstanceChoiceDialog)，
+    /// 用户选"从电脑中删除"时再追加一层 xztx127 确认，通过了才真正物理删除。</summary>
+    private void DeleteInstance_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not MenuItem { Tag: GameVersion v }) return;
+        DeleteInstance(v);
+    }
+
+    private void DeleteInstance(GameVersion v)
+    {
+        var folderPath = GetSelectedFolderPath();
+        if (string.IsNullOrEmpty(folderPath)) return;
+
+        var choiceDlg = new DeleteInstanceChoiceDialog(v.Id);
+        if (OverlayDialogService.ShowModal(choiceDlg) != true || choiceDlg.Choice == null) return;
+
+        var cfg = _owner.ConfigService.Config;
+
+        if (choiceDlg.Choice == DeleteInstanceChoiceDialog.DeleteChoice.RemoveFromList)
+        {
+            InstanceDeletionService.HideFromList(cfg, folderPath, v.Id);
+            cfg.SelectedVersionId = null;
+            _owner.ConfigService.Save();
+            _owner.RefreshSidebar();
+            RefreshInstalledVersions();
+            return;
+        }
+
+        // 从电脑中删除：物理删除，需要再过一道 xztx127 确认码，不可撤销。
+        var confirmDlg = new DangerousConfirmDialog(
+            "从电脑中删除实例",
+            $"将彻底删除「{v.Id}」这个实例目录下的所有文件（存档、mod、资源包、日志等），此操作不可撤销。");
+        if (OverlayDialogService.ShowModal(confirmDlg) != true || !confirmDlg.Confirmed) return;
+
+        try
+        {
+            InstanceDeletionService.DeletePermanently(cfg, folderPath, v.Id);
+            _owner.ConfigService.Save();
+            _owner.RefreshSidebar();
+            RefreshInstalledVersions();
+        }
+        catch (Exception ex)
+        {
+            MessageBoxDialog.ShowError("删除失败：\n" + ex.Message);
+        }
+    }
+
+    /// <summary>"已隐藏的实例..."入口：列出当前文件夹下所有被"从列表中删除"的实例 id，
+    /// 逐条支持"取消隐藏"重新出现在主列表。用最简单的方式实现——复用 MessageBoxDialog
+    /// 之外没有专门做一个列表弹窗的必要，这里手写一个轻量 Overlay 内容更直观。</summary>
+    private void ShowHiddenInstances_Click(object sender, RoutedEventArgs e)
+    {
+        var folderPath = GetSelectedFolderPath();
+        if (string.IsNullOrEmpty(folderPath)) return;
+
+        var cfg = _owner.ConfigService.Config;
+        var prefix = InstanceDeletionService.BuildKey(folderPath, "");
+        var hiddenIds = cfg.HiddenInstanceKeys
+            .Where(k => k.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+            .Select(k => k.Substring(prefix.Length))
+            .ToList();
+
+        if (hiddenIds.Count == 0)
+        {
+            RefreshHiddenInstancesButtonVisibility(folderPath);
+            return;
+        }
+
+        var dlg = new HiddenInstancesDialog(hiddenIds);
+        if (OverlayDialogService.ShowModal(dlg) != true) return;
+
+        foreach (var id in dlg.UnhiddenIds)
+            InstanceDeletionService.UnhideFromList(cfg, folderPath, id);
+
+        if (dlg.UnhiddenIds.Count > 0)
+        {
+            _owner.ConfigService.Save();
+            RefreshInstalledVersions();
+        }
+    }
+
+    /// <summary>实例条目右侧⚙️图标：点击不再直接进设置，而是弹出它的二级菜单
+    /// （版本设置/重命名/删除），设置入口从菜单里进。</summary>
+    private void OpenInstanceSettingsMenu_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button btn || btn.ContextMenu == null) return;
+        btn.ContextMenu.PlacementTarget = btn;
+        btn.ContextMenu.IsOpen = true;
+    }
+
+    /// <summary>⚙️ 二级菜单"版本设置..."：弹出这个实例的独立设置弹窗(InstanceSettingsDialog)。</summary>
+    private void OpenInstanceSettings_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not MenuItem { Tag: GameVersion v }) return;
+        var folderPath = GetSelectedFolderPath();
+        if (string.IsNullOrEmpty(folderPath)) return;
+
+        var dlg = new InstanceSettingsDialog(_owner, folderPath, v);
+        if (OverlayDialogService.ShowModal(dlg) != true) return;
+
+        _owner.RefreshSidebar();
+    }
+
     private void InstalledListBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (InstalledListBox.SelectedItem is GameVersion v)
@@ -135,132 +299,115 @@ public partial class VersionSelectPage : UserControl
             _owner.ConfigService.Config.SelectedVersionId = v.Id;
             _owner.ConfigService.Save();
             _owner.RefreshSidebar();
-            LoadPerVersionSettings(v.Id);
-        }
-        else
-        {
-            PerVersionSettingsPanel.Visibility = Visibility.Collapsed;
         }
     }
 
-    /// <summary>选中某个已安装版本时，把这个版本已有的"Java 版本覆盖"/"版本隔离覆盖"设置
-    /// 加载到面板控件上，方便用户看到当前状态并修改。</summary>
-    private void LoadPerVersionSettings(string versionId)
+    // ============================================================
+    // 游戏文件夹：设置菜单（打开/重命名/设为默认/删除）
+    // ============================================================
+
+    /// <summary>文件夹条目右侧⚙️图标：点击弹出它的二级菜单。</summary>
+    private void FolderSettingsMenu_Click(object sender, RoutedEventArgs e)
     {
-        var cfg = _owner.ConfigService.Config;
-        PerVersionTitleText.Text = $"「{versionId}」的单独设置";
-
-        VersionJavaListCombo.Items.Clear();
-        VersionJavaListCombo.Items.Add(new JavaListItem { Entry = null }); // "（不指定）"
-        foreach (var j in cfg.InstalledJavas) VersionJavaListCombo.Items.Add(new JavaListItem { Entry = j });
-        var selectedJavaId = cfg.VersionJavaIdOverrides.TryGetValue(versionId, out var jid) ? jid : null;
-        VersionJavaListCombo.SelectedItem = VersionJavaListCombo.Items.Cast<JavaListItem>()
-            .FirstOrDefault(i => i.Entry?.Id == selectedJavaId) ?? VersionJavaListCombo.Items[0];
-
-        VersionJavaOverrideBox.Text = cfg.VersionJavaOverrides.TryGetValue(versionId, out var javaOverride) && javaOverride > 0
-            ? javaOverride.ToString()
-            : "";
-
-        // 临时挂起 Checked/Unchecked 事件处理，避免加载时的赋值触发一次多余的"改动但未保存"提示。
-        VersionIsolationOverrideCheck.Checked -= VersionIsolationOverrideCheck_Changed;
-        VersionIsolationOverrideCheck.Unchecked -= VersionIsolationOverrideCheck_Changed;
-        VersionIsolationOverrideCheck.IsChecked = cfg.VersionIsolationOverrides.TryGetValue(versionId, out var isolate)
-            ? isolate
-            : cfg.IsolateVersionsByDefault;
-        VersionIsolationOverrideCheck.Checked += VersionIsolationOverrideCheck_Changed;
-        VersionIsolationOverrideCheck.Unchecked += VersionIsolationOverrideCheck_Changed;
-
-        VersionResourcePackIsolationOverrideCheck.Checked -= VersionResourcePackIsolationOverrideCheck_Changed;
-        VersionResourcePackIsolationOverrideCheck.Unchecked -= VersionResourcePackIsolationOverrideCheck_Changed;
-        VersionResourcePackIsolationOverrideCheck.IsChecked = cfg.VersionResourcePackIsolationOverrides.TryGetValue(versionId, out var resIsolate)
-            ? resIsolate
-            : cfg.IsolateResourcePacksByDefault;
-        VersionResourcePackIsolationOverrideCheck.Checked += VersionResourcePackIsolationOverrideCheck_Changed;
-        VersionResourcePackIsolationOverrideCheck.Unchecked += VersionResourcePackIsolationOverrideCheck_Changed;
-
-        // "开启后进入某某某服务器"：字典里有这个版本的 key 且值非空白，就是开启状态，
-        // 回显已保存的地址；否则视为关闭，地址框显示为空。
-        AutoJoinServerCheck.Checked -= AutoJoinServerCheck_Changed;
-        AutoJoinServerCheck.Unchecked -= AutoJoinServerCheck_Changed;
-        var hasAutoJoin = cfg.VersionAutoJoinServer.TryGetValue(versionId, out var autoJoinAddr)
-            && !string.IsNullOrWhiteSpace(autoJoinAddr);
-        AutoJoinServerCheck.IsChecked = hasAutoJoin;
-        AutoJoinServerAddressBox.Text = hasAutoJoin ? autoJoinAddr : "";
-        AutoJoinServerAddressBox.IsEnabled = hasAutoJoin;
-        AutoJoinServerCheck.Checked += AutoJoinServerCheck_Changed;
-        AutoJoinServerCheck.Unchecked += AutoJoinServerCheck_Changed;
-
-        PerVersionSettingsPanel.Visibility = Visibility.Visible;
+        if (sender is not Button btn || btn.ContextMenu == null) return;
+        btn.ContextMenu.PlacementTarget = btn;
+        btn.ContextMenu.IsOpen = true;
     }
 
-    /// <summary>勾选/取消"开启后进入某某某服务器"时，只联动地址输入框是否可编辑，
-    /// 真正写入配置同样统一在"保存这个版本的设置"时处理，跟其它按版本设置的勾选框行为一致。</summary>
-    private void AutoJoinServerCheck_Changed(object sender, RoutedEventArgs e)
+    /// <summary>菜单"打开文件夹"：用资源管理器打开这个 .minecraft 目录。</summary>
+    private void OpenFolder_Click(object sender, RoutedEventArgs e)
     {
-        AutoJoinServerAddressBox.IsEnabled = AutoJoinServerCheck.IsChecked == true;
-    }
-
-    private void VersionIsolationOverrideCheck_Changed(object sender, RoutedEventArgs e)
-    {
-        // 复选框状态变化只更新界面上的选中态，真正写入配置在点击"保存这个版本的设置"时统一处理，
-        // 避免每次勾选/取消都触发一次磁盘写入。
-    }
-
-    /// <summary>同上：资源包隔离覆盖勾选框状态变化不立即写盘，统一在"保存这个版本的设置"时处理。</summary>
-    private void VersionResourcePackIsolationOverrideCheck_Changed(object sender, RoutedEventArgs e)
-    {
-    }
-
-    /// <summary>把当前面板上的"Java 版本覆盖"/"版本隔离覆盖"写回配置并保存。</summary>
-    private void SavePerVersionSettings_Click(object sender, RoutedEventArgs e)
-    {
-        if (InstalledListBox.SelectedItem is not GameVersion v) return;
-        var cfg = _owner.ConfigService.Config;
-
-        var selectedJava = (VersionJavaListCombo.SelectedItem as JavaListItem)?.Entry;
-        if (selectedJava != null)
-            cfg.VersionJavaIdOverrides[v.Id] = selectedJava.Id;
-        else
-            cfg.VersionJavaIdOverrides.Remove(v.Id); // "（不指定）" = 移除，改走下面的主版本号/自动匹配逻辑
-
-        var javaText = VersionJavaOverrideBox.Text.Trim();
-        if (javaText.Length == 0)
+        if (sender is not MenuItem { Tag: GameFolder f }) return;
+        if (string.IsNullOrEmpty(f.Path) || !Directory.Exists(f.Path))
         {
-            cfg.VersionJavaOverrides.Remove(v.Id); // 留空 = 恢复自动匹配
+            MessageBoxDialog.ShowWarning("文件夹路径不存在：\n" + f.Path, Loc.T("Str_Cs_Error", "错误"));
+            return;
         }
-        else if (int.TryParse(javaText, out var javaMajor) && javaMajor is >= 8 and <= 99)
+        try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("explorer.exe", f.Path) { UseShellExecute = true }); }
+        catch (Exception ex) { MessageBoxDialog.ShowError($"打开文件夹失败：{ex.Message}"); }
+    }
+
+    /// <summary>菜单"重命名文件夹..."：只改列表里的显示名（GameFolder.Name），不改磁盘目录名。</summary>
+    private void RenameFolder_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not MenuItem { Tag: GameFolder f }) return;
+        var dlg = new RenameInstanceDialog(
+            f.Name,
+            candidate => _folders.Any(other => !ReferenceEquals(other, f) && string.Equals(other.Name, candidate, StringComparison.OrdinalIgnoreCase)),
+            title: "重命名文件夹");
+        if (OverlayDialogService.ShowModal(dlg) != true) return;
+        f.Name = dlg.NewName;
+        _owner.ConfigService.Save();
+        FolderListBox.Items.Refresh();   // GameFolder 没有属性变更通知，手动刷新让显示名跟上来
+    }
+
+    /// <summary>菜单"设为默认文件夹"：把目标文件夹的 IsDefault 置 true，其余全部置 false。</summary>
+    private void SetDefaultFolder_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not MenuItem { Tag: GameFolder f }) return;
+        if (f.IsDefault) return;
+        foreach (var other in _folders) other.IsDefault = ReferenceEquals(other, f);
+        _owner.ConfigService.Save();
+        FolderListBox.Items.Refresh();   // 刷新"（默认）"角标
+    }
+
+    /// <summary>菜单"删除文件夹（从列表中移除）"：只从配置列表移除，不删磁盘文件。</summary>
+    private void RemoveFolder_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not MenuItem { Tag: GameFolder f }) return;
+        if (!MessageBoxDialog.ShowConfirm(
+            $"确定要将文件夹「{f.Name}」从列表中移除吗？\n（不会删除磁盘上的任何文件，之后仍可通过「添加已有文件夹」重新加入。）",
+            "移除文件夹")) return;
+
+        RemoveFolderFromLists(f);
+        if (FolderListBox.SelectedItem == null)
+            FolderListBox.SelectedItem = _folders.FirstOrDefault();
+    }
+
+    /// <summary>菜单"直接删除文件夹（从电脑中删除）"：物理删除整个目录，必须输入 xztx127 确认。</summary>
+    private void DeleteFolderFromDisk_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not MenuItem { Tag: GameFolder f }) return;
+        if (!Directory.Exists(f.Path))
         {
-            cfg.VersionJavaOverrides[v.Id] = javaMajor;
-        }
-        else
-        {
-            MessageBoxDialog.ShowWarning("Java 版本请填一个数字(如 8、17、21、25)，或留空使用自动匹配。",
-                Loc.T("Str_Cs_Invalid_Input", "输入有误"));
+            MessageBoxDialog.ShowWarning("文件夹路径不存在，无法从电脑中删除：\n" + f.Path, Loc.T("Str_Cs_Error", "错误"));
             return;
         }
 
-        cfg.VersionIsolationOverrides[v.Id] = VersionIsolationOverrideCheck.IsChecked == true;
-        cfg.VersionResourcePackIsolationOverrides[v.Id] = VersionResourcePackIsolationOverrideCheck.IsChecked == true;
+        var confirmDlg = new DangerousConfirmDialog(
+            "从电脑中删除文件夹",
+            $"将彻底删除「{f.Name}」文件夹下的所有内容（存档、mod、资源包、版本文件等）：\n{f.Path}\n\n此操作不可撤销！");
+        if (OverlayDialogService.ShowModal(confirmDlg) != true || !confirmDlg.Confirmed) return;
 
-        if (AutoJoinServerCheck.IsChecked == true)
+        try
         {
-            var addr = AutoJoinServerAddressBox.Text.Trim();
-            if (addr.Length == 0)
-            {
-                MessageBoxDialog.ShowWarning("已勾选「开启后进入某某某服务器」，请填写服务器地址（例如 play.example.com），或取消勾选。",
-                    Loc.T("Str_Cs_Invalid_Input", "输入有误"));
-                return;
-            }
-            cfg.VersionAutoJoinServer[v.Id] = addr;
+            Directory.Delete(f.Path, recursive: true);
+            RemoveFolderFromLists(f);
+            if (FolderListBox.SelectedItem == null)
+                FolderListBox.SelectedItem = _folders.FirstOrDefault();
+            MessageBoxDialog.ShowInfo($"已从电脑中删除文件夹：\n{f.Path}", "删除完成");
         }
-        else
+        catch (Exception ex)
         {
-            cfg.VersionAutoJoinServer.Remove(v.Id);
+            MessageBoxDialog.ShowError("删除文件夹失败：\n" + ex.Message);
         }
+    }
 
-        cfg.SelectedVersionId = v.Id;
+    /// <summary>把文件夹从配置列表和当前列表里移除；如果移除的是当前选中的文件夹，
+    /// 顺便清掉 SelectedFolderPath/SelectedVersionId 并刷新侧边栏与版本列表。</summary>
+    private void RemoveFolderFromLists(GameFolder f)
+    {
+        var cfg = _owner.ConfigService.Config;
+        cfg.Folders.Remove(f);
+        _folders.Remove(f);
+        if (cfg.SelectedFolderPath == f.Path)
+        {
+            cfg.SelectedFolderPath = null;
+            cfg.SelectedVersionId = null;
+        }
         _owner.ConfigService.Save();
-        MessageBoxDialog.ShowInfo($"已保存「{v.Id}」的单独设置。", "已保存");
+        _owner.RefreshSidebar();
+        RefreshInstalledVersions();
     }
 
 }

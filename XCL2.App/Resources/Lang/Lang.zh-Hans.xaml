@@ -22,7 +22,7 @@
     <system:String x:Key="Str_Home_Toggle_AutoCycle">自动循环</system:String>
     <system:String x:Key="Str_Home_Toggle_AutoCycleOn">自动循环：已开启</system:String>
     <system:String x:Key="Str_Home_Toggle_NormalMode">普通模式</system:String>
-    <system:String x:Key="Str_Home_Toggle_ExpertMode">专家模式</system:String>
+    <system:String x:Key="Str_Home_Toggle_ExpertMode">高级模式</system:String>
     <system:String x:Key="Str_Home_Toggle_GuestMode">访客模式</system:String>
     <system:String x:Key="Str_Home_Toggle_GuestModeOn">访客模式：已开启</system:String>
         <system:String x:Key="Str_Home_Tile_Account_Title">账户登录</system:String>
@@ -524,6 +524,7 @@
     <system:String x:Key="Str_Ui_Bmclapi_Mirror_Recommended_Faster_In_Mai">BMCLAPI 镜像源 (推荐，国内更快)</system:String>
     <system:String x:Key="Str_Ui_Limit_To_A_Game_Version_E_G_1_20_1_Leave">限定游戏版本，例如 1.20.1；留空不限定</system:String>
     <system:String x:Key="Str_Ui_Open_On_The_Chinese_Minecraft_Wiki">在中文 Minecraft Wiki 中查看</system:String>
+    <system:String x:Key="Str_Ui_Instance_Settings">实例设置</system:String>
     <system:String x:Key="Str_Ui_Normal_Mode_Recommended_Works_With_Zero_">普通模式（推荐，0基础也能用，隐藏高级选项）</system:String>
     <system:String x:Key="Str_Ui_Pick_A_Java_Runtime_From_Your_Java_List">从 Java 列表里选择要使用的 Java：</system:String>
     <system:String x:Key="Str_Ui_Oray_Same_Vendor_As_Sunlogin_Graphical_U">花生壳（向日葵同厂商，图形化界面，新手友好）</system:String>
@@ -692,7 +693,7 @@
     <system:String x:Key="Str_Ui_Keep_Mods_Resource_Packs_Data_Packs_And_">默认按版本隔离 mods / 资源包 / 数据包 / 存档等（推荐开启，与官方启动器行为一致；可在「版本选择」页为单个版本单独覆盖）</system:String>
     <system:String x:Key="Str_Ui_Colour_Themes_Blue_Yellow_Purple_Pink_An">界面换肤（蓝色系、黄色系、紫色系、粉色系等配色皮肤）已经是正式功能，不再属于实验性范围，可以直接在「设置」页放心使用，不需要经过这里。</system:String>
     <system:String x:Key="Str_Ui_Pick_A_Java_For_This_Server_From_The_Lis">从「设置」页登记的 Java 列表里直接选一个给这个服务器用；选「（不指定，自动检测/下载）」则用下面的路径框，创建时按需自动匹配/下载</system:String>
-    <system:String x:Key="Str_Ui_Normal_Mode_Shows_Only_The_Essentials_An">普通模式：只展示必要选项，Java 自动探测/下载，无需手动配置；专家模式：可调试 Java 版本/架构/安装方式、自定义启动参数等高级选项</system:String>
+    <system:String x:Key="Str_Ui_Normal_Mode_Shows_Only_The_Essentials_An">普通模式：只展示必要选项，Java 自动探测/下载，无需手动配置；高级模式：可调试 Java 版本/架构/安装方式、自定义启动参数等高级选项</system:String>
     <system:String x:Key="Str_Ui_Sign_In_With_A_Third_Party_Auth_Server_A">用第三方认证服务器（统一通行证/blessing-skin 等，需支持 Yggdrasil 协议）账号登录，登录后会自动使用该服务器上的皮肤。</system:String>
     <system:String x:Key="Str_Ui_Quickly_Checks_The_Usual_Places_For_Inst">快速查找本机常见位置(便携版目录/JAVA_HOME/注册表/PATH)已装的 Java，一键批量加入下面的列表；不会遍历整个磁盘，几秒内完成</system:String>
     <system:String x:Key="Str_Ui_Switches_Between_Dark_And_Light_It_Only_">切换深色/浅色模式，只影响明暗，不影响「配色皮肤」选的色系。开启「自动循环」时，这里的选择只是临时覆盖，到下一个自动切换时间点会被自动循环重新接管。</system:String>
@@ -924,6 +925,8 @@
     <system:String x:Key="Str_Cs_No_Client_Instance_Selected">还没有选中客户端实例</system:String>
     <system:String x:Key="Str_Cs_No_Client_Instance_Selected_Body">请先在下面的列表里选中一个已下载的基岩版客户端实例。</system:String>
     <system:String x:Key="Str_Cs_Bedrock_Client_Launch_Failed">启动基岩版客户端失败。</system:String>
+    <system:String x:Key="Str_Cs_Bedrock_Client_Auto_Launched">游戏已自动启动。</system:String>
+    <system:String x:Key="Str_Cs_Bedrock_Client_Auto_Launch_Failed">游戏自动启动失败，可点上面的「启动已下载客户端」手动重试。</system:String>
 
     <system:String x:Key="Str_Ui_Channel_Client">渠道：</system:String>
 

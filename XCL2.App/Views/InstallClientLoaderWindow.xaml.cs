@@ -177,8 +177,11 @@ public partial class InstallClientLoaderWindow : OverlayDialogControl
                 // 地方"默认只看正式版"的口径保持一致），把清单缓存下来供 Install_Click 里
                 // 反查具体 VersionManifestEntry 用。
                 _versionManifest = await _vanillaDownloader.GetVersionManifestAsync();
+                // 显式按 releaseTime 倒序（新→旧），不依赖数据源本身的顺序，见
+                // VersionManifestSortExtensions.SortNewestFirst 的注释。
                 versions = _versionManifest.Versions
                     .Where(v => v.GetCategory() == VersionCategory.Release)
+                    .SortNewestFirst()
                     .Select(v => v.Id)
                     .ToList();
             }

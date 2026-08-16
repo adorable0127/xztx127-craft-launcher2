@@ -18,10 +18,39 @@ namespace XCL2.App.Services;
 ///
 /// 去重：跟 config.Folders 里已经存在的路径（大小写不敏感，路径分隔符统一）比较，已经加过的
 /// 不重复添加，避免每次启动都往列表里塞重复项。
+///
+/// 排除标记(.NOXCL)：如果某个目录下（不管是不是 .minecraft 目录本身，还是往下探的中间目录）
+/// 存在一个叫 ".NOXCL" 的文件/文件夹（内容不重要，只看存不存在），本次自动扫描就跳过它：
+///   - 如果标记放在 .minecraft 目录里面：这个 .minecraft 不会被自动加入列表；
+///   - 如果标记放在中间目录（比如 D:\SomeModProject）：直接不再往它内部递归，避免在被明确
+///     标记为"不是游戏目录"的地方（例如某些 mod 开发工程根目录也可能叫 .minecraft 相关名字）
+///     浪费扫描时间，也防止误报。
+/// 注意：这个排除只影响"自动扫描"这一步。用户如果通过"添加已有文件夹"手动把这个目录加进来，
+/// 依然可以正常启动、管理——.NOXCL 不会拦用户的手动操作，只是让自动探测绕开它。
 /// </summary>
 public static class MinecraftFolderScanService
 {
     private const string FolderName = ".minecraft";
+
+    /// <summary>排除标记：目录下存在这个名字的文件/文件夹，扫描就跳过该目录（不阻止手动添加）。</summary>
+    public const string ExcludeMarkerName = ".NOXCL";
+
+    /// <summary>
+    /// 判断某个目录是否带有 .NOXCL 排除标记。只看是否存在同名条目（文件或文件夹都算），
+    /// 不关心内容。IO 异常一律当作"没有标记"处理，不能因为探测标记本身出错而挂掉扫描。
+    /// </summary>
+    public static bool HasExcludeMarker(string dir)
+    {
+        try
+        {
+            var marker = Path.Combine(dir, ExcludeMarkerName);
+            return File.Exists(marker) || Directory.Exists(marker);
+        }
+        catch
+        {
+            return false;
+        }
+    }
 
     /// <summary>逐级往下探的最大深度：磁盘根目录本身算第 0 级，1/2/3 级分别往下探三层。
     /// 深度越大耗时越久，3 层是"能覆盖大多数自定义安装路径"和"扫描耗时可接受"之间的折衷，
@@ -49,7 +78,7 @@ public static class MinecraftFolderScanService
             if (!string.IsNullOrEmpty(appData))
             {
                 var candidate = Path.Combine(appData, FolderName);
-                if (Directory.Exists(candidate)) found.Add(candidate);
+                if (Directory.Exists(candidate) && !HasExcludeMarker(candidate)) found.Add(candidate);
             }
         }
         catch { /* 拿不到 AppData 路径就跳过，不影响后续磁盘扫描 */ }
@@ -109,16 +138,21 @@ public static class MinecraftFolderScanService
 
             if (string.IsNullOrEmpty(name)) continue;
 
+            // 跳过系统/回收站等明显不会是游戏目录、且体积或权限问题容易拖慢扫描的特殊目录
+            if (name.StartsWith('$') || name.Equals("System Volume Information", StringComparison.OrdinalIgnoreCase)
+                || name.Equals("$RECYCLE.BIN", StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            // .NOXCL 排除标记：不管这个目录是不是 .minecraft，只要带了标记就整个跳过——
+            // 既不把它收进自动发现列表（哪怕它就叫 .minecraft），也不再往它内部递归查找。
+            // 只影响自动扫描；用户手动"添加已有文件夹"不受此限制。
+            if (HasExcludeMarker(sub)) continue;
+
             if (string.Equals(name, FolderName, StringComparison.OrdinalIgnoreCase))
             {
                 found.Add(sub);
                 continue; // 命中了就不再往这个目录内部继续扫
             }
-
-            // 跳过系统/回收站等明显不会是游戏目录、且体积或权限问题容易拖慢扫描的特殊目录
-            if (name.StartsWith('$') || name.Equals("System Volume Information", StringComparison.OrdinalIgnoreCase)
-                || name.Equals("$RECYCLE.BIN", StringComparison.OrdinalIgnoreCase))
-                continue;
 
             ScanDriveForMinecraftFolders(sub, found, depth + 1);
         }

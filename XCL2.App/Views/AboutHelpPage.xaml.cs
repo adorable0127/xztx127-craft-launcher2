@@ -122,6 +122,8 @@ public partial class AboutHelpPage : UserControl
 
     private void OpenRepo_Click(object sender, RoutedEventArgs e) => OpenUrl(GitHubRepoUrl);
 
+    private void OpenRelease_Click(object sender, RoutedEventArgs e) => OpenUrl(GitHubRepoUrl);
+
     /// <summary>
     /// 统一的"用系统默认浏览器打开链接"入口，跟项目里其它地方（VersionSelectPage 等）
     /// 的 Process.Start(UseShellExecute=true) 写法保持一致，失败时弹出提示而不是静默吞掉。

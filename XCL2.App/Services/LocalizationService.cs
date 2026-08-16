@@ -39,8 +39,10 @@ public static class LocalizationService
     public static readonly LanguageOption[] SupportedLanguages =
     {
         new("zh-Hans", "简体中文"),
+        new("zh-microsoft", "简体中文（Microsoft）"),
         new("zh-Hant", "繁體中文"),
         new("yue-Hant", "粵語（繁體）"),
+        new("zh-wy", "中文（文言）"),
         new("en-US", "English (United States)"),
         new("en-GB", "English (United Kingdom)"),
         new("de-DE", "Deutsch (Deutschland)"),
@@ -149,7 +151,7 @@ public static class LocalizationService
                 // 繁体/粤语是例外——它们跟简体的重合度远高于英文，所以在英文之上
                 // 再铺一层简体，未翻条目显示简体中文比显示英文更贴近这批用户的习惯。
                 Overlay(FallbackLanguageCode);                                  // 1. 英文底
-                if (code is "zh-Hant" or "yue-Hant") Overlay(DefaultLanguageCode); // 2. 中文变体额外铺简体
+                if (code is "zh-Hant" or "yue-Hant" or "zh-microsoft" or "zh-wy") Overlay(DefaultLanguageCode); // 2. 中文变体额外铺简体
                 foreach (var key in newDict.Keys) mergedDict[key] = newDict[key];  // 3. 目标语言
 
                 newDict = mergedDict;

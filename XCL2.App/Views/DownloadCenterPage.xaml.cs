@@ -598,10 +598,12 @@ public partial class DownloadCenterPage : UserControl
 
         var keyword = VersionSearchBox.Text?.Trim() ?? "";
 
+        // 显式按 releaseTime 倒序（新→旧）重排，不依赖 manifest 数据源自带顺序，
+        // 保证界面列表任何数据源下都严格"从上到下从新到旧"。
         var filtered = _manifestCache.Versions
             .Where(v => v.GetCategory() == category)
             .Where(v => keyword.Length == 0 || v.Id.Contains(keyword, StringComparison.OrdinalIgnoreCase))
-            .ToList();
+            .SortNewestFirst();
 
         var totalPages = filtered.Count == 0 ? 0 : (int)Math.Ceiling(filtered.Count / (double)PageSize);
         if (_versionPageIndex < 0) _versionPageIndex = 0;

@@ -491,6 +491,7 @@
     <system:String x:Key="Str_Ui_Bmclapi_Mirror_Recommended_Faster_In_Mai">BMCLAPI mirror (recommended, faster in mainland China)</system:String>
     <system:String x:Key="Str_Ui_Limit_To_A_Game_Version_E_G_1_20_1_Leave">특정 게임 버전으로 제한(예: 1.20.1). 비워두면 제한 없음</system:String>
     <system:String x:Key="Str_Ui_Open_On_The_Chinese_Minecraft_Wiki">중국어 Minecraft Wiki에서 보기</system:String>
+    <system:String x:Key="Str_Ui_Instance_Settings">인스턴스 설정</system:String>
     <system:String x:Key="Str_Ui_Normal_Mode_Recommended_Works_With_Zero_">Normal mode (recommended — works with zero experience, hides advanced options)</system:String>
     <system:String x:Key="Str_Ui_Pick_A_Java_Runtime_From_Your_Java_List">Pick a Java runtime from your Java list:</system:String>
     <system:String x:Key="Str_Ui_Oray_Same_Vendor_As_Sunlogin_Graphical_U">Oray (same vendor as Sunlogin, graphical UI, beginner-friendly)</system:String>

@@ -2,6 +2,9 @@ using System.Text.Json.Serialization;
 
 namespace XCL2.App.Models;
 
+// (System.Linq 由本文件内 VersionManifestSortExtensions 使用，随文件顶部隐式 usings 引入；
+// 若目标项目未开启 ImplicitUsings，请在此手动 using System.Linq;)
+
 public class VersionManifestRoot
 {
     [JsonPropertyName("latest")] public LatestVersions Latest { get; set; } = new();
@@ -54,13 +57,18 @@ public class VersionManifestEntry
     /// KnownAprilFoolsIds/官方 type 字段又标注不准的新版本，也能被正确识别为预览版，
     /// 不用每年手动追加维护。大小写不敏感（'W' 同样算命中）。
     /// </summary>
+    /// <summary>
+    /// 2026-08 需求补充：预发布/候选版里除了 a(lpha)/b(eta)/w(周快照)/-(pre/rc 分隔符)，
+    /// 还有 c(andidate，如极少数historical候选版写法) 这个标记字符，一并纳入命中范围。
+    /// 正式版号只由数字和点号组成，不会误命中。
+    /// </summary>
     private static bool LooksLikePreviewId(string id)
     {
         if (string.IsNullOrEmpty(id)) return false;
         foreach (var c in id)
         {
             var lower = char.ToLowerInvariant(c);
-            if (lower is 'a' or 'b' or 'w' or '-') return true;
+            if (lower is 'a' or 'b' or 'c' or 'w' or '-') return true;
         }
         return false;
     }
@@ -72,6 +80,29 @@ public class VersionManifestEntry
         if (LooksLikePreviewId(Id)) return VersionCategory.Snapshot;
         return Type == "release" ? VersionCategory.Release : VersionCategory.Snapshot;
     }
+
+    /// <summary>
+    /// releaseTime 是 ISO-8601 字符串（如 "2024-04-23T13:19:35+00:00"），用 DateTimeOffset
+    /// 解析后可直接按时间比较；解析失败（理论上不会发生，兜底用）时视为最旧，排到最后。
+    /// </summary>
+    public DateTimeOffset GetReleaseTimeOrMin()
+        => DateTimeOffset.TryParse(ReleaseTime, out var t) ? t : DateTimeOffset.MinValue;
+}
+
+public static class VersionManifestSortExtensions
+{
+    /// <summary>
+    /// 统一的"新→旧"排序入口：所有展示版本列表的地方（安装向导、下载中心）都应该调用这个，
+    /// 而不是各自直接假设 manifest 里的顺序已经是新到旧——虽然 Mojang 官方源目前确实是按时间
+    /// 倒序给的，但第三方镜像源(BMCLAPI等)不保证顺序一致，显式按 releaseTime 倒序排一次，
+    /// 保证界面"从上到下从新到旧"这个约定任何数据源下都成立。releaseTime 相同/缺失时按 Id
+    /// 做次级排序，保证结果稳定、可重现。
+    /// </summary>
+    public static List<VersionManifestEntry> SortNewestFirst(this IEnumerable<VersionManifestEntry> versions)
+        => versions
+            .OrderByDescending(v => v.GetReleaseTimeOrMin())
+            .ThenByDescending(v => v.Id, StringComparer.OrdinalIgnoreCase)
+            .ToList();
 }
 
 /// <summary>version_id.json 的核心字段（客户端 jar、库、资源索引、主类等）</summary>

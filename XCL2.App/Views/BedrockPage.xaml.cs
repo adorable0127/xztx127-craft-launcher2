@@ -19,7 +19,7 @@ namespace XCL2.App.Views;
 ///
 /// 新增功能：
 ///   3) 基岩版客户端多版本下载 —— 通过 mc-w10-versiondb 获取版本列表，支持从 Microsoft Store
-///      FE3 API 获取下载直链，下载后可解压并直接启动。
+///      FE3 API 获取下载直链，下载解压完成后自动启动游戏（下载安装启动一条龙）。
 /// </summary>
 public partial class BedrockPage : UserControl
 {
@@ -155,11 +155,12 @@ public partial class BedrockPage : UserControl
             }
             else
             {
+                // 暂不支持选择具体版本：列表只用来拿到最新版，下载始终用第一项（列表按日期倒序，第一项即最新版）。
                 BedrockClientVersionCombo.ItemsSource = _clientVersions;
                 BedrockClientVersionCombo.DisplayMemberPath = "Name";
                 BedrockClientVersionCombo.SelectedIndex = 0;
                 BedrockClientDownloadBtn.IsEnabled = true;
-                BedrockClientStatusText.Text = $"已加载 {_clientVersions.Count} 个版本";
+                BedrockClientStatusText.Text = $"该渠道已加载 {_clientVersions.Count} 个版本，将下载最新版：{_clientVersions[0].Name}";
             }
         }
         catch (Exception ex)
@@ -169,7 +170,7 @@ public partial class BedrockPage : UserControl
         }
         finally
         {
-            BedrockClientVersionCombo.IsEnabled = true;
+            BedrockClientVersionCombo.IsEnabled = false;   // 版本选择暂时禁用，只保留渠道选择
         }
     }
 
@@ -198,14 +199,19 @@ public partial class BedrockPage : UserControl
                     if (versions.Count == 0)
                     {
                         BedrockClientVersionCombo.ItemsSource = new[] { Loc.T("Str_Cs_No_Versions_Available", "无法获取版本列表") };
+                        BedrockClientDownloadBtn.IsEnabled = false;
+                        BedrockClientStatusText.Text = Loc.T("Str_Cs_No_Versions_Available", "无法获取版本列表，请检查网络后点击「刷新列表」重试。");
                     }
                     else
                     {
+                        // 版本选择暂时禁用：列表只用来拿到最新版。
                         BedrockClientVersionCombo.ItemsSource = versions;
                         BedrockClientVersionCombo.DisplayMemberPath = "Name";
                         BedrockClientVersionCombo.SelectedIndex = 0;
+                        BedrockClientDownloadBtn.IsEnabled = true;
+                        BedrockClientStatusText.Text = $"该渠道已加载 {versions.Count} 个版本，将下载最新版：{versions[0].Name}";
                     }
-                    BedrockClientVersionCombo.IsEnabled = true;
+                    BedrockClientVersionCombo.IsEnabled = false;   // 版本选择暂时禁用
                 });
             }
             catch (Exception ex)
@@ -214,7 +220,9 @@ public partial class BedrockPage : UserControl
                 {
                     ErrorPresenter.LogFallback("刷新基岩版客户端版本列表失败", ex);
                     BedrockClientVersionCombo.ItemsSource = new[] { Loc.T("Str_Cs_Version_List_Load_Failed", "版本列表加载失败") };
-                    BedrockClientVersionCombo.IsEnabled = true;
+                    BedrockClientDownloadBtn.IsEnabled = false;
+                    BedrockClientStatusText.Text = Loc.T("Str_Cs_Version_List_Load_Failed", "版本列表加载失败，请检查网络后点击「刷新列表」重试。");
+                    BedrockClientVersionCombo.IsEnabled = false;   // 版本选择暂时禁用
                 });
             }
         });
@@ -275,13 +283,13 @@ public partial class BedrockPage : UserControl
 
     private async void BedrockClientDownload_Click(object sender, RoutedEventArgs e)
     {
-        // 获取选中的版本
-        var selectedVersion = BedrockClientVersionCombo.SelectedItem as BedrockClientDownloadService.BedrockVersionInfo;
+        // 暂不支持选择具体版本：始终下载所选渠道的最新版（列表按日期倒序，第一项即最新版）。
+        var selectedVersion = _clientVersions.FirstOrDefault();
         if (selectedVersion == null)
         {
             MessageBoxDialog.ShowInfo(
-                Loc.T("Str_Cs_No_Version_Selected_Body", "请先从下拉框中选择一个要下载的版本。"),
-                Loc.T("Str_Cs_No_Version_Selected", "未选择版本"));
+                Loc.T("Str_Cs_No_Version_Selected_Body", "版本列表还没有加载出来，请先点击「刷新列表」获取最新版本信息后再下载。"),
+                Loc.T("Str_Cs_No_Version_Selected", "未获取到版本信息"));
             return;
         }
 
@@ -332,10 +340,25 @@ public partial class BedrockPage : UserControl
             _owner.ConfigService.Save();
             RefreshBedrockClientInstanceList();
 
-            BedrockClientStatusText.Text = $"已下载基岩版客户端 {selectedVersion.Name} 到：{finalDir}";
+            // 一条龙：下载+解压完成后直接自动启动游戏，不用再手动点「启动已下载客户端」，
+            // 也不需要自己去安装/注册任何东西（官方包解压出来就是完整可运行的游戏）。
+            // 启动失败不阻断流程：记录已保存，用户仍可点「启动已下载客户端」手动重试。
+            string launchNote;
+            try
+            {
+                BedrockClientDownloadService.LaunchClient(finalDir);
+                launchNote = Loc.T("Str_Cs_Bedrock_Client_Auto_Launched", "游戏已自动启动。");
+                BedrockClientStatusText.Text = $"已下载并启动基岩版客户端 {selectedVersion.Name}：{finalDir}";
+            }
+            catch (Exception launchEx)
+            {
+                ErrorPresenter.LogFallback("自动启动已下载的基岩版客户端失败", launchEx);
+                launchNote = Loc.T("Str_Cs_Bedrock_Client_Auto_Launch_Failed", "游戏自动启动失败，可点上面的「启动已下载客户端」手动重试。");
+                BedrockClientStatusText.Text = $"已下载基岩版客户端 {selectedVersion.Name} 到：{finalDir}（自动启动失败）";
+            }
+
             MessageBoxDialog.ShowSuccess(
-                $"基岩版客户端 {selectedVersion.Name} 已下载并解压到：\n{finalDir}\n\n" +
-                "可以直接点上面的「启动已下载客户端」运行。",
+                $"基岩版客户端 {selectedVersion.Name} 已下载并解压到：\n{finalDir}\n\n{launchNote}",
                 Loc.T("Str_Cs_Download_Complete", "下载完成"));
         }
         catch (Exception ex)
@@ -455,9 +478,10 @@ public partial class BedrockPage : UserControl
             var versions = await _bedrockService.GetDedicatedServerVersionsAsync(channel);
             if (versions.Count > 0)
             {
+                // 暂不支持选择具体版本：列表只用来展示最新版，下载始终走最新版。
                 BedrockServerVersionCombo.ItemsSource = versions;
                 BedrockServerVersionCombo.SelectedIndex = 0;
-                BedrockServerStatusText.Text = $"已加载 {versions.Count} 个服务端版本（选择后下载对应版本；不选则下载最新版）";
+                BedrockServerStatusText.Text = $"该渠道已加载 {versions.Count} 个服务端版本，将下载最新版：{versions[0]}";
             }
             else
             {
@@ -471,7 +495,7 @@ public partial class BedrockPage : UserControl
         }
         finally
         {
-            BedrockServerVersionCombo.IsEnabled = true;
+            BedrockServerVersionCombo.IsEnabled = false;   // 版本选择暂时禁用，只保留渠道选择
             BedrockServerRefreshVersionsBtn.IsEnabled = true;
         }
     }
@@ -560,7 +584,9 @@ public partial class BedrockPage : UserControl
         }
 
         var channel = GetSelectedServerChannel();
-        var selectedVersion = BedrockServerVersionCombo.SelectedItem as string;
+
+        // 暂不支持选择具体版本：下载始终走该渠道的最新版（version 传 null 由服务端解析最新直链）。
+        string? selectedVersion = null;
 
         BedrockServerDownloadBtn.IsEnabled = false;
         var pd = new ProgressDialog(Loc.T("Str_Cs_Downloading_Bedrock_Server", "正在下载基岩版服务端 ..."));

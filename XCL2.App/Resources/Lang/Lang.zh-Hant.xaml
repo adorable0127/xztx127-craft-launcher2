@@ -494,6 +494,7 @@
     <system:String x:Key="Str_Ui_Bmclapi_Mirror_Recommended_Faster_In_Mai">BMCLAPI 映象源 (推薦，國內更快)</system:String>
     <system:String x:Key="Str_Ui_Limit_To_A_Game_Version_E_G_1_20_1_Leave">限定遊戲版本，例如 1.20.1；留空不限定</system:String>
     <system:String x:Key="Str_Ui_Open_On_The_Chinese_Minecraft_Wiki">在中文 Minecraft Wiki 中檢視</system:String>
+    <system:String x:Key="Str_Ui_Instance_Settings">實例設定</system:String>
     <system:String x:Key="Str_Ui_Normal_Mode_Recommended_Works_With_Zero_">普通模式（推薦，0基礎也能用，隱藏高階選項）</system:String>
     <system:String x:Key="Str_Ui_Pick_A_Java_Runtime_From_Your_Java_List">從 Java 列表裡選擇要使用的 Java：</system:String>
     <system:String x:Key="Str_Ui_Oray_Same_Vendor_As_Sunlogin_Graphical_U">花生殼（向日葵同廠商，圖形化介面，新手友好）</system:String>
@@ -862,6 +863,8 @@
     <system:String x:Key="Str_Cs_Couldn_T_Fetch_Builds">獲取構建版本列表失敗</system:String>
     <system:String x:Key="Str_Cs_Couldn_T_Start_Bedrock_Edition">啟動基岩版失敗</system:String>
     <system:String x:Key="Str_Cs_No_Data_Folder_Yet">還沒有資料目錄</system:String>
+    <system:String x:Key="Str_Cs_Bedrock_Client_Auto_Launched">遊戲已自動啟動。</system:String>
+    <system:String x:Key="Str_Cs_Bedrock_Client_Auto_Launch_Failed">遊戲自動啟動失敗，可點上面的「啟動已下載用戶端」手動重試。</system:String>
     <system:String x:Key="Str_Cs_Import_Complete_2">匯入完成</system:String>
     <system:String x:Key="Str_Ui_Full_Launcher_Log">完整啟動器日誌</system:String>
     <system:String x:Key="Str_Ui_Open_In_Independent_Window">獨立視窗開啟</system:String>

@@ -43,6 +43,15 @@ public class Account
     public DateTime? AccessTokenExpiresAtUtc { get; set; }
 
     /// <summary>
+    /// 最近一次成功完成在线校验（登录成功，或 refresh token 静默刷新成功）的时间（UTC）。
+    /// 用于"令牌保留时效"降级判断：access token 过期后尝试刷新，若失败原因是网络/Mojang
+    /// 服务本身不可用（而非 refresh token 已失效这种明确的认证拒绝），且距这个时间不超过
+    /// <see cref="AppConfig.AccountTokenGracePeriodDays"/> 天，则允许直接用本地缓存的
+    /// Uuid/Username 离线启动，不阻塞玩家。见 MicrosoftAuthService 调用处。
+    /// </summary>
+    public DateTime? LastVerifiedAtUtc { get; set; }
+
+    /// <summary>
     /// 认证服务器（皮肤站）账户专用：登录时使用的 Yggdrasil API 根地址（例如
     /// "https://example.com/api/yggdrasil"），游戏启动时会用这个地址给
     /// authlib-injector 挂 -javaagent，让客户端向这个地址而不是 Mojang 官方服务器

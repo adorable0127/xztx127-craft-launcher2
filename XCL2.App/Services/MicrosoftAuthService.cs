@@ -18,6 +18,19 @@ public class AuthStepException : Exception
     public AuthStepException(string step, string message) : base(message) => Step = step;
 }
 
+/// <summary>见 MicrosoftAuthService.LastRefreshFailureReason。</summary>
+public enum RefreshFailureReason
+{
+    /// <summary>没有失败（或还没调用过）。</summary>
+    None,
+    /// <summary>连不上微软登录服务/XSTS/Minecraft 服务本身，或对方 5xx——服务不可用，
+    /// 不代表这个账户的授权已失效，允许调用方走令牌保留时效降级直接离线启动。</summary>
+    ServiceUnavailable,
+    /// <summary>微软明确应答拒绝了这次刷新（4xx，典型是 refresh token 已过期/被吊销），
+    /// 是真正的"需要重新登录"，不应该走令牌保留时效降级。</summary>
+    TokenInvalid
+}
+
 /// <summary>
 /// 微软账户登录：使用 OAuth2 Device Code Flow。
 /// 通过系统默认浏览器打开微软登录页(https://microsoft.com/link)，用户在浏览器完成登录，
@@ -143,8 +156,16 @@ public class MicrosoftAuthService
         Convert.ToBase64String(bytes).Replace('+', '-').Replace('/', '_').TrimEnd('=');
 
     /// <summary>使用已缓存的 refresh token 静默刷新，免去重新登录浏览器的步骤。</summary>
+    /// <summary>
+    /// 上一次 <see cref="RefreshAsync"/> 失败的原因分类，供调用方决定要不要走"令牌保留时效"
+    /// 降级（见 AppConfig.AccountTokenGracePeriodDays）。每次调用 RefreshAsync 开始时重置为
+    /// None，调用方应在 await 返回后立即读取，不要跨多次调用复用同一个实例读旧值。
+    /// </summary>
+    public RefreshFailureReason LastRefreshFailureReason { get; private set; } = RefreshFailureReason.None;
+
     public async Task<Account?> RefreshAsync(string refreshToken, CancellationToken ct = default)
     {
+        LastRefreshFailureReason = RefreshFailureReason.None;
         var form = new Dictionary<string, string>
         {
             ["client_id"] = _clientId,
@@ -152,9 +173,32 @@ public class MicrosoftAuthService
             ["refresh_token"] = refreshToken,
             ["scope"] = Scope
         };
-        var resp = await _http.PostAsync("https://login.microsoftonline.com/consumers/oauth2/v2.0/token",
-            new FormUrlEncodedContent(form), ct);
-        if (!resp.IsSuccessStatusCode) return null; // 刷新失败静默返回 null，调用方会提示重新登录
+
+        System.Net.Http.HttpResponseMessage resp;
+        try
+        {
+            resp = await _http.PostAsync("https://login.microsoftonline.com/consumers/oauth2/v2.0/token",
+                new FormUrlEncodedContent(form), ct);
+        }
+        catch (Exception) when (ct.IsCancellationRequested == false)
+        {
+            // 连不上微软登录服务器本身（断网/DNS/超时等）：这不是"这个 refresh token 已失效"，
+            // 是"这次根本没能问到答案"，标记为服务不可用，供调用方走令牌保留时效降级。
+            LastRefreshFailureReason = RefreshFailureReason.ServiceUnavailable;
+            return null;
+        }
+
+        if (!resp.IsSuccessStatusCode)
+        {
+            // 微软明确应答了（不是网络层失败），但拒绝了这次刷新：绝大多数情况下是 refresh
+            // token 本身已经过期/被吊销/用户在别处撤销了授权，这是明确的"需要重新登录"，
+            // 不应该走令牌保留时效降级（继续离线启动没有意义——正版身份确实已经失效）。
+            // 5xx 状态码例外：那是微软服务端自己出了问题，同样按"服务不可用"处理。
+            LastRefreshFailureReason = (int)resp.StatusCode >= 500
+                ? RefreshFailureReason.ServiceUnavailable
+                : RefreshFailureReason.TokenInvalid;
+            return null;
+        }
         var token = await resp.Content.ReadFromJsonAsync<MsaTokenResponse>(cancellationToken: ct);
         if (token == null) return null;
 

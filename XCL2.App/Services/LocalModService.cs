@@ -57,7 +57,12 @@ public class LocalModService
     /// Forge 旧版 (mcmod.info)。任何一步失败都吞掉异常，因为这只是"锦上添花"的展示优化，
     /// 不应该因为个别 mod 包结构异常导致整个扫描列表出不来。
     /// </summary>
-    private static string? TryReadModName(string jarPath, bool isDisabled)
+    /// <summary>
+    /// 公开出来供 CrashAnalyzerService 复用：崩溃分析在把某个 mod jar 认定为"元凶"之后，
+    /// 想展示给用户看的是它注册的友好名字（比如"Just Enough Items"），而不是一串
+    /// jar 文件名或包名，跟这里 mod 管理页面用的是同一套元数据读取逻辑，没必要另写一份。
+    /// </summary>
+    public static string? TryReadModName(string jarPath, bool isDisabled)
     {
         try
         {

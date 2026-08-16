@@ -517,6 +517,7 @@
     <system:String x:Key="Str_Ui_Bmclapi_Mirror_Recommended_Faster_In_Mai">BMCLAPI mirror (recommended, faster in mainland China)</system:String>
     <system:String x:Key="Str_Ui_Limit_To_A_Game_Version_E_G_1_20_1_Leave">Limit to a game version, e.g. 1.20.1; leave blank for any</system:String>
     <system:String x:Key="Str_Ui_Open_On_The_Chinese_Minecraft_Wiki">Open on the Chinese Minecraft Wiki</system:String>
+    <system:String x:Key="Str_Ui_Instance_Settings">Instance Settings</system:String>
     <system:String x:Key="Str_Ui_Normal_Mode_Recommended_Works_With_Zero_">Normal mode (recommended — works with zero experience, hides advanced options)</system:String>
     <system:String x:Key="Str_Ui_Pick_A_Java_Runtime_From_Your_Java_List">Pick a Java runtime from your Java list:</system:String>
     <system:String x:Key="Str_Ui_Oray_Same_Vendor_As_Sunlogin_Graphical_U">Oray (same vendor as Sunlogin, graphical UI, beginner-friendly)</system:String>
@@ -917,6 +918,8 @@
     <system:String x:Key="Str_Cs_No_Client_Instance_Selected">No client instance selected</system:String>
     <system:String x:Key="Str_Cs_No_Client_Instance_Selected_Body">Please select a downloaded Bedrock client instance from the list below.</system:String>
     <system:String x:Key="Str_Cs_Bedrock_Client_Launch_Failed">Failed to launch Bedrock client.</system:String>
+    <system:String x:Key="Str_Cs_Bedrock_Client_Auto_Launched">The game has been launched automatically.</system:String>
+    <system:String x:Key="Str_Cs_Bedrock_Client_Auto_Launch_Failed">Auto-launch failed. You can click "Launch Downloaded Client" above to retry.</system:String>
 
     <system:String x:Key="Str_Ui_Channel_Client">Channel:</system:String>
 

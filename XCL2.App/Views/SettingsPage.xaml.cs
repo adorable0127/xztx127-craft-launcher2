@@ -113,6 +113,10 @@ public partial class SettingsPage : UserControl
 
         SkinApiRootBox.Text = cfg.SkinApiRoot;
 
+        AccountTokenGraceDaysBox.Text = cfg.AccountTokenGracePeriodDays.ToString();
+        UseMachineWideRegistryCheck.IsChecked = cfg.UseMachineWideRegistry;
+        RefreshRegistryStatusText();
+
         // 功能隐藏：绑定分组数据源，再按已保存的 HiddenFeatureKeys 逐个勾选。
         // 用 Loaded 事件而不是构造函数里直接遍历，是因为此时 ItemsControl 的
         // 容器（每个 CheckBox）还没真正生成，直接找子控件会全部落空。
@@ -596,6 +600,42 @@ public partial class SettingsPage : UserControl
         StatusText.Text = "已从 Java 列表移除。";
     }
 
+    /// <summary>「阅读协议」：以只读模式打开 AgreementsWindow，只能浏览《用户协议》《隐私协议》
+    /// 《开源协议》全文并前后翻页，不涉及任何表态、不改动任何配置，允许 Esc/点空白处关闭。</summary>
+    private void ReadAgreements_Click(object sender, RoutedEventArgs e)
+    {
+        var dlg = AgreementsWindow.CreateReadOnly(_owner);
+        OverlayDialogService.ShowModal(dlg);
+        // 只读浏览页里新增了「切换到基本模式」快捷按钮（见 AgreementsWindow 的
+        // ApplyModeChrome/GoBasicModeBtn），点了之后 RestrictedMode 可能已经变化，
+        // 这里刷新一次门控，让侧边栏置灰状态、右上角「重新阅读协议并同意」按钮
+        // 立即反映最新状态，不用等下次启动或切页。
+        _owner.ApplyRestrictedModeGating();
+    }
+
+    /// <summary>「注销应用（暂时不同意协议）」：主动撤回已同意的协议状态——把
+    /// AcceptedAgreementVersion 清零、AgreementsAccepted/BasicAgreementAccepted 复位，
+    /// 下次启动时会重新走一遍协议流程（跟"协议版本号落后"触发的场景完全一致）。
+    /// 点击后立即退出软件，避免继续停留在一个"配置上已注销、但界面仍按已同意状态运行"的
+    /// 中间态。</summary>
+    private void Deregister_Click(object sender, RoutedEventArgs e)
+    {
+        var confirmed = MessageBoxDialog.ShowConfirm(
+            "注销后，下次启动本软件将需要重新阅读并同意协议才能继续使用。\n\n" +
+            "确定要现在注销吗？软件会随即退出。",
+            "注销应用");
+        if (!confirmed) return;
+
+        var cfg = _owner.ConfigService.Config;
+        cfg.AgreementsAccepted = false;
+        cfg.AcceptedAgreementVersion = 0;
+        cfg.BasicAgreementAccepted = false;
+        cfg.RestrictedMode = false;
+        _owner.ConfigService.Save();
+
+        Application.Current.Shutdown(0);
+    }
+
     private void Save_Click(object sender, RoutedEventArgs e)
     {
         // 注意：cfg.JavaPath 这个字段本身没有删除（仍然被 FindJava 当兜底路径使用，
@@ -701,6 +741,10 @@ public partial class SettingsPage : UserControl
             }
         }
 
+        if (int.TryParse(AccountTokenGraceDaysBox.Text, out var graceDays))
+            cfg.AccountTokenGracePeriodDays = Math.Max(0, graceDays);
+        cfg.UseMachineWideRegistry = UseMachineWideRegistryCheck.IsChecked == true;
+
         _owner.ConfigService.Save();
 
         // 访客模式开关状态发生变化时，让 MainWindow 立即重新计算"当前应该用哪个账户"
@@ -718,7 +762,205 @@ public partial class SettingsPage : UserControl
         _owner.RefreshSidebar();
         _owner.ApplyFeatureVisibility(); // 功能隐藏勾选可能变了，立即刷新导航栏对应按钮的显隐
 
+        RefreshRegistryStatusText();
         StatusText.Text = "设置已保存。";
+    }
+
+    /// <summary>刷新"注册表存储"区块下方的状态提示文字：当前 HKLM/HKCU 两支实际是否存在
+    /// XCL2 的注册表键，以及当前进程是否具备管理员权限——帮用户理解"为什么我勾了全设备
+    /// 但好像没生效"（提权与否是运行时状态，跟这个勾选框本身是两回事）。</summary>
+    private void RefreshRegistryStatusText()
+    {
+        var cfg = _owner.ConfigService.Config;
+        if (!cfg.RegistryFeatureEnabled)
+        {
+            RegistryStatusText.Text = "注册表功能当前已关闭，只使用 config.json。";
+            return;
+        }
+
+        var (existsInHklm, existsInHkcu) = RegistryConfigService.CheckExistence();
+        var isAdmin = RegistryConfigService.IsRunningAsAdministrator();
+        var where = existsInHklm ? "HKEY_LOCAL_MACHINE（全设备）" : existsInHkcu ? "HKEY_CURRENT_USER（当前用户）" : "尚未写入";
+        RegistryStatusText.Text =
+            $"当前生效来源：{where}；当前进程{(isAdmin ? "以管理员身份运行" : "为普通权限")}" +
+            (cfg.UseMachineWideRegistry && !isAdmin ? "（已勾选全设备，但这次未提权，本次保存会写入当前用户分支）。" : "。");
+    }
+
+    /// <summary>"更新配置文件"：把新版本引入的设置默认值补丁进当前配置，不覆盖用户已改的字段。
+    /// 见 ConfigService.PatchDefaults 的白名单/兜底规则。</summary>
+    private void UpdateConfigDefaults_Click(object sender, RoutedEventArgs e)
+    {
+        var patched = _owner.ConfigService.PatchDefaults();
+        StatusText.Text = patched > 0 ? $"已补丁 {patched} 项新增的默认设置。" : "配置文件已经是最新，没有需要补丁的项。";
+        RefreshRegistryStatusText();
+    }
+
+    /// <summary>"导出注册表 (.reg)"：把当前 XCL2 注册表键（不管在 HKLM 还是 HKCU）导出为
+    /// 标准 .reg 文件，双击即可在别的电脑上导入同一份注册表内容。</summary>
+    private void ExportReg_Click(object sender, RoutedEventArgs e)
+    {
+        var content = _owner.ConfigService.ExportRegistryFile();
+        if (content == null)
+        {
+            MessageBoxDialog.ShowInfo("当前没有可导出的 XCL2 注册表内容（可能注册表功能已关闭，或还从未写入过）。");
+            return;
+        }
+
+        var dialog = new SaveFileDialog
+        {
+            Title = "导出注册表",
+            Filter = "注册表文件|*.reg|所有文件|*.*",
+            FileName = $"XCL2_{DateTime.Now:yyyyMMdd_HHmmss}.reg"
+        };
+        if (dialog.ShowDialog() != true) return;
+
+        try
+        {
+            // .reg 文件本身按微软习惯用 UTF-16 LE + BOM 保存（Windows 注册表编辑器导出的
+            // 标准格式，双击导入时才能正确识别中文注释/值），跟项目里其它 .bat 脚本用
+            // UTF-8 BOM 是两回事，不要混用编码。
+            File.WriteAllText(dialog.FileName, content, System.Text.Encoding.Unicode);
+            MessageBoxDialog.ShowSuccess($"注册表已导出到：\n{dialog.FileName}");
+        }
+        catch (Exception ex)
+        {
+            MessageBoxDialog.ShowError($"导出失败：{ex.Message}");
+        }
+    }
+
+    /// <summary>"导出所有配置"：config.json + 注册表镜像字段 + 各实例设置打包成一份归档文件。</summary>
+    private void ExportAllConfig_Click(object sender, RoutedEventArgs e)
+    {
+        var dialog = new SaveFileDialog
+        {
+            Title = "导出所有配置",
+            Filter = "XCL2 配置归档|*.xclconfig.json|所有文件|*.*",
+            FileName = $"XCL2_配置备份_{DateTime.Now:yyyyMMdd_HHmmss}.xclconfig.json"
+        };
+        if (dialog.ShowDialog() != true) return;
+
+        try
+        {
+            File.WriteAllText(dialog.FileName, _owner.ConfigService.ExportAllConfig());
+            MessageBoxDialog.ShowSuccess($"所有配置已导出到：\n{dialog.FileName}\n\n（不含账户登录凭据，账户需要在新环境重新登录）");
+        }
+        catch (Exception ex)
+        {
+            MessageBoxDialog.ShowError($"导出失败：{ex.Message}");
+        }
+    }
+
+    /// <summary>"导入配置"按钮：弹文件选择框，选中后走跟拖拽导入完全相同的
+    /// <see cref="ImportConfigArchiveFile"/>。</summary>
+    private void ImportConfig_Click(object sender, RoutedEventArgs e)
+    {
+        var dialog = new OpenFileDialog { Title = "导入配置", Filter = "XCL2 配置归档|*.json;*.xclconfig.json|所有文件|*.*" };
+        if (dialog.ShowDialog() != true) return;
+        ImportConfigArchiveFile(dialog.FileName);
+    }
+
+    private void ImportDropZone_DragOver(object sender, DragEventArgs e)
+    {
+        e.Effects = e.Data.GetDataPresent(DataFormats.FileDrop) ? DragDropEffects.Copy : DragDropEffects.None;
+        e.Handled = true;
+    }
+
+    private void ImportDropZone_Drop(object sender, DragEventArgs e)
+    {
+        if (e.Data.GetData(DataFormats.FileDrop) is string[] { Length: > 0 } files)
+            ImportConfigArchiveFile(files[0]);
+    }
+
+    /// <summary>真正执行"导入配置"：解析归档文件，确认后整体替换当前配置。
+    /// 因为会整体替换 Config（不是逐项合并），执行前先跟用户确认一次——这不属于危险操作
+    /// 分类里"要求 xztx127"的那三个（没有清除数据/删除注册表这类不可逆的破坏性），
+    /// 只是普通的"要不要覆盖当前设置"确认，用常规的 ShowConfirm 即可。</summary>
+    private void ImportConfigArchiveFile(string filePath)
+    {
+        string json;
+        try
+        {
+            json = File.ReadAllText(filePath);
+        }
+        catch (Exception ex)
+        {
+            MessageBoxDialog.ShowError($"无法读取文件：{ex.Message}");
+            return;
+        }
+
+        var confirmed = MessageBoxDialog.ShowConfirm(
+            "导入会用文件里的设置整体替换当前的启动器配置（账户登录状态不受影响）。\n\n确定要导入吗？",
+            "导入配置");
+        if (!confirmed) return;
+
+        try
+        {
+            var restoredInstances = _owner.ConfigService.ImportAllConfig(json);
+            MessageBoxDialog.ShowSuccess($"配置已导入，另外恢复了 {restoredInstances} 个实例的单独设置。\n部分设置需要重新打开设置页/重启启动器才能完全生效。");
+            _owner.RefreshGuestModeState();
+            _owner.RefreshSidebar();
+            _owner.ApplyFeatureVisibility();
+            _owner.ApplyRestrictedModeGating();
+        }
+        catch (Exception ex)
+        {
+            MessageBoxDialog.ShowError($"导入失败：{ex.Message}");
+        }
+    }
+
+    /// <summary>危险操作统一入口：弹 xztx127 二次确认，确认通过才真正执行 <paramref name="action"/>。</summary>
+    private void RunDangerousOperation(string title, string message, Action action)
+    {
+        var dlg = new DangerousConfirmDialog(title, message);
+        if (OverlayDialogService.ShowModal(dlg) != true || !dlg.Confirmed) return;
+        action();
+    }
+
+    private void DisableRegistry_Click(object sender, RoutedEventArgs e)
+    {
+        RunDangerousOperation(
+            "关闭注册表功能",
+            "关闭后，启动器只使用 config.json，不再读写注册表。已经写入的注册表项不会被自动删除。",
+            () =>
+            {
+                _owner.ConfigService.DisableRegistryFeature();
+                UseMachineWideRegistryCheck.IsEnabled = false;
+                RefreshRegistryStatusText();
+                StatusText.Text = "注册表功能已关闭。";
+            });
+    }
+
+    private void DeleteRegistry_Click(object sender, RoutedEventArgs e)
+    {
+        RunDangerousOperation(
+            "删除所有新增的启动器注册表项",
+            "将删除 HKEY_LOCAL_MACHINE 和 HKEY_CURRENT_USER 下的 SOFTWARE\\XCL2 键（仅此一个键，不影响其它任何注册表内容）。此操作不可撤销。",
+            () =>
+            {
+                var (hklm, hkcu) = _owner.ConfigService.DeleteAllRegistryEntries();
+                RefreshRegistryStatusText();
+                StatusText.Text = (hklm || hkcu) ? "注册表项已删除。" : "没有找到可删除的注册表项。";
+            });
+    }
+
+    private void ClearTraces_Click(object sender, RoutedEventArgs e)
+    {
+        RunDangerousOperation(
+            "清除本机痕迹",
+            "将删除 XCL2 的注册表项，以及本机的 xcl2 数据目录（配置、账户、日志、下载缓存的 Java 等全部内容）。" +
+            "不会删除任何 .minecraft 游戏目录或其它文件。执行后启动器会立即退出。此操作不可撤销。",
+            () =>
+            {
+                try
+                {
+                    _owner.ConfigService.ClearAllTraces();
+                    Application.Current.Shutdown(0);
+                }
+                catch (Exception ex)
+                {
+                    MessageBoxDialog.ShowError($"清除痕迹时出现问题，部分内容可能未能删除：{ex.Message}");
+                }
+            });
     }
 
     /// <summary>

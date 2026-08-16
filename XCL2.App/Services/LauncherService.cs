@@ -344,7 +344,13 @@ public class LauncherService
         return info;
     }
 
-    /// <summary>导出等效的 .bat 启动脚本到 xcl2/scripts/ 下，方便用户脱离启动器直接双击运行。</summary>
+    /// <summary>
+    /// 导出等效的 .bat 启动脚本到该版本自己的实例目录下：
+    /// <c>&lt;.minecraft&gt;/versions/&lt;VersionId&gt;/xcl/launch.bat</c>，方便用户脱离启动器
+    /// 直接双击运行，也让这个脚本跟随版本文件夹一起复制/打包/分享（不再放在启动器安装目录的
+    /// xcl2/scripts/ 下——那样脚本会跟启动器本体绑在一起，版本文件夹被单独拷走后就丢失了）。
+    /// 见 <see cref="InstanceConfigService.GetLaunchScriptPath"/>。
+    /// </summary>
     public string ExportLaunchScript(LaunchOptions opts)
     {
         var (_, args) = BuildArguments(opts); // 内部会设置 opts.EffectiveGameDir
@@ -364,9 +370,12 @@ public class LauncherService
         sb.AppendLine();
         sb.AppendLine("pause");
 
-        var scriptsDir = Path.Combine(App.DataDir, "scripts");
-        Directory.CreateDirectory(scriptsDir);
-        var path = Path.Combine(scriptsDir, $"launch_{opts.VersionId}.bat");
+        // opts.EffectiveGameDir 在版本隔离开启时就是 versions/<id> 本身，但版本隔离关闭时
+        // EffectiveGameDir 会是 .minecraft 根目录——脚本文件本身的存放位置不跟随这个开关，
+        // 统一固定放实例自己的 versions/<id>/xcl/ 下，两种模式下都能找到、都不会互相冲突。
+        var versionDir = Path.Combine(opts.MinecraftDir, "versions", opts.VersionId);
+        var path = InstanceConfigService.GetLaunchScriptPath(versionDir);
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
 
         // 之前这里用 Encoding.GetEncoding("GBK")：.NET 8 默认不注册 GBK 等代码页
         // (需要额外引入 System.Text.Encoding.CodePages 包并调用 RegisterProvider)，
@@ -375,6 +384,92 @@ public class LauncherService
         // UTF-8 BOM 并按 UTF-8 显示中文注释，不再依赖 GBK 代码页。
         File.WriteAllText(path, sb.ToString(), new UTF8Encoding(encoderShouldEmitUTF8Identifier: true));
         return path;
+    }
+
+    /// <summary>
+    /// 按 Maven 坐标去重 classpath：同一 group:artifact 只保留版本号最高的那份。
+    /// 修 1.21.3 Fabric/Quilt 的 "duplicate ASM classes found on classpath" 崩溃——Fabric
+    /// 的 json 声明新版 asm，游戏/其他库条目又带一份旧版 asm，两份都会进 classpath。
+    /// 解析不了 Maven 坐标的路径（不在 libraries 目录下等）一律原样保留，不参与去重。
+    /// </summary>
+    private static void DeduplicateClasspathByMavenCoordinates(List<string> classpath, string librariesDir)
+    {
+        if (classpath.Count < 2) return;
+
+        var keyByPath = new Dictionary<string, (string Key, string Version)>(StringComparer.Ordinal);
+        foreach (var p in classpath)
+        {
+            try
+            {
+                var rel = Path.GetRelativePath(librariesDir, p);
+                var parts = rel.Split(Path.DirectorySeparatorChar);
+                // 库 jar 在 libraries 目录下的相对路径结构固定为
+                // <group路径>/<artifact>/<version>/<artifact>-<version>[-classifier].jar
+                if (parts.Length >= 4 && !rel.StartsWith("..", StringComparison.Ordinal))
+                {
+                    var version = parts[parts.Length - 2];
+                    var artifact = parts[parts.Length - 3];
+                    var group = string.Join(".", parts, 0, parts.Length - 3);
+                    keyByPath[p] = (group + ":" + artifact, version);
+                }
+            }
+            catch
+            {
+                // 路径无法相对化（如跨盘符）时不参与去重，原样保留
+            }
+        }
+
+        // 同一 key 出现多份时，只保留版本号最高的那份；其余进删除名单
+        var best = new Dictionary<string, string>(StringComparer.Ordinal);
+        var toRemove = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var (p, kv) in keyByPath)
+        {
+            if (best.TryGetValue(kv.Key, out var current))
+            {
+                if (CompareMavenVersions(kv.Version, keyByPath[current].Version) > 0)
+                {
+                    toRemove.Add(current);
+                    best[kv.Key] = p;
+                }
+                else
+                {
+                    toRemove.Add(p);
+                }
+            }
+            else
+            {
+                best[kv.Key] = p;
+            }
+        }
+
+        if (toRemove.Count > 0)
+            classpath.RemoveAll(toRemove.Contains);
+    }
+
+    /// <summary>
+    /// Maven 版本号比较：按 '.'/'-'/'_' 分段，纯数字段按数值比，其余按字符串比；
+    /// 前面可带 v/V 前缀（如 v1.2.3），比较时忽略。例：9.3 &lt; 9.10.1。
+    /// </summary>
+    private static int CompareMavenVersions(string a, string b)
+    {
+        static string[] Segments(string v)
+        {
+            var s = v.TrimStart('v', 'V');
+            return s.Split(new[] { '.', '-', '_' }, StringSplitOptions.RemoveEmptyEntries);
+        }
+
+        var sa = Segments(a);
+        var sb = Segments(b);
+        for (var i = 0; i < Math.Max(sa.Length, sb.Length); i++)
+        {
+            var x = i < sa.Length ? sa[i] : "";
+            var y = i < sb.Length ? sb[i] : "";
+            if (x == y) continue;
+            if (long.TryParse(x, out var xn) && long.TryParse(y, out var yn))
+                return xn.CompareTo(yn);
+            return string.CompareOrdinal(x, y);
+        }
+        return 0;
     }
 
     /// <summary>
@@ -566,6 +661,21 @@ public class LauncherService
         }
         if (parent != null) AddLibs(parent);
         AddLibs(detail);
+
+        // 根因（1.21.3 Fabric/Quilt 一启动就崩：Fabric Loader 启动早期会 verifyClasspath，
+        // 检测到 classpath 上同一个类出现两份（例如 asm 9.3 与 asm 9.10.1 同时存在，
+        // 报 "duplicate ASM classes found on classpath: .../org/ow2/asm/asm/9.3/asm-9.3.jar ... 9.10.1 ..."）
+        // 直接抛 IllegalStateException 拒绝启动）：
+        //
+        // version json 里不同的库条目可能分别引用同一 group:artifact 的不同版本——Fabric/Quilt
+        // 的 json 会声明它自己用的新版 asm，而游戏版本 json 或其他库条目又带一份旧版 asm，
+        // 两者都会出现在本地 libraries 目录里、也都会被 AddLibs 加进 classpath。官方启动器
+        // （PCL/HMCL/官方 Launcher）都会在拼 classpath 时按 Maven 坐标去重、只保留版本号最高的
+        // 那份，这里补上同样的逻辑，避免把重复的旧版本 jar 送进 classpath。
+        //
+        // 注意：这不会影响 natives 提取——classifier(natives) jar 本来就不进 classpath，
+        // 只有 downloads.artifact 的主 jar 会走到这一步，所以按 (group:artifact) 去重是安全的。
+        DeduplicateClasspathByMavenCoordinates(classpath, librariesDir);
 
         // clientJar 所在的文件夹：有 inheritsFrom 就是父版本(原版)的文件夹，没有就是当前选中的文件夹。
         var clientJarDir = parent != null ? parentDir! : versionDir;

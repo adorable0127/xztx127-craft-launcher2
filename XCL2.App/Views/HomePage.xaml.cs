@@ -35,6 +35,22 @@ public partial class HomePage : UserControl
 
         RefreshModeToggle();
         RefreshThemeToggles();
+        ApplyRestrictedModeGating(_owner.ConfigService.Config.RestrictedMode);
+    }
+
+    /// <summary>基本模式（RestrictedMode=true）下，把右上角这一排按钮（语言/深浅色/自动循环/
+    /// 普通模式-高级模式/访客模式）都置灰——这几个不在侧边栏导航按钮之列，
+    /// MainWindow.ApplyRestrictedModeGating 单独没法碰到，靠这个方法从外面调用；
+    /// 构造函数里也会用当前配置调一次，保证"从受限状态启动、首页第一次显示"就已经是对的，
+    /// 不用等用户先切一次页。只置灰不隐藏，跟侧边栏导航按钮的处理方式保持一致
+    /// （用户随时能看见还有哪些功能存在）。</summary>
+    public void ApplyRestrictedModeGating(bool restricted)
+    {
+        LanguageEntryButton.IsEnabled = !restricted;
+        DarkModeToggle.IsEnabled = !restricted;
+        AutoThemeCycleToggle.IsEnabled = !restricted;
+        ModeToggle.IsEnabled = !restricted;
+        GuestModeToggle.IsEnabled = !restricted;
     }
 
     /// <summary>
@@ -52,11 +68,11 @@ public partial class HomePage : UserControl
     }
 
     /// <summary>
-    /// 需求：普通模式下把"启动游戏"和"一键开始游戏"这两个磁贴的位置互换（专家模式不用管，
+    /// 需求：普通模式下把"启动游戏"和"一键开始游戏"这两个磁贴的位置互换（高级模式不用管，
     /// 保持原来的顺序）——普通模式的用户大多是新手，更需要"一键开始游戏"这种全自动向导，
-    /// 换到磁贴总控台第一格（左上角，最先看到、最方便点到的位置）；专家模式用户通常已经
-    /// 自己配置好版本/账户，"启动游戏"这个直接启动的磁贴放在第一格更符合专家模式的使用习惯，
-    /// 所以专家模式下维持 XAML 里写死的原始顺序不动。
+    /// 换到磁贴总控台第一格（左上角，最先看到、最方便点到的位置）；高级模式用户通常已经
+    /// 自己配置好版本/账户，"启动游戏"这个直接启动的磁贴放在第一格更符合高级模式的使用习惯，
+    /// 所以高级模式下维持 XAML 里写死的原始顺序不动。
     ///
     /// UniformGrid 按 Children 集合顺序自动填格子，交换顺序只需要把这两个 Button 在
     /// Children 里的索引对调；但两者的 Margin 是跟\"当前所在格子的行列位置\"绑定的
@@ -74,7 +90,7 @@ public partial class HomePage : UserControl
         var quickStartIndex = TileGrid.Children.IndexOf(QuickStartTile);
         if (launchIndex < 0 || quickStartIndex < 0) return;
 
-        // 普通模式：一键开始游戏在前（索引更小）；专家模式：启动游戏在前。
+        // 普通模式：一键开始游戏在前（索引更小）；高级模式：启动游戏在前。
         // 如果当前顺序已经符合目标模式的要求，不用再交换（避免同一模式下重复调用时
         // 把已经交换好的顺序又换回去）。
         var alreadyCorrectOrder = advanced ? launchIndex < quickStartIndex : quickStartIndex < launchIndex;
@@ -124,11 +140,11 @@ public partial class HomePage : UserControl
 
     private void UpdateModeToggleText()
     {
-        ModeToggleText.Text = ModeToggle.IsChecked == true ? "专家模式" : "普通模式";
+        ModeToggleText.Text = ModeToggle.IsChecked == true ? "高级模式" : "普通模式";
     }
 
     /// <summary>
-    /// 首页右上角"普通模式/专家模式"开关：点击立即写回 cfg.AdvancedMode 并保存，
+    /// 首页右上角"普通模式/高级模式"开关：点击立即写回 cfg.AdvancedMode 并保存，
     /// 跟「设置」页 AdvancedModeCheck_Changed 是同一个配置项、同一份保存动作——不管从
     /// 哪一边切换，两边下次显示都会是最新状态（这一边不需要额外触发设置页控件显隐刷新，
     /// 那部分逻辑只在设置页自己打开时才需要跑）。

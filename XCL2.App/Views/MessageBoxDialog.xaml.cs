@@ -224,6 +224,27 @@ public partial class MessageBoxDialog : OverlayDialogControl
         return dlg.Result3;
     }
 
+    /// <summary>
+    /// 三选一弹窗，按钮文案完全自定义——ShowYesNoCancel 的按钮文案固定是"取消/否/是"，
+    /// 不满足"返回重新确认 / 使用基本模式 / 退出软件"这类每个按钮都需要说清楚具体动作
+    /// 的场景（用"是/否/取消"根本看不出来点哪个是什么意思）。三个按钮从左到右依次对应
+    /// option1（次要，靠左）/ option2（次要）/ option3（主操作，高亮，靠右，默认按钮），
+    /// 布局风格跟 ShowYesNoCancel 保持一致；返回值同样复用 XclMessageResult 三态，
+    /// 只是把 Cancel/No/Yes 分别重新解释成 option1/option2/option3，调用方按位置对应即可，
+    /// 不需要关心枚举名字面意思跟按钮文案是否匹配。用户按 Esc/点遮罩关闭（没有点任何按钮）
+    /// 时归为 Cancel（即 option1 那一档），语义上视为"什么都没选、维持现状"。
+    /// </summary>
+    public static XclMessageResult ShowThreeChoice(string message, string title, string option1, string option2, string option3)
+    {
+        var dlg = new MessageBoxDialog(message, title, XclMessageKind.Info, XclMessageButtons.OK);
+        dlg.ButtonPanel.Children.Clear();
+        dlg.ButtonPanel.Children.Add(dlg.MakeButton3(option1, XclMessageResult.Cancel, isPrimary: false, isDefault: false));
+        dlg.ButtonPanel.Children.Add(dlg.MakeButton3(option2, XclMessageResult.No, isPrimary: false, isDefault: false));
+        dlg.ButtonPanel.Children.Add(dlg.MakeButton3(option3, XclMessageResult.Yes, isPrimary: true, isDefault: true));
+        OverlayDialogService.ShowModal(dlg);
+        return dlg.Result3;
+    }
+
     /// <summary>最通用的入口，其它 ShowXxx 静态方法都是对这个的语义化包装。</summary>
     public static bool? Show(string message, string title, XclMessageKind kind, XclMessageButtons buttons)
     {

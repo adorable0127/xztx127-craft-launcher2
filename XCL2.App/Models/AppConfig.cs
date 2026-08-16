@@ -60,6 +60,50 @@ public class AppConfig
     /// 之后启动器不会再自动弹出，但用户仍可在设置页手动"重新打开新手引导"。</summary>
     public bool FirstRunWizardCompleted { get; set; } = false;
 
+    /// <summary>是否已经逐页阅读并同意过首次启动展示的三份协议（用户协议 / 隐私协议 / 开源协议）。
+    /// 默认 false：首次启动必须先看完三页协议并点「同意并继续」才能进入新手引导与主界面——
+    /// 前两页（用户协议、隐私协议）按钮强制阅读 5 秒后才可以点击，第三页（开源协议）
+    /// 不强制阅读、进入即可继续。按 Esc / 页面上没有提供其它关闭路径，任何"未走到第三页
+    /// 就关闭"的情况一律视为未同意，不会写入 true，下次启动会重新展示——法律性文本
+    /// 不允许"跳过即视为同意"。见 Views/AgreementsWindow 与 MainWindow 构造函数里的
+    /// 首次启动流程。
+    /// 新逻辑（协议版本号上线后）：这个布尔字段保留用于兼容旧配置与旧代码的读取；
+    /// 真正的"是否需要在本次启动重新弹协议"判断改为比较 <see cref="AcceptedAgreementVersion"/>
+    /// 与 <see cref="Views.AgreementsText.AgreementsVersion"/>。同意完整协议时两个字段
+    /// 都会写入（AcceptedAgreementVersion=当前版本号、AgreementsAccepted=true）。</summary>
+    public bool AgreementsAccepted { get; set; } = false;
+
+    /// <summary>
+    /// 用户已同意到的协议版本号（对应 <see cref="Views.AgreementsText.AgreementsVersion"/>）。
+    /// 小于当前版本（旧配置没有这个字段时反序列化得到默认值 0，同样小于当前版本）就会在
+    /// 下次启动时重新弹出协议同意页——这就是"每次协议更新都会重新弹出同意协议菜单"的
+    /// 实现基础：协议文本有实质修改时，只需要把 AgreementsText.AgreementsVersion 往上加一，
+    /// 老用户下次启动就会被要求重新逐页确认一遍，不需要任何额外的云端下发或远程标记
+    /// （本项目没有服务器，这种"版本号比对"的纯本地机制正是唯一正确的实现方式）。
+    /// 仅当用户完整走完三页协议并点「同意并继续」后，才会写入当前版本号。
+    /// </summary>
+    public int AcceptedAgreementVersion { get; set; } = 0;
+
+    /// <summary>
+    /// 是否处于"基本模式"（受限模式）。true 表示用户没有接受完整协议（点「不同意」后选择了
+    /// 「使用基本模式」），或从设置页主动「注销应用（暂时不同意协议）」。基本模式下，
+    /// 启动器只允许"启动游戏"和"选择/切换游戏文件夹"两项功能，其余功能入口保持可见但
+    /// 不可用（置灰，不是隐藏——用户随时能看见还有哪些功能存在）；主界面右上角会出现
+    /// 只有基本模式才有的「重新阅读协议并同意」按钮，点击后重新走完整协议流程，
+    /// 同意即退出基本模式、恢复全部功能。见 <see cref="BasicAgreementAccepted"/>。
+    /// </summary>
+    public bool RestrictedMode { get; set; } = false;
+
+    /// <summary>
+    /// 是否同意过《基本模式协议》（约 1000 字，见 <see cref="Views.AgreementsText.BasicModeAgreementText"/>）。
+    /// 仅在 <see cref="RestrictedMode"/> 为 true 时有意义：未同意（false）时，每次启动都会
+    /// 先弹出基本模式协议；点「同意」写入 true、本次会话不再重复弹出；点「不同意」则保持
+    /// false、继续以"只可启动游戏和选择文件夹"的受限状态进入主界面，不阻塞使用。
+    /// 一旦用户通过「重新阅读协议并同意」接受了完整协议并退出基本模式，RestrictedMode
+    /// 会变回 false，本字段一并复位为 true（完整协议覆盖基本协议，无需再单独确认）。
+    /// </summary>
+    public bool BasicAgreementAccepted { get; set; } = false;
+
     public string LastSelectedAccountId { get; set; } = "";
 
     /// <summary>false=傻瓜模式（默认，隐藏高级选项，一键完成）；true=高级模式（可自定义 Java 版本/架构/安装方式等）</summary>
@@ -249,6 +293,22 @@ public class AppConfig
     public List<string> FavoriteVersionIds { get; set; } = new();
 
     /// <summary>
+    /// "从列表中删除"的实例（不删文件）。已安装版本列表是每次直接扫描 versions/ 目录得到的
+    /// （见 FolderService.ScanVersions），本身没有持久化列表可"移除"，所以这里单独维护一份
+    /// "用户主动隐藏、暂时不想在列表里看到"的黑名单，扫描结果里命中的直接过滤掉，不影响磁盘
+    /// 上的文件——跟 .NOXCL（整个目录级别、面向"不想让 xcl 探测"）不是一回事：这里是单个
+    /// 实例级别、面向"看得到目录但暂时不想在列表里显示"，且没有对应的"新建标记文件"这种
+    /// 用户可自行操作的入口，只能通过启动器界面添加/移除。
+    ///
+    /// key 格式："{文件夹路径}|{版本Id}"（两者都不区分大小写，比较前统一转小写），用文件夹路径
+    /// 加以限定是因为同一个版本 Id（比如 "1.20.1"）完全可能同时出现在不同的 .minecraft 目录下，
+    /// 不加文件夹前缀会导致"在 A 文件夹隐藏了 1.20.1，结果 B 文件夹的 1.20.1 也跟着消失"这种
+    /// 跨文件夹误伤，虽然 VersionJavaIdOverrides 等老字段是这么做的（只用 versionId 做 key），
+    /// 但这里新加字段没有历史包袱，直接用更严谨的复合 key，不重复那个已知不够精确的写法。
+    /// </summary>
+    public List<string> HiddenInstanceKeys { get; set; } = new();
+
+    /// <summary>
     /// 统一的"收藏夹"内容：游戏版本 + Modrinth/CurseForge 的 Mod/材质包/数据包/光影包/地图，
     /// 现在收藏夹不再局限于"游戏版本"这一种类型，下载中心每个分类的卡片上都能收藏，
     /// 全部汇总展示在"我的收藏"里，按类型分组。
@@ -433,6 +493,15 @@ public class AppConfig
     // ===== 基岩版客户端 =====
 
     /// <summary>
+    /// 是否已同意过《基岩版分发协议》（微软对 Minecraft for Windows 客户端及基岩版
+    /// 专用服务端的分发法律协议）。默认 false：进入「基岩版启动」页面时必须先同意这份
+    /// 协议，不同意就停留在当前页面不进入（可再次点进入重新同意）；同意后写入 true
+    /// 持久化，本次及后续进入不再重复弹协议，并弹一次"暂不支持多版本"的公告。
+    /// 见 MainWindow.OpenBedrockWithAgreementGate。
+    /// </summary>
+    public bool BedrockAgreementAccepted { get; set; } = false;
+
+    /// <summary>
     /// 基岩版客户端（Bedrock Edition Windows Client）下载时的默认安装文件夹。
     /// null/空 = 每次下载都弹文件夹选择框。
     /// </summary>
@@ -459,6 +528,44 @@ public class AppConfig
     /// 存放位置：跟随 xcl2/config.json 一起持久化。
     /// </summary>
     public List<BedrockServerRecord> BedrockServers { get; set; } = new();
+
+    // ===== 注册表功能（HKLM/HKCU 双路径存储） =====
+
+    /// <summary>
+    /// 「注册表功能」总开关。默认开启：一部分启动早期就要用到的设置（是否阅读/同意用户协议、
+    /// 基本模式状态、界面配色等，具体字段清单见 <see cref="Services.RegistrySyncedFields"/>）
+    /// 会以注册表 <c>HKEY_LOCAL_MACHINE\SOFTWARE\XCL2</c>（或 HKCU，取决于是否提权/是否开启
+    /// <see cref="UseMachineWideRegistry"/>）为主存储，config.json 里的同名字段只作为镜像备份。
+    /// 关闭后完全退回只用 config.json，不再读写注册表——这是"设置里支持关闭注册表功能"的实现点。
+    /// 关闭这个开关本身不会自动删除已经写入的注册表项，删除需要用户在"危险操作"里单独确认执行。
+    /// </summary>
+    public bool RegistryFeatureEnabled { get; set; } = true;
+
+    /// <summary>
+    /// 是否使用"全设备"范围的注册表（HKLM）而不是"当前用户"范围（HKCU）。
+    /// 默认 false：绝大多数用户以普通权限运行，写 HKCU 即可正常工作，不需要每次都弹 UAC。
+    /// 打开后，只有当前进程**确实**以管理员身份运行时才会真正写入 HKLM；用户开着这个开关
+    /// 但这次以普通权限运行时，会静默退化为写 HKCU（不报错、不阻塞保存），
+    /// 保证"这次没有提权"也不会导致设置保存失败或者把已在 HKLM 里的旧设置弄丢
+    /// （HKLM 里的内容只有真正用管理员权限运行时才会被这个开关驱动的写入触碰到）。
+    /// 见 <see cref="Services.RegistryConfigService"/> 类头注释里的完整读写规则。
+    /// </summary>
+    public bool UseMachineWideRegistry { get; set; } = false;
+
+    // ===== 正版账户令牌保留时效 =====
+
+    /// <summary>
+    /// 微软正版账户的"令牌保留时效"（天数）。当 access token 已过期、且尝试用 refresh token
+    /// 静默刷新时因为网络问题/Mojang 认证服务本身故障（不是"refresh token 已失效"这种
+    /// 明确的认证错误）而失败时，只要账户最近一次成功验证的时间距今不超过这个天数，
+    /// 就允许直接使用本地缓存的正版 UUID + 用户名离线启动（跳过在线校验），
+    /// 而不是直接报错拒绝启动——见 Account.LastVerifiedAtUtc、
+    /// MicrosoftAuthService.RefreshAsync 调用处的降级处理。
+    /// 默认 7 天：在"长时间断网/服务中断也能继续玩"和"长期不联网校验，令牌形同虚设"
+    /// 之间取一个折中值，用户可在设置页调整（0 表示关闭这个降级，服务不可用时直接报错，
+    /// 恢复到功能上线前的行为）。
+    /// </summary>
+    public int AccountTokenGracePeriodDays { get; set; } = 7;
 }
 
 /// <summary>拖入 .zip 且内容特征不明确时的默认处理方式。</summary>

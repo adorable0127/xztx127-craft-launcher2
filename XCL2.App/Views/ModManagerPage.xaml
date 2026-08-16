@@ -19,6 +19,7 @@
                     <Button Content="{DynamicResource Str_Ui_Export_Modpack}" Style="{StaticResource SideNavButton}" Margin="0,0,8,0" Click="ExportModpack_Click"/>
                     <Button Content="{DynamicResource Str_Ui_Import_Modpack}" Style="{StaticResource SideNavButton}" Margin="0,0,8,0" Click="ImportModpack_Click"/>
                     <Button Content="{DynamicResource Str_Ui_Check_Dependencies}" Style="{StaticResource SideNavButton}" Margin="0,0,8,0" Click="AnalyzeDependencies_Click"/>
+                    <Button Content="一键升级" Style="{StaticResource SideNavButton}" Margin="0,0,8,0" Click="BatchUpdateMods_Click"/>
                     <Button Content="{DynamicResource Str_Common_Refresh}" Style="{StaticResource PrimaryButton}" Click="Refresh_Click"/>
                 </StackPanel>
             </Grid>

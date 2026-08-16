@@ -193,6 +193,75 @@ public partial class ModManagerPage : UserControl
         RefreshMods(); // 用户可能在弹窗里下载了前置或删除了 mod，刷新列表让状态保持一致
     }
 
+    /// <summary>
+    /// 一键批量升级：扫描当前实例 mods 文件夹里所有能在 Modrinth 上按哈希识别出来的 mod，
+    /// 有更新的列出来给用户确认一次（避免用户明明只想升一个却被连带升级了别的），
+    /// 确认后逐个下载替换，全程不影响不认识的/没有更新的文件，也不影响 mods 文件夹里
+    /// 已经存在的其它内容（存档/资源包等不在这个文件夹里，天然不受影响）。
+    /// </summary>
+    private async void BatchUpdateMods_Click(object sender, RoutedEventArgs e)
+    {
+        var gameDir = GetEffectiveGameDir();
+        var version = VersionCombo.SelectedItem as GameVersion;
+        if (gameDir == null || version == null)
+        {
+            MessageBoxDialog.ShowInfo(Loc.T("Str_Cs_Please_Choose_A_Folder_And_A_Version_Fir", "请先选择一个文件夹和版本。"));
+            return;
+        }
+
+        var modsDir = Path.Combine(gameDir, "mods");
+        if (!Directory.Exists(modsDir))
+        {
+            MessageBoxDialog.ShowInfo("这个实例还没有 mods 文件夹，没有可检查的模组。");
+            return;
+        }
+
+        using var batchUpdate = new BatchUpdateService();
+        List<UpdateCandidate> candidates;
+        try
+        {
+            // 简单进度提示：检查过程可能要跑几十次网络请求（每个 mod 至少 2 次），
+            // 用 Toast 提示一下"正在检查"，避免用户以为按钮没反应。
+            ToastService.ShowInfo("正在检查模组更新，可能需要一点时间…");
+            candidates = await batchUpdate.CheckAsync(modsDir, "*.jar",
+                version.McVersion, version.ModLoader, progress: null, ct: default);
+        }
+        catch (Exception ex)
+        {
+            ErrorPresenter.ShowFriendlyError("检查更新失败，请检查网络连接后重试。", ex.ToString(), "检查更新失败");
+            return;
+        }
+
+        if (candidates.Count == 0)
+        {
+            MessageBoxDialog.ShowInfo("没有发现可升级的模组（可能都已是最新版本，或者这些 mod 无法通过 Modrinth 识别）。", "检查完成");
+            return;
+        }
+
+        var listText = string.Join("\n", candidates.Select(c =>
+            $"「{c.DisplayName}」：{(string.IsNullOrEmpty(c.CurrentVersionName) ? "当前版本" : c.CurrentVersionName)} → {c.NewVersionName}"));
+        var confirm = MessageBoxDialog.ShowConfirm(
+            $"发现 {candidates.Count} 个模组有更新：\n\n{listText}\n\n是否全部升级？",
+            "一键批量升级");
+        if (!confirm) return;
+
+        var (succeeded, failed) = await batchUpdate.ApplyAsync(modsDir, candidates, progress: null, ct: default);
+
+        RefreshMods();
+
+        if (failed.Count == 0)
+        {
+            ToastService.ShowSuccess($"已成功升级 {succeeded.Count} 个模组。");
+        }
+        else
+        {
+            var failText = string.Join("\n", failed.Select(f => $"「{f.name}」：{f.error}"));
+            MessageBoxDialog.ShowWarning(
+                $"成功升级 {succeeded.Count} 个，{failed.Count} 个失败：\n\n{failText}",
+                "升级完成（部分失败）");
+        }
+    }
+
     private void EnableMod_Click(object sender, RoutedEventArgs e)
     {
         if (sender is not Button btn || btn.Tag is not LocalModDisplayItem item) return;

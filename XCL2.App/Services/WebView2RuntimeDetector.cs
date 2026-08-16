@@ -75,7 +75,7 @@ public static class WebView2RuntimeDetector
             try
             {
                 using var baseKey = RegistryKey.OpenBaseKey(
-                    hive == Registry.LocalMachine ? RegistryHive.LocalMachine : RegistryHive.CurrentUser, view);
+                    hive == Registry.LocalMachine ? Microsoft.Win32.RegistryHive.LocalMachine : Microsoft.Win32.RegistryHive.CurrentUser, view);
                 using var key = baseKey.OpenSubKey(clientStateSubKey);
                 var pv = key?.GetValue("pv") as string;
                 if (!string.IsNullOrEmpty(pv) && pv != "0.0.0.0") return true;

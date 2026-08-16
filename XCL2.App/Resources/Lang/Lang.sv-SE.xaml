@@ -168,6 +168,7 @@
     <system:String x:Key="Str_Ui_Official_Mojang">Officiell källa (Mojang)</system:String>
     <system:String x:Key="Str_Ui_Only_Applies_When_No_Specific_Java_Is_Ch">Gäller endast när ingen specifik Java valts ovan: lämna tomt för automatisk matchning (rekommenderas); ett tal (t.ex. 25) tvingar fram den huvudversionen</system:String>
     <system:String x:Key="Str_Ui_Open_On_The_Chinese_Minecraft_Wiki">Visa på den kinesiska Minecraft-wikin</system:String>
+    <system:String x:Key="Str_Ui_Instance_Settings">Instansinställningar</system:String>
     <system:String x:Key="Str_Ui_Pick_A_Java_For_This_Instance_From_The_J">Välj en Java specifikt för denna version från Java-listan i "Inställningar"; välj "(ej angiven)" för att i stället matcha automatiskt mot huvudversionen som anges nedan</system:String>
     <system:String x:Key="Str_Ui_Previous">◀ Föregående sida</system:String>
     <system:String x:Key="Str_Ui_Project_Id">Projekt-ID: </system:String>

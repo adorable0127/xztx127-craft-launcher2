@@ -96,6 +96,138 @@ public static class ToastService
     public static void ShowInfo(string message) => Show(message, ToastKind.Info);
     public static void ShowWarning(string message) => Show(message, ToastKind.Warning, 5);
 
+    /// <summary>
+    /// 左下角"操作类"通知：带 1-2 个按钮，点了按钮或点"关闭"之前不会自动消失
+    /// （跟右下角纯告知性 Toast 的关键区别——这里的选择有实际后果，不该在用户还没看到、
+    /// 还没决定之前就被计时器自动划走）。
+    ///
+    /// 典型用途：加载器版本转换/升级降级成功后，问"要不要删除这次操作前的自动备份"——
+    /// 按钳2要求，这里默认文案会建议用户"先启动游戏验证一次，确认没问题了再删除"，
+    /// 而不是鼓励用户一转换完就立刻删掉备份。
+    /// </summary>
+    public static void ShowActionPrompt(string message, string primaryText, Action primaryAction,
+        string? secondaryText = null, Action? secondaryAction = null, string? hint = null)
+    {
+        if (_host?.ActionToastHost == null) return;
+        if (!_host.Dispatcher.CheckAccess())
+        {
+            _host.Dispatcher.Invoke(() => ShowActionPrompt(message, primaryText, primaryAction, secondaryText, secondaryAction, hint));
+            return;
+        }
+
+        try
+        {
+            var card = BuildActionCard(message, hint, primaryText, primaryAction, secondaryText, secondaryAction);
+            _host.ActionToastHost.Items.Add(card);
+
+            // 同屏最多留 3 条，避免用户攒了一堆没处理的通知糊满左下角。
+            while (_host.ActionToastHost.Items.Count > 3)
+                _host.ActionToastHost.Items.RemoveAt(0);
+
+            var slide = new TranslateTransform(-24, 0);
+            card.RenderTransform = slide;
+            card.Opacity = 0;
+            card.BeginAnimation(UIElement.OpacityProperty,
+                new DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(160)));
+            slide.BeginAnimation(TranslateTransform.XProperty,
+                new DoubleAnimation(-24, 0, TimeSpan.FromMilliseconds(160))
+                { EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut } });
+        }
+        catch
+        {
+            // 提示层出任何问题都不该影响主流程。
+        }
+    }
+
+    private static void DismissActionCard(Border card)
+    {
+        if (_host?.ActionToastHost == null) return;
+        var fade = new DoubleAnimation(1, 0, TimeSpan.FromMilliseconds(180));
+        fade.Completed += (_, _) =>
+        {
+            if (_host?.ActionToastHost != null && _host.ActionToastHost.Items.Contains(card))
+                _host.ActionToastHost.Items.Remove(card);
+        };
+        card.BeginAnimation(UIElement.OpacityProperty, fade);
+    }
+
+    private static Border BuildActionCard(string message, string? hint,
+        string primaryText, Action primaryAction, string? secondaryText, Action? secondaryAction)
+    {
+        var accent = (Brush)Application.Current.FindResource("SuccessTextBrush");
+
+        var text = new TextBlock
+        {
+            Text = message,
+            FontSize = 13,
+            MaxWidth = 320,
+            TextWrapping = TextWrapping.Wrap,
+        };
+        text.SetResourceReference(TextBlock.ForegroundProperty, "TextPrimaryBrush");
+
+        var content = new StackPanel();
+        content.Children.Add(text);
+
+        if (!string.IsNullOrEmpty(hint))
+        {
+            var hintBlock = new TextBlock
+            {
+                Text = hint,
+                FontSize = 12,
+                MaxWidth = 320,
+                TextWrapping = TextWrapping.Wrap,
+                Margin = new Thickness(0, 4, 0, 0),
+            };
+            hintBlock.SetResourceReference(TextBlock.ForegroundProperty, "TextSecondaryBrush");
+            content.Children.Add(hintBlock);
+        }
+
+        var buttonRow = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 10, 0, 0) };
+
+        Border card = null!;
+
+        var primaryBtn = new Button { Content = primaryText, Padding = new Thickness(12, 4, 12, 4), Margin = new Thickness(0, 0, 8, 0) };
+        primaryBtn.SetResourceReference(Button.StyleProperty, "SecondaryButton");
+        primaryBtn.Click += (_, _) =>
+        {
+            try { primaryAction(); } finally { DismissActionCard(card); }
+        };
+        buttonRow.Children.Add(primaryBtn);
+
+        if (!string.IsNullOrEmpty(secondaryText))
+        {
+            var secondaryBtn = new Button { Content = secondaryText, Padding = new Thickness(12, 4, 12, 4) };
+            secondaryBtn.SetResourceReference(Button.StyleProperty, "SecondaryButton");
+            secondaryBtn.Click += (_, _) =>
+            {
+                try { secondaryAction?.Invoke(); } finally { DismissActionCard(card); }
+            };
+            buttonRow.Children.Add(secondaryBtn);
+        }
+
+        content.Children.Add(buttonRow);
+
+        card = new Border
+        {
+            CornerRadius = new CornerRadius(8),
+            Padding = new Thickness(14, 12, 16, 12),
+            Margin = new Thickness(0, 8, 0, 0),
+            BorderThickness = new Thickness(3, 1, 1, 1),
+            Child = content,
+        };
+        card.SetResourceReference(Border.BackgroundProperty, "PanelBrush");
+        card.BorderBrush = accent;
+        card.Effect = new System.Windows.Media.Effects.DropShadowEffect
+        {
+            Color = Colors.Black,
+            Opacity = 0.22,
+            BlurRadius = 16,
+            ShadowDepth = 2,
+        };
+
+        return card;
+    }
+
     private static Border BuildCard(string message, ToastKind kind)
     {
         var (glyph, brushKey) = kind switch

@@ -1,0 +1,24 @@
+<local:OverlayDialogControl x:Class="XCL2.App.Views.DangerousConfirmDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="clr-namespace:XCL2.App.Views"
+        Width="420">
+    <!-- 危险操作二次确认：关闭注册表功能 / 删除所有新增的启动器注册表项 / 清除本机痕迹
+         三个操作共用这一个弹窗，要求用户手动输入固定确认码 "xztx127" 才能继续，
+         防止手滑误触。见 ConfigService 里对应三个方法头注释（DisableRegistryFeature /
+         DeleteAllRegistryEntries / ClearAllTraces）——那三个方法本身不做确认码校验，
+         校验完全在这个弹窗里完成，通过了才会调用它们。 -->
+    <StackPanel Margin="20">
+        <TextBlock x:Name="TitleText" FontSize="16" FontWeight="SemiBold" Margin="0,0,0,10"
+                   Foreground="{DynamicResource WarningTextBrush}"/>
+        <TextBlock x:Name="MessageText" TextWrapping="Wrap" Margin="0,0,0,14"
+                   Foreground="{DynamicResource TextSecondaryBrush}"/>
+        <TextBlock Text="请输入确认码 xztx127 以继续：" Margin="0,0,0,6"/>
+        <TextBox x:Name="ConfirmCodeBox" Height="30" VerticalContentAlignment="Center"/>
+        <TextBlock x:Name="ErrorText" Foreground="IndianRed" FontSize="12" Margin="0,6,0,0" Visibility="Collapsed"/>
+        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,18,0,0">
+            <Button x:Name="CancelBtn" Content="{DynamicResource Str_Common_Cancel}" Width="80" Margin="0,0,8,0" Click="Cancel_Click"/>
+            <Button x:Name="OkBtn" Content="确认执行" Width="100" Style="{DynamicResource PrimaryButton}" Click="Ok_Click" IsDefault="True"/>
+        </StackPanel>
+    </StackPanel>
+</local:OverlayDialogControl>

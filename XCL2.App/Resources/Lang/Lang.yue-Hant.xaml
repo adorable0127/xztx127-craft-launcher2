@@ -496,6 +496,7 @@
     <system:String x:Key="Str_Ui_Bmclapi_Mirror_Recommended_Faster_In_Mai">BMCLAPI 映象源 (推薦，國內更快)</system:String>
     <system:String x:Key="Str_Ui_Limit_To_A_Game_Version_E_G_1_20_1_Leave">限定遊戲版本，例如 1.20.1；留空不限定</system:String>
     <system:String x:Key="Str_Ui_Open_On_The_Chinese_Minecraft_Wiki">在中文 Minecraft Wiki 中檢視</system:String>
+    <system:String x:Key="Str_Ui_Instance_Settings">實例設定</system:String>
     <system:String x:Key="Str_Ui_Normal_Mode_Recommended_Works_With_Zero_">普通模式（推薦，0基礎也能用，隱藏高階選項）</system:String>
     <system:String x:Key="Str_Ui_Pick_A_Java_Runtime_From_Your_Java_List">從 Java 列表裡選擇要使用的 Java：</system:String>
     <system:String x:Key="Str_Ui_Oray_Same_Vendor_As_Sunlogin_Graphical_U">花生殼（向日葵同廠商，圖形化介面，新手友好）</system:String>

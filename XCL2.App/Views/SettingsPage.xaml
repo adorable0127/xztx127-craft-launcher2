@@ -388,6 +388,77 @@
                 </ItemsControl.ItemTemplate>
             </ItemsControl>
 
+            <!-- 协议：只读查看当前协议全文（不影响任何配置），以及"注销应用"——主动放弃已同意的
+                 协议状态，下次启动会重新走一遍协议流程。两者都对应 AgreementsWindow/AppConfig 里
+                 已有的协议版本号机制，见各自 Click 处理函数上的注释。 -->
+            <TextBlock Text="协议与账户" FontSize="14" FontWeight="Bold" Margin="0,0,0,4"/>
+            <StackPanel Orientation="Horizontal" Margin="0,0,0,20">
+                <Button x:Name="ReadAgreementsButton" Content="阅读协议" Padding="14,8" Click="ReadAgreements_Click"/>
+                <Button x:Name="DeregisterButton" Content="注销应用（暂时不同意协议）" Padding="14,8" Margin="8,0,0,0"
+                        Click="Deregister_Click"/>
+            </StackPanel>
+
+            <!-- 正版账户令牌保留时效：见 AppConfig.AccountTokenGracePeriodDays 与
+                 MainWindow 里微软账户刷新失败后的降级处理。0 = 关闭这个降级。 -->
+            <TextBlock Text="正版账户令牌保留时效" FontSize="14" FontWeight="Bold" Margin="0,0,0,4"/>
+            <TextBlock Text="微软账户令牌过期且暂时联系不上认证服务器时，只要账户最近一次成功验证距今不超过这个天数，就允许直接用本地缓存的正版信息离线启动（0 = 关闭，服务不可用时直接要求重新登录）。"
+                       FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,8" TextWrapping="Wrap"/>
+            <StackPanel Orientation="Horizontal" Margin="0,0,0,20">
+                <TextBox x:Name="AccountTokenGraceDaysBox" Width="80" Padding="8"/>
+                <TextBlock Text="天" VerticalAlignment="Center" Margin="8,0,0,0"/>
+            </StackPanel>
+
+            <!-- 注册表功能：见 RegistryConfigService / RegistrySyncedFields / ConfigService 里
+                 危险操作三个方法的详细注释。这里只是把已有能力接到界面上。 -->
+            <TextBlock Text="注册表存储" FontSize="14" FontWeight="Bold" Margin="0,0,0,4"/>
+            <TextBlock Text="部分设置（是否同意协议、基本模式、配色等）会同时保存到 Windows 注册表 HKEY_LOCAL_MACHINE\SOFTWARE\XCL2（或当前用户分支），跟 config.json 互为镜像，其中一处丢失时仍能从另一处恢复。"
+                       FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,8" TextWrapping="Wrap"/>
+            <CheckBox x:Name="UseMachineWideRegistryCheck" Content="使用全设备范围（HKEY_LOCAL_MACHINE，需要以管理员身份运行才会真正生效，未提权时自动改写当前用户分支）"
+                      Margin="0,0,0,4"/>
+            <TextBlock x:Name="RegistryStatusText" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}"
+                       Margin="0,0,0,10" TextWrapping="Wrap"/>
+            <WrapPanel Margin="0,0,0,10">
+                <Button x:Name="UpdateConfigDefaultsBtn" Content="更新配置文件" Padding="14,8" Margin="0,0,8,8"
+                        ToolTip="把新版本引入的设置默认值补丁进当前配置，不会覆盖你已经改过的任何设置"
+                        Click="UpdateConfigDefaults_Click"/>
+                <Button x:Name="ExportRegBtn" Content="导出注册表 (.reg)" Padding="14,8" Margin="0,0,8,8" Click="ExportReg_Click"/>
+                <Button x:Name="ExportAllConfigBtn" Content="导出所有配置" Padding="14,8" Margin="0,0,8,8" Click="ExportAllConfig_Click"/>
+                <Button x:Name="ImportConfigBtn" Content="导入配置" Padding="14,8" Margin="0,0,8,8" Click="ImportConfig_Click"/>
+            </WrapPanel>
+            <!-- 拖拽导入：把导出的 .xclconfig.json 归档文件直接拖到这个区域即可，
+                 跟点"导入配置"按钮走同一套解析/写回逻辑（见 SettingsPage.xaml.cs 的
+                 ImportConfigArchiveFile 方法），只是入口多一种。 -->
+            <Border x:Name="ImportDropZone" BorderBrush="{DynamicResource TextSecondaryBrush}" BorderThickness="1"
+                    CornerRadius="6" Padding="14" Margin="0,0,0,20"
+                    AllowDrop="True" Drop="ImportDropZone_Drop" DragOver="ImportDropZone_DragOver">
+                <TextBlock Text="也可以把「导出所有配置」生成的归档文件拖到这里直接导入" HorizontalAlignment="Center"
+                           FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}"/>
+            </Border>
+
+            <!-- 帮助/小贴士：一些不太好从界面本身看出来的行为，集中放在这里说明，
+                 免得用户翻文档或者猜。目前只有 .NOXCL 这一条，以后陆续增加同类条目
+                 可以继续往这个 StackPanel 里加 TextBlock，不用专门开新分区。 -->
+            <TextBlock Text="帮助" FontSize="14" FontWeight="Bold" Margin="0,0,0,4"/>
+            <Border Background="{DynamicResource SideBrush}" CornerRadius="6" Padding="12" Margin="0,0,0,20">
+                <StackPanel>
+                    <TextBlock Text="排除某个目录不被自动扫描到" FontSize="12" FontWeight="Bold" Margin="0,0,0,4"/>
+                    <TextBlock TextWrapping="Wrap" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}">
+                        <Run Text="在某个文件夹目录下新建一个名为 "/>
+                        <Run Text=".NOXCL" FontFamily="Consolas" FontWeight="Bold"/>
+                        <Run Text=" 的文件或文件夹（内容不重要，存在即可），启动器下次自动扫描时就会跳过这个目录，不会把它当成 .minecraft 目录自动收进列表，也不会再往它内部继续查找。如果是通过「添加已有文件夹」手动加进来的，不受这个标记影响，依然可以正常启动、管理。"/>
+                    </TextBlock>
+                </StackPanel>
+            </Border>
+
+            <TextBlock Text="危险操作" FontSize="14" FontWeight="Bold" Foreground="{DynamicResource WarningTextBrush}" Margin="0,0,0,4"/>
+            <TextBlock Text="以下操作需要输入确认码 xztx127 才能执行，且都不可撤销；只会影响 XCL2 自身的配置/注册表数据，不会触碰 .minecraft 游戏目录或系统其它设置。"
+                       FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,10" TextWrapping="Wrap"/>
+            <WrapPanel Margin="0,0,0,20">
+                <Button x:Name="DisableRegistryBtn" Content="关闭注册表功能" Padding="14,8" Margin="0,0,8,8" Click="DisableRegistry_Click"/>
+                <Button x:Name="DeleteRegistryBtn" Content="删除所有新增的启动器注册表项" Padding="14,8" Margin="0,0,8,8" Click="DeleteRegistry_Click"/>
+                <Button x:Name="ClearTracesBtn" Content="清除本机痕迹" Padding="14,8" Margin="0,0,8,8" Click="ClearTraces_Click"/>
+            </WrapPanel>
+
             <Button Content="{DynamicResource Str_Ui_Save_Settings}" Style="{StaticResource PrimaryButton}" Width="140" HorizontalAlignment="Left" Click="Save_Click"/>
             <TextBlock x:Name="StatusText" Foreground="{DynamicResource AccentBrush}" Margin="0,12,0,0"/>
         </StackPanel>

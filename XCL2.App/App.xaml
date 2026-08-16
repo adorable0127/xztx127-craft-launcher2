@@ -61,6 +61,41 @@
                  <Border.Effect><StaticResource GlowEffect"/></Border.Effect> 引用。 -->
             <DropShadowEffect x:Key="GlowEffect" Color="#00C2E8" BlurRadius="10" ShadowDepth="0" Opacity="0.55"/>
 
+            <!-- 胶囊开关按钮：原来只在 HomePage.xaml 里当局部资源定义（首页右上角"深/浅色、
+                 自动循环、高级模式、访客模式"那一排），这里挪到全局资源，方便任何窗口/页面
+                 复用同一套"未开启=描边小胶囊、开启=强调色填充"的视觉语言（比如 AgreementsWindow
+                 的"人话版"开关），不需要每个用到的地方各自复制一份同样的样式。
+                 HomePage.xaml 里原来的同名局部资源已删除，改成引用这里。 -->
+            <Style x:Key="GuestModeToggleStyle" TargetType="ToggleButton">
+                <Setter Property="Background" Value="{DynamicResource SideBrush}"/>
+                <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}"/>
+                <Setter Property="BorderBrush" Value="{DynamicResource BorderBrush2}"/>
+                <Setter Property="BorderThickness" Value="1"/>
+                <Setter Property="Padding" Value="12,7"/>
+                <Setter Property="Cursor" Value="Hand"/>
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="ToggleButton">
+                            <Border x:Name="ToggleBorder" Background="{TemplateBinding Background}"
+                                    BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}"
+                                    CornerRadius="16" Padding="{TemplateBinding Padding}">
+                                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                            </Border>
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="IsChecked" Value="True">
+                                    <Setter TargetName="ToggleBorder" Property="Background" Value="{DynamicResource AccentBrush}"/>
+                                    <Setter TargetName="ToggleBorder" Property="BorderBrush" Value="{DynamicResource AccentBrush}"/>
+                                    <Setter Property="Foreground" Value="White"/>
+                                </Trigger>
+                                <Trigger Property="IsMouseOver" Value="True">
+                                    <Setter TargetName="ToggleBorder" Property="Effect" Value="{StaticResource GlowEffect}"/>
+                                </Trigger>
+                            </ControlTemplate.Triggers>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+            </Style>
+
             <!-- 全局窗口图标：不需要挨个给 20 多个弹窗窗口（AccountPickerWindow、
                  CreateServerWindow 等）单独写 Icon="..."，用不带 x:Key 的隐式 Style
                  让所有未显式设置 Icon 的 Window 都自动套用同一个应用图标，
@@ -409,6 +444,15 @@
                                 <Trigger Property="IsMouseOver" Value="True">
                                     <Setter TargetName="bd" Property="Background" Value="{DynamicResource GlowSoftBrush}"/>
                                     <Setter TargetName="bd" Property="BorderBrush" Value="{DynamicResource GlowBrush}"/>
+                                </Trigger>
+                                <!-- 基本模式（RestrictedMode）门控靠 IsEnabled=false 置灰受限的导航按钮，
+                                     但这个模板原来没有对应的视觉反馈——IsEnabled=false 只是让按钮吃不到点击，
+                                     图标/文字看起来还是正常颜色，用户分不清"这个功能存在但用不了"和
+                                     "这个功能能点"。补一个禁用态：整体降低不透明度 + 鼠标显示"禁止"光标，
+                                     跟其它控件（比如 TextBox）的禁用态处理方式保持一致。 -->
+                                <Trigger Property="IsEnabled" Value="False">
+                                    <Setter TargetName="bd" Property="Opacity" Value="0.4"/>
+                                    <Setter Property="Cursor" Value="No"/>
                                 </Trigger>
                             </ControlTemplate.Triggers>
                         </ControlTemplate>

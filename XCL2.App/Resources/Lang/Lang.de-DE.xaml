@@ -168,6 +168,7 @@
     <system:String x:Key="Str_Ui_Official_Mojang">Offizielle Quelle (Mojang)</system:String>
     <system:String x:Key="Str_Ui_Only_Applies_When_No_Specific_Java_Is_Ch">Gilt nur, wenn oben kein bestimmtes Java ausgewählt ist: leer lassen für automatischen Abgleich (empfohlen); eine Zahl (z. B. 25) erzwingt diese Hauptversion</system:String>
     <system:String x:Key="Str_Ui_Open_On_The_Chinese_Minecraft_Wiki">Im chinesischen Minecraft-Wiki ansehen</system:String>
+    <system:String x:Key="Str_Ui_Instance_Settings">Instanzeinstellungen</system:String>
     <system:String x:Key="Str_Ui_Pick_A_Java_For_This_Instance_From_The_J">Aus der Java-Liste in „Einstellungen“ ein Java speziell für diese Version wählen; bei „(nicht festgelegt)“ wird stattdessen die unten eingegebene Hauptversion automatisch abgeglichen</system:String>
     <system:String x:Key="Str_Ui_Previous">◀ Vorherige Seite</system:String>
     <system:String x:Key="Str_Ui_Project_Id">Projekt-ID: </system:String>

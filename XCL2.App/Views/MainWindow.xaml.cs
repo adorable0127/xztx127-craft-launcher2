@@ -169,8 +169,8 @@ public partial class MainWindow : Window
         // 同步一次，并订阅 LanguageChanged，保证用户在运行时切换语言后这个按钮立即跟着
         // 显示/隐藏，不需要重启或切页面才生效。
         RefreshExperimentalNavVisibility();
-        LocalizationService.LanguageChanged += RefreshExperimentalNavVisibility;
-        Closed += (_, _) => LocalizationService.LanguageChanged -= RefreshExperimentalNavVisibility;
+        LocalizationService.LanguageChanged += OnLanguageChanged;
+        Closed += (_, _) => LocalizationService.LanguageChanged -= OnLanguageChanged;
 
         // 侧边栏"收起/展开"初始状态：默认展开（跟原来的固定 180 宽行为一致），
         // 不做持久化——每次启动都是展开态，避免"上次不小心点收起了，下次开机
@@ -283,13 +283,24 @@ public partial class MainWindow : Window
             }
         };
 
-        // 首次启动自动弹出新手引导：挂在 ContentRendered 而不是 Loaded 上（原因见上面
+        // 首次启动自动弹出「协议页 → 新手引导」，挂在 ContentRendered 而不是 Loaded 上（原因见上面
         // MC 文件夹/Java 扫描两处的注释——Loaded 不保证首帧已经真正画出来，向导这种
         // 立刻弹出的模态 Overlay 如果在 Loaded 里弹，很容易跟"主窗口自己的首帧渲染"抢
         // UI 线程，表现就是主窗口白屏、向导也显示不全）。ContentRendered 在窗口每次
         // 内容重新渲染完成后都会触发，这里用 EventHandler 局部变量 + 立即反订阅实现
         // "只在首帧渲染完成后弹一次"，避免后续任何触发 ContentRendered 的操作
-        // （比如窗口尺寸变化、主题切换引起的视觉刷新）意外把向导再弹一次。
+        // （比如窗口尺寸变化、主题切换引起的视觉刷新）意外把流程再弹一次。
+        //
+        // 协议页（AgreementsWindow）三页依次是《用户协议》《隐私协议》《开源协议》：
+        // 前两页强制阅读 5 秒，「同意并继续」按钮才可点击；第三页（开源协议）不强制阅读、
+        // 进入即可继续。三页全部同意后由协议窗口把 AgreementsAccepted 标记为已完成并落盘，
+        // 此后不再自动弹出。按 Esc 关闭（Overlay 的 Esc 关闭走 PreviewKeyDown →
+        // RequestDismissTopByEscape，见上面 Esc 处理）或任何未走到第三页的退出都会被
+        // ShowModal 返回 null，调用方据此判定"未同意"，本次启动不再继续后续流程，
+        // 下次启动会重新展示——法律性文本不允许"跳过即视为同意"。也正因为不允许半路退出，
+        // 这里同样通过 OverlayDialogService.ShowModal 的 dismissOnBackgroundClick: false
+        // （不点调用点兼容层 ShowDialog() 默认值的更详细说明见下方新手引导那段注释）
+        // 显式禁止"点空白处关闭"。
         //
         // 新手引导走完/关闭之后才补跑一次 .minecraft 文件夹自动扫描（原因见上面
         // ScanMinecraftFoldersInBackgroundAsync 调用点的注释：避免扫描结果提示框
@@ -306,20 +317,111 @@ public partial class MainWindow : Window
         // 成\"已完成\"，不应该走这条默认放行的路径。这里不改 OverlayDialogControl 基类
         // 的默认值（改了会连带影响其余 20 多个弹窗的点击外部关闭行为），而是绕开
         // ShowDialog() 这层封装，直接调用 OverlayDialogService.ShowModal 并显式传
-        // dismissOnBackgroundClick: false，只让新手引导这一个弹窗变成"点空白处不生效，
-        // 必须点「跳过引导」或走完流程"。
-        if (!ConfigService.Config.FirstRunWizardCompleted)
+        // dismissOnBackgroundClick: false，只让首次启动流程里的弹窗变成"点空白处不生效，
+        // 必须点「同意并继续」/「跳过引导」或走完流程"。
+        // 是否需要重新走一遍协议：不再只看 AgreementsAccepted 这个布尔，而是比较
+        // AcceptedAgreementVersion 与当前 AgreementsText.AgreementsVersion——协议文本
+        // 有实质修改（版本号被加一）时，即使老用户以前已经 AgreementsAccepted=true，
+        // 这里比较结果仍然是"需要重新弹出"，实现"每次协议更新都重新展示"。
+        var needsAgreements = ConfigService.Config.AcceptedAgreementVersion < AgreementsText.AgreementsVersion;
+        if (needsAgreements || !ConfigService.Config.FirstRunWizardCompleted)
         {
-            EventHandler? showWizardOnce = null;
-            showWizardOnce = (_, _) =>
+            EventHandler? showFirstRunOnce = null;
+            showFirstRunOnce = (_, _) =>
             {
-                ContentRendered -= showWizardOnce;
-                var wizard = new FirstRunWizardWindow(this);
-                OverlayDialogService.ShowModal(wizard, dismissOnBackgroundClick: false);
+                ContentRendered -= showFirstRunOnce;
+
+                // 第一次开启先选语言（协议之前）：「简体中文（Microsoft）」这类实验性翻译
+                // 需要用户明确看过再继续，其它语言同理。只在真正的首次启动（还没完成新手引导）
+                // 时弹这一次；老用户升级后只是"重新同意新版协议"（FirstRunWizardCompleted 已为
+                // true）不再重复弹语言选择。选完立即生效并保存（LanguageSelectDialog 内部逻辑），
+                // 后续协议页/新手引导都以所选语言显示。
+                if (!ConfigService.Config.FirstRunWizardCompleted)
+                {
+                    var langDlg = new LanguageSelectDialog(ConfigService);
+                    OverlayDialogService.ShowModal(langDlg, dismissOnBackgroundClick: false);
+                }
+
+                // 先协议后向导：协议未同意（或按 Esc 中途退出）就不往下走，本次启动到此为止，
+                // 下次启动重新展示协议页。dismissOnEsc: false 锁死 Esc——协议是必须显式表态
+                // 的法律流程，不允许"按一下 Esc 就跳过"（修复该 bug 的入口在
+                // OverlayDialogService.RequestDismissTopByEscape）。
+                if (ConfigService.Config.AcceptedAgreementVersion < AgreementsText.AgreementsVersion)
+                {
+                    var agreements = new AgreementsWindow(this);
+                    if (OverlayDialogService.ShowModal(agreements, dismissOnBackgroundClick: false, dismissOnEsc: false) != true)
+                    {
+                        ApplyRestrictedModeGating();
+                        return;
+                    }
+                }
+
+                if (!ConfigService.Config.FirstRunWizardCompleted)
+                {
+                    var wizard = new FirstRunWizardWindow(this);
+                    OverlayDialogService.ShowModal(wizard, dismissOnBackgroundClick: false);
+                }
+                ApplyRestrictedModeGating();
                 _ = ScanMinecraftFoldersInBackgroundAsync();
             };
-            ContentRendered += showWizardOnce;
+            ContentRendered += showFirstRunOnce;
         }
+        else
+        {
+            ApplyRestrictedModeGating();
+        }
+    }
+
+    /// <summary>
+    /// 「基本模式」功能门控：RestrictedMode=true 时，除首页(NavHomeButton)和版本选择
+    /// (NavVersionsButton) 外的所有导航按钮 IsEnabled=false（置灰，不隐藏——用户随时能看见
+    /// 还有哪些功能存在，跟 AppConfig.RestrictedMode 的注释一致），并显示右上角常驻的
+    /// 「重新阅读协议并同意」按钮；RestrictedMode=false 时恢复全部功能、隐藏该按钮。
+    ///
+    /// 同时负责基本模式下"每次启动都确认一遍《基本模式协议》"：RestrictedMode=true 且
+    /// 尚未 BasicAgreementAccepted 时，弹出仅含第 4 页的 AgreementsWindow（不阻塞使用，
+    /// 不同意也能继续以受限状态进入主界面）。
+    /// </summary>
+    public void ApplyRestrictedModeGating()
+    {
+        var restricted = ConfigService.Config.RestrictedMode;
+
+        ReReadAgreementsButton.Visibility = restricted ? Visibility.Visible : Visibility.Collapsed;
+
+        var gatedButtons = new[]
+        {
+            NavDownloadButton, NavMultiplayerButton, NavModManagerButton, NavServerManagerButton,
+            NavToolboxButton, NavBedrockButton, NavAboutHelpButton, NavAccountsButton,
+            NavSettingsButton, NavLogsButton, NavExperimentalButton,
+        };
+        foreach (var btn in gatedButtons)
+        {
+            btn.IsEnabled = !restricted;
+        }
+
+        // 基本模式下首页自己右上角那一排（语言/深浅色/自动循环/普通模式/访客模式）胶囊按钮
+        // 也应该跟侧边栏导航按钮一样置灰——基本模式的设计目标是"只能启动游戏、选择游戏
+        // 文件夹，其余功能置灰"，这几个按钮虽然不在侧边栏导航里，但同样属于"其余功能"，
+        // 之前漏掉了。首页是独立 UserControl，只有当前正显示首页时才能拿到它的实例去改。
+        if (MainContent?.Content is HomePage homePage)
+        {
+            homePage.ApplyRestrictedModeGating(restricted);
+        }
+
+        if (restricted && !ConfigService.Config.BasicAgreementAccepted)
+        {
+            var basicAgreement = AgreementsWindow.CreateBasicModeOnly(this);
+            OverlayDialogService.ShowModal(basicAgreement, dismissOnBackgroundClick: false, dismissOnEsc: false);
+        }
+    }
+
+    /// <summary>右上角「重新阅读协议并同意」：重新走一遍完整四步协议流程；用户同意后
+    /// AgreementsWindow 会把 RestrictedMode 写回 false，这里据此刷新一次门控状态。</summary>
+    private void ReReadAgreements_Click(object sender, RoutedEventArgs e)
+    {
+        var agreements = new AgreementsWindow(this);
+        OverlayDialogService.ShowModal(agreements, dismissOnBackgroundClick: false, dismissOnEsc: false);
+        ApplyRestrictedModeGating();
     }
 
     /// <summary>
@@ -792,25 +894,88 @@ public partial class MainWindow : Window
 
     private void NavBedrock_Click(object sender, RoutedEventArgs e)
     {
-        SetMainContent(new BedrockPage(this));
+        OpenBedrockWithAgreementGate();
     }
 
     /// <summary>供其他页面/窗口调用的公开导航方法，跳转到「基岩版启动」页。</summary>
-    public void NavigateToBedrock() => SetMainContent(new BedrockPage(this));
+    public void NavigateToBedrock() => OpenBedrockWithAgreementGate();
+
+    /// <summary>
+    /// 「基岩版启动」统一入口。基岩版客户端/服务端由 Microsoft/Mojang 分发，进入页面
+    /// 前必须先同意《基岩版分发协议》（微软的分发法律协议）：未同意时弹协议确认框，
+    /// 不同意就直接返回当前页面（不进入），之后可以再点进入重新同意；同意后写入配置
+    /// 持久化，并弹一次公告（当前暂不支持选择具体版本，只支持最新正式版/预览版），
+    /// 然后才进入页面。
+    /// </summary>
+    private void OpenBedrockWithAgreementGate()
+    {
+        if (!ConfigService.Config.BedrockAgreementAccepted)
+        {
+            var agree = MessageBoxDialog.ShowConfirm(
+                "基岩版（Minecraft for Windows 客户端及基岩版专用服务端）由 Microsoft/Mojang 分发，" +
+                "受相关法律协议约束：\n\n" +
+                "1. 基岩版客户端通过 Microsoft Store 分发，需用户本人持有有效的微软账号与 Minecraft 许可证。" +
+                "本启动器只负责检测、唤起、管理已安装的客户端，不参与任何绕过 Store 许可证获取客户端包的行为。\n" +
+                "2. 基岩版专用服务端（BDS）由 Mojang 在官网公开免费发布，按其服务端 EULA 使用。\n" +
+                "3. 使用基岩版相关功能，即表示你已阅读并同意 Microsoft Store 服务条款、" +
+                "Minecraft 最终用户许可协议（EULA）及 Mojang 服务条款（https://www.minecraft.net/terms）。\n\n" +
+                "是否同意以上协议并继续进入「基岩版启动」页面？",
+                "基岩版分发协议");
+            if (!agree) return;   // 不同意就返回，可再点进入重新同意
+
+            ConfigService.Config.BedrockAgreementAccepted = true;
+            ConfigService.Save();
+
+            MessageBoxDialog.ShowInfo(
+                "公告：当前暂不支持选择基岩版的具体版本（多版本支持尚未完成）。" +
+                "进入页面后只能选择「正式版 / 预览版」渠道，下载和使用均为对应渠道的最新版。",
+                "基岩版公告");
+        }
+        SetMainContent(new BedrockPage(this));
+    }
 
     private void NavAboutHelp_Click(object sender, RoutedEventArgs e)
     {
-        SetMainContent(new AboutHelpPage(this));
+        OpenAboutHelpWithMicrosoftChineseWarning();
     }
 
     /// <summary>供其他页面/窗口调用的公开导航方法，跳转到「鸣谢与帮助」页。</summary>
-    public void NavigateToAboutHelp() => SetMainContent(new AboutHelpPage(this));
+    public void NavigateToAboutHelp() => OpenAboutHelpWithMicrosoftChineseWarning();
+
+    /// <summary>
+    /// 「鸣谢与帮助」统一入口。微软中文（zh-microsoft）界面是实验性翻译，
+    /// 现有及将来都不会提供完整维护，所以先用确认弹窗提醒用户、用户确认后才进入；
+    /// 其它语言直接进入。
+    /// </summary>
+    private void OpenAboutHelpWithMicrosoftChineseWarning()
+    {
+        if (LocalizationService.CurrentLanguageCode == "zh-microsoft" &&
+            !MessageBoxDialog.ShowConfirm(
+                "当前界面语言为「简体中文（Microsoft）」。该翻译现在及将来都不会得到完整支持，" +
+                "部分文案可能显示不全或翻译不准确。是否仍要继续打开「鸣谢与帮助」？",
+                "简体中文（Microsoft）提示"))
+        {
+            return;
+        }
+        SetMainContent(new AboutHelpPage(this));
+    }
 
     /// <summary>侧边栏当前是否处于"收起"状态。</summary>
     private bool _sidebarCollapsed;
 
-    private const double SidebarExpandedWidth = 180;
+    private const double SidebarExpandedWidthDefault = 180;
+    private const double SidebarExpandedWidthMicrosoftChinese = 220;
     private const double SidebarCollapsedWidth = 56;
+
+    /// <summary>
+    /// 展开态侧边栏宽度：简体中文等语言 180 足够放下所有导航文案，不用改；
+    /// 只有微软中文（zh-microsoft）的翻译文案普遍更长（180 会省略号截断），才加宽到 220。
+    /// 语言切换后 LanguageChanged 会重新应用一次（见 OnLanguageChanged）。
+    /// </summary>
+    private double SidebarExpandedWidth =>
+        LocalizationService.CurrentLanguageCode == "zh-microsoft"
+            ? SidebarExpandedWidthMicrosoftChinese
+            : SidebarExpandedWidthDefault;
 
     private void SidebarCollapseToggle_Click(object sender, RoutedEventArgs e)
     {
@@ -935,6 +1100,17 @@ public partial class MainWindow : Window
     }
 
 
+
+    /// <summary>
+    /// 语言切换完成后的统一刷新：实验性功能按钮显隐（原 RefreshExperimentalNavVisibility）
+    /// + 侧边栏展开宽度（微软中文文案更长需要加宽，见 SidebarExpandedWidth）。
+    /// 构造函数里订阅一次，运行时切换语言立即生效。
+    /// </summary>
+    private void OnLanguageChanged()
+    {
+        RefreshExperimentalNavVisibility();
+        ApplySidebarCollapsedState(_sidebarCollapsed);
+    }
 
     /// <summary>
     /// 根据当前启动器界面语言控制侧边栏"实验性功能"按钮的显隐（见
@@ -1232,10 +1408,12 @@ public partial class MainWindow : Window
                 (account.AccessTokenExpiresAtUtc == null || account.AccessTokenExpiresAtUtc < DateTime.UtcNow.AddMinutes(5)))
             {
                 Account? refreshed = null;
+                var refreshFailureReason = RefreshFailureReason.None;
                 if (!string.IsNullOrEmpty(account.MsRefreshToken))
                 {
                     var msAuth = new MicrosoftAuthService();
                     refreshed = await msAuth.RefreshAsync(account.MsRefreshToken);
+                    refreshFailureReason = msAuth.LastRefreshFailureReason;
                 }
 
                 if (refreshed != null)
@@ -1246,15 +1424,39 @@ public partial class MainWindow : Window
                 }
                 else if (account.AccessTokenExpiresAtUtc == null || account.AccessTokenExpiresAtUtc < DateTime.UtcNow)
                 {
-                    // access token 已经确实过期、且刷新拿不到新的——不能再往下启动，
-                    // 否则就是本节注释描述的"静默变 Demo"现象。
-                    MessageBoxDialog.ShowWarning(
-                        $"账户「{account.Username}」的登录状态已过期，且自动刷新失败，请重新登录微软账户后再启动游戏。\n" +
-                        "（如果直接用过期状态启动，Minecraft 会静默进入离线试玩(Demo)模式而不会报错，" +
-                        "为避免这种情况这里主动拦截。）",
-                        Loc.T("Str_Cs_Sign_In_Required", "需要重新登录"));
-                    NavAccounts_Click(sender, e);
-                    return;
+                    // access token 已经确实过期、且刷新拿不到新的。
+                    //
+                    // 「令牌保留时效」降级：只有在刷新失败原因明确是"服务不可用"（断网/微软服务
+                    // 本身故障/超时，见 RefreshFailureReason.ServiceUnavailable）——而不是
+                    // "refresh token 已被明确拒绝"（TokenInvalid，真正的授权失效）——且账户
+                    // 最近一次成功在线校验距今没有超过 cfg.AccountTokenGracePeriodDays 天时，
+                    // 才允许直接用本地缓存的正版 Uuid/Username 离线启动，不阻塞玩家。
+                    // AccountTokenGracePeriodDays=0 表示用户主动关闭了这个降级，一律直接拦截。
+                    var withinGracePeriod =
+                        refreshFailureReason == RefreshFailureReason.ServiceUnavailable &&
+                        cfg.AccountTokenGracePeriodDays > 0 &&
+                        account.LastVerifiedAtUtc != null &&
+                        account.LastVerifiedAtUtc.Value.AddDays(cfg.AccountTokenGracePeriodDays) >= DateTime.UtcNow;
+
+                    if (!withinGracePeriod)
+                    {
+                        var reasonHint = refreshFailureReason == RefreshFailureReason.TokenInvalid
+                            ? "（登录状态已被微软服务器明确拒绝，需要重新登录，无法离线继续使用。）"
+                            : "（如果直接用过期状态启动，Minecraft 会静默进入离线试玩(Demo)模式而不会报错，" +
+                              "为避免这种情况这里主动拦截。）";
+                        MessageBoxDialog.ShowWarning(
+                            $"账户「{account.Username}」的登录状态已过期，且自动刷新失败，请重新登录微软账户后再启动游戏。\n{reasonHint}",
+                            Loc.T("Str_Cs_Sign_In_Required", "需要重新登录"));
+                        NavAccounts_Click(sender, e);
+                        return;
+                    }
+
+                    // 走令牌保留时效降级：Mojang/微软服务暂时联系不上，但账户最近验证过、
+                    // 且本地缓存了这个账户的正版 Uuid，直接沿用现有 account（其 Uuid/Username
+                    // 就是最后一次成功登录时拿到的正版信息）离线启动，不再纠结 access token
+                    // 本身——LauncherService 拼参数只要求 Uuid+Username+一个非空 accessToken
+                    // 字符串占位，不会二次向 Mojang 校验这个 token，所以过期的旧 token 在这条
+                    // 路径下可以继续沿用，不影响正常进入游戏。
                 }
                 // else: token 还没到硬过期时间（只是进入 5 分钟提前刷新窗口)，刷新虽失败但
                 // 旧 token 短期内应该仍然有效，容许继续启动，避免因为一次偶发的网络抖动

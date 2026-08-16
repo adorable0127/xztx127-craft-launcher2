@@ -45,6 +45,10 @@
          需要用户机器已安装 WebView2 Runtime——Windows 10 1803+/Windows 11 默认随 Edge 预装，
          绝大多数机器无需额外安装；如未安装，首次使用时 WebView2 控件会自动提示下载。 -->
     <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.2792.45" />
+    <!-- net8.0-windows 起 Microsoft.Win32.Registry 不再随框架内置，需要显式引用这个包
+         才能使用 RegistryKey/Registry.LocalMachine 等 API。RegistryConfigService 用它
+         实现 HKLM/HKCU 双路径的注册表读写（见该类头注释）。 -->
+    <PackageReference Include="Microsoft.Win32.Registry" Version="5.0.0" />
   </ItemGroup>
 
   <ItemGroup>

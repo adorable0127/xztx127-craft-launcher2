@@ -546,10 +546,18 @@ public class BedrockClientDownloadService
             {
                 var s = u.GetString();
                 if (string.IsNullOrWhiteSpace(s)) continue;
-                // 微软 CDN 返回的是 http 直链，统一升级成 https，避免部分网络环境被劫持/拦截
-                if (s.StartsWith("http://", StringComparison.OrdinalIgnoreCase))
-                    s = "https://" + s["http://".Length..];
-                urls.Add(s);
+                // 微软 CDN 元数据给的是 http 直链。同一份文件保留两个候选：
+                //   1) 升级成 https 的版本（默认优先尝试，避免明文传输被劫持）；
+                //   2) 原始 http 版本（兜底：部分 CDN 边缘节点实际并未启用 TLS，
+                //      强升 https 会直接 SSL 握手失败——本地上报的"所有镜像源均不可用，
+                //      The SSL connection could not be established"就是这么来的。
+                //      此时退回 http 原链能正常下动；下载物是微软签名安装包，
+                //      安装时系统会校验签名，安全性风险可控）。
+                var https = s.StartsWith("http://", StringComparison.OrdinalIgnoreCase)
+                    ? "https://" + s["http://".Length..]
+                    : s;
+                urls.Add(https);
+                if (!string.Equals(https, s, StringComparison.OrdinalIgnoreCase)) urls.Add(s);
             }
         }
         catch { /* 解析失败返回空 */ }

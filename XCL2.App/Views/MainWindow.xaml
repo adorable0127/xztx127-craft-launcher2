@@ -10,8 +10,11 @@
     <Grid>
         <Grid.ColumnDefinitions>
             <!-- 侧边栏宽度改成可变列（原来固定 180），配合 SidebarCollapseToggle_Click
-                 在展开(180)/收起(56，仅剩图标)两个宽度之间切换。 x:Name 供代码里读取/修改宽度。 -->
-            <ColumnDefinition x:Name="SidebarColumn" Width="180"/>
+                 在展开/收起(56，仅剩图标)两个宽度之间切换。 x:Name 供代码里读取/修改宽度。
+                 展开态宽度随语言变化：简体中文等语言保持 180，只有微软中文（zh-microsoft）
+                 的翻译文案更长，会加宽到 220 避免省略号截断（见 MainWindow.xaml.cs 里
+                 SidebarExpandedWidth 的注释），所以这里不用写死具体数值。 -->
+            <ColumnDefinition x:Name="SidebarColumn" Width="220"/>
             <ColumnDefinition Width="*"/>
         </Grid.ColumnDefinitions>
 
@@ -257,11 +260,26 @@
 
         <!-- 右侧内容区 -->
         <Border Grid.Column="1" Margin="16">
-            <ContentControl x:Name="MainContent" RenderTransformOrigin="0.5,0.5">
-                <ContentControl.RenderTransform>
-                    <TranslateTransform x:Name="MainContentTransform" Y="0"/>
-                </ContentControl.RenderTransform>
-            </ContentControl>
+            <Grid>
+                <ContentControl x:Name="MainContent" RenderTransformOrigin="0.5,0.5">
+                    <ContentControl.RenderTransform>
+                        <TranslateTransform x:Name="MainContentTransform" Y="0"/>
+                    </ContentControl.RenderTransform>
+                </ContentControl>
+
+                <!-- 「重新阅读协议并同意」：只有基本模式（RestrictedMode=true）下常驻显示。
+                     点击后重新走一遍完整协议四步流程，同意即退出基本模式、恢复全部功能；
+                     见 AppConfig.RestrictedMode 的注释与 MainWindow.xaml.cs 里的
+                     ApplyRestrictedModeGating。
+                     修复：原来固定在右上角，跟 HomePage 自己右上角那一排（语言/深浅色/
+                     自动循环/普通模式/访客模式）胶囊按钮共用同一块屏幕区域——两者都是
+                     "浮在内容区之上、右上角对齐"，首页显示时会直接叠在一起。现在挪到
+                     左上角，跟内容区里任何页面自己的右上角控件都不会有重叠的可能。 -->
+                <Button x:Name="ReReadAgreementsButton" Content="重新阅读协议并同意"
+                        HorizontalAlignment="Left" VerticalAlignment="Top"
+                        Style="{StaticResource PrimaryButton}" Padding="14,6"
+                        Click="ReReadAgreements_Click" Visibility="Collapsed"/>
+            </Grid>
         </Border>
 
         <!-- ===== 进程内弹窗宿主层（OverlayHost） =====
@@ -325,6 +343,23 @@
         <ItemsControl x:Name="ToastHost" Grid.Column="0" Grid.ColumnSpan="2"
                       HorizontalAlignment="Right" VerticalAlignment="Bottom"
                       Margin="0,0,20,20" IsHitTestVisible="False">
+            <ItemsControl.ItemsPanel>
+                <ItemsPanelTemplate>
+                    <StackPanel/>
+                </ItemsPanelTemplate>
+            </ItemsControl.ItemsPanel>
+        </ItemsControl>
+
+        <!-- ===== 左下角"操作类"通知层 =====
+             跟右下角纯告知性 Toast 不同，这里放的是"需要用户点一下按钮做选择、但又不想用
+             模态弹窗打断"的提示——典型场景：加载器版本转换成功后，问用户"要不要删掉这次
+             操作前的自动备份"。这类提示不会自动消失（要等用户点按钮），且必须能点击，
+             所以单独开一层、不能沿用 IsHitTestVisible=False 的 ToastHost（WPF 里祖先元素
+             IsHitTestVisible=False 会导致子元素即使自己设 True 也收不到鼠标事件）。
+             放左下角是刻意跟右下角的普通 Toast 错开，避免两类提示同时出现时互相遮挡/混淆。 -->
+        <ItemsControl x:Name="ActionToastHost" Grid.Column="0" Grid.ColumnSpan="2"
+                      HorizontalAlignment="Left" VerticalAlignment="Bottom"
+                      Margin="20,0,0,20">
             <ItemsControl.ItemsPanel>
                 <ItemsPanelTemplate>
                     <StackPanel/>

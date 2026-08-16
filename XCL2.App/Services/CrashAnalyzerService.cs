@@ -1,4 +1,5 @@
 using System.IO;
+using System.IO.Compression;
 using System.Linq;
 using System.Text.RegularExpressions;
 
@@ -82,7 +83,8 @@ public class CrashAnalyzerService
     public CrashReportResult Analyze(string filePath)
     {
         var raw = SafeReadAll(filePath);
-        var ranked = RunRankedRules(raw);
+        var modsDir = ResolveLikelyModsDir(filePath);
+        var ranked = RunRankedRules(raw, modsDir);
         return new CrashReportResult
         {
             FilePath = filePath,
@@ -101,6 +103,31 @@ public class CrashAnalyzerService
         catch (Exception ex) { return $"(读取崩溃文件失败: {ex.Message})"; }
     }
 
+    /// <summary>
+    /// 从崩溃文件路径反推它所属实例的 mods 文件夹在哪。崩溃文件常见落点是
+    /// &lt;实例目录&gt;/crash-reports/xxx.txt、&lt;实例目录&gt;/logs/latest.log 或
+    /// &lt;实例目录&gt;/hs_err_pid*.log，往上最多找 3 层目录，找到第一个挂着 mods
+    /// 子文件夹的就当作这个崩溃所属的实例目录（版本隔离开/关两种布局都能兼容：
+    /// 隔离时实例目录本身就有 mods/，不隔离时最终会找到 .minecraft 根目录的 mods/）。
+    /// 找不到就返回 null，调用方据此跳过"具体是哪个 mod 崩的"这一步分析（没有 mods
+    /// 文件夹就没法比对，不代表分析失败，只是少了这一条结论）。
+    /// </summary>
+    private static string? ResolveLikelyModsDir(string crashFilePath)
+    {
+        try
+        {
+            var dir = Path.GetDirectoryName(Path.GetFullPath(crashFilePath));
+            for (var i = 0; i < 3 && dir != null; i++)
+            {
+                var candidate = Path.Combine(dir, "mods");
+                if (Directory.Exists(candidate)) return candidate;
+                dir = Path.GetDirectoryName(dir);
+            }
+        }
+        catch { /* 路径解析异常就当作找不到，不影响其它规则继续跑 */ }
+        return null;
+    }
+
     /// <summary>启发式规则库：按顺序匹配，命中即加入提示，允许同时命中多条。
     /// 面向"小白也能看懂"这个目标重写：每条结论都尽量说清楚"是什么原因"+"具体是哪个方块/
     /// 实体/mod"+"应该怎么处理"，而不是只甩一个异常类名。</summary>
@@ -108,7 +135,7 @@ public class CrashAnalyzerService
     /// 分析入口：先跑「高置信度」规则（日志里明确写出了原因的），再跑原有的启发式规则，
     /// 最后按置信度排序。高置信度规则命中时会抑制掉那句"未匹配到已知规则"的兜底提示。
     /// </summary>
-    private static List<CrashFinding> RunRankedRules(string text)
+    private static List<CrashFinding> RunRankedRules(string text, string? modsDir)
     {
         var result = new List<CrashFinding>();
         if (string.IsNullOrWhiteSpace(text)) return result;
@@ -116,6 +143,7 @@ public class CrashAnalyzerService
         result.AddRange(RunDependencyRules(text));
         result.AddRange(RunExitCodeRules(text));
         result.AddRange(RunModuleSystemRules(text));
+        result.AddRange(RunModAttributionRules(text, modsDir));
 
         // 原有启发式规则：整体归为 Likely（关键字匹配，比"猜"强，但不如日志明说可靠）。
         var heuristic = RunRules(text);
@@ -218,6 +246,87 @@ public class CrashAnalyzerService
             .Select(g => g.First())
             .Take(8)
             .ToList();
+    }
+
+    /// <summary>
+    /// 崩溃 mod 归因：不满足于"哪个方块/实体在 tick"这种笼统提示，进一步比对崩溃堆栈里
+    /// 实际的 Java 代码包名跟已安装 mod jar 内部真实包含的 class 包名，直接指认"是这个
+    /// mod 的问题"，而不是让用户自己拿着一串 com.xxx.yyy 包名去猜是谁。
+    ///
+    /// 做法：
+    /// 1. 定位崩溃报告里最后一个 "Caused by:"（真正的根因异常，前面的往往只是包装层），
+    ///    取它后面紧跟的调用栈 "at 包名.类名.方法名(...)" 行；
+    /// 2. 从上到下找第一行**不属于** Minecraft/Mixin/加载器/JDK/常见第三方库自身代码的包名
+    ///    ——这些框架代码即使出现在栈顶，也不代表"崩溃是它的锅"，真正有意义的是第一个
+    ///    落在"玩家自己装的 mod 的代码"里的栈帧；
+    /// 3. 遍历 mods 文件夹，读每个 jar 内部实际包含哪些 class 包名，找哪个 mod 的包名是
+    ///    上面选中包名的前缀（或完全相等）——包名匹配长度最长的那个判定为"元凶"。
+    ///
+    /// 这是启发式但比"猜"可靠得多：包名是编译产物里的客观事实，一个 mod 的代码只会出现在
+    /// 它自己声明的包名下，误判概率远低于关键字匹配。给 Certain 置信度。
+    /// </summary>
+    private static readonly string[] FrameworkPackagePrefixes =
+    {
+        "net.minecraft.", "com.mojang.", "net.fabricmc.", "net.minecraftforge.", "net.neoforged.",
+        "org.spongepowered.asm.", "cpw.mods.", "java.", "javax.", "jdk.", "sun.", "com.sun.",
+        "com.google.", "org.apache.", "it.unimi.dsi.", "io.netty.", "org.lwjgl.", "kotlin.", "kotlinx.",
+        "com.electronwill.", "org.objectweb.asm.", "javassist."
+    };
+
+    private static List<CrashFinding> RunModAttributionRules(string text, string? modsDir)
+    {
+        var found = new List<CrashFinding>();
+        if (string.IsNullOrEmpty(modsDir) || !Directory.Exists(modsDir)) return found;
+
+        var causedByIdx = text.LastIndexOf("Caused by:", StringComparison.OrdinalIgnoreCase);
+        var relevant = causedByIdx >= 0 ? text[causedByIdx..] : text;
+
+        var stackPackages = Regex.Matches(relevant, @"^\s*at\s+([\w.$]+)\.[\w$<>]+\([^\n]*\)", RegexOptions.Multiline)
+            .Take(30)
+            .Select(m => m.Groups[1].Value)
+            .ToList();
+        if (stackPackages.Count == 0) return found;
+
+        var candidatePackage = stackPackages.FirstOrDefault(pkg =>
+            !FrameworkPackagePrefixes.Any(p => pkg.StartsWith(p, StringComparison.OrdinalIgnoreCase)));
+        if (candidatePackage == null) return found;
+
+        (string jarName, string modName, int matchedLength)? best = null;
+        foreach (var jar in Directory.GetFiles(modsDir, "*.jar"))
+        {
+            try
+            {
+                using var archive = ZipFile.OpenRead(jar);
+                var matchedPkgLength = archive.Entries
+                    .Where(en => en.FullName.EndsWith(".class", StringComparison.OrdinalIgnoreCase) && en.FullName.Contains('/'))
+                    .Select(en => string.Join('.', en.FullName[..en.FullName.LastIndexOf('/')].Split('/')))
+                    .Distinct()
+                    .Where(pkg => candidatePackage.Equals(pkg, StringComparison.OrdinalIgnoreCase)
+                                  || candidatePackage.StartsWith(pkg + ".", StringComparison.OrdinalIgnoreCase))
+                    .Select(pkg => (int?)pkg.Length)
+                    .Max();
+
+                if (matchedPkgLength.HasValue && (best == null || matchedPkgLength.Value > best.Value.matchedLength))
+                {
+                    var fileName = Path.GetFileName(jar);
+                    var isDisabled = fileName.EndsWith(".disabled", StringComparison.OrdinalIgnoreCase);
+                    var modName = LocalModService.TryReadModName(jar, isDisabled) ?? Path.GetFileNameWithoutExtension(jar);
+                    best = (fileName, modName, matchedPkgLength.Value);
+                }
+            }
+            catch { /* 单个 mod jar 打不开/读取失败不影响其它 mod 的比对 */ }
+        }
+
+        if (best == null) return found;
+
+        found.Add(new CrashFinding(
+            $"根据崩溃堆栈里的代码包名（{candidatePackage}）比对已安装的 mod，判断这次崩溃是由「{best.Value.modName}」" +
+            $"（文件：{best.Value.jarName}）引起的。建议：先去 Modrinth/CurseForge 检查这个 mod 有没有新版本，" +
+            "更新到最新版本很可能就能解决；如果暂时没有更新，可以在「模组管理」页面先临时禁用它" +
+            "（不需要删除，禁用后随时可以恢复），验证不再崩溃后再考虑要不要换个替代 mod。",
+            CrashConfidence.Certain));
+
+        return found;
     }
 
     /// <summary>

@@ -1084,6 +1084,140 @@ public class ClientLoaderInstallService : IDisposable
         try { if (File.Exists(path)) File.Delete(path); } catch { /* 忽略清理失败 */ }
     }
 
+    // ========================================================================
+    // 原地增删/升降级/重装加载器
+    //
+    // 需求：对一个已经存在、里面已经有 mods/saves/resourcepacks/config 等用户数据的实例，
+    // 更换加载器类型、升级/降级加载器版本、或者重装同一个加载器版本，都不应该破坏这些用户
+    // 数据文件夹——用户要保留的是"这个实例"，只是想换/修/重装它的加载器部分。
+    //
+    // 实现思路：复用上面已经验证过的 Install*ClientAsync（它们各自都有一套完整的、已经趟过坑的
+    // 下载/安装逻辑），但不直接装进目标实例文件夹，而是先装进一个全新的临时版本文件夹，
+    // 装完之后只把"加载器定义相关的文件"（顶层 version json + 客户端 jar，以及 libraries 等
+    // 非用户数据子目录）合并覆盖进目标实例文件夹，mods/saves/resourcepacks/config/screenshots/
+    // crash-reports/logs 这些认定为"用户数据"的子目录完全跳过、绝不触碰。
+    // 操作开始前先用 InstanceBackupService 把目标实例整个打包备份一份，即使合并逻辑本身有意外，
+    // 用户也能一键找回操作前的完整状态。
+    // ========================================================================
+
+    private static readonly HashSet<string> UserDataDirNames = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "mods", "resourcepacks", "shaderpacks", "saves", "config",
+        "screenshots", "schematics", "crash-reports", "logs", "kubejs", "defaultconfigs"
+    };
+
+    /// <summary>
+    /// 把 sourceDir（临时新装好的加载器文件夹）合并进 targetDir（用户的目标实例文件夹）：
+    /// - 顶层的 *.json / *.jar（版本定义文件、客户端 jar）先清空旧的再拷贝新的，避免目录里
+    ///   同时残留新旧两份 json 导致 FolderService"唯一 json 兜底识别"失效。
+    /// - mods/saves/resourcepacks 等用户数据子目录整个跳过，不管新装的临时文件夹里有没有同名目录，
+    ///   一律不覆盖、不合并、不删除目标目录里已有的内容。
+    /// - 其余子目录（如 libraries/、assets 相关文件）按文件递归覆盖合并，只增不减
+    ///   （新装文件夹里没有的文件不会被删除，避免误删目标实例里其它无关文件）。
+    /// </summary>
+    private static void MergeLoaderFilesPreservingUserData(string sourceDir, string targetDir, bool isTopLevel = true)
+    {
+        Directory.CreateDirectory(targetDir);
+
+        if (isTopLevel)
+        {
+            foreach (var old in Directory.GetFiles(targetDir, "*.json").Concat(Directory.GetFiles(targetDir, "*.jar")))
+            {
+                try { File.Delete(old); } catch { /* 尽力而为，单个文件删不掉不阻断整个流程 */ }
+            }
+        }
+
+        foreach (var dir in Directory.GetDirectories(sourceDir))
+        {
+            var name = Path.GetFileName(dir);
+            if (isTopLevel && UserDataDirNames.Contains(name)) continue;
+            MergeLoaderFilesPreservingUserData(dir, Path.Combine(targetDir, name), isTopLevel: false);
+        }
+        foreach (var file in Directory.GetFiles(sourceDir))
+            File.Copy(file, Path.Combine(targetDir, Path.GetFileName(file)), overwrite: true);
+    }
+
+    /// <summary>
+    /// 原地增删/升降级/重装加载器的统一入口。
+    /// installNewLoaderAsync 负责"装出一个全新版本文件夹"（直接传现成的 InstallFabricClientAsync
+    /// 等方法即可，不需要调用方自己关心命名），本方法负责：备份 → 调用它 → 合并进目标实例 →
+    /// 清理临时文件夹这一整套流程，并保证任何一步失败都不会残留半成品覆盖掉原实例
+    /// （合并动作是最后一步，且备份已经在最前面完成）。
+    /// </summary>
+    public async Task<string> ChangeLoaderInPlaceAsync(
+        string minecraftDir, string existingVersionId,
+        Func<CancellationToken, Task<string>> installNewLoaderAsync,
+        string backupReason,
+        IProgress<ProgressInfo>? progress = null, CancellationToken ct = default)
+    {
+        var existingDir = Path.Combine(minecraftDir, "versions", existingVersionId);
+        string? backupZipPath = null;
+
+        if (Directory.Exists(existingDir))
+        {
+            progress?.Report(new ProgressInfo(
+                Loc.T("Str_Cs_Backing_Up_Instance", "正在备份当前实例（操作前自动备份）"), 0, 1, existingVersionId));
+            backupZipPath = await InstanceBackupService.CreateBackupAsync(minecraftDir, existingVersionId, backupReason, ct: ct);
+        }
+
+        var newVersionId = await installNewLoaderAsync(ct);
+        var newDir = Path.Combine(minecraftDir, "versions", newVersionId);
+
+        try
+        {
+            progress?.Report(new ProgressInfo(
+                Loc.T("Str_Cs_Merging_Loader_Files", "正在把新加载器合并进当前实例（不影响存档/模组/资源包）"),
+                0, 1, existingVersionId));
+            MergeLoaderFilesPreservingUserData(newDir, existingDir);
+        }
+        finally
+        {
+            // 临时文件夹已经合并完成，不再需要；就算合并中途抛异常，也尝试清理掉，
+            // 避免版本列表里多出一个不明所以、内容残缺的临时文件夹。
+            try { if (Directory.Exists(newDir)) Directory.Delete(newDir, recursive: true); } catch { /* 忽略清理失败 */ }
+        }
+
+        // 走到这里说明合并没有抛异常，视为操作成功：弹出左下角"是否删除本次备份"通知，
+        // 明确建议先启动验证再删——见 InstanceBackupService.NotifyBackupCreated 的注释。
+        if (backupZipPath != null)
+            InstanceBackupService.NotifyBackupCreated(backupZipPath, DescribeBackupReason(backupReason));
+
+        return existingVersionId;
+    }
+
+    private static string DescribeBackupReason(string backupReason) => backupReason switch
+    {
+        "fabric_change" => "Fabric 加载器版本转换",
+        "quilt_change" => "Quilt 加载器版本转换",
+        "forge_change" => "Forge 加载器版本转换",
+        "neoforge_change" => "NeoForge 加载器版本转换",
+        _ => "加载器操作",
+    };
+
+    /// <summary>原地更换/升级/降级/重装 Fabric（同一个 loaderVersion 传当前版本号即为"重装"）。</summary>
+    public Task<string> ChangeFabricLoaderInPlaceAsync(string minecraftDir, string existingVersionId,
+        string mcVersion, string loaderVersion, IProgress<ProgressInfo>? progress, CancellationToken ct = default,
+        bool installFabricApi = false)
+        => ChangeLoaderInPlaceAsync(minecraftDir, existingVersionId,
+            innerCt => InstallFabricClientAsync(minecraftDir, mcVersion, loaderVersion, progress, innerCt, installFabricApi),
+            "fabric_change", progress, ct);
+
+    /// <summary>原地更换/升级/降级/重装 Quilt。</summary>
+    public Task<string> ChangeQuiltLoaderInPlaceAsync(string minecraftDir, string existingVersionId,
+        string mcVersion, string loaderVersion, IProgress<ProgressInfo>? progress, CancellationToken ct = default,
+        bool installQsl = false)
+        => ChangeLoaderInPlaceAsync(minecraftDir, existingVersionId,
+            innerCt => InstallQuiltClientAsync(minecraftDir, mcVersion, loaderVersion, progress, innerCt, installQsl),
+            "quilt_change", progress, ct);
+
+    /// <summary>原地更换/升级/降级/重装 Forge 或 NeoForge。</summary>
+    public Task<string> ChangeForgeOrNeoForgeLoaderInPlaceAsync(string minecraftDir, string existingVersionId,
+        ServerCoreType coreType, string fullVersion, string javaExePath,
+        IProgress<ProgressInfo>? progress, CancellationToken ct = default)
+        => ChangeLoaderInPlaceAsync(minecraftDir, existingVersionId,
+            innerCt => InstallForgeOrNeoForgeClientAsync(minecraftDir, coreType, fullVersion, javaExePath, progress, innerCt),
+            coreType == ServerCoreType.Forge ? "forge_change" : "neoforge_change", progress, ct);
+
     /// <summary>释放内部 _vanillaDownloader（进而释放它可能持有的智能限速后台采样任务）。</summary>
     public void Dispose() => _vanillaDownloader.Dispose();
 }

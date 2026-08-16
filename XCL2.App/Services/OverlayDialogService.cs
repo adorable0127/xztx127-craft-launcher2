@@ -69,6 +69,10 @@ public static class OverlayDialogService
         public required object Content;
         public required TaskCompletionSource<bool?> Tcs;
         public required bool DismissOnBackgroundClick;
+        /// <summary>是否允许按 Esc 关闭本弹窗。默认 true（跟系统对话框习惯一致）；
+        /// 法律协议等"不允许跳过"的弹窗传 false 锁死 Esc，避免用户一个按键
+        /// 就把必须显式表态的流程强行关掉。</summary>
+        public required bool DismissOnEsc;
     }
 
     private static MainWindow? _host;
@@ -95,13 +99,13 @@ public static class OverlayDialogService
     /// 确实需要"点外面 = 取消"这种体验（比如某个纯展示性的气泡提示），调用方可以在
     /// 各自的调用点显式传 true 单独开启，不需要再改这个服务本身。
     /// </summary>
-    public static bool? ShowModal(IOverlayDialog dialog, bool dismissOnBackgroundClick = false)
+    public static bool? ShowModal(IOverlayDialog dialog, bool dismissOnBackgroundClick = false, bool dismissOnEsc = true)
     {
         if (_host is null)
             throw new InvalidOperationException("OverlayDialogService 尚未 Register 宿主 MainWindow。");
 
         var tcs = new TaskCompletionSource<bool?>();
-        var entry = new OverlayEntry { Content = dialog, Tcs = tcs, DismissOnBackgroundClick = dismissOnBackgroundClick };
+        var entry = new OverlayEntry { Content = dialog, Tcs = tcs, DismissOnBackgroundClick = dismissOnBackgroundClick, DismissOnEsc = dismissOnEsc };
 
         void OnRequestClose(object? s, bool? result) => CloseTop(result);
         dialog.RequestClose += OnRequestClose;
@@ -120,13 +124,13 @@ public static class OverlayDialogService
 
     /// <summary>ShowModal 的 async/await 版本，供不需要兼容旧同步调用写法的新代码使用。
     /// dismissOnBackgroundClick 默认值同 ShowModal，见该方法上的注释。</summary>
-    public static Task<bool?> ShowModalAsync(IOverlayDialog dialog, bool dismissOnBackgroundClick = false)
+    public static Task<bool?> ShowModalAsync(IOverlayDialog dialog, bool dismissOnBackgroundClick = false, bool dismissOnEsc = true)
     {
         if (_host is null)
             throw new InvalidOperationException("OverlayDialogService 尚未 Register 宿主 MainWindow。");
 
         var tcs = new TaskCompletionSource<bool?>();
-        var entry = new OverlayEntry { Content = dialog, Tcs = tcs, DismissOnBackgroundClick = dismissOnBackgroundClick };
+        var entry = new OverlayEntry { Content = dialog, Tcs = tcs, DismissOnBackgroundClick = dismissOnBackgroundClick, DismissOnEsc = dismissOnEsc };
 
         void OnRequestClose(object? s, bool? result) => CloseTop(result);
         dialog.RequestClose += OnRequestClose;
@@ -140,9 +144,9 @@ public static class OverlayDialogService
     /// "只是展示信息，用户自己去外部完成操作后再手动关闭"的情况）。dismissOnBackgroundClick
     /// 默认值同 ShowModal（默认 false，不允许点遮罩关闭），仍然支持 Esc 关闭，只是不强制
     /// 调用方等待结果。</summary>
-    public static void ShowNonModal(IOverlayDialog dialog, bool dismissOnBackgroundClick = false)
+    public static void ShowNonModal(IOverlayDialog dialog, bool dismissOnBackgroundClick = false, bool dismissOnEsc = true)
     {
-        _ = ShowModalAsync(dialog, dismissOnBackgroundClick);
+        _ = ShowModalAsync(dialog, dismissOnBackgroundClick, dismissOnEsc);
     }
 
     private static readonly Dictionary<object, Action> _unsubscribers = new();
@@ -192,10 +196,13 @@ public static class OverlayDialogService
     }
 
     /// <summary>供 MainWindow 里 Esc 按键处理调用，语义同上。多数弹窗允许 Esc 取消，
-    /// 跟 Windows 系统对话框的通行习惯一致。</summary>
+    /// 跟 Windows 系统对话框的通行习惯一致；但个别"必须显式表态、不允许跳过"的弹窗
+    /// （例如首次启动的协议页）通过 ShowModal 的 dismissOnEsc: false 锁死 Esc，
+    /// 此时按 Esc 不做任何事——修复"按 Esc 会强行关闭协议窗口"这类问题。</summary>
     internal static void RequestDismissTopByEscape()
     {
         if (_stack.Count == 0) return;
+        if (!_stack.Peek().DismissOnEsc) return;
         CloseTop(null);
     }
 
