@@ -1,4 +1,6 @@
 # XCL2
+下载地址:xztx127.dpdns.org/download
+default.zip代表的是纯源码，不包含成品（通常会小很多）
 
 ## 运行环境要求
 
