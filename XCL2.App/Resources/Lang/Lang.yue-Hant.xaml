@@ -468,7 +468,7 @@
     <system:String x:Key="Str_Ui_Custom_Java_Arguments_Advanced">自定義 Java 啟動參數（高手）</system:String>
     <system:String x:Key="Str_Ui_When_A_Dropped_Zip_Can_T_Be_Identified">拖入無法識別型別的 .zip 時：</system:String>
     <system:String x:Key="Str_Ui_Dropping_Jar_On_The_Server_Management_Pa">在「服務端管理」頁拖入 .jar：</system:String>
-    <system:String x:Key="Str_Ui_Custom_Advancement_Image_Generator_Engli">自定義成就圖片生成器（僅支援英文）</system:String>
+    <system:String x:Key="Str_Ui_Custom_Advancement_Image_Generator_Engli">自定義成就圖片生成器（支援中文搜尋方塊）</system:String>
     <system:String x:Key="Str_Ui_Extract_Into_This_Instance_S_Saves_Folde">解壓到而家例項的 saves 資料夾</system:String>
     <system:String x:Key="Str_Ui_Account_Version_Loader_And_Mods_In_One_P">帳戶、版本、載入器、Mod 一步到位</system:String>
     <system:String x:Key="Str_Ui_Paste_Or_Type_The_Token_Not_Case_Sensiti">貼上或輸入 token，不區分大小寫</system:String>

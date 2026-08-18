@@ -525,7 +525,7 @@
     <system:String x:Key="Str_Ui_Custom_Java_Arguments_Advanced">Anpassade Java-argument (avancerat)</system:String>
     <system:String x:Key="Str_Ui_When_A_Dropped_Zip_Can_T_Be_Identified">När en släppt .zip inte kan identifieras:</system:String>
     <system:String x:Key="Str_Ui_Dropping_Jar_On_The_Server_Management_Pa">Släppa .jar på serverhanteringssidan:</system:String>
-    <system:String x:Key="Str_Ui_Custom_Advancement_Image_Generator_Engli">Anpassad framstegsbildgenerator (endast engelska)</system:String>
+    <system:String x:Key="Str_Ui_Custom_Advancement_Image_Generator_Engli">Anpassad framstegsbildgenerator</system:String>
     <system:String x:Key="Str_Ui_Extract_Into_This_Instance_S_Saves_Folde">Packa upp i denna instans sparmapp</system:String>
     <system:String x:Key="Str_Ui_Paste_Or_Type_The_Token_Not_Case_Sensiti">Klistra in eller skriv token (skiftlägesokänslig)</system:String>
     <system:String x:Key="Str_Ui_Step_2_Choose_A_Version_Amp_Loader">Steg 2: Välj en version &amp; loader</system:String>

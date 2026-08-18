@@ -165,6 +165,21 @@ public class ConfigService
     }
 
     /// <summary>
+    /// 把 snapshot 里每一个可读写属性的值逐个复制到当前 Config 实例上（跟 PatchDefaults
+    /// 用的是同一套反射遍历套路），而不是直接把 Config 属性整个替换成 snapshot 引用——
+    /// Config 是 { get; private set; }，且项目里不少地方持有 Config 的引用长期使用，
+    /// 直接换引用会导致那些地方还拿着旧对象。用于设置页"自动保存后点击回退"场景，
+    /// 把配置整体还原到自动保存前的那一份 JSON 快照，见 SettingsPage.RollbackAutoSave。
+    /// </summary>
+    public void ReplaceConfigFieldsFrom(AppConfig snapshot)
+    {
+        foreach (var prop in typeof(AppConfig).GetProperties().Where(p => p.CanRead && p.CanWrite))
+        {
+            prop.SetValue(Config, prop.GetValue(snapshot));
+        }
+    }
+
+    /// <summary>
     /// 设置页"更新配置文件"按钮：把 <see cref="AppConfig"/> 里字段的默认值补丁进当前已加载的
     /// 配置，但**只补两类安全情况**，不会覆盖用户已经改过的任何设置：
     ///   1. 字符串/集合/字典字段当前是 null（老版本 config.json 没有这个字段，反序列化后

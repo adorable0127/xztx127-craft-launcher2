@@ -1,7 +1,8 @@
 <UserControl x:Class="XCL2.App.Views.ToolboxPage"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-             xmlns:services="clr-namespace:XCL2.App.Services">
+             xmlns:services="clr-namespace:XCL2.App.Services"
+             xmlns:tools="clr-namespace:XCL2.App.Views.Tools">
     <Border Background="{DynamicResource PanelBrush}" CornerRadius="10" Padding="20">
         <Grid>
             <Grid.RowDefinitions>
@@ -24,7 +25,24 @@
                             <TextBlock Text="{DynamicResource Str_Ui_Custom_Advancement_Image_Generator_Engli}" FontWeight="Bold" Margin="0,0,0,10"/>
 
                             <TextBlock Text="{DynamicResource Str_Ui_Item_Id}" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4"/>
-                            <TextBox x:Name="AchItemIdBox" Margin="0,0,0,10" Padding="6,5" Text="minecraft:diamond"/>
+                            <Grid Margin="0,0,0,10">
+                                <TextBox x:Name="AchItemIdBox" Padding="6,5" Text="minecraft:diamond"
+                                         TextChanged="AchItemIdBox_TextChanged" GotFocus="AchItemIdBox_GotFocus"
+                                         LostFocus="AchItemIdBox_LostFocus"/>
+                                <!-- 中/英文搜索建议下拉：输完关键字（比如"钻石""红石块"或英文 id 片段）
+                                     实时列出匹配到的方块/物品，点一下就能直接填进输入框，
+                                     不用自己去猜到底有没有这个方块、拼得对不对，从根上减少
+                                     "填了个不存在的方块结果只画出兜底图标，看着像没生效/还是预设"的情况。 -->
+                                <Popup x:Name="AchSuggestPopup" PlacementTarget="{Binding ElementName=AchItemIdBox}"
+                                       Placement="Bottom" StaysOpen="False" AllowsTransparency="True">
+                                    <Border Background="{DynamicResource PanelBrush}" BorderBrush="{DynamicResource DividerBrush}"
+                                            BorderThickness="1" CornerRadius="6" Padding="2"
+                                            Width="{Binding ActualWidth, ElementName=AchItemIdBox}">
+                                        <ListBox x:Name="AchSuggestList" BorderThickness="0" MaxHeight="220"
+                                                 MouseLeftButtonUp="AchSuggestList_MouseLeftButtonUp"/>
+                                    </Border>
+                                </Popup>
+                            </Grid>
 
                             <TextBlock Text="{DynamicResource Str_Ui_Advancement}" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4"/>
                             <TextBox x:Name="AchNameBox" Margin="0,0,0,10" Padding="6,5" Text="Achievement Get!"/>
@@ -35,15 +53,38 @@
                             <TextBlock Text="{DynamicResource Str_Ui_Line_2_Optional}" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4"/>
                             <TextBox x:Name="AchLine2Box" Margin="0,0,0,14" Padding="6,5"/>
 
-                            <Border Background="{DynamicResource SideBrush}" CornerRadius="6" Padding="12" Margin="0,0,0,14"
+                            <Border Background="{DynamicResource SideBrush}" CornerRadius="6" Padding="12" Margin="0,0,0,6"
                                     HorizontalAlignment="Left">
-                                <Image x:Name="AchPreviewImage" Width="520" Height="80" Stretch="None"/>
+                                <Grid Width="520" Height="80">
+                                    <Image x:Name="AchPreviewImage" Stretch="None" HorizontalAlignment="Left"/>
+                                    <!-- 生成过程要联网找真实贴图，慢的时候能到几秒——之前是直接在
+                                         UI 线程同步跑，界面在这几秒里完全卡死、点不动也拖不动。
+                                         现在挪到后台线程跑，这里用一个转圈+"生成中…"提示占位，
+                                         界面本身不会再卡住。 -->
+                                    <TextBlock x:Name="AchGeneratingText" Text="{DynamicResource Str_Ui_Generating}"
+                                               Foreground="{DynamicResource TextSecondaryBrush}" FontSize="12"
+                                               HorizontalAlignment="Center" VerticalAlignment="Center" Visibility="Collapsed"/>
+                                </Grid>
                             </Border>
+                            <TextBlock x:Name="AchStatusText" FontSize="11" Margin="0,0,0,14"
+                                       Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap" MaxWidth="520"/>
 
                             <StackPanel Orientation="Horizontal">
-                                <Button Content="{DynamicResource Str_Ui_Preview_Image}" Padding="14,7" Margin="0,0,10,0" Click="AchPreview_Click"/>
-                                <Button Content="{DynamicResource Str_Ui_Save_Image}" Style="{StaticResource PrimaryButton}" Padding="14,7" Click="AchSave_Click"/>
+                                <Button x:Name="AchPreviewButton" Content="{DynamicResource Str_Ui_Preview_Image}" Padding="14,7" Margin="0,0,10,0" Click="AchPreview_Click"/>
+                                <Button x:Name="AchSaveButton" Content="{DynamicResource Str_Ui_Save_Image}" Style="{StaticResource PrimaryButton}" Padding="14,7" Click="AchSave_Click"/>
                             </StackPanel>
+
+                            <Border Background="{DynamicResource SideBrush}" CornerRadius="6" Padding="12" Margin="0,14,0,0"
+                                    HorizontalAlignment="Left">
+                                <StackPanel>
+                                    <StackPanel Orientation="Horizontal">
+                                        <Button Content="设置自己已经安装好的MC基岩版" Padding="12,6" Click="AchSetBedrockDir_Click"/>
+                                        <Button Content="清除" Padding="12,6" Margin="8,0,0,0" Click="AchClearBedrockDir_Click"/>
+                                    </StackPanel>
+                                    <TextBlock x:Name="AchBedrockDirText" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}"
+                                               TextWrapping="Wrap" MaxWidth="560" Margin="0,8,0,0"/>
+                                </StackPanel>
+                            </Border>
                         </StackPanel>
                     </ScrollViewer>
                 </TabItem>
@@ -138,15 +179,15 @@
                             <ListBox x:Name="LoaderListBox" BorderThickness="0" Background="Transparent"
                                      SelectionChanged="LoaderListBox_SelectionChanged">
                                 <ListBoxItem Content="Minecraft" IsEnabled="False" FontWeight="Bold"/>
-                                <ListBoxItem Content="OptiFine" IsEnabled="False" Foreground="{DynamicResource TextSecondaryBrush}" ToolTip="{DynamicResource Str_Ui_Optifine_S_Site_Has_No_Public_Download_A}"/>
+                                <ListBoxItem Content="OptiFine" Tag="OptiFine"/>
                                 <ListBoxItem Content="Forge" Tag="Forge"/>
                                 <ListBoxItem Content="NeoForge" Tag="NeoForge"/>
-                                <ListBoxItem Content="Cleanroom" IsEnabled="False" Foreground="{DynamicResource TextSecondaryBrush}" ToolTip="{DynamicResource Str_Ui_Cleanroom_Cannot_Be_Downloaded_Separatel}"/>
+                                <ListBoxItem Content="Cleanroom" Tag="Cleanroom"/>
                                 <ListBoxItem Content="Fabric" Tag="Fabric"/>
-                                <ListBoxItem Content="Legacy Fabric" IsEnabled="False" Foreground="{DynamicResource TextSecondaryBrush}" ToolTip="{DynamicResource Str_Ui_Legacy_Fabric_Cannot_Be_Downloaded_Separ}"/>
+                                <ListBoxItem Content="Legacy Fabric" Tag="LegacyFabric"/>
                                 <ListBoxItem Content="Quilt" Tag="Quilt"/>
-                                <ListBoxItem Content="LabyMod" IsEnabled="False" Foreground="{DynamicResource TextSecondaryBrush}" ToolTip="{DynamicResource Str_Ui_Labymod_Cannot_Be_Downloaded_Separately_}"/>
-                                <ListBoxItem Content="LiteLoader" IsEnabled="False" Foreground="{DynamicResource TextSecondaryBrush}" ToolTip="{DynamicResource Str_Ui_Liteloader_Cannot_Be_Downloaded_Separate}"/>
+                                <ListBoxItem Content="LabyMod" Tag="LabyMod"/>
+                                <ListBoxItem Content="LiteLoader" Tag="LiteLoader"/>
                             </ListBox>
                         </Border>
 
@@ -197,6 +238,689 @@
                             <CheckBox x:Name="MemOptCheck" Content="{DynamicResource Str_Ui_Optimise_Memory_Allocation_Before_}" Checked="MemOptCheck_Changed" Unchecked="MemOptCheck_Changed" Margin="0,0,0,10"/>
                             <Button Content="{DynamicResource Str_Ui_Preview_Recommended_Values}" Padding="14,7" HorizontalAlignment="Left" Click="MemOptPreview_Click"/>
                             <TextBlock x:Name="MemOptStatusText" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,10,0,0" TextWrapping="Wrap"/>
+                        </StackPanel>
+                    </ScrollViewer>
+                </TabItem>
+
+                <!-- ===== Tab 6：计算器 ===== -->
+                <TabItem Header="{DynamicResource Str_Ui_Calculator}">
+                    <ScrollViewer VerticalScrollBarVisibility="Auto" services:ScrollWheelBehavior.EnableFastWheel="True">
+                        <StackPanel Margin="4,12,4,4">
+                            <TextBlock Text="{DynamicResource Str_Ui_Calculator_Desc}" FontSize="12"
+                                       Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,10" TextWrapping="Wrap"
+                                       MaxWidth="640" HorizontalAlignment="Left"/>
+                            <tools:CalculatorTool HorizontalAlignment="Left"/>
+                        </StackPanel>
+                    </ScrollViewer>
+                </TabItem>
+
+                <!-- ===== Tab 7：桌面便签 ===== -->
+                <TabItem Header="{DynamicResource Str_Ui_Sticky_Notes}">
+                    <ScrollViewer VerticalScrollBarVisibility="Auto" services:ScrollWheelBehavior.EnableFastWheel="True">
+                        <StackPanel Margin="4,12,4,4">
+                            <TextBlock Text="{DynamicResource Str_Ui_Sticky_Notes_Desc}" FontSize="12"
+                                       Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,10" TextWrapping="Wrap"
+                                       MaxWidth="640" HorizontalAlignment="Left"/>
+                            <tools:StickyNotesTool/>
+                        </StackPanel>
+                    </ScrollViewer>
+                </TabItem>
+
+                <!-- ===== Tab 8：电脑清理 ===== -->
+                <TabItem Header="电脑清理">
+                    <ScrollViewer VerticalScrollBarVisibility="Auto" services:ScrollWheelBehavior.EnableFastWheel="True">
+                        <StackPanel Margin="4,12,4,4" MaxWidth="680" HorizontalAlignment="Left">
+                            <TextBlock Text="清理电脑临时垃圾" FontWeight="Bold" Margin="0,0,0,8"/>
+                            <TextBlock Text="扫描并清理系统临时文件夹(%TEMP%、Windows\Temp)和常见浏览器缓存。只清理超过 6 小时未修改、确定是缓存/临时性质的文件，不会碰你的文档、下载、桌面等任何个人数据，正被占用的文件会自动跳过。"
+                                       TextWrapping="Wrap" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,10"/>
+                            <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                                <Button Content="扫描" Padding="14,7" Margin="0,0,10,0" Click="SysJunkScan_Click"/>
+                                <Button x:Name="SysJunkCleanBtn" Content="清理" Style="{StaticResource PrimaryButton}" Padding="14,7" Click="SysJunkClean_Click" IsEnabled="False"/>
+                            </StackPanel>
+                            <TextBlock x:Name="SysJunkStatusText" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap"/>
+                        </StackPanel>
+                    </ScrollViewer>
+                </TabItem>
+
+                <!-- ===== Tab 9：服务器测速 ===== -->
+                <TabItem Header="服务器测速">
+                    <ScrollViewer VerticalScrollBarVisibility="Auto" services:ScrollWheelBehavior.EnableFastWheel="True">
+                        <StackPanel Margin="4,12,4,4" MaxWidth="640" HorizontalAlignment="Left">
+                            <TextBlock Text="Minecraft 服务器测速 / MOTD 查询" FontWeight="Bold" Margin="0,0,0,8"/>
+                            <TextBlock Text="填入服务器地址，实测连接延迟、MOTD、在线人数和版本号——跟游戏里多人游戏列表看到的信息是同一套协议，不需要真的进游戏就能查。"
+                                       TextWrapping="Wrap" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,10"/>
+
+                            <TextBlock Text="服务器地址" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4"/>
+                            <Grid Margin="0,0,0,10">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="90"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBox x:Name="PingHostBox" Padding="6,5" Text="mc.hypixel.net"/>
+                                <TextBox x:Name="PingPortBox" Grid.Column="1" Padding="6,5" Margin="8,0,0,0" Text="25565"/>
+                            </Grid>
+
+                            <Button x:Name="PingGoBtn" Content="开始测速" Style="{StaticResource PrimaryButton}"
+                                    Padding="14,7" HorizontalAlignment="Left" Click="PingGo_Click"/>
+
+                            <Border Background="{DynamicResource SideBrush}" CornerRadius="6" Padding="12" Margin="0,14,0,0">
+                                <StackPanel>
+                                    <TextBlock x:Name="PingResultText" FontSize="13" TextWrapping="Wrap"
+                                               Text="还没有测速结果。" Foreground="{DynamicResource TextSecondaryBrush}"/>
+                                </StackPanel>
+                            </Border>
+                        </StackPanel>
+                    </ScrollViewer>
+                </TabItem>
+
+                <!-- ===== Tab 10：下界坐标换算 ===== -->
+                <TabItem Header="坐标换算">
+                    <ScrollViewer VerticalScrollBarVisibility="Auto" services:ScrollWheelBehavior.EnableFastWheel="True">
+                        <StackPanel Margin="4,12,4,4" MaxWidth="480" HorizontalAlignment="Left">
+                            <TextBlock Text="主世界 / 下界坐标换算" FontWeight="Bold" Margin="0,0,0,8"/>
+                            <TextBlock Text="下界里的 1 格对应主世界的 8 格，挖下界隧道传送是快速跨大陆移动的常用手段——填一边，另一边自动算出来（Y 坐标两边一致，不参与换算）。"
+                                       TextWrapping="Wrap" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,14"/>
+
+                            <TextBlock Text="主世界坐标 (X, Z)" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4"/>
+                            <StackPanel Orientation="Horizontal" Margin="0,0,0,14">
+                                <TextBox x:Name="OverworldXBox" Width="140" Padding="6,5" Text="0" TextChanged="OverworldCoord_TextChanged"/>
+                                <TextBox x:Name="OverworldZBox" Width="140" Padding="6,5" Margin="10,0,0,0" Text="0" TextChanged="OverworldCoord_TextChanged"/>
+                            </StackPanel>
+
+                            <TextBlock Text="下界坐标 (X, Z)" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4"/>
+                            <StackPanel Orientation="Horizontal">
+                                <TextBox x:Name="NetherXBox" Width="140" Padding="6,5" Text="0" TextChanged="NetherCoord_TextChanged"/>
+                                <TextBox x:Name="NetherZBox" Width="140" Padding="6,5" Margin="10,0,0,0" Text="0" TextChanged="NetherCoord_TextChanged"/>
+                            </StackPanel>
+
+                            <TextBlock x:Name="CoordStatusText" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,10,0,0"/>
+                        </StackPanel>
+                    </ScrollViewer>
+                </TabItem>
+
+                <!-- ===== Tab 11：聊天颜色代码编辑器 ===== -->
+                <TabItem Header="颜色代码编辑器">
+                    <ScrollViewer VerticalScrollBarVisibility="Auto" services:ScrollWheelBehavior.EnableFastWheel="True">
+                        <StackPanel Margin="4,12,4,4" MaxWidth="680" HorizontalAlignment="Left">
+                            <TextBlock Text="聊天 / MOTD 颜色代码编辑器" FontWeight="Bold" Margin="0,0,0,8"/>
+                            <TextBlock Text="点下面的色块把 § 颜色代码插入光标处，右侧实时预览游戏里的显示效果——服务器 MOTD、告示牌、记分板标题这些地方都能用这套代码。"
+                                       TextWrapping="Wrap" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,10"/>
+
+                            <WrapPanel x:Name="ColorSwatchPanel" Margin="0,0,0,6"/>
+                            <WrapPanel x:Name="FormatSwatchPanel" Margin="0,0,0,10"/>
+
+                            <TextBox x:Name="ColorCodeInputBox" AcceptsReturn="True" TextWrapping="Wrap"
+                                     MinHeight="70" Padding="8" FontSize="13" Margin="0,0,0,10"
+                                     Text="&amp;6欢迎来到 &amp;l&amp;c我的服务器&amp;r&amp;6！"
+                                     TextChanged="ColorCodeInputBox_TextChanged"/>
+
+                            <TextBlock Text="预览" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4"/>
+                            <Border Background="#2B2B2B" CornerRadius="6" Padding="12" Margin="0,0,0,10">
+                                <TextBlock x:Name="ColorCodePreviewText" FontSize="14" TextWrapping="Wrap" FontFamily="Consolas"/>
+                            </Border>
+
+                            <StackPanel Orientation="Horizontal">
+                                <Button Content="复制代码" Padding="12,6" Margin="0,0,10,0" Click="ColorCodeCopy_Click"/>
+                                <Button Content="清空" Padding="12,6" Click="ColorCodeClear_Click"/>
+                            </StackPanel>
+                        </StackPanel>
+                    </ScrollViewer>
+                </TabItem>
+
+                <!-- ===== Tab 12：系统内存监视 / 一键释放 ===== -->
+                <TabItem Header="系统内存监视">
+                    <ScrollViewer VerticalScrollBarVisibility="Auto" services:ScrollWheelBehavior.EnableFastWheel="True">
+                        <StackPanel Margin="4,12,4,4" MaxWidth="640" HorizontalAlignment="Left">
+                            <TextBlock Text="系统内存监视 / 一键释放" FontWeight="Bold" Margin="0,0,0,8"/>
+                            <TextBlock Text="跟上面「内存优化」不同——那个只影响给游戏本身分配的 -Xms/-Xmx，这里看的是整台电脑当前的物理内存占用，「一键释放」会尝试让其它正在运行的桌面程序把暂时用不到的内存工作集交还给系统（不会关闭或影响它们的运行），适合开了很多软件、内存快见底时应急用一下。"
+                                       TextWrapping="Wrap" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,14"/>
+
+                            <Border Background="{DynamicResource SideBrush}" CornerRadius="6" Padding="14" Margin="0,0,0,10">
+                                <StackPanel>
+                                    <Grid Margin="0,0,0,8">
+                                        <TextBlock Text="内存占用" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}"/>
+                                        <TextBlock x:Name="MemMonPercentText" FontSize="12" FontWeight="Bold" HorizontalAlignment="Right" Text="--%"/>
+                                    </Grid>
+                                    <ProgressBar x:Name="MemMonBar" Height="10" Minimum="0" Maximum="100" Value="0" Margin="0,0,0,10"/>
+                                    <TextBlock x:Name="MemMonDetailText" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap"/>
+                                </StackPanel>
+                            </Border>
+
+                            <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                                <Button Content="刷新" Padding="14,7" Margin="0,0,10,0" Click="MemMonRefresh_Click"/>
+                                <Button x:Name="MemMonTrimBtn" Content="一键释放内存" Style="{StaticResource PrimaryButton}" Padding="14,7" Click="MemMonTrim_Click"/>
+                            </StackPanel>
+                            <TextBlock x:Name="MemMonStatusText" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap"/>
+                        </StackPanel>
+                    </ScrollViewer>
+                </TabItem>
+
+                <!-- ===== Tab 13：离线 UUID 生成器 ===== -->
+                <TabItem Header="离线UUID生成器">
+                    <ScrollViewer VerticalScrollBarVisibility="Auto" services:ScrollWheelBehavior.EnableFastWheel="True">
+                        <StackPanel Margin="4,12,4,4" MaxWidth="640" HorizontalAlignment="Left">
+                            <TextBlock Text="离线（正版无关）UUID 生成器" FontWeight="Bold" Margin="0,0,0,8"/>
+                            <TextBlock Text="按 Minecraft 离线模式的算法（对 &quot;OfflinePlayer:用户名&quot; 取 MD5，再按 UUID v3 规则改写版本/变体位）本地算出这个用户名对应的离线 UUID——跟你开一个离线账户实际拿到的 UUID完全一致，不需要联网查询，纯本地计算，同一个用户名任何时候算出来的结果都一样。"
+                                       TextWrapping="Wrap" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,14"/>
+
+                            <TextBlock Text="用户名" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4"/>
+                            <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
+                                <TextBox x:Name="OfflineUuidNameBox" Width="220" Padding="6,5" Text="Steve" TextChanged="OfflineUuidNameBox_TextChanged"/>
+                            </StackPanel>
+
+                            <Border Background="{DynamicResource SideBrush}" CornerRadius="6" Padding="12">
+                                <StackPanel>
+                                    <TextBlock Text="离线 UUID（带短横线）" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,2"/>
+                                    <TextBlock x:Name="OfflineUuidDashedText" FontSize="14" FontFamily="Consolas" Margin="0,0,0,8"/>
+                                    <TextBlock Text="离线 UUID（无短横线）" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,2"/>
+                                    <TextBlock x:Name="OfflineUuidPlainText" FontSize="14" FontFamily="Consolas"/>
+                                </StackPanel>
+                            </Border>
+
+                            <Button Content="复制带短横线格式" Padding="12,6" Margin="0,10,0,0" HorizontalAlignment="Left" Click="OfflineUuidCopy_Click"/>
+                        </StackPanel>
+                    </ScrollViewer>
+                </TabItem>
+
+                <!-- ===== Tab 14：JVM 参数生成器 ===== -->
+                <TabItem Header="JVM参数生成器">
+                    <ScrollViewer VerticalScrollBarVisibility="Auto" services:ScrollWheelBehavior.EnableFastWheel="True">
+                        <StackPanel Margin="4,12,4,4" MaxWidth="680" HorizontalAlignment="Left">
+                            <TextBlock Text="JVM 启动参数生成器" FontWeight="Bold" Margin="0,0,0,8"/>
+                            <TextBlock Text="按分配给游戏的内存大小、CPU 核数、游戏版本三个条件，生成一套业界常用的 G1 垃圾回收调优参数（俗称 Aikar's Flags 的简化版），能明显减少长时间游玩后的卡顿/掉帧。生成结果可以直接复制粘贴到「设置」页的自定义 JVM 参数里，不需要自己去查每个参数是什么意思。"
+                                       TextWrapping="Wrap" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,14"/>
+
+                            <TextBlock Text="分配内存 (GB)" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4"/>
+                            <ComboBox x:Name="JvmMemCombo" Width="160" HorizontalAlignment="Left" Margin="0,0,0,10" SelectionChanged="JvmGenOption_Changed">
+                                <ComboBoxItem Content="2 GB" Tag="2"/>
+                                <ComboBoxItem Content="4 GB" Tag="4" IsSelected="True"/>
+                                <ComboBoxItem Content="6 GB" Tag="6"/>
+                                <ComboBoxItem Content="8 GB" Tag="8"/>
+                                <ComboBoxItem Content="12 GB" Tag="12"/>
+                                <ComboBoxItem Content="16 GB" Tag="16"/>
+                            </ComboBox>
+
+                            <TextBlock Text="CPU 核心数" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4"/>
+                            <ComboBox x:Name="JvmCoreCombo" Width="160" HorizontalAlignment="Left" Margin="0,0,0,10" SelectionChanged="JvmGenOption_Changed">
+                                <ComboBoxItem Content="2 核" Tag="2"/>
+                                <ComboBoxItem Content="4 核" Tag="4" IsSelected="True"/>
+                                <ComboBoxItem Content="6 核" Tag="6"/>
+                                <ComboBoxItem Content="8 核及以上" Tag="8"/>
+                            </ComboBox>
+
+                            <TextBlock Text="游戏版本" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4"/>
+                            <ComboBox x:Name="JvmVersionCombo" Width="220" HorizontalAlignment="Left" Margin="0,0,0,14" SelectionChanged="JvmGenOption_Changed">
+                                <ComboBoxItem Content="1.17 及以上（现代版本）" Tag="modern" IsSelected="True"/>
+                                <ComboBoxItem Content="1.16 及以下（旧版本）" Tag="legacy"/>
+                            </ComboBox>
+
+                            <Border Background="{DynamicResource SideBrush}" CornerRadius="6" Padding="12" Margin="0,0,0,10">
+                                <TextBox x:Name="JvmResultText" IsReadOnly="True" TextWrapping="Wrap" AcceptsReturn="True"
+                                         BorderThickness="0" Background="Transparent" FontFamily="Consolas" FontSize="12"/>
+                            </Border>
+                            <Button Content="复制参数" Padding="12,6" HorizontalAlignment="Left" Click="JvmGenCopy_Click"/>
+                        </StackPanel>
+                    </ScrollViewer>
+                </TabItem>
+
+                <!-- ===== Tab 15：材质包/资源包完整性校验 ===== -->
+                <TabItem Header="资源包完整性校验">
+                    <ScrollViewer VerticalScrollBarVisibility="Auto" services:ScrollWheelBehavior.EnableFastWheel="True">
+                        <StackPanel Margin="4,12,4,4" MaxWidth="680" HorizontalAlignment="Left">
+                            <TextBlock Text="资源包 / 材质包完整性校验" FontWeight="Bold" Margin="0,0,0,8"/>
+                            <TextBlock Text="选一个 .zip 格式的资源包文件，计算它的 SHA1 值（服务器 server.properties 里的 resource-pack-sha1、或对方发给你的\u201c官方校验值\u201d用的就是这个），同时读取包内 pack.mcmeta 的 pack_format 版本号，可以粘贴一个\u201c期望的 SHA1\u201d进来自动比对是否一致，用来确认下载到的资源包文件没有被损坏或篡改。"
+                                       TextWrapping="Wrap" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,14"/>
+
+                            <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
+                                <Button Content="选择资源包 (.zip)" Padding="14,7" Margin="0,0,10,0" Click="RpVerifyBrowse_Click"/>
+                                <TextBlock x:Name="RpVerifyFileText" VerticalAlignment="Center" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="12" Text="尚未选择文件"/>
+                            </StackPanel>
+
+                            <Border Background="{DynamicResource SideBrush}" CornerRadius="6" Padding="12" Margin="0,0,0,10">
+                                <StackPanel>
+                                    <TextBlock Text="pack_format" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,2"/>
+                                    <TextBlock x:Name="RpVerifyFormatText" FontSize="13" Margin="0,0,0,8" Text="--"/>
+                                    <TextBlock Text="计算出的 SHA1" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,2"/>
+                                    <TextBlock x:Name="RpVerifySha1Text" FontSize="13" FontFamily="Consolas" TextWrapping="Wrap" Text="--"/>
+                                </StackPanel>
+                            </Border>
+
+                            <TextBlock Text="期望的 SHA1（可选，留空则只显示计算结果不比对）" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4"/>
+                            <TextBox x:Name="RpVerifyExpectedBox" Margin="0,0,0,10" Padding="6,5" FontFamily="Consolas" TextChanged="RpVerifyExpectedBox_TextChanged"/>
+
+                            <TextBlock x:Name="RpVerifyResultText" FontSize="13" FontWeight="Bold" TextWrapping="Wrap"/>
+                        </StackPanel>
+                    </ScrollViewer>
+                </TabItem>
+
+                <!-- ===== Tab 16：快捷键速查表 ===== -->
+                <TabItem Header="快捷键速查表">
+                    <ScrollViewer VerticalScrollBarVisibility="Auto" services:ScrollWheelBehavior.EnableFastWheel="True">
+                        <StackPanel Margin="4,12,4,4" MaxWidth="680" HorizontalAlignment="Left">
+                            <TextBlock Text="常用快捷键速查表" FontWeight="Bold" Margin="0,0,0,8"/>
+                            <TextBlock Text="纯静态参考表，不需要联网，游戏里记不清按键的时候切过来看一眼就行。"
+                                       TextWrapping="Wrap" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,10"/>
+
+                            <ItemsControl x:Name="KeyRefList"/>
+                        </StackPanel>
+                    </ScrollViewer>
+                </TabItem>
+
+                <!-- ===== Tab 17：随机种子生成器 ===== -->
+                <TabItem Header="随机种子生成器">
+                    <ScrollViewer VerticalScrollBarVisibility="Auto" services:ScrollWheelBehavior.EnableFastWheel="True">
+                        <StackPanel Margin="4,12,4,4" MaxWidth="640" HorizontalAlignment="Left">
+                            <TextBlock Text="随机存档种子生成器" FontWeight="Bold" Margin="0,0,0,8"/>
+                            <TextBlock Text="一键生成一个随机的存档种子，创建新世界时可以直接粘贴到\u201c种子\u201d输入框——纯本地随机数生成，不是查已有地图的种子。"
+                                       TextWrapping="Wrap" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,14"/>
+
+                            <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
+                                <RadioButton x:Name="SeedNumericRadio" Content="纯数字种子" GroupName="SeedType" IsChecked="True" Margin="0,0,20,0" Checked="SeedTypeRadio_Changed"/>
+                                <RadioButton x:Name="SeedStringRadio" Content="字符串种子" GroupName="SeedType" Checked="SeedTypeRadio_Changed"/>
+                            </StackPanel>
+
+                            <Border Background="{DynamicResource SideBrush}" CornerRadius="6" Padding="12" Margin="0,0,0,10">
+                                <TextBlock x:Name="SeedResultText" FontSize="16" FontFamily="Consolas" Text="点下面的按钮生成一个种子"/>
+                            </Border>
+
+                            <StackPanel Orientation="Horizontal">
+                                <Button x:Name="SeedGenBtn" Content="生成种子" Style="{StaticResource PrimaryButton}" Padding="14,7" Margin="0,0,10,0" Click="SeedGen_Click"/>
+                                <Button Content="复制" Padding="14,7" Click="SeedCopy_Click"/>
+                            </StackPanel>
+                        </StackPanel>
+                    </ScrollViewer>
+                </TabItem>
+
+                <!-- ===== Tab 18：经验等级计算器 ===== -->
+                <TabItem Header="经验等级计算器">
+                    <ScrollViewer VerticalScrollBarVisibility="Auto" services:ScrollWheelBehavior.EnableFastWheel="True">
+                        <StackPanel Margin="4,12,4,4" MaxWidth="640" HorizontalAlignment="Left">
+                            <TextBlock Text="经验等级 / 经验值互算" FontWeight="Bold" Margin="0,0,0,8"/>
+                            <TextBlock Text="按官方公式换算等级和累计经验值（Experience Orb 总量），两边填一边、另一边自动算，附带算出升到下一级还差多少经验。"
+                                       TextWrapping="Wrap" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,14"/>
+
+                            <TextBlock Text="经验等级" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4"/>
+                            <TextBox x:Name="XpLevelBox" Width="160" HorizontalAlignment="Left" Padding="6,5" Text="30" Margin="0,0,0,14" TextChanged="XpLevelBox_TextChanged"/>
+
+                            <TextBlock Text="累计经验值（总经验）" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4"/>
+                            <TextBox x:Name="XpTotalBox" Width="160" HorizontalAlignment="Left" Padding="6,5" Margin="0,0,0,14" TextChanged="XpTotalBox_TextChanged"/>
+
+                            <Border Background="{DynamicResource SideBrush}" CornerRadius="6" Padding="12">
+                                <TextBlock x:Name="XpResultText" FontSize="12" TextWrapping="Wrap" Foreground="{DynamicResource TextSecondaryBrush}"/>
+                            </Border>
+                        </StackPanel>
+                    </ScrollViewer>
+                </TabItem>
+
+                <!-- ===== Tab 19：三维坐标距离计算器 ===== -->
+                <TabItem Header="坐标距离计算器">
+                    <ScrollViewer VerticalScrollBarVisibility="Auto" services:ScrollWheelBehavior.EnableFastWheel="True">
+                        <StackPanel Margin="4,12,4,4" MaxWidth="520" HorizontalAlignment="Left">
+                            <TextBlock Text="两点坐标距离计算" FontWeight="Bold" Margin="0,0,0,8"/>
+                            <TextBlock Text="填入两个坐标点，算出直线距离（含 Y 轴）和水平距离（只算 X/Z，不看高度差）——找基地、算鞘翅飞行路程、判断信标/出生点范围时都用得上。"
+                                       TextWrapping="Wrap" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,14"/>
+
+                            <TextBlock Text="坐标点 A (X, Y, Z)" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4"/>
+                            <StackPanel Orientation="Horizontal" Margin="0,0,0,14">
+                                <TextBox x:Name="DistAxBox" Width="100" Padding="6,5" Text="0" TextChanged="DistBox_TextChanged"/>
+                                <TextBox x:Name="DistAyBox" Width="100" Padding="6,5" Margin="8,0,0,0" Text="64" TextChanged="DistBox_TextChanged"/>
+                                <TextBox x:Name="DistAzBox" Width="100" Padding="6,5" Margin="8,0,0,0" Text="0" TextChanged="DistBox_TextChanged"/>
+                            </StackPanel>
+
+                            <TextBlock Text="坐标点 B (X, Y, Z)" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4"/>
+                            <StackPanel Orientation="Horizontal" Margin="0,0,0,14">
+                                <TextBox x:Name="DistBxBox" Width="100" Padding="6,5" Text="100" TextChanged="DistBox_TextChanged"/>
+                                <TextBox x:Name="DistByBox" Width="100" Padding="6,5" Margin="8,0,0,0" Text="64" TextChanged="DistBox_TextChanged"/>
+                                <TextBox x:Name="DistBzBox" Width="100" Padding="6,5" Margin="8,0,0,0" Text="100" TextChanged="DistBox_TextChanged"/>
+                            </StackPanel>
+
+                            <Border Background="{DynamicResource SideBrush}" CornerRadius="6" Padding="12">
+                                <StackPanel>
+                                    <TextBlock Text="直线距离（3D）" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}"/>
+                                    <TextBlock x:Name="Dist3DText" FontSize="16" FontFamily="Consolas" Margin="0,0,0,8"/>
+                                    <TextBlock Text="水平距离（仅 X/Z）" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}"/>
+                                    <TextBlock x:Name="DistXZText" FontSize="16" FontFamily="Consolas"/>
+                                </StackPanel>
+                            </Border>
+                        </StackPanel>
+                    </ScrollViewer>
+                </TabItem>
+
+                <!-- ===== Tab 20：常用指令生成器 ===== -->
+                <TabItem Header="指令生成器">
+                    <ScrollViewer VerticalScrollBarVisibility="Auto" services:ScrollWheelBehavior.EnableFastWheel="True">
+                        <StackPanel Margin="4,12,4,4" MaxWidth="640" HorizontalAlignment="Left">
+                            <TextBlock Text="常用作弊指令生成器" FontWeight="Bold" Margin="0,0,0,8"/>
+                            <TextBlock Text="挑一种指令、填好参数，下面直接拼出完整指令，游戏里打开聊天栏粘贴回车即可，不用自己记参数顺序。"
+                                       TextWrapping="Wrap" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,14"/>
+
+                            <TextBlock Text="指令类型" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4"/>
+                            <ComboBox x:Name="CmdTypeCombo" Width="220" HorizontalAlignment="Left" Margin="0,0,0,14" SelectedIndex="0" SelectionChanged="CmdGenOption_Changed">
+                                <ComboBoxItem Content="给予物品 /give"/>
+                                <ComboBoxItem Content="传送 /tp"/>
+                                <ComboBoxItem Content="切换游戏模式 /gamemode"/>
+                                <ComboBoxItem Content="设置时间 /time set"/>
+                                <ComboBoxItem Content="设置天气 /weather"/>
+                            </ComboBox>
+
+                            <!-- /give 参数 -->
+                            <StackPanel x:Name="CmdGivePanel">
+                                <TextBlock Text="玩家名（留空则用 @p 最近玩家）" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4"/>
+                                <TextBox x:Name="CmdGivePlayerBox" Margin="0,0,0,10" Padding="6,5" TextChanged="CmdGenOption_TextChanged"/>
+                                <TextBlock Text="物品 ID" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4"/>
+                                <TextBox x:Name="CmdGiveItemBox" Margin="0,0,0,10" Padding="6,5" Text="minecraft:diamond" TextChanged="CmdGenOption_TextChanged"/>
+                                <TextBlock Text="数量" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4"/>
+                                <TextBox x:Name="CmdGiveCountBox" Width="100" HorizontalAlignment="Left" Margin="0,0,0,10" Padding="6,5" Text="1" TextChanged="CmdGenOption_TextChanged"/>
+                            </StackPanel>
+
+                            <!-- /tp 参数 -->
+                            <StackPanel x:Name="CmdTpPanel" Visibility="Collapsed">
+                                <TextBlock Text="玩家名（留空则用 @p 最近玩家）" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4"/>
+                                <TextBox x:Name="CmdTpPlayerBox" Margin="0,0,0,10" Padding="6,5" TextChanged="CmdGenOption_TextChanged"/>
+                                <TextBlock Text="目标坐标 (X Y Z)" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4"/>
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBox x:Name="CmdTpXBox" Width="100" Padding="6,5" Text="0" TextChanged="CmdGenOption_TextChanged"/>
+                                    <TextBox x:Name="CmdTpYBox" Width="100" Padding="6,5" Margin="8,0,0,0" Text="64" TextChanged="CmdGenOption_TextChanged"/>
+                                    <TextBox x:Name="CmdTpZBox" Width="100" Padding="6,5" Margin="8,0,0,0" Text="0" TextChanged="CmdGenOption_TextChanged"/>
+                                </StackPanel>
+                            </StackPanel>
+
+                            <!-- /gamemode 参数 -->
+                            <StackPanel x:Name="CmdGamemodePanel" Visibility="Collapsed">
+                                <TextBlock Text="模式" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4"/>
+                                <ComboBox x:Name="CmdGamemodeCombo" Width="200" HorizontalAlignment="Left" Margin="0,0,0,10" SelectedIndex="0" SelectionChanged="CmdGenOption_Changed">
+                                    <ComboBoxItem Content="survival（生存）"/>
+                                    <ComboBoxItem Content="creative（创造）"/>
+                                    <ComboBoxItem Content="adventure（冒险）"/>
+                                    <ComboBoxItem Content="spectator（旁观）"/>
+                                </ComboBox>
+                                <TextBlock Text="玩家名（留空则作用于自己）" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4"/>
+                                <TextBox x:Name="CmdGamemodePlayerBox" Margin="0,0,0,10" Padding="6,5" TextChanged="CmdGenOption_TextChanged"/>
+                            </StackPanel>
+
+                            <!-- /time set 参数 -->
+                            <StackPanel x:Name="CmdTimePanel" Visibility="Collapsed">
+                                <TextBlock Text="时间" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4"/>
+                                <ComboBox x:Name="CmdTimeCombo" Width="200" HorizontalAlignment="Left" Margin="0,0,0,10" SelectedIndex="0" SelectionChanged="CmdGenOption_Changed">
+                                    <ComboBoxItem Content="day（白天，1000）"/>
+                                    <ComboBoxItem Content="noon（正午，6000）"/>
+                                    <ComboBoxItem Content="night（夜晚，13000）"/>
+                                    <ComboBoxItem Content="midnight（午夜，18000）"/>
+                                </ComboBox>
+                            </StackPanel>
+
+                            <!-- /weather 参数 -->
+                            <StackPanel x:Name="CmdWeatherPanel" Visibility="Collapsed">
+                                <TextBlock Text="天气" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4"/>
+                                <ComboBox x:Name="CmdWeatherCombo" Width="200" HorizontalAlignment="Left" Margin="0,0,0,10" SelectedIndex="0" SelectionChanged="CmdGenOption_Changed">
+                                    <ComboBoxItem Content="clear（晴天）"/>
+                                    <ComboBoxItem Content="rain（下雨）"/>
+                                    <ComboBoxItem Content="thunder（雷雨）"/>
+                                </ComboBox>
+                            </StackPanel>
+
+                            <Border Background="{DynamicResource SideBrush}" CornerRadius="6" Padding="12" Margin="0,4,0,10">
+                                <TextBlock x:Name="CmdResultText" FontSize="14" FontFamily="Consolas" TextWrapping="Wrap"/>
+                            </Border>
+                            <Button Content="复制指令" Padding="12,6" HorizontalAlignment="Left" Click="CmdGenCopy_Click"/>
+                        </StackPanel>
+                    </ScrollViewer>
+                </TabItem>
+
+                <!-- ===== Tab 21：Base64 编码/解码 ===== -->
+                <TabItem Header="Base64编解码">
+                    <ScrollViewer VerticalScrollBarVisibility="Auto" services:ScrollWheelBehavior.EnableFastWheel="True">
+                        <StackPanel Margin="4,12,4,4" MaxWidth="680" HorizontalAlignment="Left">
+                            <TextBlock Text="Base64 文本编码 / 解码" FontWeight="Bold" Margin="0,0,0,8"/>
+                            <TextBlock Text="通用文本工具，跟 Minecraft 本身没有强绑定——皮肤站接口返回值、部分 Mod 的配置字段偶尔会用到 Base64，这里可以直接互转，按 UTF-8 处理文本。"
+                                       TextWrapping="Wrap" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,14"/>
+
+                            <TextBlock Text="原文" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4"/>
+                            <TextBox x:Name="B64PlainBox" AcceptsReturn="True" TextWrapping="Wrap" MinHeight="70" Padding="8" Margin="0,0,0,10" TextChanged="B64PlainBox_TextChanged"/>
+
+                            <TextBlock Text="Base64" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4"/>
+                            <TextBox x:Name="B64EncodedBox" AcceptsReturn="True" TextWrapping="Wrap" MinHeight="70" Padding="8" Margin="0,0,0,10" FontFamily="Consolas" TextChanged="B64EncodedBox_TextChanged"/>
+
+                            <TextBlock x:Name="B64StatusText" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,10" TextWrapping="Wrap"/>
+
+                            <StackPanel Orientation="Horizontal">
+                                <Button Content="复制 Base64" Padding="12,6" Margin="0,0,10,0" Click="B64CopyEncoded_Click"/>
+                                <Button Content="复制原文" Padding="12,6" Margin="0,0,10,0" Click="B64CopyPlain_Click"/>
+                                <Button Content="清空" Padding="12,6" Click="B64Clear_Click"/>
+                            </StackPanel>
+                        </StackPanel>
+                    </ScrollViewer>
+                </TabItem>
+
+                <!-- ===== Tab 22：游戏内时间换算器 ===== -->
+                <TabItem Header="游戏时间换算">
+                    <ScrollViewer VerticalScrollBarVisibility="Auto" services:ScrollWheelBehavior.EnableFastWheel="True">
+                        <StackPanel Margin="4,12,4,4" MaxWidth="640" HorizontalAlignment="Left">
+                            <TextBlock Text="游戏内时间 / 现实时间换算" FontWeight="Bold" Margin="0,0,0,8"/>
+                            <TextBlock Text="Minecraft 里一个整天是 24000 tick，按 20 tick/秒运行，正好对应现实 20 分钟——填游戏 tick（比如 /time query daytime 查到的数值）能换算出对应现实分钟数和大致时刻（0 点=日出），也支持反过来从现实分钟数推算 tick。"
+                                       TextWrapping="Wrap" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,14"/>
+
+                            <TextBlock Text="游戏 Tick（0 ~ 23999）" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4"/>
+                            <TextBox x:Name="GtTickBox" Width="160" HorizontalAlignment="Left" Padding="6,5" Text="0" Margin="0,0,0,14" TextChanged="GtTickBox_TextChanged"/>
+
+                            <TextBlock Text="现实分钟数（从当天日出开始算）" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4"/>
+                            <TextBox x:Name="GtMinuteBox" Width="160" HorizontalAlignment="Left" Padding="6,5" Margin="0,0,0,14" TextChanged="GtMinuteBox_TextChanged"/>
+
+                            <Border Background="{DynamicResource SideBrush}" CornerRadius="6" Padding="12">
+                                <TextBlock x:Name="GtResultText" FontSize="12" TextWrapping="Wrap" Foreground="{DynamicResource TextSecondaryBrush}"/>
+                            </Border>
+                        </StackPanel>
+                    </ScrollViewer>
+                </TabItem>
+
+                <!-- ===== Tab 23：物品堆叠 / 箱子格子计算器 ===== -->
+                <TabItem Header="堆叠格子计算器">
+                    <ScrollViewer VerticalScrollBarVisibility="Auto" services:ScrollWheelBehavior.EnableFastWheel="True">
+                        <StackPanel Margin="4,12,4,4" MaxWidth="560" HorizontalAlignment="Left">
+                            <TextBlock Text="物品数量 / 箱子格子换算" FontWeight="Bold" Margin="0,0,0,8"/>
+                            <TextBlock Text="填物品总数和每组堆叠上限（大多数物品是 64，药水/装备/工具等不可堆叠物品填 1），算出需要多少组、多少个单箱（27 格）和双箱（54 格）才装得下。"
+                                       TextWrapping="Wrap" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,14"/>
+
+                            <TextBlock Text="物品总数" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4"/>
+                            <TextBox x:Name="StackCountBox" Width="160" HorizontalAlignment="Left" Padding="6,5" Text="1000" Margin="0,0,0,14" TextChanged="StackCalc_TextChanged"/>
+
+                            <TextBlock Text="每组堆叠上限" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4"/>
+                            <ComboBox x:Name="StackSizeCombo" Width="160" HorizontalAlignment="Left" Margin="0,0,0,14" SelectedIndex="0" SelectionChanged="StackCalc_SelectionChanged">
+                                <ComboBoxItem Content="64（大多数物品）"/>
+                                <ComboBoxItem Content="16（雪球/鸡蛋/告示牌等）"/>
+                                <ComboBoxItem Content="1（工具/装备/药水等）"/>
+                            </ComboBox>
+
+                            <Border Background="{DynamicResource SideBrush}" CornerRadius="6" Padding="12">
+                                <TextBlock x:Name="StackResultText" FontSize="12" TextWrapping="Wrap" Foreground="{DynamicResource TextSecondaryBrush}"/>
+                            </Border>
+                        </StackPanel>
+                    </ScrollViewer>
+                </TabItem>
+
+                <!-- ===== Tab 24：RGB 转 MC 文本颜色代码 ===== -->
+                <TabItem Header="RGB颜色转换">
+                    <ScrollViewer VerticalScrollBarVisibility="Auto" services:ScrollWheelBehavior.EnableFastWheel="True">
+                        <StackPanel Margin="4,12,4,4" MaxWidth="560" HorizontalAlignment="Left">
+                            <TextBlock Text="RGB / 十六进制 转 Minecraft 文本颜色代码" FontWeight="Bold" Margin="0,0,0,8"/>
+                            <TextBlock Text="1.16 以后聊天文本、书本、记分板支持任意 RGB 自定义颜色，格式是 &amp;#RRGGBB（部分服务端插件用 &amp;x&amp;R&amp;R&amp;G&amp;G&amp;B&amp;B 这种逐字符写法，下面两种都给出）。"
+                                       TextWrapping="Wrap" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,14"/>
+
+                            <TextBlock Text="十六进制颜色（如 FF8800，不带 #）" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4"/>
+                            <TextBox x:Name="RgbHexBox" Width="200" HorizontalAlignment="Left" Padding="6,5" Text="FF8800" Margin="0,0,0,14" TextChanged="RgbConvert_TextChanged"/>
+
+                            <Border Background="{DynamicResource SideBrush}" CornerRadius="6" Padding="12" Margin="0,0,0,10">
+                                <Border x:Name="RgbSwatch" Height="36" CornerRadius="4"/>
+                            </Border>
+
+                            <Border Background="{DynamicResource SideBrush}" CornerRadius="6" Padding="12">
+                                <StackPanel>
+                                    <TextBlock Text="&amp;#RRGGBB 格式" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}"/>
+                                    <TextBlock x:Name="RgbShortText" FontSize="14" FontFamily="Consolas" Margin="0,0,0,8"/>
+                                    <TextBlock Text="&amp;x 逐字符格式" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}"/>
+                                    <TextBlock x:Name="RgbLongText" FontSize="14" FontFamily="Consolas"/>
+                                </StackPanel>
+                            </Border>
+                        </StackPanel>
+                    </ScrollViewer>
+                </TabItem>
+
+                <!-- ===== Tab 25：红石中继器延时计算器 ===== -->
+                <TabItem Header="红石延时计算器">
+                    <ScrollViewer VerticalScrollBarVisibility="Auto" services:ScrollWheelBehavior.EnableFastWheel="True">
+                        <StackPanel Margin="4,12,4,4" MaxWidth="560" HorizontalAlignment="Left">
+                            <TextBlock Text="红石中继器链延时计算" FontWeight="Bold" Margin="0,0,0,8"/>
+                            <TextBlock Text="每个中继器有 1~4 档延时，每档 1 红石 tick（0.1 秒，游戏内 2 游戏 tick）。填中继器个数和每个用第几档，算出这一串总共延时多少红石 tick、多少秒——搭时序电路/自动农场常用。"
+                                       TextWrapping="Wrap" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,14"/>
+
+                            <TextBlock Text="中继器数量" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4"/>
+                            <TextBox x:Name="RedstoneCountBox" Width="160" HorizontalAlignment="Left" Padding="6,5" Text="4" Margin="0,0,0,14" TextChanged="RedstoneCalc_TextChanged"/>
+
+                            <TextBlock Text="每个的档位（1~4）" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4"/>
+                            <ComboBox x:Name="RedstoneTickCombo" Width="160" HorizontalAlignment="Left" Margin="0,0,0,14" SelectedIndex="0" SelectionChanged="RedstoneCalc_SelectionChanged">
+                                <ComboBoxItem Content="1 档（最短）"/>
+                                <ComboBoxItem Content="2 档"/>
+                                <ComboBoxItem Content="3 档"/>
+                                <ComboBoxItem Content="4 档（最长）"/>
+                            </ComboBox>
+
+                            <Border Background="{DynamicResource SideBrush}" CornerRadius="6" Padding="12">
+                                <TextBlock x:Name="RedstoneResultText" FontSize="12" TextWrapping="Wrap" Foreground="{DynamicResource TextSecondaryBrush}"/>
+                            </Border>
+                        </StackPanel>
+                    </ScrollViewer>
+                </TabItem>
+
+                <!-- ===== Tab 26：随机玩家名生成器 ===== -->
+                <TabItem Header="随机玩家名生成器">
+                    <ScrollViewer VerticalScrollBarVisibility="Auto" services:ScrollWheelBehavior.EnableFastWheel="True">
+                        <StackPanel Margin="4,12,4,4" MaxWidth="560" HorizontalAlignment="Left">
+                            <TextBlock Text="随机玩家名生成器" FontWeight="Bold" Margin="0,0,0,8"/>
+                            <TextBlock Text="纯本地按词根拼接生成，只保证符合 Minecraft 用户名规则（3~16 位，仅字母/数字/下划线），不保证这个名字在正版没被注册，正式使用前建议自己去核实一下是否可用。"
+                                       TextWrapping="Wrap" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,14"/>
+
+                            <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
+                                <Button x:Name="NameGenBtn" Content="生成一批（8 个）" Style="{StaticResource PrimaryButton}" Padding="14,7" Click="NameGen_Click"/>
+                            </StackPanel>
+
+                            <ItemsControl x:Name="NameGenList"/>
+                        </StackPanel>
+                    </ScrollViewer>
+                </TabItem>
+
+                <!-- ===== Tab 27：服务器 MOTD 长度检查器 ===== -->
+                <TabItem Header="MOTD长度检查">
+                    <ScrollViewer VerticalScrollBarVisibility="Auto" services:ScrollWheelBehavior.EnableFastWheel="True">
+                        <StackPanel Margin="4,12,4,4" MaxWidth="680" HorizontalAlignment="Left">
+                            <TextBlock Text="服务器 MOTD 长度 / 换行检查" FontWeight="Bold" Margin="0,0,0,8"/>
+                            <TextBlock Text="server.properties 里的 motd 每行在多人游戏列表通常只能显示约 45 个西文字符（中文按 2 个宽度算），超出会被截断或挤压显示；用 \n 表示换行，最多两行。下面按输入内容实时估算每行显示宽度是否超限。"
+                                       TextWrapping="Wrap" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,14"/>
+
+                            <TextBlock Text="MOTD 内容（用 \n 表示换行）" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4"/>
+                            <TextBox x:Name="MotdInputBox" AcceptsReturn="False" TextWrapping="Wrap" MinHeight="50" Padding="8" Margin="0,0,0,10"
+                                     Text="§6我的服务器\n§a欢迎加入游玩！" TextChanged="MotdInputBox_TextChanged"/>
+
+                            <ItemsControl x:Name="MotdLineList"/>
+                        </StackPanel>
+                    </ScrollViewer>
+                </TabItem>
+
+                <!-- ===== Tab 28：时间戳转换器 ===== -->
+                <TabItem Header="时间戳转换器">
+                    <ScrollViewer VerticalScrollBarVisibility="Auto" services:ScrollWheelBehavior.EnableFastWheel="True">
+                        <StackPanel Margin="4,12,4,4" MaxWidth="560" HorizontalAlignment="Left">
+                            <TextBlock Text="Unix 时间戳 / 日期时间互转" FontWeight="Bold" Margin="0,0,0,8"/>
+                            <TextBlock Text="服务器日志、崩溃报告、部分 Mod 配置里常见的是秒级或毫秒级 Unix 时间戳，这里按本机所在时区互相换算，方便对照日志时间线。"
+                                       TextWrapping="Wrap" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,14"/>
+
+                            <TextBlock Text="Unix 时间戳（自动识别秒/毫秒）" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4"/>
+                            <StackPanel Orientation="Horizontal" Margin="0,0,0,14">
+                                <TextBox x:Name="TsInputBox" Width="220" Padding="6,5" TextChanged="TsInputBox_TextChanged"/>
+                                <Button Content="填入当前时间" Padding="10,5" Margin="8,0,0,0" Click="TsNow_Click"/>
+                            </StackPanel>
+
+                            <TextBlock Text="本地日期时间（yyyy-MM-dd HH:mm:ss）" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4"/>
+                            <TextBox x:Name="TsDateBox" Width="220" HorizontalAlignment="Left" Padding="6,5" Margin="0,0,0,14" TextChanged="TsDateBox_TextChanged"/>
+
+                            <Border Background="{DynamicResource SideBrush}" CornerRadius="6" Padding="12">
+                                <TextBlock x:Name="TsResultText" FontSize="12" TextWrapping="Wrap" Foreground="{DynamicResource TextSecondaryBrush}"/>
+                            </Border>
+                        </StackPanel>
+                    </ScrollViewer>
+                </TabItem>
+
+                <!-- ===== Tab 29：服务器地址解析器 ===== -->
+                <TabItem Header="服务器地址解析">
+                    <ScrollViewer VerticalScrollBarVisibility="Auto" services:ScrollWheelBehavior.EnableFastWheel="True">
+                        <StackPanel Margin="4,12,4,4" MaxWidth="560" HorizontalAlignment="Left">
+                            <TextBlock Text="服务器地址解析 / 格式校验" FontWeight="Bold" Margin="0,0,0,8"/>
+                            <TextBlock Text="粘贴 host:port 或纯域名/IP，拆出主机名和端口并做基本格式校验（端口范围、IPv4 格式），添加服务器之前先确认一下格式没写错。"
+                                       TextWrapping="Wrap" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,14"/>
+
+                            <TextBlock Text="服务器地址" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4"/>
+                            <TextBox x:Name="AddrParseInputBox" Margin="0,0,0,14" Padding="6,5" Text="play.example.com:25565" TextChanged="AddrParseInputBox_TextChanged"/>
+
+                            <Border Background="{DynamicResource SideBrush}" CornerRadius="6" Padding="12">
+                                <StackPanel>
+                                    <TextBlock Text="主机名 / IP" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}"/>
+                                    <TextBlock x:Name="AddrParseHostText" FontSize="14" FontFamily="Consolas" Margin="0,0,0,8"/>
+                                    <TextBlock Text="端口" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}"/>
+                                    <TextBlock x:Name="AddrParsePortText" FontSize="14" FontFamily="Consolas" Margin="0,0,0,8"/>
+                                    <TextBlock x:Name="AddrParseStatusText" FontSize="12" TextWrapping="Wrap"/>
+                                </StackPanel>
+                            </Border>
+                        </StackPanel>
+                    </ScrollViewer>
+                </TabItem>
+
+                <!-- ===== Tab 30：药水持续时间换算 ===== -->
+                <TabItem Header="药水时长换算">
+                    <ScrollViewer VerticalScrollBarVisibility="Auto" services:ScrollWheelBehavior.EnableFastWheel="True">
+                        <StackPanel Margin="4,12,4,4" MaxWidth="560" HorizontalAlignment="Left">
+                            <TextBlock Text="药水效果持续时间换算" FontWeight="Bold" Margin="0,0,0,8"/>
+                            <TextBlock Text="/effect give 指令里的时间参数单位是秒，游戏内部按 tick（20 tick=1 秒）计时，这里互相换算，同时给出常见的延长型/浓缩型药水时长参考倍率提示。"
+                                       TextWrapping="Wrap" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,14"/>
+
+                            <TextBlock Text="秒" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4"/>
+                            <TextBox x:Name="PotionSecBox" Width="160" HorizontalAlignment="Left" Padding="6,5" Text="180" Margin="0,0,0,14" TextChanged="PotionSecBox_TextChanged"/>
+
+                            <TextBlock Text="游戏 Tick" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4"/>
+                            <TextBox x:Name="PotionTickBox" Width="160" HorizontalAlignment="Left" Padding="6,5" Margin="0,0,0,14" TextChanged="PotionTickBox_TextChanged"/>
+
+                            <Border Background="{DynamicResource SideBrush}" CornerRadius="6" Padding="12">
+                                <TextBlock x:Name="PotionResultText" FontSize="12" TextWrapping="Wrap" Foreground="{DynamicResource TextSecondaryBrush}"/>
+                            </Border>
+                        </StackPanel>
+                    </ScrollViewer>
+                </TabItem>
+
+                <!-- ===== Tab 31：颜色代码速查表 ===== -->
+                <TabItem Header="颜色代码速查表">
+                    <ScrollViewer VerticalScrollBarVisibility="Auto" services:ScrollWheelBehavior.EnableFastWheel="True">
+                        <StackPanel Margin="4,12,4,4" MaxWidth="640" HorizontalAlignment="Left">
+                            <TextBlock Text="Java 版聊天颜色 / 格式代码对照表" FontWeight="Bold" Margin="0,0,0,8"/>
+                            <TextBlock Text="纯静态参考，跟前面「颜色代码编辑器」不同——那个用来实时编辑预览一整句话，这里是完整的代码-颜色-十六进制对照速查，需要查具体某个代码对应哪个颜色时更快。"
+                                       TextWrapping="Wrap" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,10"/>
+
+                            <ItemsControl x:Name="ColorRefList"/>
+                        </StackPanel>
+                    </ScrollViewer>
+                </TabItem>
+
+                <!-- ===== Tab 32：附魔台书架数量对照 ===== -->
+                <TabItem Header="附魔书架计算器">
+                    <ScrollViewer VerticalScrollBarVisibility="Auto" services:ScrollWheelBehavior.EnableFastWheel="True">
+                        <StackPanel Margin="4,12,4,4" MaxWidth="560" HorizontalAlignment="Left">
+                            <TextBlock Text="附魔台书架数量对照" FontWeight="Bold" Margin="0,0,0,8"/>
+                            <TextBlock Text="附魔台周围（间隔 1 格、高 2 层）摆放的书架数量决定能开出的最高附魔等级上限，最多 15 个书架即可达到满级 30 级台面，超过 15 个没有额外效果。"
+                                       TextWrapping="Wrap" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,14"/>
+
+                            <TextBlock Text="书架数量（0~15）" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4"/>
+                            <TextBox x:Name="BookshelfCountBox" Width="160" HorizontalAlignment="Left" Padding="6,5" Text="15" Margin="0,0,0,14" TextChanged="BookshelfCountBox_TextChanged"/>
+
+                            <Border Background="{DynamicResource SideBrush}" CornerRadius="6" Padding="12">
+                                <TextBlock x:Name="BookshelfResultText" FontSize="12" TextWrapping="Wrap" Foreground="{DynamicResource TextSecondaryBrush}"/>
+                            </Border>
                         </StackPanel>
                     </ScrollViewer>
                 </TabItem>

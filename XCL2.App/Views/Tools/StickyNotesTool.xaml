@@ -1,0 +1,48 @@
+<UserControl x:Class="XCL2.App.Views.Tools.StickyNotesTool"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             Unloaded="StickyNotesTool_Unloaded">
+    <Grid>
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="230"/>
+            <ColumnDefinition Width="16"/>
+            <ColumnDefinition Width="*"/>
+        </Grid.ColumnDefinitions>
+
+        <!-- 左侧：便签列表 -->
+        <Border Grid.Column="0" Background="{DynamicResource SideBrush}" CornerRadius="6" Padding="6">
+            <DockPanel>
+                <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="2,2,2,8">
+                    <Button Content="＋ 新建便签" Padding="10,5" FontSize="12" Click="NoteNew_Click"/>
+                    <Button Content="🗑 删除" Padding="10,5" FontSize="12" Margin="8,0,0,0" Click="NoteDelete_Click"/>
+                </StackPanel>
+                <ListBox x:Name="NoteList" BorderThickness="0" Background="Transparent"
+                         SelectionChanged="NoteList_SelectionChanged">
+                    <ListBox.ItemTemplate>
+                        <DataTemplate>
+                            <StackPanel Margin="2,4">
+                                <TextBlock Text="{Binding Title}" FontSize="13" FontWeight="SemiBold"
+                                           TextTrimming="CharacterEllipsis" MaxWidth="190"/>
+                                <TextBlock Text="{Binding TimeText}" FontSize="11"
+                                           Foreground="{DynamicResource TextSecondaryBrush}"/>
+                            </StackPanel>
+                        </DataTemplate>
+                    </ListBox.ItemTemplate>
+                </ListBox>
+            </DockPanel>
+        </Border>
+
+        <!-- 右侧：编辑区 -->
+        <StackPanel Grid.Column="2" MaxWidth="640" HorizontalAlignment="Left">
+            <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                <Button x:Name="NotePinBtn" Content="📌 作为桌面便签打开" Style="{StaticResource PrimaryButton}" Padding="12,6" Click="NotePin_Click"/>
+                <Button Content="📂 打开便签文件夹" Padding="12,6" Margin="8,0,0,0" Click="NoteOpenFolder_Click"/>
+            </StackPanel>
+            <TextBox x:Name="NoteEditor" AcceptsReturn="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto"
+                     MinHeight="260" Padding="8" FontSize="13"
+                     TextChanged="NoteEditor_TextChanged" LostFocus="NoteEditor_LostFocus"/>
+            <TextBlock x:Name="NoteStatusText" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}"
+                       Margin="2,8,0,0" TextWrapping="Wrap"/>
+        </StackPanel>
+    </Grid>
+</UserControl>

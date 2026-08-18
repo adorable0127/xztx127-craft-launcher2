@@ -232,6 +232,157 @@ public class ClientLoaderInstallService : IDisposable
         return result;
     }
 
+    /// <summary>Legacy Fabric 自己维护的 Meta API，接口形状(端点路径/返回字段)跟官方 Fabric Meta
+    /// 完全一致——这是专门给 1.13 之前老版本(官方 Fabric 早已不再兼容)做的独立分支项目，
+    /// 客户端安装的整体流程复用 InstallLegacyFabricClientAsync，跟 InstallFabricClientAsync
+    /// 除了 base url 和不提供"Fabric API"这个可选项以外几乎一致。</summary>
+    private const string LegacyFabricMetaBase = "https://meta.legacyfabric.net/v2";
+
+    /// <summary>Legacy Fabric：客户端支持的 MC 版本列表。</summary>
+    public async Task<List<string>> GetLegacyFabricMcVersionsAsync(CancellationToken ct = default)
+    {
+        var json = await _http.GetStringAsync($"{LegacyFabricMetaBase}/versions/game", ct);
+        using var doc = JsonDocument.Parse(json);
+        var result = new List<string>();
+        foreach (var v in doc.RootElement.EnumerateArray())
+        {
+            if (v.TryGetProperty("version", out var ver) && ver.GetString() is { } s)
+                result.Add(s);
+        }
+        return result;
+    }
+
+    /// <summary>Legacy Fabric：某个 MC 版本下可用的 loader 版本列表，跟
+    /// GetFabricLoaderVersionsAsync 同样按游戏版本查交集端点，同样把 404 翻译成人话。</summary>
+    public async Task<List<ServerCoreBuild>> GetLegacyFabricLoaderVersionsAsync(string mcVersion, CancellationToken ct = default)
+    {
+        var url = $"{LegacyFabricMetaBase}/versions/loader/{Uri.EscapeDataString(mcVersion.Trim())}";
+        string json;
+        try
+        {
+            json = await _http.GetStringAsync(url, ct);
+        }
+        catch (HttpRequestException ex) when (ex.StatusCode == System.Net.HttpStatusCode.NotFound)
+        {
+            throw new InvalidOperationException(
+                $"Legacy Fabric 目前还没有为 Minecraft {mcVersion} 发布 Loader。\n" +
+                "Legacy Fabric 主要覆盖 1.13 之前的老版本，可以换一个 MC 版本再试。", ex);
+        }
+
+        using var doc = JsonDocument.Parse(json);
+        var result = new List<ServerCoreBuild>();
+        foreach (var v in doc.RootElement.EnumerateArray())
+        {
+            var node = v.TryGetProperty("loader", out var loaderNode) ? loaderNode : v;
+            if (!node.TryGetProperty("version", out var verEl)) continue;
+            var ver = verEl.GetString();
+            if (string.IsNullOrEmpty(ver)) continue;
+            result.Add(new ServerCoreBuild
+            {
+                DisplayVersion = ver,
+                IsRecommended = node.TryGetProperty("stable", out var stable) && stable.GetBoolean()
+            });
+        }
+
+        if (result.Count == 0)
+            throw new InvalidOperationException(
+                $"Legacy Fabric 没有返回任何适用于 Minecraft {mcVersion} 的 Loader 版本，无法继续安装。");
+        if (!result.Any(r => r.IsRecommended)) result[0].IsRecommended = true;
+
+        return result;
+    }
+
+    /// <summary>
+    /// 安装 Legacy Fabric 客户端到 .minecraft/versions/{versionId}/。
+    /// 跟 InstallFabricClientAsync 整体流程一致（同样是"下载现成 profile json + 补库文件 +
+    /// 独立成不依赖父版本文件夹的实例"），差异只有：base url 换成 LegacyFabricMetaBase，
+    /// 不提供"顺带装 Fabric API"这个可选项——Fabric API 本身就是给较新版本 mod 生态用的，
+    /// Legacy Fabric 覆盖的老版本(1.13 以下)生态里没有这个概念。
+    /// </summary>
+    public async Task<string> InstallLegacyFabricClientAsync(string minecraftDir, string mcVersion, string loaderVersion,
+        IProgress<ProgressInfo>? progress, CancellationToken ct = default, string? customInstanceName = null)
+    {
+        var parentVersionDir = Path.Combine(minecraftDir, "versions", mcVersion);
+        if (!File.Exists(Path.Combine(parentVersionDir, $"{mcVersion}.jar")))
+        {
+            progress?.Report(new ProgressInfo(Loc.T("Str_Cs_Installing_The_Base_Vanilla_Version", "安装原版父版本"), 0, 1, mcVersion));
+            var manifest = await _vanillaDownloader.GetVersionManifestAsync(ct);
+            var entry = manifest.Versions.FirstOrDefault(v => v.Id == mcVersion)
+                ?? throw new InvalidOperationException($"在版本清单中找不到 MC 版本 {mcVersion}，无法安装 Legacy Fabric 所需的原版父版本。");
+            await _vanillaDownloader.InstallVersionAsync(minecraftDir, entry, progress, ct);
+        }
+
+        loaderVersion = await ResolveLoaderVersionOrAutoMatchAsync(
+            LegacyFabricMetaBase, "Legacy Fabric", mcVersion, loaderVersion, progress, ct);
+
+        progress?.Report(new ProgressInfo("查询 Legacy Fabric installer 版本", 0, 1, loaderVersion));
+        var installerJson = await GetStringWithFriendly404Async(
+            $"{LegacyFabricMetaBase}/versions/installer",
+            "无法获取 Legacy Fabric 安装器版本列表，请检查网络或稍后重试。", ct);
+        using var installerDoc = JsonDocument.Parse(installerJson);
+        string? installerVersion = null;
+        foreach (var v in installerDoc.RootElement.EnumerateArray())
+        {
+            if (v.TryGetProperty("stable", out var stable) && stable.GetBoolean())
+            {
+                installerVersion = v.GetProperty("version").GetString();
+                break;
+            }
+        }
+        installerVersion ??= installerDoc.RootElement[0].GetProperty("version").GetString();
+
+        var profileUrl = $"{LegacyFabricMetaBase}/versions/loader/" +
+                         $"{Uri.EscapeDataString(mcVersion)}/" +
+                         $"{Uri.EscapeDataString(loaderVersion)}/" +
+                         $"{Uri.EscapeDataString(installerVersion!)}/profile/json";
+        progress?.Report(new ProgressInfo("下载 Legacy Fabric 版本信息", 0, 1, "profile/json"));
+        var profileJson = await GetStringWithFriendly404Async(profileUrl,
+            $"Legacy Fabric 没有 \"Minecraft {mcVersion} + Loader {loaderVersion}\" 这个组合的安装信息。\n" +
+            "可以在「Loader 版本」下拉框里换一个，或者换一个 MC 版本再试。", ct);
+
+        var detail = JsonSerializer.Deserialize<VersionDetail>(profileJson)
+            ?? throw new InvalidOperationException("Legacy Fabric 返回的版本信息解析失败。");
+
+        var defaultVersionId = string.IsNullOrEmpty(detail.Id) ? $"legacyfabric-loader-{loaderVersion}-{mcVersion}" : detail.Id;
+        var versionId = string.IsNullOrWhiteSpace(customInstanceName)
+            ? defaultVersionId
+            : ModpackInstallService.MakeUniqueInstanceName(minecraftDir, customInstanceName);
+        var versionDir = Path.Combine(minecraftDir, "versions", versionId);
+        Directory.CreateDirectory(versionDir);
+
+        var parentJarPath = ResolveVersionFile(parentVersionDir, mcVersion, "jar");
+        if (parentJarPath != null)
+        {
+            File.Copy(parentJarPath, Path.Combine(versionDir, $"{versionId}.jar"), overwrite: true);
+        }
+
+        var parentJsonPath = ResolveVersionFile(parentVersionDir, mcVersion, "json");
+        if (parentJsonPath != null)
+        {
+            var parentDetail = JsonSerializer.Deserialize<VersionDetail>(File.ReadAllText(parentJsonPath));
+            if (parentDetail != null)
+            {
+                detail.AssetIndex ??= parentDetail.AssetIndex;
+                detail.Assets ??= parentDetail.Assets;
+                detail.Downloads ??= parentDetail.Downloads;
+                detail.JavaVersion ??= parentDetail.JavaVersion;
+            }
+        }
+        detail.InheritsFrom = null;
+        detail.Id = versionId;
+        var finalProfileJson = JsonSerializer.Serialize(detail,
+            new JsonSerializerOptions { WriteIndented = true, DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull });
+
+        var versionJsonPath = Path.Combine(versionDir, $"{versionId}.json");
+        await File.WriteAllTextAsync(versionJsonPath, finalProfileJson, ct);
+
+        progress?.Report(new ProgressInfo("下载 Legacy Fabric 加载器库文件", 0, Math.Max(detail.Libraries.Count, 1), versionId));
+        await _vanillaDownloader.DownloadLibrariesOnlyAsync(minecraftDir, detail, progress, ct);
+
+        progress?.Report(new ProgressInfo(Loc.T("Str_Cs_Installation_Complete", "安装完成"), 1, 1, versionId));
+        return versionId;
+    }
+
     /// <summary>Forge：有安装器构建的 MC 版本列表（客户端和服务端安装器是同一个 jar，只是参数不同）。
     /// 实际逻辑已抽到 ForgeVersionQueryService（见该类注释：跟 ServerCoreDownloadService 消除重复代码）。</summary>
     public Task<List<string>> GetForgeVersionsAsync(CancellationToken ct = default)
@@ -246,6 +397,55 @@ public class ClientLoaderInstallService : IDisposable
     /// </summary>
     public Task<List<string>> GetNeoForgeVersionsAsync(CancellationToken ct = default)
         => ForgeVersionQueryService.GetNeoForgeVersionsAsync(_http, ct);
+
+    /// <summary>bangbang93 维护的 BMCLAPI，除了给官方 Mojang/Fabric/Forge 等接口当镜像
+    /// （见 DownloadEndpoints.BmclMap）以外，还额外提供了几个"官方本身没有可编程接口"的专属数据源，
+    /// OptiFine 就是其中之一：optifine.net 的下载页有人机验证挡着，没有公开、可直接程序化调用的
+    /// 官方列表/下载接口，BMCLAPI 是社区事实上唯一可靠的 OptiFine 数据源，这里直接对接它，
+    /// 不走 DownloadEndpoints 的"官方地址 + 镜像回退"两段式（因为压根没有对应的官方地址可填）。</summary>
+    private const string BmclApiBase = "https://bmclapi2.bangbang93.com";
+
+    /// <summary>
+    /// OptiFine：查询某个 MC 版本下所有可用构建（BMCLAPI 的 /optifine/{mcVersion} 接口）。
+    /// 返回的 DisplayVersion 形如 "HD_U_I6"（type_patch 拼在一起），跟官网下载页上看到的编号一致，
+    /// 方便用户跟着教程/记忆去选对应的版本。BMCLAPI 上没有该 MC 版本对应构建时返回空列表
+    /// （不算错误——很多版本 OptiFine 官方压根没发布过），调用方按空列表处理成"该版本不支持"。
+    /// </summary>
+    public async Task<List<ServerCoreBuild>> GetOptiFineVersionsAsync(string mcVersion, CancellationToken ct = default)
+    {
+        string json;
+        try
+        {
+            json = await _http.GetStringAsync(
+                $"{BmclApiBase}/optifine/{Uri.EscapeDataString(mcVersion.Trim())}", ct);
+        }
+        catch (HttpRequestException ex) when (ex.StatusCode == System.Net.HttpStatusCode.NotFound)
+        {
+            return new List<ServerCoreBuild>();
+        }
+
+        using var doc = JsonDocument.Parse(json);
+        if (doc.RootElement.ValueKind != JsonValueKind.Array) return new List<ServerCoreBuild>();
+
+        var result = new List<ServerCoreBuild>();
+        foreach (var v in doc.RootElement.EnumerateArray())
+        {
+            var type = v.TryGetProperty("type", out var t) ? t.GetString() ?? "" : "";
+            var patch = v.TryGetProperty("patch", out var p) ? p.GetString() ?? "" : "";
+            if (string.IsNullOrEmpty(type) && string.IsNullOrEmpty(patch)) continue;
+            result.Add(new ServerCoreBuild
+            {
+                DisplayVersion = string.IsNullOrEmpty(patch) ? type : $"{type}_{patch}",
+                IsRecommended = false,
+                RawIdentifier = $"{type}|{patch}"
+            });
+        }
+        // BMCLAPI 按发布顺序（旧到新）给的，最新的一般是用户最想要的默认项，翻转成新到旧，
+        // 跟 Fabric/Forge 那几个列表"最新排最前"的展示习惯保持一致。
+        result.Reverse();
+        if (result.Count > 0) result[0].IsRecommended = true;
+        return result;
+    }
 
     /// <summary>Fabric API 在 Modrinth 上的项目 slug，固定值（官方项目，不会变）。</summary>
     private const string FabricApiModrinthSlug = "fabric-api";
@@ -872,6 +1072,194 @@ public class ClientLoaderInstallService : IDisposable
 
         progress?.Report(new ProgressInfo(Loc.T("Str_Cs_Installation_Complete", "安装完成"), 2, 2, fileName));
         return candidate != null ? Path.GetFileName(candidate) : fullVersion;
+    }
+
+    /// <summary>
+    /// OptiFine 客户端安装。
+    ///
+    /// ===== 跟 Forge/NeoForge 的关键差异 =====
+    /// Forge/NeoForge 官方安装器认识 "--installClient <dir>" 这个命令行参数，可以完全无交互地跑；
+    /// OptiFine 的安装器（optifine.net 下载到的那个 jar）没有对外文档化的命令行参数，双击运行只会弹出
+    /// 一个 Swing 图形界面等人点"安装"按钮。为了在无人值守的情况下也能自动装完，这里用官方安装器
+    /// 自身实现所依赖的补丁类 optifine.Patcher（负责"把 OptiFine 的补丁应用到原版 client.jar 上，
+    /// 产出一份 OptiFine 化的库 jar"这一步核心逻辑，跟弹不弹图形界面无关，是安装器内部纯逻辑），
+    /// 通过一段编译期生成的小型 Java 帮助类反射调用它，绕开图形界面。这跟 HMCL/PCL 等主流启动器
+    /// 采用的技术路线一致。
+    ///
+    /// 这个技术路线依赖本机 Java 是完整 JDK（需要 javac 编译帮助类），纯 JRE 环境下 javac 不存在，
+    /// 会在下面 EnsureJavacAvailable 处提前失败并给出清晰提示——不静默假装装成功。
+    /// </summary>
+    public async Task<string> InstallOptiFineClientAsync(string minecraftDir, string mcVersion,
+        string ofType, string ofPatch, string javaExePath, IProgress<ProgressInfo>? progress,
+        CancellationToken ct = default, string? customInstanceName = null)
+    {
+        if (!File.Exists(javaExePath))
+            throw new FileNotFoundException("找不到可用的 Java，无法安装 OptiFine。", javaExePath);
+
+        // 1. 确保原版父版本已装好——OptiFine 是"往原版 client.jar 上打补丁"，没有原版 jar 无从谈起。
+        var parentVersionDir = Path.Combine(minecraftDir, "versions", mcVersion);
+        var vanillaJarPath = ResolveVersionFile(parentVersionDir, mcVersion, "jar");
+        if (vanillaJarPath == null)
+        {
+            progress?.Report(new ProgressInfo(Loc.T("Str_Cs_Installing_The_Base_Vanilla_Version", "安装原版父版本"), 0, 1, mcVersion));
+            var manifest = await _vanillaDownloader.GetVersionManifestAsync(ct);
+            var entry = manifest.Versions.FirstOrDefault(v => v.Id == mcVersion)
+                ?? throw new InvalidOperationException($"在版本清单中找不到 MC 版本 {mcVersion}，无法安装 OptiFine 所需的原版父版本。");
+            await _vanillaDownloader.InstallVersionAsync(minecraftDir, entry, progress, ct);
+            vanillaJarPath = ResolveVersionFile(parentVersionDir, mcVersion, "jar");
+        }
+        if (vanillaJarPath == null)
+            throw new InvalidOperationException("原版父版本安装完成，但找不到 client.jar，无法继续安装 OptiFine。");
+
+        var javacExePath = Path.Combine(Path.GetDirectoryName(javaExePath) ?? "", OperatingSystem.IsWindows() ? "javac.exe" : "javac");
+        if (!File.Exists(javacExePath))
+            throw new InvalidOperationException(
+                "自动安装 OptiFine 需要一份完整的 JDK（要用到 javac），当前选择的 Java 只是 JRE，缺少 javac。\n" +
+                "请在「设置 - Java 管理」里换一个完整 JDK 后重试，或前往 OptiFine 官网手动下载安装。");
+
+        var buildLabel = string.IsNullOrEmpty(ofPatch) ? ofType : $"{ofType}_{ofPatch}";
+        var fileName = $"OptiFine_{mcVersion}_{buildLabel}.jar";
+        var downloadUrl = $"{BmclApiBase}/optifine/{Uri.EscapeDataString(mcVersion)}/{Uri.EscapeDataString(ofType)}/{Uri.EscapeDataString(ofPatch)}";
+
+        var tempDir = Path.Combine(Path.GetTempPath(), "xcl2-optifine-installer", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tempDir);
+        var installerPath = Path.Combine(tempDir, fileName);
+
+        progress?.Report(new ProgressInfo("下载 OptiFine 安装器（来自 BMCLAPI）", 0, 3, fileName));
+        await DownloadFileNoHashCheckAsync(downloadUrl, installerPath, ct);
+
+        // 2. 生成并编译一个几行代码的帮助类：反射调用安装器 jar 内的 optifine.Patcher.process，
+        //    直接产出打好补丁的 OptiFine 库 jar，不弹图形界面、不需要人工点击。
+        var helperSrc = Path.Combine(tempDir, "XCL2OptiFineHelper.java");
+        var outputJarPath = Path.Combine(tempDir, "optifine-patched.jar");
+        await File.WriteAllTextAsync(helperSrc, """
+            import java.io.File;
+            import java.lang.reflect.Method;
+            public class XCL2OptiFineHelper {
+                public static void main(String[] args) throws Exception {
+                    // args: [0]=原版 client.jar  [1]=输出的补丁后 jar  [2]=OptiFine 安装器 jar 自身
+                    Class<?> patcherClass = Class.forName("optifine.Patcher");
+                    Method process = patcherClass.getMethod("process", File.class, File.class, File.class);
+                    process.invoke(null, new File(args[0]), new File(args[1]), new File(args[2]));
+                }
+            }
+            """, ct);
+
+        progress?.Report(new ProgressInfo("正在准备 OptiFine 补丁工具", 1, 3, fileName));
+        await RunProcessAsync(javacExePath,
+            new[] { "-cp", installerPath, "-encoding", "UTF-8", helperSrc },
+            tempDir, "编译 OptiFine 补丁工具失败", ct);
+
+        progress?.Report(new ProgressInfo("正在给客户端打 OptiFine 补丁", 2, 3, fileName));
+        var classpathSep = OperatingSystem.IsWindows() ? ";" : ":";
+        await RunProcessAsync(javaExePath,
+            new[] { "-cp", $".{classpathSep}{installerPath}", "XCL2OptiFineHelper", vanillaJarPath, outputJarPath, installerPath },
+            tempDir, "运行 OptiFine 补丁工具失败（optifine.Patcher 反射调用异常）", ct);
+
+        if (!File.Exists(outputJarPath) || new FileInfo(outputJarPath).Length == 0)
+            throw new InvalidOperationException("OptiFine 补丁工具运行完成，但没有产出有效的补丁 jar，安装失败。");
+
+        // 3. 组装成独立的 versions/ 实例：mainClass 固定是 OptiFine 自带的 launchwrapper 入口，
+        //    libraries 里带上 launchwrapper 本体 + OptiFine 补丁库自身两条（都是 OptiFine 安装器
+        //    自带、不需要联网单独下载的东西，直接复制进 libraries/ 目录）。
+        var defaultVersionId = $"{mcVersion}-OptiFine_{buildLabel}";
+        var versionId = string.IsNullOrWhiteSpace(customInstanceName)
+            ? ModpackInstallService.MakeUniqueInstanceName(minecraftDir, defaultVersionId)
+            : ModpackInstallService.MakeUniqueInstanceName(minecraftDir, customInstanceName);
+        var versionDir = Path.Combine(minecraftDir, "versions", versionId);
+        Directory.CreateDirectory(versionDir);
+
+        File.Copy(outputJarPath, Path.Combine(versionDir, $"{versionId}.jar"), overwrite: true);
+
+        var vanillaJsonPath = ResolveVersionFile(parentVersionDir, mcVersion, "json")
+            ?? throw new InvalidOperationException("找不到原版 version json，无法生成 OptiFine 版本信息。");
+        var vanillaDetail = JsonSerializer.Deserialize<VersionDetail>(await File.ReadAllTextAsync(vanillaJsonPath, ct))
+            ?? throw new InvalidOperationException("原版 version json 解析失败。");
+
+        vanillaDetail.Id = versionId;
+        vanillaDetail.InheritsFrom = null;
+        vanillaDetail.MainClass = "net.minecraft.launchwrapper.Launch";
+        // launchwrapper 是运行 OptiFine 补丁 jar 必需的启动垫片，OptiFine 官方安装器一直自带、
+        // 版本长期固定在 1.12，直接从 Maven Central 拉取即可，不依赖 BMCLAPI 专属数据。
+        var launchwrapperLib = new LibraryEntry
+        {
+            Name = "net.minecraft:launchwrapper:1.12",
+            Downloads = new LibraryDownloads
+            {
+                Artifact = new DownloadArtifact
+                {
+                    Path = "net/minecraft/launchwrapper/1.12/launchwrapper-1.12.jar",
+                    Url = "https://libraries.minecraft.net/net/minecraft/launchwrapper/1.12/launchwrapper-1.12.jar"
+                }
+            }
+        };
+        vanillaDetail.Libraries ??= new List<LibraryEntry>();
+        vanillaDetail.Libraries.Insert(0, launchwrapperLib);
+
+        var finalJson = JsonSerializer.Serialize(vanillaDetail,
+            new JsonSerializerOptions { WriteIndented = true, DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull });
+        await File.WriteAllTextAsync(Path.Combine(versionDir, $"{versionId}.json"), finalJson, ct);
+
+        // launchwrapper 是 DownloadLibrariesOnlyAsync 已经支持的普通 Maven 风格库条目，补一次库文件，
+        // 跟 Forge/NeoForge 安装收尾时"体检+补漏"是同一套逻辑。
+        try
+        {
+            progress?.Report(new ProgressInfo("校验并补全依赖库", 2, 3, fileName));
+            await _vanillaDownloader.DownloadLibrariesOnlyAsync(minecraftDir, vanillaDetail, progress, ct);
+        }
+        catch (OperationCanceledException) { throw; }
+        catch { /* 同 Forge/NeoForge：补库失败不阻断已经完成的安装结果 */ }
+
+        try { Directory.Delete(tempDir, recursive: true); } catch { /* 忽略清理失败 */ }
+
+        progress?.Report(new ProgressInfo(Loc.T("Str_Cs_Installation_Complete", "安装完成"), 3, 3, fileName));
+        return versionId;
+    }
+
+    /// <summary>起一个前台进程、等它跑完、非 0 退出码时把最后若干行输出打进异常里——
+    /// InstallOptiFineClientAsync 里"编译帮助类"和"运行帮助类"两步共用同一段样板逻辑。</summary>
+    private static async Task RunProcessAsync(string exePath, IReadOnlyList<string> args, string workingDir,
+        string failureMessage, CancellationToken ct)
+    {
+        var psi = new ProcessStartInfo
+        {
+            FileName = exePath,
+            WorkingDirectory = workingDir,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            StandardOutputEncoding = System.Text.Encoding.UTF8,
+            StandardErrorEncoding = System.Text.Encoding.UTF8,
+            UseShellExecute = false,
+            CreateNoWindow = true
+        };
+        foreach (var a in args) psi.ArgumentList.Add(a);
+
+        using var process = new Process { StartInfo = psi };
+        var outputLines = new List<string>();
+        process.OutputDataReceived += (_, e) => { if (e.Data != null) outputLines.Add(e.Data); };
+        process.ErrorDataReceived += (_, e) => { if (e.Data != null) outputLines.Add(e.Data); };
+
+        process.Start();
+        process.BeginOutputReadLine();
+        process.BeginErrorReadLine();
+
+        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        timeoutCts.CancelAfter(TimeSpan.FromMinutes(5));
+        try
+        {
+            await process.WaitForExitAsync(timeoutCts.Token);
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        {
+            try { if (!process.HasExited) process.Kill(entireProcessTree: true); } catch { /* 尽力而为 */ }
+            throw new InvalidOperationException($"{failureMessage}：运行超过 5 分钟仍未完成，已中止。");
+        }
+
+        if (process.ExitCode != 0)
+        {
+            var tail = string.Join('\n', outputLines.TakeLast(20));
+            throw new InvalidOperationException($"{failureMessage}（退出码 {process.ExitCode}）。最后输出：\n{tail}");
+        }
     }
 
     /// <summary>

@@ -105,19 +105,37 @@ public static class ToastService
     /// 按钳2要求，这里默认文案会建议用户"先启动游戏验证一次，确认没问题了再删除"，
     /// 而不是鼓励用户一转换完就立刻删掉备份。
     /// </summary>
+    /// <summary>同一个 key 的提示同时只保留一张卡片——比如"设置已保存"这种在短时间内
+    /// 可能被连续触发好几次的提示，不应该每次都在原有那张还没消失时再叠一张新的上去，
+    /// 那样会越堆越高、糊住下面的下拉框/按钮，甚至因为 ActionToastHost 本身可点击，
+    /// 用户点下面的控件时其实点到了压在上面的卡片，导致"选择被打断"。
+    /// key 为 null 时保持旧行为（允许堆叠），只有明确传了 key 的调用点才去重。</summary>
     public static void ShowActionPrompt(string message, string primaryText, Action primaryAction,
-        string? secondaryText = null, Action? secondaryAction = null, string? hint = null)
+        string? secondaryText = null, Action? secondaryAction = null, string? hint = null,
+        double? autoDismissSeconds = null, string? key = null)
     {
         if (_host?.ActionToastHost == null) return;
         if (!_host.Dispatcher.CheckAccess())
         {
-            _host.Dispatcher.Invoke(() => ShowActionPrompt(message, primaryText, primaryAction, secondaryText, secondaryAction, hint));
+            _host.Dispatcher.Invoke(() => ShowActionPrompt(message, primaryText, primaryAction, secondaryText, secondaryAction, hint, autoDismissSeconds, key));
             return;
         }
 
         try
         {
+            // 去重：同 key 的旧卡片直接原地移除（不走淡出动画，避免和新卡片的淡入
+            // 同时播放显得很跳），让新卡片顶替它的位置。
+            if (key != null)
+            {
+                for (int i = _host.ActionToastHost.Items.Count - 1; i >= 0; i--)
+                {
+                    if (_host.ActionToastHost.Items[i] is Border b && Equals(b.Tag, key))
+                        _host.ActionToastHost.Items.RemoveAt(i);
+                }
+            }
+
             var card = BuildActionCard(message, hint, primaryText, primaryAction, secondaryText, secondaryAction);
+            card.Tag = key;
             _host.ActionToastHost.Items.Add(card);
 
             // 同屏最多留 3 条，避免用户攒了一堆没处理的通知糊满左下角。
@@ -132,6 +150,21 @@ public static class ToastService
             slide.BeginAnimation(TranslateTransform.XProperty,
                 new DoubleAnimation(-24, 0, TimeSpan.FromMilliseconds(160))
                 { EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut } });
+
+            // 设置保存气泡（"设置已保存，是否回退"/"设置已修改，是否保存"）需要 2 秒后
+            // 自动消失而不是一直挂着等用户点，autoDismissSeconds 传了值时挂一个计时器，
+            // 到点后跟点了按钮一样走 DismissActionCard 淡出移除；不传（null，其余原有调用点）
+            // 保持"必须用户点按钮才消失"的原行为不变。
+            if (autoDismissSeconds is > 0)
+            {
+                var timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(autoDismissSeconds.Value) };
+                timer.Tick += (_, _) =>
+                {
+                    timer.Stop();
+                    DismissActionCard(card);
+                };
+                timer.Start();
+            }
         }
         catch
         {

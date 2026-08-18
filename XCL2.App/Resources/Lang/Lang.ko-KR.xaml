@@ -463,7 +463,7 @@
     <system:String x:Key="Str_Ui_Custom_Java_Arguments_Advanced">Custom Java arguments (advanced)</system:String>
     <system:String x:Key="Str_Ui_When_A_Dropped_Zip_Can_T_Be_Identified">When a dropped .zip can't be identified:</system:String>
     <system:String x:Key="Str_Ui_Dropping_Jar_On_The_Server_Management_Pa">Dropping .jar on the Server management page:</system:String>
-    <system:String x:Key="Str_Ui_Custom_Advancement_Image_Generator_Engli">Custom advancement image generator (English only)</system:String>
+    <system:String x:Key="Str_Ui_Custom_Advancement_Image_Generator_Engli">Custom advancement image generator</system:String>
     <system:String x:Key="Str_Ui_Extract_Into_This_Instance_S_Saves_Folde">Extract into this instance's saves folder</system:String>
     <system:String x:Key="Str_Ui_Account_Version_Loader_And_Mods_In_One_P">계정, 버전, 로더, Mod를 한 번에 설정</system:String>
     <system:String x:Key="Str_Ui_Paste_Or_Type_The_Token_Not_Case_Sensiti">Paste or type the token (not case-sensitive)</system:String>

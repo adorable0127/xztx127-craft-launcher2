@@ -1,4 +1,6 @@
+using System.Diagnostics;
 using System.IO;
+using System.Linq;
 using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Controls;
@@ -14,6 +16,67 @@ public partial class App : Application
     /// 存放配置文件(config.json)、账户缓存(accounts.json)、日志、下载的 Java 等。
     /// </summary>
     public static string DataDir { get; } = Path.Combine(AppContext.BaseDirectory, "xcl2");
+
+    private const string WriteXorExecuteEnvVar = "DOTNET_EnableWriteXorExecute";
+    private const string Win7RelaunchMarkerEnvVar = "XCL2_WIN7_WXORX_RELAUNCHED";
+
+    /// <summary>
+    /// Win7 专属修复：.NET 7 开始 Runtime 默认打开 WriteXorExecute 安全特性，Win7 上跟这个
+    /// 特性不兼容，会导致启动变慢、内存占用暴涨到 2G 左右（网上很少提到，GitHub 上
+    /// dotnet/runtime 有相关 issue 讨论）。关掉它只需要把 DOTNET_EnableWriteXorExecute
+    /// 环境变量设成 0，但这个开关必须在 CLR 启动前就通过环境变量生效——进程已经跑起来之后
+    /// 再 Environment.SetEnvironmentVariable 已经来不及了，Runtime 早就按默认值初始化完了。
+    /// 所以唯一可行的办法：检测到是 Win7 且这个环境变量还没设置时，带着设置好的环境变量
+    /// 重新拉起自己一份新进程，当前这个旧进程立刻退出，交给新进程接管。
+    ///
+    /// 只在 Win7 上这么做——Win10/11 不受这个问题影响，关掉 WriteXorExecute 反而是倒退
+    /// （JIT 出来的代码没有 W^X 隔离，安全性打折扣，某些场景下执行效率也会变差），所以
+    /// Win10/11 上完全不碰这个环境变量、不重新拉起进程，行为和没加这段代码之前一模一样。
+    /// </summary>
+    private static bool TryRelaunchForWin7WriteXorExecuteFix()
+    {
+        // 只处理 Win7（内核版本 6.1）。Win8/8.1 是 6.2/6.3，官方支持更完整，且基岩版这类
+        // 功能本来就已经按 Win10+ 判定，不需要跟着一起处理；Win10/11 内核版本号都是 10.x，
+        // 直接跳过，不受影响。
+        var ver = Environment.OSVersion.Version;
+        var isWin7 = ver.Major == 6 && ver.Minor == 1;
+        if (!isWin7) return false;
+
+        // 已经是重新拉起之后的那个新进程了（标记环境变量已经带上了），不要再拉一次，
+        // 避免自己无限重启自己。
+        if (Environment.GetEnvironmentVariable(Win7RelaunchMarkerEnvVar) == "1") return false;
+
+        // 用户/运维已经在系统层面手动设置过这个环境变量（比如自己按教程配置好了），
+        // 就不要越俎代庖再包一层子进程，尊重现有设置，直接用当前进程即可。
+        if (!string.IsNullOrEmpty(Environment.GetEnvironmentVariable(WriteXorExecuteEnvVar))) return false;
+
+        try
+        {
+            var exePath = Process.GetCurrentProcess().MainModule?.FileName;
+            if (string.IsNullOrEmpty(exePath)) return false;
+
+            var psi = new ProcessStartInfo
+            {
+                FileName = exePath,
+                UseShellExecute = false,
+                WorkingDirectory = AppContext.BaseDirectory,
+            };
+            foreach (var arg in Environment.GetCommandLineArgs().Skip(1))
+                psi.ArgumentList.Add(arg);
+
+            psi.EnvironmentVariables[WriteXorExecuteEnvVar] = "0";
+            psi.EnvironmentVariables[Win7RelaunchMarkerEnvVar] = "1";
+
+            Process.Start(psi);
+            return true;
+        }
+        catch
+        {
+            // 重新拉起失败（比如权限问题）：退回原来的行为，正常在当前进程里启动，
+            // 只是 Win7 上会比较慢——总比直接打不开、或者代码抛异常崩溃强。
+            return false;
+        }
+    }
 
     /// <summary>
     /// 需求："如果用户电脑上没有安装 .NET，就在启动的前面加上：你需要安装 .NET8 运行时
@@ -40,7 +103,31 @@ public partial class App : Application
     /// </summary>
     protected override void OnStartup(StartupEventArgs e)
     {
+        // Win7 专属修复：必须在 base.OnStartup / 任何托管代码正式跑起来之前做，
+        // 见 TryRelaunchForWin7WriteXorExecuteFix 上面的注释。
+        if (TryRelaunchForWin7WriteXorExecuteFix())
+        {
+            Shutdown();
+            return;
+        }
+
         base.OnStartup(e);
+
+        // 需求："首页十分卡，特别是切换页面时，可以在启动时稍微弄一个进度条，提示正在
+        // 渲染主界面，1-2s 内必须进入主界面"。真正让 MainWindow 首帧渲染变得更快涉及
+        // 面比较广（各页面构造函数的懒加载改造，见 MainWindow.NavigateLazy 的注释），
+        // 这里先解决"用户完全看不到任何反馈"这个更紧迫的体感问题：在 OnStartup 一开始、
+        // 任何耗时初始化之前，先弹出一个几乎零依赖、瞬间就能显示出来的轻量提示窗，
+        // 明确告诉用户"正在渲染主界面"，而不是让用户对着没有任何窗口出现的桌面干等。
+        // 等 MainWindow 真正的首帧画出来之后立刻关掉这个提示窗、切换到 MainWindow。
+        var splash = new Views.StartupSplashWindow();
+        splash.Show();
+        // 跟下面 mainWindow.UpdateLayout() 同样的道理：Show() 不保证立刻真正画到屏幕上，
+        // 这里强制走一遍首帧，确保用户能第一时间看到这个提示窗，而不是被接下来的
+        // ConfigService.Load()/ThemeService 初始化这些同步工作抢占，导致提示窗跟主窗口
+        // 一起延后才出现，失去了"提前反馈"的意义。
+        splash.UpdateLayout();
+        Dispatcher.Invoke(() => { }, System.Windows.Threading.DispatcherPriority.Render);
 
         // 兜底：DispatcherUnhandledException 只能捕获"已经进入 WPF 消息循环之后、
         // 在 UI 线程上抛出"的异常。OnStartup 方法体自身在调用 base.OnStartup(e) 之后、
@@ -118,7 +205,7 @@ public partial class App : Application
         // "进程静默退出"这种用户完全看不出发生了什么的结局。
         try
         {
-            RunStartupSequence();
+            RunStartupSequence(splash);
         }
         catch (Exception ex)
         {
@@ -130,6 +217,10 @@ public partial class App : Application
                     $"[{DateTime.Now}] [启动阶段异常，发生在主窗口创建/显示完成之前] {ex}\n\n");
             }
             catch { /* 落盘失败也不能再抛，见下面的原生 MessageBox 兜底 */ }
+
+            // 启动失败也要把提示窗关掉，不然用户会看到一个卡死的"正在启动…"窗口
+            // 停留在桌面上，跟后面弹出的错误提示框叠在一起，体验很奇怪。
+            try { splash.Close(); } catch { /* 已经关闭或窗口本身出问题时忽略 */ }
 
             MessageBox.Show(
                 "启动器在初始化阶段发生异常，无法继续启动：\n\n" + GetFullExceptionMessage(ex) +
@@ -144,7 +235,9 @@ public partial class App : Application
     /// "从读配置到窗口创建完成"的全过程，而不需要把 try/catch 的缩进套进整个方法体里
     /// 让本来就很长的 OnStartup 变得更难读。行为跟原来完全一致，只是外层多包了一层。
     /// </summary>
-    private void RunStartupSequence()
+    /// <param name="splash">OnStartup 一开始弹出的轻量提示窗，MainWindow 首帧渲染完成后
+    /// 由本方法负责关闭并让位。</param>
+    private void RunStartupSequence(Views.StartupSplashWindow splash)
     {
         // 修复"切换页面后才会变黑/侧边栏和底部账户区一直是浅色"：必须在 MainWindow 构造
         // 之前完成"读配置 + 应用主题/语言"，让 MainWindow.xaml 第一次 InitializeComponent()
@@ -155,6 +248,17 @@ public partial class App : Application
         earlyConfig.Load();
         ThemeService.ApplyForCurrentState(earlyConfig.Config.GuestModeEnabled, earlyConfig.Config.UiSkin, earlyConfig.Config.IsDarkMode);
         LocalizationService.ApplyForCurrentState(earlyConfig.Config.LauncherLanguage);
+
+        // 窗口透明度 + Win11 新视觉效果：均默认关闭，这里只是把启动时读到的配置状态记下来
+        // （ThemeService/Win11EffectsService 各自的静态字段），真正应用到具体窗口的时机分两处：
+        // 这一刻还没有任何窗口打开的话什么也不会发生；已经打开的窗口（几乎不会出现在这么早的
+        // 阶段）会被立即应用；后续新建的每一个窗口，靠下面 Win11EffectsService 对应的
+        // Loaded 类处理器自动套用，不需要逐个窗口接线，见 Win11EffectsService 类注释。
+        ThemeService.ApplyWindowTransparency(earlyConfig.Config.EnableWindowTransparency, earlyConfig.Config.WindowOpacityPercent);
+        ThemeService.ApplyGlobalWindowTransparency(earlyConfig.Config.EnableGlobalWindowTransparency, earlyConfig.Config.GlobalWindowOpacityPercent);
+        var earlyMaterial = Enum.TryParse<Win11EffectsService.BackdropMaterial>(earlyConfig.Config.Win11BackdropMaterial, out var earlyM)
+            ? earlyM : Win11EffectsService.BackdropMaterial.Mica;
+        Win11EffectsService.SetEnabled(earlyConfig.Config.EnableWin11VisualEffects, earlyMaterial);
 
         // 深色/浅色窗口图标自动切换：原来靠 App.xaml 里一条隐式 Window Style 的
         // Setter 统一设图标，那条已经移除（Setter 的样式值会跟运行时赋的本地值打架，
@@ -196,6 +300,24 @@ public partial class App : Application
             new System.Windows.RoutedEventHandler((sender, _) =>
             {
                 if (sender is Window w) WindowChromeService.ApplyTitleBarTheme(w, ThemeService.CurrentIsDarkMode);
+            }));
+
+        // Win11 新视觉效果（云母/亚克力背景 + 圆角）：跟上面标题栏深色模式同一套思路，
+        // 用类处理器让"当前已存在的 + 以后新增的"所有 Window 子类都在 Loaded 时自动套用，
+        // 不需要逐个窗口文件接线。默认关闭，Win11EffectsService.CurrentEnabled 读的是
+        // 用户在设置页的最新选择（见该类注释），不是这里闭包捕获的一次性配置快照。
+        EventManager.RegisterClassHandler(typeof(Window), FrameworkElement.LoadedEvent,
+            new System.Windows.RoutedEventHandler((sender, _) =>
+            {
+                if (sender is Window w) Win11EffectsService.Apply(w, Win11EffectsService.CurrentEnabled);
+            }));
+
+        // 全局窗口透明（整窗 Window.Opacity）：跟上面两个类处理器同一套思路，让"当前已存在的
+        // + 以后新增的"所有 Window 子类在 Loaded 时都自动套用最新的全局透明度状态。
+        EventManager.RegisterClassHandler(typeof(Window), FrameworkElement.LoadedEvent,
+            new System.Windows.RoutedEventHandler((sender, _) =>
+            {
+                if (sender is Window w) ThemeService.ApplyGlobalOpacityToWindow(w);
             }));
 
         DispatcherUnhandledException += (s, args) =>
@@ -244,6 +366,11 @@ public partial class App : Application
         // 首帧"的完整流程，缺一不可。
         mainWindow.UpdateLayout();
         Dispatcher.Invoke(() => { }, System.Windows.Threading.DispatcherPriority.Render);
+
+        // 到这里 MainWindow 的首帧已经真正画出来了，提示窗完成使命，关掉让位。
+        // 放在这两行强制渲染之后而不是 mainWindow.Show() 之后，是为了避免出现
+        // "提示窗先消失、MainWindow 还有一小段黑屏/白屏才画出来"这种反而更难看的空档。
+        splash.Close();
     }
 
     private static void RegisterUiInteractionLogging()

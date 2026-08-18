@@ -92,6 +92,41 @@ public static class ThemeService
     /// 强调色用清冷的冰蓝，比默认白色系的科技蓝更浅、更透，模拟"磨砂冰晶/毛玻璃"在光线下
     /// 泛出的淡蓝冷光，定位介于"清透"和"高级冷淡"之间。</summary>
     public const string SkinGlacier = "Glacier";
+    /// <summary>氧化铜绿：新增。对标 Minecraft 铜锭氧化后的经典青绿色（做旧铜/氧化铜方块），
+    /// 强调色用略带灰调的青铜绿，背景带一点点暖灰打底，模拟铜器氧化后表面那种斑驳、
+    /// 有历史感的哑光青绿，跟已有的 Emerald（鲜亮翠绿）区分开——这里更沉稳、更"做旧"，
+    /// 是第一个走"金属氧化做旧"路线的色系。</summary>
+    public const string SkinCopper = "Copper";
+    /// <summary>深板岩：新增。对标 Minecraft 深板岩(Deepslate)的冷灰黑基调，比曜石黑更"石感"、
+    /// 饱和度更低——曜石黑走的是磨砂玻璃/雾面蓝紫强调色的高级感路线，深板岩则是更朴素的
+    /// 岩石灰黑，强调色用低饱和度的冷灰蓝，整体观感偏"矿洞/地底"，适合喜欢极简冷淡深色调、
+    /// 又不想要曜石黑那种偏"珠光"质感的用户。</summary>
+    public const string SkinDeepslate = "Deepslate";
+    /// <summary>紫水晶：新增。对标 Minecraft 紫水晶洞的透亮紫粉色，强调色用饱和度较高的
+    /// 水晶紫，比已有的 Purple（偏正紫）和 Pink（偏粉）都更"透光晶体感"，背景带一点点
+    /// 极淡的紫灰打底模拟晶洞内壁的冷调，是第一个走"半透明水晶"路线而不是纯色块的色系。</summary>
+    public const string SkinAmethyst = "Amethyst";
+    /// <summary>海晶石：新增。对标 Minecraft 海底遗迹的海晶石方块，强调色是清澈的青绿蓝，
+    /// 介于 Blue（纯蓝）和 Emerald（纯绿）之间但更"水感"，背景带浅浅的海水青打底，
+    /// 跟偏"金属氧化"的 Copper、偏"科技"的 Blue 都区分开，是色轮上目前唯一的青色系。</summary>
+    public const string SkinPrismarine = "Prismarine";
+    /// <summary>熔岩：新增。对标 Minecraft 熔岩的炽热橙红，强调色饱和度拉到接近警示色的
+    /// 程度，比 Nether（暗红偏橙、克制）和 Orange（鲜橙但不带"燃烧感"）都更强烈、更烫，
+    /// 深色版背景压得很暗模拟熔洞环境，衬得强调色像真的在发光，适合喜欢强对比、高辨识度
+    /// 界面的用户。</summary>
+    public const string SkinLava = "Lava";
+    /// <summary>青金石：新增。对标 Minecraft 青金石矿的深邃宝石蓝，比 Blue（明快科技蓝）
+    /// 更深、更"矿物感"，背景带一点点靛蓝灰打底，深色版整体偏靛紫蓝，是目前色系里最深、
+    /// 最浓郁的一个蓝色调，跟清透的 Prismarine、清冷的 Glacier 都拉开明显差异。</summary>
+    public const string SkinLapis = "Lapis";
+    /// <summary>水（清澈通透）：新增，专为「Windows 11 高级特效」准备的水主题。跟已有的
+    /// Prismarine（海晶石，稳重青绿、面板不透） / Glacier（冰晶白，冷淡玻璃）都不同——
+    /// 这里背景/面板本身就带极轻的水蓝透明基调，强调色用清澈的水蓝，专门为配合云母材质 +
+    /// 更高透明度（面板透明度下限从 60 放宽到 40、可选整窗全局透明）设计，视觉上最接近
+    /// "一整块清水玻璃"。开启 EnableWin11VisualEffects 后设置页会强制默认选中并锁定为
+    /// 这一个色系（见 SettingsPage.xaml.cs VisualEffectsToggle_Changed），因为其它色系的
+    /// 面板颜色不是按"水感"设计的，跟云母材质叠加在一起观感会很怪。</summary>
+    public const string SkinAquatic = "Aquatic";
     /// <summary>历史遗留色系常量：仅用于兼容"旧配置文件里 UiSkin 存的是 Dark"这种数据，
     /// 新增的色系选择 UI（设置页下拉框等）不再把它作为一个可选项列出——现在"要不要深色"
     /// 已经拆到 IsDarkMode 独立控制，不需要再单独占一个"色系"位置。</summary>
@@ -107,7 +142,7 @@ public static class ThemeService
 
     /// <summary>提供给设置页"色系"下拉框遍历用的可选值，不包含 SkinDark（见上面注释，
     /// 深色已经拆成 IsDarkMode 独立维度，不再是一个单独的色系选项）。</summary>
-    public static readonly string[] AllSkins = { SkinWhite, SkinBlue, SkinYellow, SkinPurple, SkinPink, SkinSilver, SkinGold, SkinEmerald, SkinNether, SkinEndStone, SkinWarmYellow, SkinOrange, SkinObsidian, SkinFrostglass, SkinChampagneFrost, SkinPearl, SkinAlabaster, SkinGlacier };
+    public static readonly string[] AllSkins = { SkinWhite, SkinBlue, SkinYellow, SkinPurple, SkinPink, SkinSilver, SkinGold, SkinEmerald, SkinNether, SkinEndStone, SkinWarmYellow, SkinOrange, SkinObsidian, SkinFrostglass, SkinChampagneFrost, SkinPearl, SkinAlabaster, SkinGlacier, SkinCopper, SkinDeepslate, SkinAmethyst, SkinPrismarine, SkinLava, SkinLapis, SkinAquatic };
 
     /// <summary>当前是否深色模式，Apply 每次调用时同步更新。供 WindowChromeService 在
     /// 新窗口刚创建（SourceInitialized）时查询"现在该用深色标题栏还是浅色标题栏"——
@@ -115,6 +150,32 @@ public static class ThemeService
     /// 切换过深色模式之后才新打开的），需要一个随时可查的当前状态，而不是只能被动
     /// 等 RefreshOpenWindows 广播。</summary>
     public static bool CurrentIsDarkMode { get; private set; }
+
+    /// <summary>当前应用中的色系（不含明暗），供 <see cref="ReapplyPanelAlpha"/> 在窗口透明度
+    /// 开关/百分比变化、但色系本身没变时，知道该用哪个色系的原始面板颜色重新计算透明度，
+    /// 不用每次都重新走一遍完整的 Apply（避免不必要地闪一下）。</summary>
+    private static string _currentHue = SkinWhite;
+
+    /// <summary>窗口透明度功能相关状态，见 AppConfig.EnableWindowTransparency 注释。
+    /// 默认关闭 / 88%，跟 AppConfig 的默认值保持一致，避免 App.xaml.cs 忘记调用初始化方法时
+    /// 出现两边不一致的情况。</summary>
+    private static bool _transparencyEnabled;
+    private static int _transparencyPercent = 88;
+
+    /// <summary>全局（整窗级）透明度相关状态，见 AppConfig.EnableGlobalWindowTransparency 注释。
+    /// 跟 _transparencyEnabled/_transparencyPercent（面板透明）是两套独立状态：这套通过
+    /// Window.Opacity 让整个窗口（含标题栏、边框）一起变透明，而不是只调面板画刷的 alpha。
+    /// 默认关闭 / 80%，跟 AppConfig 默认值保持一致。</summary>
+    public static bool CurrentGlobalTransparencyEnabled { get; private set; }
+    public static int CurrentGlobalOpacityPercent { get; private set; } = 80;
+
+    /// <summary>参与"窗口透明度"效果的面板类画刷 key：只挑背景大面积色块（侧栏、主面板、
+    /// 普通按钮背景），不动强调色/文字/危险色这些需要保持高对比度、一眼看清的画刷——
+    /// 这些如果也跟着变淡，按钮上的文字、警告色块会变得难以辨认。</summary>
+    private static readonly string[] TransparencyParticipatingBrushKeys =
+    {
+        "PanelBrush", "SideBrush", "ButtonBackgroundBrush"
+    };
 
     private sealed record Palette(
         string Accent, string AccentHover, string Glow, string GlowSoft,
@@ -496,6 +557,139 @@ public static class ThemeService
             SuccessText: "#5FE092", WarningText: "#F0B368", WarningBanner: "#2A2620", Danger: "#EE7E7C", Divider: "#374854",
             ButtonBackground: "#28404C", ButtonHoverBackground: "#345060", ButtonForeground: "#DCEEF6"),
 
+        // ------- 氧化铜绿：新增。对标 Minecraft 氧化铜方块的青铜绿，暖灰打底，做旧金属质感。 -------
+        [(SkinCopper, false)] = new Palette(
+            Accent: "#6E9A87", AccentHover: "#5A8371", Glow: "#8FC2AA", GlowSoft: "#EDF4F0",
+            Panel: "#FBFAF7", Side: "#F1F0EA", Border: "#DCE0D6", BorderHover: "#B9C7BA",
+            TextPrimary: "#22271F", TextSecondary: "#6E7466",
+            TileBlue: "#E6EEEA", TileIndigo: "#E9ECE6", TileGreen: "#E3F0E8", TileOrange: "#F3EDE2", TilePurple: "#ECEAE4",
+            SuccessText: "#1E9E4F", WarningText: "#B5762B", WarningBanner: "#F3EDE2", Danger: "#C24B4B", Divider: "#DCE0D6",
+            ButtonBackground: "#D7E6DC", ButtonHoverBackground: "#C2D9CA", ButtonForeground: "#2C4A3C"),
+
+        // 氧化铜绿-深：铜锈深色版，深灰绿背景配偏亮的氧化铜青绿强调色，比 Emerald-深 更沉、
+        // 更"哑光"，符合氧化铜"做旧金属"而非"宝石鲜亮"的定位。
+        [(SkinCopper, true)] = new Palette(
+            Accent: "#8FC2AA", AccentHover: "#A4D0BC", Glow: "#8FC2AA", GlowSoft: "#1E2A24",
+            Panel: "#1A211C", Side: "#121712", Border: "#3C4640", BorderHover: "#4E5C52",
+            TextPrimary: "#E8F0EA", TextSecondary: "#9CAC9E",
+            TileBlue: "#1E322C", TileIndigo: "#20281E", TileGreen: "#1C2E24", TileOrange: "#2A2620", TilePurple: "#242A22",
+            SuccessText: "#5FE092", WarningText: "#F0B368", WarningBanner: "#2A2620", Danger: "#EE7E7C", Divider: "#3C4640",
+            ButtonBackground: "#2C4038", ButtonHoverBackground: "#385046", ButtonForeground: "#DCEEE2"),
+
+        // ------- 深板岩：新增。对标 Minecraft 深板岩，冷灰黑岩石基调，低饱和度冷灰蓝强调色，
+        // 比曜石黑更朴素、更少"珠光"感，偏"矿洞/地底"的极简冷淡观感。 -------
+        [(SkinDeepslate, false)] = new Palette(
+            Accent: "#6E7686", AccentHover: "#5A6272", Glow: "#8C96A8", GlowSoft: "#EEEFF2",
+            Panel: "#F9FAFB", Side: "#EEEFF1", Border: "#D8DADE", BorderHover: "#B6BAC2",
+            TextPrimary: "#22242A", TextSecondary: "#6C7078",
+            TileBlue: "#E8EAEE", TileIndigo: "#E9EAEE", TileGreen: "#E6ECE8", TileOrange: "#EEECE8", TilePurple: "#EAE9EE",
+            SuccessText: "#1E9E4F", WarningText: "#B5762B", WarningBanner: "#EEECE8", Danger: "#C24B4B", Divider: "#D8DADE",
+            ButtonBackground: "#DCDFE4", ButtonHoverBackground: "#CACFD6", ButtonForeground: "#30343C"),
+
+        // 深板岩-深：几乎纯灰黑的背景配冷灰蓝强调色，是所有深色版里饱和度最低、最"岩石感"的一个，
+        // 跟曜石黑-深（带雾面蓝紫、更"珠光"）拉开差异。
+        [(SkinDeepslate, true)] = new Palette(
+            Accent: "#8C96A8", AccentHover: "#A2ACBC", Glow: "#8C96A8", GlowSoft: "#1C1E22",
+            Panel: "#17181B", Side: "#101113", Border: "#383A40", BorderHover: "#4A4D54",
+            TextPrimary: "#E4E5E8", TextSecondary: "#94989E",
+            TileBlue: "#22242A", TileIndigo: "#24242A", TileGreen: "#202622", TileOrange: "#26241F", TilePurple: "#242228",
+            SuccessText: "#5FE092", WarningText: "#F0B368", WarningBanner: "#26241F", Danger: "#EE7E7C", Divider: "#383A40",
+            ButtonBackground: "#2E3036", ButtonHoverBackground: "#3A3D44", ButtonForeground: "#DCDEE2"),
+
+        // ------- 紫水晶：新增。透亮水晶紫粉，比 Purple 更"透光"、比 Pink 更饱和，
+        // 背景带极淡的紫灰打底模拟晶洞内壁。 -------
+        [(SkinAmethyst, false)] = new Palette(
+            Accent: "#9C6FD6", AccentHover: "#8657C4", Glow: "#C79AF0", GlowSoft: "#F5EEFC",
+            Panel: "#FCFAFE", Side: "#F4EEFA", Border: "#E2D4F0", BorderHover: "#C9AEE6",
+            TextPrimary: "#241E2C", TextSecondary: "#726A80",
+            TileBlue: "#EEEAF8", TileIndigo: "#EDE8FA", TileGreen: "#E9F2E9", TileOrange: "#F6EEE4", TilePurple: "#F1E4FA",
+            SuccessText: "#1E9E4F", WarningText: "#B5762B", WarningBanner: "#F6EEE4", Danger: "#C24B4B", Divider: "#E2D4F0",
+            ButtonBackground: "#E6D6F4", ButtonHoverBackground: "#D8C0EE", ButtonForeground: "#4A2C70"),
+
+        // 紫水晶-深：深紫背景配发光水晶紫强调色，是所有深色版里"晶体发光感"最强的一个。
+        [(SkinAmethyst, true)] = new Palette(
+            Accent: "#C79AF0", AccentHover: "#D6B4F6", Glow: "#C79AF0", GlowSoft: "#241E30",
+            Panel: "#1E1826", Side: "#15111C", Border: "#413A50", BorderHover: "#544A66",
+            TextPrimary: "#F0E8FA", TextSecondary: "#A99CBC",
+            TileBlue: "#26223E", TileIndigo: "#282040", TileGreen: "#1E2E22", TileOrange: "#2C2620", TilePurple: "#302340",
+            SuccessText: "#5FE092", WarningText: "#F0B368", WarningBanner: "#2C2620", Danger: "#EE7E7C", Divider: "#413A50",
+            ButtonBackground: "#3C2E52", ButtonHoverBackground: "#4C3A66", ButtonForeground: "#EEDCFA"),
+
+        // ------- 海晶石：新增。清澈青绿蓝，介于 Blue 和 Emerald 之间但更"水感"，
+        // 目前唯一的青色系。 -------
+        [(SkinPrismarine, false)] = new Palette(
+            Accent: "#3FA6A0", AccentHover: "#33908B", Glow: "#6BD4CC", GlowSoft: "#E4F7F5",
+            Panel: "#F9FEFD", Side: "#EBF7F5", Border: "#CDE9E5", BorderHover: "#9FD6CE",
+            TextPrimary: "#17262A", TextSecondary: "#5E7876",
+            TileBlue: "#E1F3F0", TileIndigo: "#E7F0F6", TileGreen: "#E1F3E8", TileOrange: "#F2EEE2", TilePurple: "#E9EEF4",
+            SuccessText: "#1E9E4F", WarningText: "#B5762B", WarningBanner: "#F2EEE2", Danger: "#C24B4B", Divider: "#CDE9E5",
+            ButtonBackground: "#CDEBE6", ButtonHoverBackground: "#B0DED6", ButtonForeground: "#144A46"),
+
+        // 海晶石-深：深青黑背景配发光青绿强调色，模拟海底遗迹的幽光效果。
+        [(SkinPrismarine, true)] = new Palette(
+            Accent: "#6BD4CC", AccentHover: "#84E0D8", Glow: "#6BD4CC", GlowSoft: "#16282A",
+            Panel: "#132220", Side: "#0C1918", Border: "#2E4644", BorderHover: "#3E5C58",
+            TextPrimary: "#E0F5F2", TextSecondary: "#8FB0AC",
+            TileBlue: "#1A3230", TileIndigo: "#1C2A38", TileGreen: "#18301F", TileOrange: "#2A2620", TilePurple: "#22283A",
+            SuccessText: "#5FE092", WarningText: "#F0B368", WarningBanner: "#2A2620", Danger: "#EE7E7C", Divider: "#2E4644",
+            ButtonBackground: "#204440", ButtonHoverBackground: "#2A5450", ButtonForeground: "#D8F4EE"),
+
+        // ------- 熔岩：新增。炽热橙红，饱和度接近警示色，比 Nether/Orange 都更强烈滚烫。 -------
+        [(SkinLava, false)] = new Palette(
+            Accent: "#E0562A", AccentHover: "#C7451E", Glow: "#FF8A3D", GlowSoft: "#FFEDE0",
+            Panel: "#FFFBF8", Side: "#FFF1E8", Border: "#F5D2BC", BorderHover: "#EEAE84",
+            TextPrimary: "#2A1810", TextSecondary: "#82624E",
+            TileBlue: "#EAEEF4", TileIndigo: "#ECEAF4", TileGreen: "#E7F2E8", TileOrange: "#FFEADC", TilePurple: "#F1E6EE",
+            SuccessText: "#1E9E4F", WarningText: "#C7601A", WarningBanner: "#FFEADC", Danger: "#C24B4B", Divider: "#F5D2BC",
+            ButtonBackground: "#FBD8BE", ButtonHoverBackground: "#F6BE96", ButtonForeground: "#7A2E10"),
+
+        // 熔岩-深：近黑背景（模拟熔洞暗处）配炽亮橙红强调色，是所有深色版里对比度/发光感最强的一个。
+        [(SkinLava, true)] = new Palette(
+            Accent: "#FF8A3D", AccentHover: "#FFA25E", Glow: "#FF8A3D", GlowSoft: "#2A1810",
+            Panel: "#221410", Side: "#180D0A", Border: "#4A2C1E", BorderHover: "#603A28",
+            TextPrimary: "#FCE8DC", TextSecondary: "#C09680",
+            TileBlue: "#2A241E", TileIndigo: "#2A2020", TileGreen: "#22261E", TileOrange: "#3A2416", TilePurple: "#2A1E22",
+            SuccessText: "#5FE092", WarningText: "#F0B368", WarningBanner: "#3A2416", Danger: "#FF6B4A", Divider: "#4A2C1E",
+            ButtonBackground: "#4A2E1C", ButtonHoverBackground: "#5E3A22", ButtonForeground: "#FCE4D4"),
+
+        // ------- 青金石：新增。深邃宝石蓝，比 Blue 更深更"矿物感"，是最浓郁的蓝色调。 -------
+        [(SkinLapis, false)] = new Palette(
+            Accent: "#2C5FBE", AccentHover: "#234DA0", Glow: "#4D7DE0", GlowSoft: "#E4EBFA",
+            Panel: "#F9FAFE", Side: "#ECF0FA", Border: "#CCD8F0", BorderHover: "#9FB6E6",
+            TextPrimary: "#161C2C", TextSecondary: "#5C6680",
+            TileBlue: "#E2E9FA", TileIndigo: "#E5E6FA", TileGreen: "#E4F0E7", TileOrange: "#F4EDE2", TilePurple: "#EBE6F6",
+            SuccessText: "#1E9E4F", WarningText: "#B5762B", WarningBanner: "#F4EDE2", Danger: "#C24B4B", Divider: "#CCD8F0",
+            ButtonBackground: "#CCDBF6", ButtonHoverBackground: "#AEC6F0", ButtonForeground: "#152C60"),
+
+        // 青金石-深：靛紫蓝背景配明亮宝石蓝强调色，是所有深色版里最浓郁厚重的一个蓝调。
+        [(SkinLapis, true)] = new Palette(
+            Accent: "#4D7DE0", AccentHover: "#6994EA", Glow: "#4D7DE0", GlowSoft: "#181E30",
+            Panel: "#141830", Side: "#0D1022", Border: "#303A5C", BorderHover: "#3E4A70",
+            TextPrimary: "#E2E7FA", TextSecondary: "#8892B4",
+            TileBlue: "#1E2648", TileIndigo: "#20223E", TileGreen: "#1C2A24", TileOrange: "#282420", TilePurple: "#24203E",
+            SuccessText: "#5FE092", WarningText: "#F0B368", WarningBanner: "#282420", Danger: "#EE7E7C", Divider: "#303A5C",
+            ButtonBackground: "#283460", ButtonHoverBackground: "#344278", ButtonForeground: "#DCE4FA"),
+
+        // ------- 水（清澈通透）：新增。专为 Win11 高级特效 + 更高透明度设计，面板/背景本身
+        // 就带极轻的水蓝基调，强调色是清澈水蓝，配合云母材质和更大幅度的面板/整窗透明度，
+        // 视觉上追求"一整块清水玻璃"的效果，而不是稳重的海晶石或冷淡的冰晶白。 -------
+        [(SkinAquatic, false)] = new Palette(
+            Accent: "#2FA7E0", AccentHover: "#2390C6", Glow: "#7FD4F5", GlowSoft: "#EAF8FE",
+            Panel: "#F3FCFF", Side: "#E4F6FC", Border: "#C6E9F5", BorderHover: "#93D4EE",
+            TextPrimary: "#0E2A33", TextSecondary: "#4C7480",
+            TileBlue: "#E0F3FC", TileIndigo: "#E4EEFA", TileGreen: "#E1F5EE", TileOrange: "#F2EEE2", TilePurple: "#EBEEF7",
+            SuccessText: "#1E9E4F", WarningText: "#B5762B", WarningBanner: "#F2EEE2", Danger: "#C24B4B", Divider: "#C6E9F5",
+            ButtonBackground: "#CBEBFA", ButtonHoverBackground: "#A9DEF4", ButtonForeground: "#0C3E4C"),
+
+        // 水-深：近黑靛蓝背景配发光水蓝强调色，模拟深水中透出的光，是水主题的深色版本。
+        [(SkinAquatic, true)] = new Palette(
+            Accent: "#7FD4F5", AccentHover: "#98DEF8", Glow: "#7FD4F5", GlowSoft: "#12262E",
+            Panel: "#0E2028", Side: "#08161C", Border: "#264450", BorderHover: "#325A68",
+            TextPrimary: "#E2F5FC", TextSecondary: "#84AEBA",
+            TileBlue: "#163040", TileIndigo: "#1A2438", TileGreen: "#16302A", TileOrange: "#2A2620", TilePurple: "#20263C",
+            SuccessText: "#5FE092", WarningText: "#F0B368", WarningBanner: "#2A2620", Danger: "#EE7E7C", Divider: "#264450",
+            ButtonBackground: "#1C3E4C", ButtonHoverBackground: "#265060", ButtonForeground: "#D6F2FC"),
+
         // ------- 彩蛋皮肤：全部复用白色系配色 -------
         [(SkinEggNote, false)] = WhiteLight,      [(SkinEggNote, true)] = WhiteDark,
         [(SkinEggDisco, false)] = WhiteLight,     [(SkinEggDisco, true)] = WhiteDark,
@@ -534,6 +728,7 @@ public static class ThemeService
     private static void Apply(string hue, bool isDark)
     {
         CurrentIsDarkMode = isDark;
+        _currentHue = hue;
 
         if (!Palettes.TryGetValue((hue, isDark), out var p))
         {
@@ -565,7 +760,120 @@ public static class ThemeService
         SetBrushColor(res, "ButtonHoverBackgroundBrush", p.ButtonHoverBackground);
         SetBrushColor(res, "ButtonForegroundBrush", p.ButtonForeground);
 
+        // 窗口透明度：色系/明暗切换时，用新色系的原始面板颜色重新计算一遍透明度，
+        // 不然切换配色会把之前设置的透明效果覆盖回不透明。见 ReapplyPanelAlpha 注释。
+        ReapplyPanelAlpha();
+
         RefreshOpenWindows();
+    }
+
+    /// <summary>
+    /// 窗口透明度功能的唯一入口：设置页保存时调用这个方法（而不是直接改资源字典），
+    /// 同时负责记住状态（供色系切换时复用，见 _transparencyEnabled/_transparencyPercent）、
+    /// 重新计算面板画刷的透明度、以及刷新已打开窗口。
+    /// 默认关闭（percent 参数无意义）；开启时 percent 会被夹在 40~100 之间——原下限是 60，
+    /// 放宽到 40 是为了配合"水"主题追求更通透的玻璃质感；40 以下文字会难以辨认，所以
+    /// 仍然保留一个下限，不允许无限透明。
+    /// </summary>
+    public static void ApplyWindowTransparency(bool enabled, int percent)
+    {
+        _transparencyEnabled = enabled;
+        _transparencyPercent = Math.Clamp(percent, 40, 100);
+        ReapplyPanelAlpha();
+        RefreshOpenWindows();
+    }
+
+    /// <summary>
+    /// 全局（整窗级）透明度的唯一入口：设置页保存时调用。跟 ApplyWindowTransparency（只调
+    /// 面板画刷 alpha）不同，这里让整个窗口——包括标题栏、边框、所有内容——一起呈现
+    /// 半透明效果，能看到窗口后面的桌面/其它窗口透出来。
+    /// percent 会被夹在 50~100 之间（下限比面板透明更保守，见 AppConfig.GlobalWindowOpacityPercent
+    /// 注释）。关闭时统一恢复成完全不透明。
+    /// </summary>
+    public static void ApplyGlobalWindowTransparency(bool enabled, int percent)
+    {
+        CurrentGlobalTransparencyEnabled = enabled;
+        CurrentGlobalOpacityPercent = Math.Clamp(percent, 50, 100);
+
+        foreach (Window window in Application.Current.Windows)
+        {
+            ApplyGlobalOpacityToWindow(window);
+        }
+    }
+
+    [System.Runtime.InteropServices.DllImport("user32.dll", SetLastError = true)]
+    private static extern int GetWindowLong(IntPtr hWnd, int nIndex);
+
+    [System.Runtime.InteropServices.DllImport("user32.dll", SetLastError = true)]
+    private static extern int SetWindowLong(IntPtr hWnd, int nIndex, int dwNewLong);
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern bool SetLayeredWindowAttributes(IntPtr hWnd, uint crKey, byte bAlpha, uint dwFlags);
+
+    private const int GWL_EXSTYLE = -20;
+    private const int WS_EX_LAYERED = 0x80000;
+    private const uint LWA_ALPHA = 0x2;
+
+    /// <summary>
+    /// 把当前全局透明度状态应用到单个窗口——新开窗口在 Loaded 时（见 App.xaml.cs 里
+    /// 对应的类处理器，跟 Win11EffectsService.Apply 同一套接线方式）、以及
+    /// ApplyGlobalWindowTransparency 遍历已打开窗口时都会调用这个方法。
+    ///
+    /// 之前直接设 Window.Opacity：WPF 的 Window.Opacity 只有在 AllowsTransparency="True"
+    /// （逐像素透明的分层窗口）时才真正生效，而项目里所有窗口都是 AllowsTransparency="False"
+    /// （保留硬件加速渲染 + 兼容下面 Win11EffectsService 的 Mica/Acrylic 背景材质，两者跟
+    /// AllowsTransparency="True" 都不兼容）。AllowsTransparency="False" 时 Window.Opacity
+    /// 被 WPF 直接忽略，实际看到的"变透明"其实是别的画刷 alpha 调整在软件渲染层跟未定义
+    /// 背景（近似黑色）做混合的副作用——表现出来就是"只是变暗，没有真的透出桌面"。
+    ///
+    /// 现在改成不依赖 AllowsTransparency 的原生做法：给窗口句柄追加 WS_EX_LAYERED 扩展样式，
+    /// 再用 SetLayeredWindowAttributes + LWA_ALPHA 让 DWM 把整个窗口（连同它硬件加速渲染出的
+    /// 全部内容）当成一张位图统一做 alpha 混合——这是 Windows 自带的"整窗透明"机制，
+    /// 不需要放弃硬件加速，也不影响同时开启的 Mica/Acrylic 背景材质。
+    /// </summary>
+    public static void ApplyGlobalOpacityToWindow(Window window)
+    {
+        var hwnd = new System.Windows.Interop.WindowInteropHelper(window).Handle;
+        if (hwnd == IntPtr.Zero) return; // 窗口还没 Show，句柄未创建，等 Loaded 里再调一次
+
+        var exStyle = GetWindowLong(hwnd, GWL_EXSTYLE);
+        if (CurrentGlobalTransparencyEnabled)
+        {
+            if ((exStyle & WS_EX_LAYERED) == 0)
+                SetWindowLong(hwnd, GWL_EXSTYLE, exStyle | WS_EX_LAYERED);
+
+            var alpha = (byte)Math.Round(CurrentGlobalOpacityPercent / 100.0 * 255.0);
+            SetLayeredWindowAttributes(hwnd, 0, alpha, LWA_ALPHA);
+        }
+        else if ((exStyle & WS_EX_LAYERED) != 0)
+        {
+            // 关闭时把 WS_EX_LAYERED 样式摘掉，而不是只设 alpha=255：分层窗口即使 alpha
+            // 拉满，合成路径跟普通窗口仍不完全一样（尤其跟下面的 Mica/Acrylic 背景材质叠加时），
+            // 摘掉样式才是真正回到"完全不透明"的原始状态。
+            SetWindowLong(hwnd, GWL_EXSTYLE, exStyle & ~WS_EX_LAYERED);
+        }
+    }
+
+    /// <summary>
+    /// 按当前色系(_currentHue)、当前明暗(CurrentIsDarkMode)取出面板类画刷的原始十六进制颜色，
+    /// 关闭透明度时按完全不透明(alpha=FF)重设，开启时按 _transparencyPercent 算出的 alpha
+    /// 重设——不管开关状态如何，色相/明暗本身都不受影响，只调整这几个画刷的 alpha 通道。
+    /// 这个方法本身不触发 RefreshOpenWindows，调用方（Apply / ApplyWindowTransparency）
+    /// 各自负责在需要的时候刷新，避免重复刷新两次。
+    /// </summary>
+    private static void ReapplyPanelAlpha()
+    {
+        if (!Palettes.TryGetValue((_currentHue, CurrentIsDarkMode), out var p))
+        {
+            p = Palettes[(SkinWhite, CurrentIsDarkMode)];
+        }
+
+        var res = Application.Current.Resources;
+        var alpha = _transparencyEnabled ? (byte)Math.Round(_transparencyPercent / 100.0 * 255.0) : (byte)255;
+
+        SetBrushColorWithAlpha(res, "PanelBrush", p.Panel, alpha);
+        SetBrushColorWithAlpha(res, "SideBrush", p.Side, alpha);
+        SetBrushColorWithAlpha(res, "ButtonBackgroundBrush", p.ButtonBackground, alpha);
     }
 
     /// <summary>
@@ -596,6 +904,12 @@ public static class ThemeService
             // 跟标题栏一样需要在这里主动重设，才能在切换深浅色时立即跟着换。
             // 深色图标文件缺失会自动回退浅色，不会抛异常。见 AppIconService 类头注释。
             AppIconService.ApplyTo(window);
+
+            // MainWindow 自绘标题栏左上角那个 Image（跟 Window.Icon 是两个不同的控件，
+            // 后者只影响任务栏/Alt-Tab，不会自动带动前者跟着换）单独刷一次，否则深浅色
+            // 切换时任务栏图标换了、自绘标题栏里的图标却停在旧的那张不动。
+            if (window is Views.MainWindow main)
+                AppIconService.ApplyToTitleBarImage(main, main.TitleBarIconImage);
         }
     }
 
@@ -657,6 +971,27 @@ public static class ThemeService
         res[key] = new SolidColorBrush(color);
     }
 
+    /// <summary>
+    /// 跟 SetBrushColor 是同一套"已冻结画刷换新实例"逻辑，唯一区别是这里额外接受一个
+    /// alpha 通道参数——专供窗口透明度功能使用，其余调用方（色系/明暗切换的完整画刷列表）
+    /// 继续走上面不带 alpha 的 SetBrushColor，保持完全不透明。
+    /// </summary>
+    private static void SetBrushColorWithAlpha(ResourceDictionary res, string key, string hex, byte alpha)
+    {
+        var color = (Color)ColorConverter.ConvertFromString(hex)!;
+        color.A = alpha;
+
+        if (res[key] is not SolidColorBrush brush) return;
+
+        if (!brush.IsFrozen)
+        {
+            brush.Color = color;
+            return;
+        }
+
+        res[key] = new SolidColorBrush(color);
+    }
+
     /// <summary>用于设置页"色系"下拉框的中文显示名，UI 展示用，不参与持久化。</summary>
     public static string GetDisplayName(string skin) => skin switch
     {
@@ -678,6 +1013,13 @@ public static class ThemeService
         SkinPearl => "珍珠白（高级）",
         SkinAlabaster => "云杉白（高级）",
         SkinGlacier => "冰晶白（高级）",
+        SkinCopper => "氧化铜绿",
+        SkinDeepslate => "深板岩",
+        SkinAmethyst => "紫水晶",
+        SkinPrismarine => "海晶石",
+        SkinLava => "熔岩",
+        SkinLapis => "青金石",
+        SkinAquatic => "水（清澈通透）",
         SkinDark => "黑色",
         SkinEggNote => "注意：此按钮以及以下的按钮均为彩蛋，均为白色系",
         SkinEggDisco => "(彩蛋)雷霆动物集体蹦迪",

@@ -90,6 +90,16 @@ public class CurseForgeMod : System.ComponentModel.INotifyPropertyChanged
     [JsonIgnore]
     public string FavoriteLabel => IsFavorite ? "★ 已收藏" : "☆ 收藏";
 
+    /// <summary>是否显示封面图，跟 Mod/资源包列表同一套开关（AppConfig.ShowModIcons），
+    /// 由 DownloadCenterPage 在地图搜索结果加载完成时统一赋值。反序列化时不参与 JSON 往返。</summary>
+    [JsonIgnore]
+    public bool ShowIcon { get; set; } = true;
+
+    /// <summary>实际绑定给 Image.Source 用的值：关闭封面显示、或者这条地图本身没有 Logo 时给 null，
+    /// WPF 的 Image 控件在 Source 为 null 时不会渲染任何内容（不会报错/不会显示裂图占位）。</summary>
+    [JsonIgnore]
+    public string? DisplayIconUrl => ShowIcon ? Logo?.ThumbnailUrl : null;
+
     public event System.ComponentModel.PropertyChangedEventHandler? PropertyChanged;
     private void OnPropertyChanged(string name) => PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(name));
 }

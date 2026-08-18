@@ -1,5 +1,10 @@
+using System.Diagnostics;
+using System.Text.RegularExpressions;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Documents;
+using System.Windows.Input;
+using System.Windows.Media;
 using System.Windows.Threading;
 using XCL2.App.Services;
 
@@ -10,7 +15,9 @@ namespace XCL2.App.Views;
 ///
 /// 交互规则（按需求逐条落实）：
 /// 1) 第 1、2 页（法律性文本）：「同意并继续」必须同时满足①页面停留满 5 秒
-///    （倒计时显示在按钮上）②已把滚动条拖到本页文本的最底部，两者都满足才可点击。
+///    （倒计时显示在按钮上，文案先是"请认真阅读本协议（5s）"）②已把滚动条拖到本页文本的
+///    最底部，两者都满足才可点击；未满 5 秒时按钮只提示倒计时，5 秒到了、还没滚到底部时
+///    才会改口提示"请先滚动阅读到页面最底部"——不是一上来就先逼着划到底部。
 /// 2) 第 3 页（开源协议）：不强制阅读，进入即可点击；但若停留不足 3 秒就点「同意并继续」，
 ///    页面底部会揭示"用人话说"备注，需再点一次才真正通过。
 /// 3) 第 4 页（基本模式协议，约 1000 字）：只有从「不同意」的三选一里选择「使用基本模式」，
@@ -85,14 +92,14 @@ public partial class AgreementsWindow : OverlayDialogControl
         _mode = mode;
         InitializeComponent();
 
-        Page1Text.Text = AgreementsText.UserAgreementText;
-        Page2Text.Text = AgreementsText.PrivacyAgreementText;
-        Page3Text.Text = AgreementsText.OpenSourceAgreementText;
-        Page4Text.Text = AgreementsText.BasicModeAgreementText;
-        Page1PlainText.Text = AgreementsText.UserAgreementPlainLanguage;
-        Page2PlainText.Text = AgreementsText.PrivacyAgreementPlainLanguage;
-        Page3PlainText.Text = AgreementsText.OpenSourceAgreementPlainLanguage;
-        Page4PlainText.Text = AgreementsText.BasicModeAgreementPlainLanguage;
+        SetAgreementText(Page1Text, AgreementsText.UserAgreementText);
+        SetAgreementText(Page2Text, AgreementsText.PrivacyAgreementText);
+        SetAgreementText(Page3Text, AgreementsText.OpenSourceAgreementText);
+        SetAgreementText(Page4Text, AgreementsText.BasicModeAgreementText);
+        SetAgreementText(Page1PlainText, AgreementsText.UserAgreementPlainLanguage);
+        SetAgreementText(Page2PlainText, AgreementsText.PrivacyAgreementPlainLanguage);
+        SetAgreementText(Page3PlainText, AgreementsText.OpenSourceAgreementPlainLanguage);
+        SetAgreementText(Page4PlainText, AgreementsText.BasicModeAgreementPlainLanguage);
 
         // 滚动检测：第 1、2 页需要"滚到最底部"才算读完。每次滚动都重算一次当前页是否
         // 已到底（只置 true 不置回 false——一旦看到过底部，往回滚也算已读）。只读模式
@@ -328,7 +335,7 @@ public partial class AgreementsWindow : OverlayDialogControl
     {
         _mode = WindowMode.Full;
         HeaderTitle.Text = "欢迎使用 XCL2";
-        HeaderSubtitle.Text = "首次使用前，请逐一阅读并同意以下四步：用户协议 → 隐私协议 → 开源协议 → 基本模式（如适用）。前两份需要拖到页面最底部并完整阅读 5 秒后即可继续；第三份（开源协议）不强制。";
+        HeaderSubtitle.Text = "首次使用前，请逐一阅读并同意以下四步：用户协议 → 隐私协议 → 开源协议 → 基本模式（如适用）。前两份需要认真阅读满 5 秒后才能拖到页面最底部完成确认；第三份（开源协议）不强制。";
         StepDots.Visibility = Visibility.Visible;
         DisagreeBtn.Content = "不同意";
         GoFullModeBtn.Visibility = Visibility.Collapsed;
@@ -422,14 +429,16 @@ public partial class AgreementsWindow : OverlayDialogControl
             var atBottom = _step == 1 ? _page1AtBottom : _page2AtBottom;
             var elapsed = _step == 1 ? _page1Elapsed : _page2Elapsed;
 
-            if (!atBottom)
+            // 顺序调整：先要求"认真阅读满 5 秒"，5 秒到了之后才轮到"滚动到最底部"的要求——
+            // 不再是一上来就顶着一句"请先滚动到底部"，逼着用户先划到底再假装读完。
+            if (!elapsed)
             {
-                AgreeBtn.Content = "请先滚动阅读到页面最底部";
+                AgreeBtn.Content = $"请认真阅读本协议（{_countdownRemaining}s）";
                 AgreeBtn.IsEnabled = false;
             }
-            else if (!elapsed)
+            else if (!atBottom)
             {
-                AgreeBtn.Content = $"请完整阅读（剩余 {_countdownRemaining} 秒）";
+                AgreeBtn.Content = "请先滚动阅读到页面最底部";
                 AgreeBtn.IsEnabled = false;
             }
             else
@@ -450,6 +459,56 @@ public partial class AgreementsWindow : OverlayDialogControl
         {
             AgreeBtn.Content = AgreeLabel;
             AgreeBtn.IsEnabled = true;
+        }
+    }
+
+    // ---------- 协议正文里的可点击链接 ----------
+
+    private static readonly Regex AgreementUrlRegex = new(
+        @"https?://[\w\-._~:/?#\[\]@!$&'()*+,;=%]+",
+        RegexOptions.Compiled);
+
+    private static readonly SolidColorBrush AgreementLinkBrush = new(Color.FromRgb(0x00, 0x78, 0xD4));
+
+    /// <summary>把协议正文里的网址渲染成蓝色的可点击交互字体，点击用系统浏览器打开。
+    /// 协议正文是纯文本常量，不能直接在 XAML 里写 Hyperlink，这里用正则把 URL 拆出来
+    /// 逐个替换成 Hyperlink Run，其余文字保持原样。</summary>
+    private static void SetAgreementText(TextBlock block, string text)
+    {
+        block.Inlines.Clear();
+
+        var last = 0;
+        foreach (Match match in AgreementUrlRegex.Matches(text))
+        {
+            if (match.Index > last)
+                block.Inlines.Add(new Run(text.Substring(last, match.Index - last)));
+
+            var url = match.Value;
+            var link = new Hyperlink(new Run(url))
+            {
+                Foreground = AgreementLinkBrush,
+                TextDecorations = TextDecorations.Underline,
+                Cursor = Cursors.Hand,
+            };
+            link.RequestNavigate += (_, _) => OpenAgreementUrl(url);
+            block.Inlines.Add(link);
+
+            last = match.Index + match.Length;
+        }
+
+        if (last < text.Length)
+            block.Inlines.Add(new Run(text.Substring(last)));
+    }
+
+    private static void OpenAgreementUrl(string url)
+    {
+        try
+        {
+            Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
+        }
+        catch (Exception ex)
+        {
+            MessageBoxDialog.ShowWarning("打开浏览器失败：\n" + ex.Message, "错误");
         }
     }
 }

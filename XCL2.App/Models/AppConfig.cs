@@ -439,6 +439,70 @@ public class AppConfig
     public bool EnablePageAnimations { get; set; } = true;
 
     /// <summary>
+    /// 窗口透明度开关。默认 false（关闭），需要用户在设置页「外观与视觉效果」里主动开启——
+    /// 这是一个纯装饰性的视觉功能，不影响任何现有窗口行为，所以刻意默认关闭，避免老用户
+    /// 升级后界面观感突然发生变化。开启后按 <see cref="WindowOpacityPercent"/> 让主窗口/
+    /// 各弹窗的侧栏、卡片等面板呈现半透明的\"玻璃质感\"，见 Services/Win11EffectsService.cs。
+    /// 出于兼容性考虑（项目里所有窗口都是标准系统边框窗口，没有用 AllowsTransparency + 
+    /// WindowStyle=None 的自绘窗口，见 WindowChromeService 类注释里的取舍说明），这里做的是
+    /// \"内容面板半透明\"而不是真正的整窗操作系统级像素穿透——这样不需要重写窗口拖动/
+    /// 缩放/贴边等系统级行为，风险和改动范围都小得多，视觉效果上依然能看到底层桌面/
+    /// 其它窗口透出来的朦胧效果。
+    /// </summary>
+    public bool EnableWindowTransparency { get; set; } = false;
+
+    /// <summary>
+    /// 窗口透明度百分比，仅在 <see cref="EnableWindowTransparency"/> 开启时生效。
+    /// 取值范围 60~100（100 等同于完全不透明，60 是允许的最透明程度——低于 60 面板上的文字
+    /// 会难以辨认，所以设置页的滑块把下限卡在 60）。默认 88，是一个观感上\"能看出透明质感、
+    /// 又不影响阅读\"的折中值。
+    /// </summary>
+    public int WindowOpacityPercent { get; set; } = 88;
+
+    /// <summary>
+    /// Windows 11 新光效/新图形设计支持开关。默认 false（关闭，需要去设置里手动开启）——
+    /// 这是纯视觉增强，且依赖 Windows 11 才有的 DWM 特性（Mica 云母材质背景、窗口圆角、
+    /// 更强的悬停/点击光晕过渡），在 Windows 10 或更早系统上会被静默忽略、不影响任何功能，
+    /// 但既然是"新"设计就不该在老用户毫无预期的情况下自动打开，所以跟窗口透明度一样默认关闭。
+    /// 开启后见 Services/Win11EffectsService.cs：给窗口套用 DWM 云母背景材质 + 圆角，
+    /// 同时给 ThemeService 应用的强调色/悬停色加一层\"沉浸光感\"渐变光晕效果。
+    /// </summary>
+    public bool EnableWin11VisualEffects { get; set; } = false;
+
+    /// <summary>Win11 新光效开启时，主窗口用哪种背景材质：Mica（默认，贴合壁纸的柔和渐变）/
+    /// MicaAlt（云母加深版，层次更明显）/ Acrylic（真正的毛玻璃磨砂模糊，透感更强）。
+    /// 存字符串而不是数字，方便直接对应 Win11EffectsService.BackdropMaterial 的枚举名，
+    /// 配置文件里可读性也更好。旧配置文件没有这一项时按 Mica 处理，跟以前的固定行为一致。</summary>
+    public string Win11BackdropMaterial { get; set; } = "Mica";
+
+    /// <summary>
+    /// 全局窗口透明（整窗级别的像素穿透，而不是 <see cref="WindowOpacityPercent"/> 那种只让
+    /// 侧栏/卡片等面板半透明的"内容面板半透明"）。默认关闭。开启后通过 Window.Opacity 直接
+    /// 让整个窗口（含标题栏、边框、所有内容）按 <see cref="GlobalWindowOpacityPercent"/> 呈现
+    /// 半透明效果，能看到窗口后方桌面/其它窗口透出来。跟 EnableWindowTransparency 是两套独立
+    /// 效果，可以同时开：面板透明负责"玻璃质感"的层次感，这个负责"整窗都能透"的通透感。
+    /// </summary>
+    public bool EnableGlobalWindowTransparency { get; set; } = false;
+
+    /// <summary>
+    /// 全局窗口透明度百分比，仅在 <see cref="EnableGlobalWindowTransparency"/> 开启时生效。
+    /// 取值范围 50~100（50 是允许的最透明程度——整窗透明比面板透明更容易影响可读性，
+    /// 所以下限比 <see cref="WindowOpacityPercent"/> 更保守）。默认 80。
+    /// </summary>
+    public int GlobalWindowOpacityPercent { get; set; } = 80;
+
+    /// <summary>
+    /// 设置页"是否可以直接保存，无需点击保存设置"。默认关闭（false）——维持原有的
+    /// "改完必须手动点保存设置按钮"流程，避免老用户误触发不想要的自动保存。
+    /// 开启后，设置页里任何控件的改动都会在短暂防抖（约 0.4 秒无新改动）后自动保存，
+    /// 并在右下角弹出一张云母气泡卡片："设置已保存，是否回退"，2 秒后自动消失
+    /// （消失前可以点"回退"撤销这一次自动保存，见 SettingsPage.OnSettingsEdited）。
+    /// 关闭时改为左下角弹出"设置已修改，是否保存"的气泡卡片（撤销/保存两个按钮，
+    /// 同样 2 秒后自动消失），以及切换到其它页面时的三选一确认弹窗。
+    /// </summary>
+    public bool SettingsAutoSaveWithoutConfirm { get; set; } = false;
+
+    /// <summary>
     /// 用户手动指定的陶瓦联机(Terracotta)可执行文件路径。陶瓦联机本体是 burningtnt/Terracotta
     /// 发布的独立可执行程序(基于 EasyTier 的 P2P 联机工具)，不是本启动器能重新实现的协议——
     /// 真正的建房/加入房间/房间码交互，全部在陶瓦联机自己的界面里完成，见 TerracottaService 类注释。
@@ -496,7 +560,7 @@ public class AppConfig
     /// 是否已同意过《基岩版分发协议》（微软对 Minecraft for Windows 客户端及基岩版
     /// 专用服务端的分发法律协议）。默认 false：进入「基岩版启动」页面时必须先同意这份
     /// 协议，不同意就停留在当前页面不进入（可再次点进入重新同意）；同意后写入 true
-    /// 持久化，本次及后续进入不再重复弹协议，并弹一次"暂不支持多版本"的公告。
+    /// 持久化，本次及后续进入不再重复弹协议。
     /// 见 MainWindow.OpenBedrockWithAgreementGate。
     /// </summary>
     public bool BedrockAgreementAccepted { get; set; } = false;
@@ -506,6 +570,16 @@ public class AppConfig
     /// null/空 = 每次下载都弹文件夹选择框。
     /// </summary>
     public string? BedrockClientDefaultDownloadDir { get; set; }
+
+    /// <summary>
+    /// 用户手动选择的、已安装的 Microsoft Store 版基岩版所在文件夹（比如
+    /// "...\XboxGames\Minecraft for Windows\Content"）。用来在自动检测（PowerShell
+    /// 查询 Appx 包）失败或不可用时提供一个手动兜底：只要这个目录里能找到
+    /// Minecraft.Windows.exe，就认为"已安装"，「启动基岩版」直接运行这个 exe。
+    /// null/空 = 没有手动指定，完全依赖自动检测。
+    /// </summary>
+    public string? BedrockManualInstallDir { get; set; }
+
 
     /// <summary>
     /// 已下载的基岩版客户端实例列表（每个实例对应一个独立目录）。

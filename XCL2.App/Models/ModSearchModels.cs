@@ -51,6 +51,16 @@ public class FavoriteItem
     public string? IconUrl { get; set; }
     public long Downloads { get; set; }
 
+    /// <summary>是否显示图标，跟 Mod/资源包/地图列表同一套开关（AppConfig.ShowModIcons），
+    /// 由 DownloadCenterPage 刷新"我的收藏"面板时统一赋值，不参与配置文件的 JSON 往返
+    /// （每次打开收藏面板都会重新按当前设置赋值一次，不需要持久化这个展示状态）。</summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public bool ShowIcon { get; set; } = true;
+
+    /// <summary>实际绑定给 Image.Source 用的值：关闭图标显示、或者这条收藏本身没存图标时给 null。</summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string? DisplayIconUrl => ShowIcon ? IconUrl : null;
+
     /// <summary>判断这条收藏记录是否对应给定的 (类型, 来源ID, 来源平台)。
     /// Type=Version 时按约定 Source 恒为 Combined，调用方传 ModSource.Combined 即可命中。</summary>
     public bool MatchesKey(FavoriteItemType type, string sourceId, ModSource source)

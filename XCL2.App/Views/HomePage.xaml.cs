@@ -38,19 +38,26 @@ public partial class HomePage : UserControl
         ApplyRestrictedModeGating(_owner.ConfigService.Config.RestrictedMode);
     }
 
-    /// <summary>基本模式（RestrictedMode=true）下，把右上角这一排按钮（语言/深浅色/自动循环/
-    /// 普通模式-高级模式/访客模式）都置灰——这几个不在侧边栏导航按钮之列，
-    /// MainWindow.ApplyRestrictedModeGating 单独没法碰到，靠这个方法从外面调用；
+    /// <summary>基本模式（RestrictedMode=true）下的功能门控。
+    /// 右上角这一排按钮里，「语言」和「访客模式」两个允许在基本模式下继续使用（语言是
+    /// 界面可用性的前提，访客模式是新手最常用的临时游玩方式），其余「模式设置」（深/浅色）、
+    /// 「自动循环」、「普通模式/高级模式切换」保持置灰——这几个不在侧边栏导航按钮之列，
+    /// MainWindow.ApplyRestrictedModeGating 单独没法碰到，靠这个方法从外面调用。
+    /// 磁贴总控台里，「账户管理」磁贴允许使用；「下载中心」「服务器管理」「设置」三个磁贴
+    /// 在基本模式下置灰（这些是进阶功能，跟侧边栏对应导航按钮的受限状态保持一致）；
+    /// 「启动游戏」「一键开始游戏」两个磁贴不受影响，本来就不在受限范围内。
     /// 构造函数里也会用当前配置调一次，保证"从受限状态启动、首页第一次显示"就已经是对的，
     /// 不用等用户先切一次页。只置灰不隐藏，跟侧边栏导航按钮的处理方式保持一致
     /// （用户随时能看见还有哪些功能存在）。</summary>
     public void ApplyRestrictedModeGating(bool restricted)
     {
-        LanguageEntryButton.IsEnabled = !restricted;
         DarkModeToggle.IsEnabled = !restricted;
         AutoThemeCycleToggle.IsEnabled = !restricted;
         ModeToggle.IsEnabled = !restricted;
-        GuestModeToggle.IsEnabled = !restricted;
+
+        DownloadTile.IsEnabled = !restricted;
+        ServerManagerTile.IsEnabled = !restricted;
+        SettingsTile.IsEnabled = !restricted;
     }
 
     /// <summary>

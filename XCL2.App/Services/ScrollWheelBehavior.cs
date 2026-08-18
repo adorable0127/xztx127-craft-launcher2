@@ -69,6 +69,17 @@ public static class ScrollWheelBehavior
     {
         if (sender is not ScrollViewer sv) return;
 
+        // 修复"下拉框展开时滚动页面，弹出的选项列表跟丢在原地、跟真正的下拉框错位分开"：
+        // 根因见下面 DoubleAnimation 那段——ComboBox 的下拉 Popup 是独立的顶层窗口，靠监听
+        // PlacementTarget 的 LayoutUpdated 事件同步重新定位；同步的 ScrollToVerticalOffset
+        // 每次都会立刻触发一次 LayoutUpdated，Popup 跟得上，但这里为了解决"滚轮滑不动"改成了
+        // DoubleAnimation 动画过渡滚动，动画插值帧由渲染线程直接推动，不保证每帧都可靠触发
+        // Popup 重新定位，于是出现"页面滚动画面已经在动了，下拉框的浮层却停在旧位置没跟上"
+        // 这种视觉分离。原生控件的通行做法本来就是"一滚动就该收起下拉框"，所以这里在真正
+        // 开始滚动之前，先把视觉树里任何还展开着的 ComboBox 下拉收起来，从根源上避免这种
+        // 半途而废的错位状态出现，而不是事后去修正 Popup 的位置。
+        CloseAnyOpenComboBoxDropdown(sv);
+
         // 修复"内嵌 ListBox/列表控件里滚轮不起作用"：这个事件处理器订阅的是 PreviewMouseWheel，
         // 而 Preview 系列事件是"隧道"路由——从最外层的元素开始，一路向下传到鼠标实际所在的
         // 那个子控件，沿途每一层都会先经过这里。之前的写法不管鼠标在哪儿，只要事件路过这个
@@ -122,6 +133,24 @@ public static class ScrollWheelBehavior
 
         sv.BeginAnimation(ScrollViewerOffsetHelper.VerticalOffsetProperty, animation);
         e.Handled = true;
+    }
+
+    /// <summary>递归遍历视觉树，找到当前展开着(IsDropDownOpen=true)的 ComboBox 就把它收起来。
+    /// 设置页这类长列表页面上同一时间通常最多只有一个下拉框是展开状态，但这里不假设"最多一个"，
+    /// 找到的每一个都会收起——万一有嵌套/自定义控件内部各自持有一个 ComboBox，也能一并处理，
+    /// 不会因为遗漏第二个而留下同样的错位问题。</summary>
+    private static void CloseAnyOpenComboBoxDropdown(DependencyObject root)
+    {
+        var count = VisualTreeHelper.GetChildrenCount(root);
+        for (int i = 0; i < count; i++)
+        {
+            var child = VisualTreeHelper.GetChild(root, i);
+            if (child is ComboBox { IsDropDownOpen: true } combo)
+            {
+                combo.IsDropDownOpen = false;
+            }
+            CloseAnyOpenComboBoxDropdown(child);
+        }
     }
 
     /// <summary>从事件真正的来源(originalSource)往上找，直到碰到外层这个 ScrollViewer(outer)为止——

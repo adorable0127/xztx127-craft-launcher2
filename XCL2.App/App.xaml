@@ -192,6 +192,12 @@
             <Geometry x:Key="IconLogs">M6 3 H16 L19 6 V21 H6 Z M9 8 H16 M9 12 H16 M9 16 H13</Geometry>
             <Geometry x:Key="IconFlask">M10 3 V9 L5 19 A1.5 1.5 0 0 0 6.5 21 H17.5 A1.5 1.5 0 0 0 19 19 L14 9 V3 M9 3 H15 M7.5 15 H16.5</Geometry>
             <Geometry x:Key="IconMenu">M4 7 H20 M4 12 H20 M4 17 H20</Geometry>
+            <!-- 自绘标题栏的最小化/最大化/还原/关闭四个按钮图标，风格跟导航图标一致
+                 （单色线框、24×24 viewBox），见 MainWindow.xaml 顶部自绘标题栏说明。 -->
+            <Geometry x:Key="IconWinMinimize">M5 12 H19</Geometry>
+            <Geometry x:Key="IconWinMaximize">M6 6 H18 V18 H6 Z</Geometry>
+            <Geometry x:Key="IconWinRestore">M9 9 H18 V18 H9 Z M6 6 H15 V9 M6 6 V15 H9</Geometry>
+            <Geometry x:Key="IconWinClose">M6 6 L18 18 M18 6 L6 18</Geometry>
             <!-- 「鸣谢与帮助」导航图标：一个简化的心形，呼应"鸣谢/感谢"的语义，
                  同时跟其它导航图标一样是单色线条风格，不引入实心填充打破视觉统一。 -->
             <Geometry x:Key="IconHeart">M12 20 C12 20 4 14.5 4 9 A4 4 0 0 1 12 6.5 A4 4 0 0 1 20 9 C20 14.5 12 20 12 20 Z</Geometry>
@@ -223,6 +229,68 @@
                 <Setter Property="Height" Value="20"/>
                 <Setter Property="Background" Value="Transparent"/>
                 <Setter Property="VerticalAlignment" Value="Center"/>
+            </Style>
+
+            <!-- ===== 自绘标题栏按钮（最小化/最大化/关闭）=====
+                 需求："隐藏系统默认标题条，自己做"——不用系统标题栏后，最小化/最大化/关闭
+                 三个按钮也得自己画。悬停背景跟其它标题栏图标一致用 GlowSoftBrush，
+                 唯独关闭按钮悬停时按 Windows 惯例给红色背景（CloseHoverBrush 未定义过，
+                 直接写死 #E81123 微软官方"关闭按钮红"，是系统级通用色，不随主题换）。 -->
+            <Style TargetType="Button" x:Key="CaptionButton">
+                <Setter Property="Background" Value="Transparent"/>
+                <Setter Property="BorderThickness" Value="0"/>
+                <!-- 46×32 是 Windows 10/11 原生标题栏按钮在 100% 缩放下的实际尺寸
+                     （之前写的 44×36 是凭感觉估的，跟系统按钮站一起明显偏大/偏方，
+                     这就是"标题栏跟系统的不一样"的直接原因之一）。 -->
+                <Setter Property="Width" Value="46"/>
+                <Setter Property="Height" Value="32"/>
+                <Setter Property="Cursor" Value="Arrow"/>
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="Button">
+                            <Border x:Name="bd" Background="{TemplateBinding Background}">
+                                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                            </Border>
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="IsMouseOver" Value="True">
+                                    <Setter TargetName="bd" Property="Background" Value="{DynamicResource GlowSoftBrush}"/>
+                                </Trigger>
+                            </ControlTemplate.Triggers>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+            </Style>
+            <Style TargetType="Button" x:Key="CaptionCloseButton" BasedOn="{StaticResource CaptionButton}">
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="Button">
+                            <Border x:Name="bd" Background="{TemplateBinding Background}">
+                                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                            </Border>
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="IsMouseOver" Value="True">
+                                    <Setter TargetName="bd" Property="Background" Value="#E81123"/>
+                                </Trigger>
+                            </ControlTemplate.Triggers>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+            </Style>
+            <!-- 关闭按钮悬停时图标改白色（红底配深色线框看不清），其余两个按钮悬停时
+                 沿用 TextPrimaryBrush 即可，不需要单独处理。 -->
+            <Style TargetType="Path" x:Key="CaptionIconPath" BasedOn="{StaticResource NavIconPath}">
+                <Setter Property="Width" Value="10"/>
+                <Setter Property="Height" Value="10"/>
+                <!-- 系统标题栏的最小化/最大化/关闭图标描边是 1px 极细线，
+                     沿用导航图标的 1.6 描边会显得比系统的粗、发"肿"，这里单独调细。 -->
+                <Setter Property="StrokeThickness" Value="1"/>
+            </Style>
+            <Style TargetType="Path" x:Key="CaptionCloseIconPath" BasedOn="{StaticResource CaptionIconPath}">
+                <Style.Triggers>
+                    <DataTrigger Binding="{Binding IsMouseOver, RelativeSource={RelativeSource AncestorType=Button}}" Value="True">
+                        <Setter Property="Stroke" Value="White"/>
+                    </DataTrigger>
+                </Style.Triggers>
             </Style>
 
             <!-- 修复"深色模式字体没跟着反转"：全项目 418 个 TextBlock 里有 271 个没有显式写
@@ -903,6 +971,11 @@
                 <Setter Property="Padding" Value="14,8"/>
                 <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}"/>
                 <Setter Property="FontSize" Value="13"/>
+                <!-- 固定用 SemiBold（不再随选中状态切换字重）：字重变化会改变文字测量宽度，
+                     TabPanel 是按行自动换行摆放的，一旦某一项选中后变宽/变窄，会导致换行结果
+                     整体重新计算，后面所有条目跟着挪位置、页面看起来在"跳动"。字重固定后，
+                     每一项的宽度不会再因选中/取消选中而改变，条目位置就不会再跟着挑动了。 -->
+                <Setter Property="FontWeight" Value="SemiBold"/>
                 <Setter Property="Template">
                     <Setter.Value>
                         <ControlTemplate TargetType="TabItem">
@@ -914,7 +987,6 @@
                                 <Trigger Property="IsSelected" Value="True">
                                     <Setter TargetName="bd" Property="BorderBrush" Value="{DynamicResource AccentBrush}"/>
                                     <Setter Property="Foreground" Value="{DynamicResource AccentBrush}"/>
-                                    <Setter Property="FontWeight" Value="SemiBold"/>
                                 </Trigger>
                                 <Trigger Property="IsMouseOver" Value="True">
                                     <Setter TargetName="bd" Property="Background" Value="{DynamicResource GlowSoftBrush}"/>

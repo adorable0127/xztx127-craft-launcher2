@@ -523,7 +523,7 @@
     <system:String x:Key="Str_Ui_Custom_Java_Arguments_Advanced">Benutzerdefinierte Java-Argumente (fortgeschritten)</system:String>
     <system:String x:Key="Str_Ui_When_A_Dropped_Zip_Can_T_Be_Identified">Wenn eine abgelegte .zip nicht erkannt werden kann:</system:String>
     <system:String x:Key="Str_Ui_Dropping_Jar_On_The_Server_Management_Pa">Ablegen von .jar auf der Seite „Serververwaltung“:</system:String>
-    <system:String x:Key="Str_Ui_Custom_Advancement_Image_Generator_Engli">Generator für benutzerdefinierte Fortschrittsbilder (nur Englisch)</system:String>
+    <system:String x:Key="Str_Ui_Custom_Advancement_Image_Generator_Engli">Generator für benutzerdefinierte Fortschrittsbilder</system:String>
     <system:String x:Key="Str_Ui_Extract_Into_This_Instance_S_Saves_Folde">In den Saves-Ordner dieser Instanz entpacken</system:String>
     <system:String x:Key="Str_Ui_Paste_Or_Type_The_Token_Not_Case_Sensiti">Token einfügen oder eingeben (Groß-/Kleinschreibung egal)</system:String>
     <system:String x:Key="Str_Ui_Step_2_Choose_A_Version_Amp_Loader">Schritt 2: Version &amp;amp; Loader wählen</system:String>

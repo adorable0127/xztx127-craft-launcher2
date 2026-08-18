@@ -2,7 +2,17 @@
 
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
-    <TargetFramework>net8.0-windows</TargetFramework>
+    <!-- 原来是 net8.0-windows（不带 SDK 版本号），这样连不上 Windows.Management.Deployment
+         这类 WinRT 命名空间——PackageManager.AddPackageAsync 是注册基岩版（UWP/GDK 包）
+         真正需要的 API，之前"解压 zip 直接跑 exe"完全跳过了这一步，是启动不稳定/闪退的
+         根本原因之一。加上 10.0.19041.0（Windows 10 2004，2020年发布，覆盖绝大多数用户）
+         这个版本号后，SDK 会自动做 WinRT 投影，不需要额外装 CsWinRT 相关 NuGet 包。 -->
+    <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
+    <!-- 只是"能调用"这些 API，不代表要求用户系统版本必须多高；TargetPlatformMinVersion
+         控制运行时最低系统要求，设成比 TargetFramework 更低的 10.0.17763.0（Windows 10
+         1809）即可，兼容面更广，同时仍然覆盖 PackageManager 这套 API（该 API 自 UWP
+         初期就存在）。 -->
+    <SupportedOSPlatformVersion>10.0.17763.0</SupportedOSPlatformVersion>
     <Nullable>enable</Nullable>
     <UseWPF>true</UseWPF>
     <ImplicitUsings>enable</ImplicitUsings>

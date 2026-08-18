@@ -25,12 +25,16 @@
                              Content="{DynamicResource Str_Ui_Vanilla_3}" Checked="LoaderType_Checked" Tag="Vanilla" Margin="0,0,6,0"/>
                 <RadioButton x:Name="LoaderFabric" Style="{StaticResource DownloadCategoryButton}"
                              Content="Fabric" Checked="LoaderType_Checked" Tag="Fabric" Margin="0,0,6,0"/>
+                <RadioButton x:Name="LoaderLegacyFabric" Style="{StaticResource DownloadCategoryButton}"
+                             Content="Legacy Fabric" Checked="LoaderType_Checked" Tag="LegacyFabric" Margin="0,0,6,0"/>
                 <RadioButton x:Name="LoaderForge" Style="{StaticResource DownloadCategoryButton}"
                              Content="Forge" Checked="LoaderType_Checked" Tag="Forge" Margin="0,0,6,0"/>
                 <RadioButton x:Name="LoaderNeoForge" Style="{StaticResource DownloadCategoryButton}"
                              Content="NeoForge" Checked="LoaderType_Checked" Tag="NeoForge" Margin="0,0,6,0"/>
                 <RadioButton x:Name="LoaderQuilt" Style="{StaticResource DownloadCategoryButton}"
-                             Content="Quilt" Checked="LoaderType_Checked" Tag="Quilt"/>
+                             Content="Quilt" Checked="LoaderType_Checked" Tag="Quilt" Margin="0,0,6,0"/>
+                <RadioButton x:Name="LoaderOptiFine" Style="{StaticResource DownloadCategoryButton}"
+                             Content="OptiFine" Checked="LoaderType_Checked" Tag="OptiFine"/>
             </StackPanel>
 
             <Grid Margin="0,0,0,14">
@@ -51,6 +55,8 @@
                               SelectionChanged="BuildVersionCombo_SelectionChanged"/>
                 </StackPanel>
             </Grid>
+            <TextBlock x:Name="BuildVersionHintText" FontSize="11" Margin="0,-10,0,14" TextWrapping="Wrap"
+                       Foreground="{DynamicResource AccentBrush}" Visibility="Collapsed"/>
 
             <!-- NeoForge 没有独立的 MC 版本列表，选中项本身就是完整版本号，不需要第二级下拉框 -->
 

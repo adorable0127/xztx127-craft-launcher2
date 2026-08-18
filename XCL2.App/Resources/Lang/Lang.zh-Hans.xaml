@@ -8,7 +8,7 @@
          详见同目录 README.md。 -->
 
     <!-- ============ 语言选择弹窗自身 ============ -->
-    <system:String x:Key="Str_Lang_DialogTitle">选择语言</system:String>
+    <system:String x:Key="Str_Lang_DialogTitle">设置语言/Language</system:String>
     <system:String x:Key="Str_Lang_EntryButton">语言/Language</system:String>
     <system:String x:Key="Str_Lang_ExperimentalNotice">部分实验性功能仅对简体中文界面开放；切换到其它语言后，这些实验性功能会暂时隐藏（功能本身不受影响，只是尚未提供对应语言的界面翻译）。</system:String>
     <system:String x:Key="Str_Lang_Ok">确定</system:String>
@@ -115,6 +115,8 @@
 
     <!-- ============ 界面标签（第三批·从 XAML 抽取） ============ -->
     <system:String x:Key="Str_Ui_Close">关</system:String>
+    <system:String x:Key="Str_Ui_Minimize">最小化</system:String>
+    <system:String x:Key="Str_Ui_Maximize_Restore">最大化/还原</system:String>
     <system:String x:Key="Str_Ui_Risk">风险</system:String>
     <system:String x:Key="Str_Ui_Vendor">厂商</system:String>
     <system:String x:Key="Str_Ui_Path">路径</system:String>
@@ -225,6 +227,7 @@
     <system:String x:Key="Str_Ui_Clean_Junk_Files">清理游戏垃圾</system:String>
     <system:String x:Key="Str_Ui_Bedrock_Client">基岩版客户端</system:String>
     <system:String x:Key="Str_Ui_Preview_Image">预览成就图像</system:String>
+    <system:String x:Key="Str_Ui_Generating">生成中…（首次查找贴图需要联网，请稍候）</system:String>
     <system:String x:Key="Str_Ui_Download_Jar">下载 Jar</system:String>
     <system:String x:Key="Str_Ui_Create_Shortcut">创建快捷方式</system:String>
     <system:String x:Key="Str_Ui_Launch_Count">查看启动计数</system:String>
@@ -496,7 +499,7 @@
     <system:String x:Key="Str_Ui_Custom_Java_Arguments_Advanced">自定义 Java 启动参数（高手）</system:String>
     <system:String x:Key="Str_Ui_When_A_Dropped_Zip_Can_T_Be_Identified">拖入无法识别类型的 .zip 时：</system:String>
     <system:String x:Key="Str_Ui_Dropping_Jar_On_The_Server_Management_Pa">在「服务端管理」页拖入 .jar：</system:String>
-    <system:String x:Key="Str_Ui_Custom_Advancement_Image_Generator_Engli">自定义成就图片生成器（仅支持英文）</system:String>
+    <system:String x:Key="Str_Ui_Custom_Advancement_Image_Generator_Engli">自定义成就图片生成器（支持中文搜索方块）</system:String>
     <system:String x:Key="Str_Ui_Extract_Into_This_Instance_S_Saves_Folde">解压到当前实例的 saves 文件夹</system:String>
     <system:String x:Key="Str_Ui_Account_Version_Loader_And_Mods_In_One_P">账户、版本、加载器、Mod 一步到位</system:String>
     <system:String x:Key="Str_Ui_Paste_Or_Type_The_Token_Not_Case_Sensiti">粘贴或输入 token，不区分大小写</system:String>

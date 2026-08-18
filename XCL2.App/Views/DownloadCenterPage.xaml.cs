@@ -647,8 +647,20 @@ public partial class DownloadCenterPage : UserControl
         var choiceDialog = new LoaderChoiceDialog(entry.Id);
         if (OverlayDialogService.ShowModal(choiceDialog) != true) return; // 用户点了"取消"
 
-        // 选了 Fabric/Forge/NeoForge：跳转到 InstallClientLoaderWindow，预选好加载器类型 + 这一行
-        // 的 MC 版本号，复用现成的三级联动安装逻辑，不在这里重新实现一遍加载器安装。
+        // LiteLoader/Cleanroom/LabyMod 目前只在 LoaderChoiceDialog 里做了"能不能装"的探测和置灰，
+        // InstallClientLoaderWindow 那边的三级联动安装流程还没有对应实现（不像 Fabric/Forge/
+        // NeoForge/Quilt/OptiFine 那样有完整的下载安装代码），选中这几项直接告知用户暂不支持，
+        // 而不是误落进下面 Forge/NeoForge 分支报出一个看不懂的错误。
+        if (choiceDialog.SelectedLoader is ServerCoreType.LiteLoader or ServerCoreType.Cleanroom or ServerCoreType.LabyMod)
+        {
+            MessageBoxDialog.ShowInfo(
+                $"{choiceDialog.SelectedLoader} 的自动安装还在开发中，暂时需要前往对应官网手动下载安装。",
+                Loc.T("Str_Status_Tip", "提示"));
+            return;
+        }
+
+        // 选了 Fabric/Forge/NeoForge/Quilt/OptiFine：跳转到 InstallClientLoaderWindow，预选好加载器
+        // 类型 + 这一行的 MC 版本号，复用现成的三级联动安装逻辑，不在这里重新实现一遍加载器安装。
         if (choiceDialog.SelectedLoader != ServerCoreType.Vanilla)
         {
             var loaderWindow = new InstallClientLoaderWindow(_owner, choiceDialog.SelectedLoader, entry.Id);
@@ -1891,9 +1903,11 @@ public partial class DownloadCenterPage : UserControl
             if (seq != _mapSearchSeq) return; // 期间已有更新的搜索发出，这次结果已过时，丢弃
 
             _maps.Clear();
+            var showIcons = _owner.ConfigService.Config.ShowModIcons;
             var favorites = _owner.ConfigService.Config.FavoriteItems;
             foreach (var mod in result.Data)
             {
+                mod.ShowIcon = showIcons;
                 mod.IsFavorite = favorites.Any(f => f.MatchesKey(FavoriteItemType.Map, mod.Id.ToString(), ModSource.CurseForge));
                 _maps.Add(mod);
             }

@@ -108,6 +108,8 @@
 
     <!-- ============ UI labels (batch 3, extracted from XAML) ============ -->
     <system:String x:Key="Str_Ui_Close">Close</system:String>
+    <system:String x:Key="Str_Ui_Minimize">Minimize</system:String>
+    <system:String x:Key="Str_Ui_Maximize_Restore">Maximize/Restore</system:String>
     <system:String x:Key="Str_Ui_Risk">Risk</system:String>
     <system:String x:Key="Str_Ui_Vendor">Vendor</system:String>
     <system:String x:Key="Str_Ui_Path">Path</system:String>
@@ -218,6 +220,7 @@
     <system:String x:Key="Str_Ui_Clean_Junk_Files">Clean junk files</system:String>
     <system:String x:Key="Str_Ui_Bedrock_Client">Bedrock client</system:String>
     <system:String x:Key="Str_Ui_Preview_Image">Preview image</system:String>
+    <system:String x:Key="Str_Ui_Generating">Generating… (first lookup may need network, please wait)</system:String>
     <system:String x:Key="Str_Ui_Download_Jar">Download JAR</system:String>
     <system:String x:Key="Str_Ui_Create_Shortcut">Create shortcut</system:String>
     <system:String x:Key="Str_Ui_Launch_Count">Launch count</system:String>
@@ -489,7 +492,7 @@
     <system:String x:Key="Str_Ui_Custom_Java_Arguments_Advanced">Custom Java arguments (advanced)</system:String>
     <system:String x:Key="Str_Ui_When_A_Dropped_Zip_Can_T_Be_Identified">When a dropped .zip can't be identified:</system:String>
     <system:String x:Key="Str_Ui_Dropping_Jar_On_The_Server_Management_Pa">Dropping .jar on the Server management page:</system:String>
-    <system:String x:Key="Str_Ui_Custom_Advancement_Image_Generator_Engli">Custom advancement image generator (English only)</system:String>
+    <system:String x:Key="Str_Ui_Custom_Advancement_Image_Generator_Engli">Custom advancement image generator</system:String>
     <system:String x:Key="Str_Ui_Extract_Into_This_Instance_S_Saves_Folde">Extract into this instance's saves folder</system:String>
     <system:String x:Key="Str_Ui_Account_Version_Loader_And_Mods_In_One_P">Account, version, loader and mods in one pass</system:String>
     <system:String x:Key="Str_Ui_Paste_Or_Type_The_Token_Not_Case_Sensiti">Paste or type the token (not case-sensitive)</system:String>

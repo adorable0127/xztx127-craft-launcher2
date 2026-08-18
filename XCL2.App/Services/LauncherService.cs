@@ -196,6 +196,112 @@ public class LauncherService
     }
 
     /// <summary>
+    /// 启动前主动做一次只读完整性检查，不修改任何文件，也不构建完整的启动参数——
+    /// 只是抢在真正调用 Launch() 之前，先判断这个版本"看起来能不能启动起来"。
+    ///
+    /// 动机（参考 PCL 等主流第三方启动器的"启动前自动修复"设计）：BuildArguments 原有的
+    /// missingLibraries 检测只在真正准备拼启动参数、即将拉起 Java 进程的那一刻才跑，
+    /// 属于"先崩溃/先抛异常，再补救"的被动流程；而且它只检查 library jar 文件本身是否
+    /// 存在，完全没有检查"jar 存在，但里面该解压出来的 natives dll 实际上一个都没解压出来"
+    /// 这种情况——这正是老版本(1.8 及更早，用 lwjgl-platform/jinput-platform 这类
+    /// "classifier natives" 库)最容易踩的坑：natives jar 本身下载成功了，
+    /// 但解压阶段被杀毒软件拦截/半途网络中断/磁盘权限问题导致 natives 文件夹是空的，
+    /// BuildArguments 那边看 jar 文件"存在"就直接放行，直到 Java 进程真正跑起来找不到
+    /// lwjgl.dll/OpenAL32.dll 才崩溃，用户只能看着一闪而过的黑框，完全不知道发生了什么。
+    ///
+    /// 这里除了复用跟 BuildArguments 一致的"library jar 是否存在"检测之外，额外加了一条：
+    /// 如果这个版本的库列表里确实声明了需要解压 natives(即存在 classifier natives 条目)，
+    /// 但 natives 目录里一个 .dll 都没有，也判定为"缺失"——这才是真正会导致启动失败、
+    /// 而不是"下载阶段可能漏了几个无关紧要文件"的那类问题。
+    ///
+    /// 返回空 list 代表没发现问题；非空则是给用户看的缺失项描述列表，调用方（UI 层）
+    /// 可以据此弹出"是否自动补全"确认框——用户选"否"就直接跳过，尝试原样启动，
+    /// 不强制打断任何人。
+    /// </summary>
+    public List<string> CheckMissingLibraries(string minecraftDir, string versionId)
+    {
+        var missing = new List<string>();
+        var versionDir = Path.Combine(minecraftDir, "versions", versionId);
+        var versionJsonPath = ResolveVersionFile(versionDir, versionId, "json");
+        if (versionJsonPath == null)
+        {
+            // 版本 json 本身都找不到，这已经不是"缺依赖库"能描述的问题了，交给
+            // BuildArguments 里已有的、措辞更明确的 InvalidOperationException 去处理，
+            // 这里不重复报错，避免同一个问题被以两种不同的方式提示两次。
+            return missing;
+        }
+
+        VersionDetail detail;
+        try { detail = JsonSerializer.Deserialize<VersionDetail>(File.ReadAllText(versionJsonPath)) ?? new VersionDetail(); }
+        catch (Exception ex)
+        {
+            ErrorPresenter.LogFallback($"启动前完整性检查读取 version json 失败，跳过本次检查：{versionId}", ex);
+            return missing;
+        }
+
+        VersionDetail? parent = null;
+        if (!string.IsNullOrEmpty(detail.InheritsFrom))
+        {
+            var parentDir = Path.Combine(minecraftDir, "versions", detail.InheritsFrom);
+            var parentJsonPath = ResolveVersionFile(parentDir, detail.InheritsFrom, "json");
+            if (parentJsonPath != null)
+            {
+                try { parent = JsonSerializer.Deserialize<VersionDetail>(File.ReadAllText(parentJsonPath)); }
+                catch (Exception ex)
+                {
+                    ErrorPresenter.LogFallback($"启动前完整性检查读取父版本 json 失败，跳过本次检查：{detail.InheritsFrom}", ex);
+                    return missing;
+                }
+            }
+        }
+
+        var librariesDir = Path.Combine(minecraftDir, "libraries");
+        var clientJarDir = parent != null ? Path.Combine(minecraftDir, "versions", detail.InheritsFrom!) : versionDir;
+        var nativesDir = Path.Combine(clientJarDir, "natives");
+        var hasClassifierNativesEntry = false;
+
+        void Scan(VersionDetail d)
+        {
+            foreach (var lib in d.Libraries.Where(l => l.IsApplicableToCurrentOs()))
+            {
+                // 跟 BuildArguments.AddLibs 里的判断保持一致：纯 classifier-natives 条目
+                // 不进 classpath，但需要单独确认它对应的 dll 确实已经解压出来了。
+                if (lib.Downloads?.Artifact == null && lib.Natives != null && lib.Natives.Count > 0)
+                {
+                    hasClassifierNativesEntry = true;
+                    continue;
+                }
+
+                string? relativePath = null;
+                if (lib.Downloads?.Artifact is { } art && !string.IsNullOrEmpty(art.Path))
+                    relativePath = art.Path;
+                else if (!string.IsNullOrEmpty(lib.Url))
+                    relativePath = lib.GetMavenPath();
+
+                if (string.IsNullOrEmpty(relativePath)) continue;
+
+                var p = Path.Combine(librariesDir, relativePath.Replace('/', Path.DirectorySeparatorChar));
+                if (!File.Exists(p))
+                    missing.Add($"{lib.Name} (期望路径: {p})");
+            }
+        }
+        if (parent != null) Scan(parent);
+        Scan(detail);
+
+        if (hasClassifierNativesEntry)
+        {
+            var hasAnyExtractedNative = Directory.Exists(nativesDir)
+                && Directory.EnumerateFiles(nativesDir, "*.dll", SearchOption.TopDirectoryOnly).Any();
+            if (!hasAnyExtractedNative)
+            {
+                missing.Add($"natives 运行库(lwjgl/openal 等 .dll 文件，目录: {nativesDir})");
+            }
+        }
+
+        return missing;
+    }
+
+    /// <summary>
     /// 扫描这个版本 mods 目录下所有 jar，读取里面 fabric.mod.json 的 "depends": { "java": "..." }
     /// (以及少数 mod 用 "requires" 字段写同样的意思)，解析出其中声明的最低 Java 主版本号，
     /// 返回所有 mod 里要求的最大值(最严格的那个)。
@@ -387,9 +493,19 @@ public class LauncherService
     }
 
     /// <summary>
-    /// 按 Maven 坐标去重 classpath：同一 group:artifact 只保留版本号最高的那份。
+    /// 按 Maven 坐标去重 classpath：同一 group:artifact:classifier 只保留版本号最高的那份。
     /// 修 1.21.3 Fabric/Quilt 的 "duplicate ASM classes found on classpath" 崩溃——Fabric
     /// 的 json 声明新版 asm，游戏/其他库条目又带一份旧版 asm，两份都会进 classpath。
+    ///
+    /// 坑（26.2 + LWJGL 3.4.1 才暴露）：key 之前只按 group:artifact 分组，没算上 classifier。
+    /// LWJGL 3.4.1 起同一 group:artifact:version 下会同时有好几个不同 classifier 的 jar
+    /// （无 classifier 的主 jar 本体 / natives-windows / natives-windows-arm64 /
+    /// natives-windows-x86 / unsafe），这些是完全不同的文件、缺一个都不行——不是同一个库的
+    /// 新旧版本。之前的 key 把它们全部并成一组，版本号一样时"只保留先出现的那份"，
+    /// 结果主 jar（不带 classifier，装的是 org.lwjgl.Version 等核心类）经常被当成"重复"删掉，
+    /// 表现为 ClassNotFoundException: org.lwjgl.Version 直接崩服。
+    /// 这里把 classifier 也纳入 key，只有 group:artifact:classifier 完全相同、仅版本号不同的
+    /// 才会被判定为真正的重复库。
     /// 解析不了 Maven 坐标的路径（不在 libraries 目录下等）一律原样保留，不参与去重。
     /// </summary>
     private static void DeduplicateClasspathByMavenCoordinates(List<string> classpath, string librariesDir)
@@ -410,7 +526,22 @@ public class LauncherService
                     var version = parts[parts.Length - 2];
                     var artifact = parts[parts.Length - 3];
                     var group = string.Join(".", parts, 0, parts.Length - 3);
-                    keyByPath[p] = (group + ":" + artifact, version);
+
+                    // 从文件名里把 classifier 抠出来：文件名固定形如
+                    // "<artifact>-<version>[-<classifier>].jar"，去掉 "<artifact>-<version>" 前缀
+                    // 和 ".jar" 后缀，剩下的（如果以 '-' 开头）就是 classifier，没有就是空字符串
+                    // （代表无 classifier 的主 jar 本体）。
+                    var fileName = parts[parts.Length - 1];
+                    var expectedPrefix = artifact + "-" + version;
+                    var classifier = "";
+                    if (fileName.EndsWith(".jar", StringComparison.OrdinalIgnoreCase)
+                        && fileName.StartsWith(expectedPrefix, StringComparison.Ordinal))
+                    {
+                        var middle = fileName.Substring(expectedPrefix.Length, fileName.Length - expectedPrefix.Length - 4);
+                        if (middle.StartsWith("-", StringComparison.Ordinal)) classifier = middle;
+                    }
+
+                    keyByPath[p] = (group + ":" + artifact + ":" + classifier, version);
                 }
             }
             catch

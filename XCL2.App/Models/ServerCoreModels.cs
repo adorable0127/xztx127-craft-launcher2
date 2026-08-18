@@ -37,7 +37,23 @@ public enum ServerCoreType
     Folia,
     Velocity,
     Waterfall,
-    Spigot
+    Spigot,
+
+    // ===== 非主流五大加载器之外的客户端加载器 =====
+    // 老版本 MC（尤其是 1.5.2 及更早）没有 Fabric/Forge/NeoForge/Quilt 中的大部分选项，
+    // 但有 LiteLoader 这类当年就存在的加载器；OptiFine 严格说不是"加载器"而是客户端优化 mod，
+    // 但安装形态（独立 installer jar，产出一个可选的 versions/ 目录）跟加载器完全一致，
+    // 沿用同一套 LoaderChoiceDialog/ClientLoaderInstallService 基础设施最省事。
+    // Cleanroom 是给 1.12.2 生态的 Forge-fork（用 TRIP 后端跑在新版 Java 上），
+    // LabyMod 4 同样是"独立安装、产出自己的 versions/ 目录"的客户端增强层。
+    OptiFine,
+    LiteLoader,
+    Cleanroom,
+    LabyMod,
+    /// <summary>Legacy Fabric：Fabric 生态里专门覆盖 1.13 之前老版本的独立分支项目，
+    /// Meta API 跟官方 Fabric 是同一套接口形状（meta.legacyfabric.net 对 meta.fabricmc.net），
+    /// 客户端安装产出的 profile json 结构也跟 Fabric 完全一致，只是数据源、Maven 仓库地址不同。</summary>
+    LegacyFabric
 }
 
 /// <summary>某个 Minecraft 版本下，某个核心类型可选的"构建/加载器版本"列表里的一项。</summary>
@@ -48,6 +64,12 @@ public class ServerCoreBuild
 
     /// <summary>是否官方标记为推荐/稳定构建（Paper 的 channel=default，Fabric 的 stable=true 等）。</summary>
     public bool IsRecommended { get; set; }
+
+    /// <summary>部分加载器的"展示文本"和"实际调用安装接口所需的原始标识"不是同一个字符串
+    /// （例如 OptiFine：DisplayVersion 是给用户看的 "HD_U_I6"，但下载接口要求分开传 type="HD_U"、
+    /// patch="I6"）。这类场景把安装所需的原始标识按 "type|patch" 存在这里，调用方按 '|' 拆开用；
+    /// 不需要这个的加载器（Fabric/Forge/...）保持 null，行为不变。</summary>
+    public string? RawIdentifier { get; set; }
 }
 
 /// <summary>下载一个服务端核心所需的完整上下文，UI 层收集后传给 ServerCoreDownloadService。</summary>

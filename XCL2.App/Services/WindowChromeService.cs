@@ -108,4 +108,95 @@ public static class WindowChromeService
             _isFullScreen = false;
         }
     }
+
+    // ===== 自绘标题栏最大化时"盖住任务栏" 的修复 =====
+    //
+    // 用 shell:WindowChrome 本该会自动处理这件事（它接管 WM_GETMINMAXINFO，最大化时
+    // 按当前显示器工作区计算尺寸），但 WindowChrome 内部这段计算在 Per-Monitor-V2
+    // DPI 感知（.NET Core/.NET 5+ 项目默认就是这个模式，见 csproj/app.manifest）下有个
+    // 长期存在、微软没修的已知 bug：某些 DPI 缩放比例/多屏组合下算出来的
+    // ptMaxSize/ptMaxPosition 是"物理屏幕"而不是"工作区"，结果就是最大化后窗口边缘
+    // 盖住任务栏。不是我们的 XAML 配置有问题，是 WindowChrome 这个类本身这段逻辑不可靠。
+    //
+    // 解决方式是不依赖 WindowChrome 自己算，改成我们自己在 WM_GETMINMAXINFO 消息里
+    // 用 Win32 API（MonitorFromWindow + GetMonitorInfo）现查当前窗口所在显示器的工作区
+    // （rcWork，天然已经排除任务栏），直接把 MINMAXINFO 结构体里的
+    // ptMaxPosition/ptMaxSize 改写成这个工作区的坐标——这是 WPF 自定义标题栏窗口
+    // 遇到这个 bug 时的标准/通用解法（MahApps.Metro、MaterialDesignInXAML 等主流
+    // WPF 无边框窗口库内部都是同一套做法），比等 WindowChrome 自己修更可靠。
+    //
+    // 调用时机：Window.SourceInitialized 时挂钩子（这时 HWND 才真正创建出来，
+    // 之前挂钩子拿不到 Handle）。只对 MainWindow 调用一次即可，弹窗仍是系统标题栏，
+    // 用不到这个修复。
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr MonitorFromWindow(IntPtr hwnd, int flags);
+
+    [DllImport("user32.dll", CharSet = CharSet.Auto)]
+    private static extern bool GetMonitorInfo(IntPtr hMonitor, ref MONITORINFO lpmi);
+
+    private const int MONITOR_DEFAULTTONEAREST = 2;
+    private const int WM_GETMINMAXINFO = 0x0024;
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct POINT { public int X; public int Y; }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct RECT { public int Left; public int Top; public int Right; public int Bottom; }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct MONITORINFO
+    {
+        public int cbSize;
+        public RECT rcMonitor;
+        public RECT rcWork;
+        public int dwFlags;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct MINMAXINFO
+    {
+        public POINT ptReserved;
+        public POINT ptMaxSize;
+        public POINT ptMaxPosition;
+        public POINT ptMinTrackSize;
+        public POINT ptMaxTrackSize;
+    }
+
+    /// <summary>给自绘标题栏窗口（目前只有 MainWindow）接上"最大化尊重任务栏"的修复钩子。
+    /// 在窗口构造函数里、SourceInitialized 事件触发时调用一次即可，此后每次用户最大化
+    /// 窗口（点按钮/双击标题栏/拖到屏幕顶部）都会自动生效，不需要每次手动调。</summary>
+    public static void EnableWorkAreaAwareMaximize(Window window)
+    {
+        var hwnd = new WindowInteropHelper(window).Handle;
+        if (hwnd == IntPtr.Zero) return; // 必须在 SourceInitialized 之后调用，这里兜底一下避免空句柄崩溃
+
+        var source = HwndSource.FromHwnd(hwnd);
+        source?.AddHook((IntPtr hWnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled) =>
+        {
+            if (msg != WM_GETMINMAXINFO) return IntPtr.Zero;
+
+            var mmi = Marshal.PtrToStructure<MINMAXINFO>(lParam);
+
+            var monitor = MonitorFromWindow(hWnd, MONITOR_DEFAULTTONEAREST);
+            if (monitor != IntPtr.Zero)
+            {
+                var info = new MONITORINFO { cbSize = Marshal.SizeOf<MONITORINFO>() };
+                if (GetMonitorInfo(monitor, ref info))
+                {
+                    // ptMaxPosition/ptMaxSize 要用"相对显示器左上角"的偏移，而不是屏幕
+                    // 绝对坐标——多屏且非主屏在左/上方向有负坐标时，直接抄绝对坐标会导致
+                    // 窗口最大化后跑到别的显示器上，这里统一减去 rcMonitor 的偏移量。
+                    mmi.ptMaxPosition.X = info.rcWork.Left - info.rcMonitor.Left;
+                    mmi.ptMaxPosition.Y = info.rcWork.Top - info.rcMonitor.Top;
+                    mmi.ptMaxSize.X = info.rcWork.Right - info.rcWork.Left;
+                    mmi.ptMaxSize.Y = info.rcWork.Bottom - info.rcWork.Top;
+                }
+            }
+
+            Marshal.StructureToPtr(mmi, lParam, true);
+            handled = true;
+            return IntPtr.Zero;
+        });
+    }
 }

@@ -1,3 +1,4 @@
+using System.Windows;
 using XCL2.App.Services;
 
 namespace XCL2.App.Views;
@@ -28,10 +29,18 @@ public partial class ProgressDialog : OverlayDialogControl
 
     private bool _isShowing;
 
-    public ProgressDialog(string title)
+    public ProgressDialog(string title, bool indeterminate = false)
     {
         InitializeComponent();
         TitleText.Text = title;
+        if (indeterminate)
+        {
+            // 扫描/删除垃圾文件这类操作事先不知道总量，没法算出真实百分比，
+            // 用不确定进度条（转圈样式）传达"正在处理，没有卡死"，比强行显示一个
+            // 不准的百分比更诚实。
+            Bar.IsIndeterminate = true;
+            DetailText.Visibility = Visibility.Collapsed;
+        }
         Progress = new System.Progress<ProgressInfo>(info =>
         {
             Dispatcher.Invoke(() =>

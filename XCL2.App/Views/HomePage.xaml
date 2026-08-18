@@ -225,7 +225,7 @@
                     </StackPanel>
                 </Button>
 
-                <Button Style="{StaticResource TileButton}" Margin="0,0,10,10" Click="TileAccounts_Click">
+                <Button x:Name="AccountsTile" Style="{StaticResource TileButton}" Margin="0,0,10,10" Click="TileAccounts_Click">
                     <StackPanel>
                         <Border Style="{StaticResource TileIconBadge}" Background="{DynamicResource TileBadgeIndigoBrush}">
                             <TextBlock Text="&#128100;" Style="{StaticResource TileIconText}"/>
@@ -235,7 +235,7 @@
                     </StackPanel>
                 </Button>
 
-                <Button Style="{StaticResource TileButton}" Margin="0,0,10,10" Click="TileDownload_Click">
+                <Button x:Name="DownloadTile" Style="{StaticResource TileButton}" Margin="0,0,10,10" Click="TileDownload_Click">
                     <StackPanel>
                         <Border Style="{StaticResource TileIconBadge}" Background="{DynamicResource TileBadgeGreenBrush}">
                             <TextBlock Text="&#8681;" Style="{StaticResource TileIconText}" Foreground="{DynamicResource SuccessTextBrush}"/>
@@ -255,7 +255,7 @@
                     </StackPanel>
                 </Button>
 
-                <Button Style="{StaticResource TileButton}" Margin="0,0,10,10" Click="TileServerManager_Click">
+                <Button x:Name="ServerManagerTile" Style="{StaticResource TileButton}" Margin="0,0,10,10" Click="TileServerManager_Click">
                     <StackPanel>
                         <Border Style="{StaticResource TileIconBadge}" Background="{DynamicResource TileBadgePurpleBrush}">
                             <TextBlock Text="&#128423;" Style="{StaticResource TileIconText}"/>
@@ -265,7 +265,7 @@
                     </StackPanel>
                 </Button>
 
-                <Button Style="{StaticResource TileButton}" Margin="0,0,10,10" Click="TileSettings_Click">
+                <Button x:Name="SettingsTile" Style="{StaticResource TileButton}" Margin="0,0,10,10" Click="TileSettings_Click">
                     <StackPanel>
                         <Border Style="{StaticResource TileIconBadge}" Background="{DynamicResource SideBrush}">
                             <TextBlock Text="&#9881;" Style="{StaticResource TileIconText}" Foreground="{DynamicResource TextSecondaryBrush}"/>

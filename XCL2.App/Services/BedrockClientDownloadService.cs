@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.IO.Compression;
@@ -5,6 +6,7 @@ using System.Linq;
 using System.Net.Http;
 using System.Text;
 using System.Text.Json;
+using System.Threading;
 using System.Xml.Linq;
 using XCL2.App.Models;
 
@@ -454,40 +456,130 @@ public class BedrockClientDownloadService
     public async Task<string> DownloadClientAsync(BedrockVersionInfo version, string targetDir,
         IProgress<ProgressInfo>? progress, CancellationToken ct = default)
     {
+        // 0. 已经装过同版本（解压目录里能找到可执行文件）：直接复用，避免重复下载
+        var extractDir = Path.Combine(targetDir, "extracted");
+        if (FindClientExe(targetDir) != null)
+        {
+            progress?.Report(new ProgressInfo($"已安装 {version.Name}，无需重复下载", 1, 1, targetDir));
+            return extractDir;
+        }
+
+        // 1~3. 拿到安装包文件。多源回退只发生在"下载本身失败"（连不上/文件损坏）时；
+        //      一旦某个源下载成功，就固定用它安装，绝不因为后面解压之类的问题再重新下载。
+        var filePath = await ResolveAndDownloadPackageAsync(version, targetDir, progress, ct);
+
+        // 下载完成 → 立即开始安装（解压）。这一步只安装、不联网、不重新下载。
+        progress?.Report(new ProgressInfo("正在解压", 0, 1, ""));
+        try
+        {
+            // 不先删旧目录：游戏正在运行/杀软扫描时旧 extracted 目录可能被占用，
+            // 删除失败以前会整条路回退到"换源重新下载"。overwriteFiles 直接覆盖同名文件，
+            // 旧版本残留的额外文件不影响运行，重下才真正浪费流量和时间。
+            Directory.CreateDirectory(extractDir);
+            ZipFile.ExtractToDirectory(filePath, extractDir, overwriteFiles: true);
+        }
+        catch (Exception ex)
+        {
+            throw new InvalidOperationException(
+                $"基岩版客户端 {version.Name} 已下载完成，但解压安装失败：{ex.Message}。" +
+                "安装包已保存在本地，重试时会直接复用，不会重新下载。", ex);
+        }
+
+        progress?.Report(new ProgressInfo(Loc.T("Str_Common_Finish", "完成"), 1, 1, version.Name));
+        return extractDir;
+    }
+
+    /// <summary>
+    /// 解析下载链接并下载安装包到 version_save（多源回退仅在下载失败时发生；
+    /// 成功拿到完好的安装包后立即返回，不在这里做解压等安装动作）。
+    /// </summary>
+    /// <summary>判断这个下载链接是不是已知打不开的包格式（目前是 .msixvc——Xbox/Game Pass
+    /// 云流式安装用的分块格式，不是标准 zip，ZipFile 系列 API 无法读取/解压，
+    /// 下了也没法用，提前跳过，避免白白下载几个 GB 又被判定"无效"重新来过）。</summary>
+    private static bool IsKnownUnextractablePackageUrl(string url)
+    {
+        try
+        {
+            var path = new Uri(url).AbsolutePath;
+            return path.EndsWith(".msixvc", StringComparison.OrdinalIgnoreCase);
+        }
+        catch
+        {
+            return url.Contains(".msixvc", StringComparison.OrdinalIgnoreCase);
+        }
+    }
+
+    private async Task<string> ResolveAndDownloadPackageAsync(BedrockVersionInfo version, string targetDir,
+        IProgress<ProgressInfo>? progress, CancellationToken ct)
+    {
         // 1. 带直链的（缓存/内置列表里已有）直接下载
         if (!string.IsNullOrEmpty(version.Url))
-            return await DownloadFromUrlAsync(version.Url, version.Name, targetDir, progress, ct);
+            return await DownloadFromUrlAsync(EnumerateCdnMirrors(version.Url), version.Name, targetDir, progress, ct);
 
         // 2. 新版（reversedcodes 列表，1.26.x 等 GDK 通道版本）：
-        //    先拉该版本的 GDK 元数据拿微软官方直链（多镜像回退，直链全部失败再走 Store）
+        //    先拉该版本的 GDK 元数据拿直链，但 GDK 元数据给出来的很多是 .msixvc 格式——
+        //    这是微软 Xbox/Game Pass 那套"云流式安装"用的分块流式包格式，不是标准 zip，
+        //    ZipFile 系列 API 天生打不开、也没法用 ExtractToDirectory 解压。以前的代码把
+        //    这些 .msixvc 链接和真正的 .appx（zip 结构）混在一起、.msixvc 还排在前面优先试，
+        //    结果永远校验失败（"End of Central Directory record could not be found"），
+        //    但每次还是要先把几百 MB~几个 GB 的文件完整下完才能验出来是无效的——这才是
+        //    "重复下载"的真正根因：不是网络问题，是从一开始就注定会验证失败的格式，
+        //    白白重下了一整个文件的流量和时间。
+        //
+        //    现在的策略：Microsoft Store FE3 API 换到的直链是真正的 .appx（合法 zip
+        //    结构），优先试这条；GDK 元数据里的 .msixvc 链接直接过滤掉、根本不去尝试下载
+        //    （下了也白下)，只保留 GDK 元数据里万一给出的非 .msixvc（真正 zip 结构）链接
+        //    作为补充候选。
         if (version.DirectUrlAvailable)
         {
-            Exception? gdkError = null;
-            foreach (var url in await ResolveGdkDownloadUrlsAsync(version, ct))
+            var urls = new List<string>();
+
+            // FE3（Microsoft Store）优先：给出来的是真正可解压的 .appx。
+            var fe3Url = await ResolveDownloadUrlAsync(version.Uuid, ct);
+            if (!string.IsNullOrEmpty(fe3Url))
+                urls.AddRange(EnumerateCdnMirrors(fe3Url));
+
+            // GDK 元数据链接作为补充：过滤掉已知打不开的 .msixvc，避免白下几个 GB。
+            var gdkUrls = await ResolveGdkDownloadUrlsAsync(version, ct);
+            var skippedMsixvc = 0;
+            foreach (var url in gdkUrls)
+            {
+                if (IsKnownUnextractablePackageUrl(url)) { skippedMsixvc++; continue; }
+                urls.AddRange(EnumerateCdnMirrors(url));
+            }
+            if (skippedMsixvc > 0)
+                LauncherLogService.AppendLine(
+                    $"[Bedrock下载] GDK 元数据给了 {skippedMsixvc} 个 .msixvc 格式链接（不是 zip 结构，" +
+                    "已知无法用当前的解压方式安装），已跳过不尝试下载。");
+
+            var distinct = urls.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+            if (distinct.Count > 0)
             {
                 try
                 {
-                    return await DownloadFromUrlAsync(url, version.Name, targetDir, progress, ct);
+                    return await DownloadFromUrlAsync(distinct, version.Name, targetDir, progress, ct);
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {
-                    gdkError = ex;
+                    throw new InvalidOperationException(
+                        "获取该版本的微软官方下载链接失败，所有镜像源均不可用。\n" +
+                        $"详细信息：{ex.Message}", ex);
                 }
             }
 
-            var fe3Url = await ResolveDownloadUrlAsync(version.Uuid, ct);
-            if (!string.IsNullOrEmpty(fe3Url))
-                return await DownloadFromUrlAsync(fe3Url, version.Name, targetDir, progress, ct);
+            if (skippedMsixvc > 0 && gdkUrls.Count == skippedMsixvc)
+                throw new InvalidOperationException(
+                    $"版本 {version.Name} 目前只能拿到 .msixvc 格式的官方包（微软 Xbox/Game Pass 云安装" +
+                    "格式，不是标准 zip 结构），当前启动器的安装方式无法处理这种格式，且 Microsoft Store " +
+                    "接口也没能换到直链。请尝试其他版本，或从 Microsoft Store 直接安装该版本。");
 
-            throw new InvalidOperationException(
-                "获取该版本的微软官方下载链接失败，所有镜像源均不可用。" +
-                (gdkError != null ? $"\n详细信息：{gdkError.Message}" : ""));
+            throw new InvalidOperationException("获取该版本的微软官方下载链接失败，所有镜像源均不可用。");
         }
 
         // 3. 老版本：Microsoft Store FE3 换直链
         var downloadUrl = await ResolveDownloadUrlAsync(version.Uuid, ct);
         if (!string.IsNullOrEmpty(downloadUrl))
-            return await DownloadFromUrlAsync(downloadUrl, version.Name, targetDir, progress, ct);
+            return await DownloadFromUrlAsync(EnumerateCdnMirrors(downloadUrl), version.Name, targetDir, progress, ct);
 
         throw new InvalidOperationException(
             "无法获取该版本的下载链接。基岩版 Windows 客户端由 Microsoft Store 分发，\n" +
@@ -616,18 +708,142 @@ public class BedrockClientDownloadService
         }
     }
 
-    private async Task<string> DownloadFromUrlAsync(string url, string versionName, string targetDir,
+    // ===== 游戏包多下载源（多 CDN 镜像回退）=====
+    // 微软 CDN 同一个资源有多台域名（assets1/2、xvcf1/2、d1/d2 × .com/.cn），
+    // 直连某个域名失败（地区网络/CDN 边缘抽风）时换一台域名重下，大幅提高成功率。
+    // 这一套直接移植自 BedrockBoot 的 SourceList.GameFileDownloadSource。
+    private static readonly string[] GameCdnMirrorHosts =
+    {
+        "assets1.xboxlive.cn",
+        "assets2.xboxlive.cn",
+        "assets1.xboxlive.com",
+        "assets2.xboxlive.com",
+        "xvcf1.xboxlive.com",
+        "xvcf2.xboxlive.com",
+        "d1.xboxlive.cn",
+        "d2.xboxlive.cn",
+        "d1.xboxlive.com",
+        "d2.xboxlive.com",
+    };
+
+    /// <summary>把微软 CDN 的下载地址展开成"原始地址 + 各镜像域名"的一串候选。
+    /// 非微软 CDN 的地址原样返回（只一个）。</summary>
+    private static IEnumerable<string> EnumerateCdnMirrors(string url)
+    {
+        yield return url;
+
+        Uri uri;
+        try { uri = new Uri(url); }
+        catch { yield break; }
+
+        var host = uri.Host;
+        var isMsCdn = host.EndsWith(".xboxlive.com", StringComparison.OrdinalIgnoreCase)
+            || host.EndsWith(".xboxlive.cn", StringComparison.OrdinalIgnoreCase);
+        if (!isMsCdn) yield break;
+
+        var router = uri.PathAndQuery;
+        foreach (var mirror in GameCdnMirrorHosts)
+        {
+            if (string.Equals(mirror, host, StringComparison.OrdinalIgnoreCase)) continue;
+            yield return $"{uri.Scheme}://{mirror}{router}";
+        }
+    }
+
+    /// <summary>从一串候选 URL 里挑一个能用的下载安装包（多源回退：某个源失败自动换下一个）。
+    /// 只负责把完好的安装包拿到本地 version_save 并登记全局缓存，不做解压等安装动作——</summary>
+    private async Task<string> DownloadFromUrlAsync(IEnumerable<string> urls, string versionName, string targetDir,
         IProgress<ProgressInfo>? progress, CancellationToken ct)
     {
         Directory.CreateDirectory(targetDir);
 
-        var ext = Path.GetExtension(new Uri(url).AbsolutePath);
+        var urlList = urls.ToList();
+        var firstUrl = urlList.FirstOrDefault();
+        var ext = string.IsNullOrEmpty(firstUrl) ? ".appx" : Path.GetExtension(new Uri(firstUrl).AbsolutePath);
         if (string.IsNullOrEmpty(ext)) ext = ".appx";
         var fileName = $"Minecraft-{versionName}{ext}";
-        var filePath = Path.Combine(targetDir, fileName);
 
-        progress?.Report(new ProgressInfo($"正在下载基岩版客户端 {versionName}", 0, 1, ""));
+        // 安装包缓存放在目标目录 version_save 下：同一版本再次安装时直接复用，
+        // 不重新下载（首次下载完成后校验完整性，损坏就删除重下）。
+        var versionSaveDir = Path.Combine(targetDir, "version_save");
+        Directory.CreateDirectory(versionSaveDir);
+        var filePath = Path.Combine(versionSaveDir, fileName);
 
+        if (!IsValidZip(filePath))
+        {
+            // 全局缓存索引：其他目录里已缓存过同一版本的安装包，直接复用，不再重复下载
+            var cachedEntry = GamePackageCacheIndex.Find(versionName, "client");
+            if (cachedEntry != null && IsValidZip(cachedEntry.FilePath))
+            {
+                try
+                {
+                    File.Copy(cachedEntry.FilePath, filePath, overwrite: true);
+                    progress?.Report(new ProgressInfo($"使用全局缓存的安装包 {versionName}（{cachedEntry.FilePath}）", 1, 1, ""));
+                }
+                catch
+                {
+                    try { File.Delete(filePath); } catch { }
+                }
+            }
+        }
+
+        if (!IsValidZip(filePath, out var initialReason))
+        {
+            LauncherLogService.AppendLine($"[Bedrock下载] 目标文件当前不可复用：{initialReason}，开始按镜像列表下载（共 {urlList.Count} 个候选源）");
+            Exception? lastError = null;
+            foreach (var url in urlList)
+            {
+                try
+                {
+                    progress?.Report(new ProgressInfo($"正在下载基岩版客户端 {versionName}", 0, 1, url));
+                    LauncherLogService.AppendLine($"[Bedrock下载] 尝试源：{url}");
+
+                    try { File.Delete(filePath); } catch { }
+
+                    await DownloadToFileAsync(url, filePath, versionName, progress, ct);
+
+                    // 下载完先验证是不是完好的压缩包：网上下到一半/被劫持成 HTML 都会在这里暴露，
+                    // 直接删掉换下一个源，全失败再报错，避免后面"解压失败"。
+                    if (IsValidZip(filePath, out var checkReason))
+                    {
+                        LauncherLogService.AppendLine($"[Bedrock下载] 校验通过（{checkReason}），使用此源：{url}");
+                        break;
+                    }
+                    LauncherLogService.AppendLine($"[Bedrock下载]   -> {url} 被判定无效，原因：{checkReason}");
+                    try { File.Delete(filePath); } catch { }
+                    lastError = new InvalidOperationException($"从 {url} 下载的文件不完整或无效：{checkReason}");
+                }
+                catch (OperationCanceledException) { throw; }
+                catch (Exception ex)
+                {
+                    LauncherLogService.AppendLine($"[Bedrock下载]   -> {url} 下载抛出异常：{ex.GetType().Name}: {ex.Message}");
+                    lastError = ex;
+                }
+            }
+
+            if (!IsValidZip(filePath, out var finalReason))
+            {
+                try { File.Delete(filePath); } catch { }
+                LauncherLogService.AppendLine($"[Bedrock下载] 所有源均失败，最终原因：{finalReason}");
+                throw new InvalidOperationException(
+                    $"基岩版客户端 {versionName} 所有下载源均失败，请检查网络后重试。" +
+                    (lastError != null ? $"\n详细信息：{lastError.Message}" : ""));
+            }
+
+            // 登记到全局缓存索引：以后在别的目录安装同一版本直接复用
+            GamePackageCacheIndex.Register(versionName, "client", filePath, GamePackageCacheIndex.ComputeMd5(filePath));
+        }
+        else
+        {
+            progress?.Report(new ProgressInfo($"使用已下载的安装包 {versionName}", 1, 1, ""));
+        }
+
+        return filePath;
+    }
+
+    /// <summary>从一个 URL 下载文件到本地（带进度上报）。</summary>
+    private static async Task DownloadToFileAsync(string url, string filePath, string versionName,
+        IProgress<ProgressInfo>? progress, CancellationToken ct)
+    {
         using var http = new HttpClient { Timeout = TimeSpan.FromMinutes(30) };
         http.DefaultRequestHeaders.UserAgent.ParseAdd(
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) XCL2-Launcher/1.0");
@@ -651,63 +867,151 @@ public class BedrockClientDownloadService
                     (int)(done / 1024), (int)(total / 1024),
                     $"{done / 1048576} MB / {total / 1048576} MB"));
         }
+    }
 
-        await dst.DisposeAsync();
+    /// <summary>校验文件是否为完好的 zip 压缩包。
+    /// 刚下载完的大文件（几百 MB 的客户端安装包）落地瞬间经常被杀毒软件/Windows Defender
+    /// 实时扫描短暂锁住，此时读文件会抛 IOException/UnauthorizedAccessException——
+    /// 以前这里逮到异常就直接判"文件损坏"，导致好端端下载完成的包被删掉重新下载一遍
+    /// （用户看到的"进度条从 0 重新开始"就是这么来的，跟网络/CDN 完全无关）。
+    /// 现在对"文件被占用"这类瞬时性异常做几次短暂重试，真正打不开（几百毫秒后依然
+    /// 拿不到读句柄，或者压缩包结构本身就是坏的）才判定为无效。</summary>
+    private static bool IsValidZip(string path) => IsValidZip(path, out _);
 
-        progress?.Report(new ProgressInfo("正在解压", 0, 1, ""));
-        var extractDir = Path.Combine(targetDir, "extracted");
-        if (Directory.Exists(extractDir))
-            Directory.Delete(extractDir, recursive: true);
-        Directory.CreateDirectory(extractDir);
+    /// <summary>校验版本，额外把"为什么判定无效"的具体原因带出来（写日志用，
+    /// 之前排查"重复下载"时缺的就是这一段——之前只知道"判定无效了"，
+    /// 不知道是文件被占用、大小不对、还是压缩包结构本身就是坏的。</summary>
+    private static bool IsValidZip(string path, out string reason)
+    {
+        if (!File.Exists(path)) { reason = "文件不存在"; return false; }
 
-        ZipFile.ExtractToDirectory(filePath, extractDir, overwriteFiles: true);
+        var fileLen = new FileInfo(path).Length;
+        if (fileLen == 0) { reason = "文件大小为 0"; return false; }
 
-        progress?.Report(new ProgressInfo(Loc.T("Str_Common_Finish", "完成"), 1, 1, versionName));
-        return extractDir;
+        const int maxAttempts = 5;
+        Exception? lastEx = null;
+        for (int attempt = 1; attempt <= maxAttempts; attempt++)
+        {
+            try
+            {
+                using var archive = ZipFile.OpenRead(path);
+                var count = archive.Entries.Count;
+                if (count > 0) { reason = "有效"; return true; }
+                reason = "压缩包内没有条目（entries=0），文件大小 " + fileLen + " 字节";
+                return false;
+            }
+            catch (IOException ex) when (attempt < maxAttempts)
+            {
+                // 大概率是杀毒软件/索引服务正在扫描刚落地的文件，短暂占用句柄——
+                // 稍等一下再试，不要立刻当成"下载损坏"。
+                lastEx = ex;
+                Thread.Sleep(400);
+            }
+            catch (UnauthorizedAccessException ex) when (attempt < maxAttempts)
+            {
+                lastEx = ex;
+                Thread.Sleep(400);
+            }
+            catch (Exception ex)
+            {
+                // 压缩包结构本身就是坏的（比如下载到一半被截断、或返回了 HTML 错误页），
+                // 这种才是真的需要换源重下的情况。
+                reason = $"打开压缩包失败：{ex.GetType().Name}: {ex.Message}（文件大小 {fileLen} 字节）";
+                return false;
+            }
+        }
+        reason = $"多次重试后仍无法打开（可能一直被占用）：{lastEx?.GetType().Name}: {lastEx?.Message}（文件大小 {fileLen} 字节）";
+        return false;
+    }
+
+    /// <summary>在安装目录里找 Minecraft 客户端可执行文件（含 extracted 子目录）。</summary>
+    public static string? FindClientExe(string installDir)
+    {
+        if (!Directory.Exists(installDir)) return null;
+
+        var candidates = new[]
+        {
+            Path.Combine(installDir, "Minecraft.Windows.exe"),
+            Path.Combine(installDir, "Minecraft.Windows", "Minecraft.Windows.exe"),
+            Path.Combine(installDir, "extracted", "Minecraft.Windows.exe"),
+            Path.Combine(installDir, "extracted", "Minecraft.Windows", "Minecraft.Windows.exe"),
+        };
+        foreach (var exe in candidates)
+            if (File.Exists(exe)) return exe;
+
+        var files = Directory.GetFiles(installDir, "*.exe", SearchOption.AllDirectories);
+        return files.FirstOrDefault(f =>
+            Path.GetFileNameWithoutExtension(f).Contains("Minecraft", StringComparison.OrdinalIgnoreCase));
     }
 
     // ==================== 启动 ====================
 
-    public static Process? LaunchClient(string installDir)
+    /// <summary>
+    /// 启动已下载的基岩版客户端。启动前自动补全运行库（VC++ 2015-2022 x64 等支持库），
+    /// 避免因缺运行库直接闪退。
+    /// </summary>
+    public static async Task<Process?> LaunchClientAsync(string installDir,
+        IProgress<ProgressInfo>? progress = null)
     {
         if (!Directory.Exists(installDir))
             throw new InvalidOperationException($"安装目录不存在：{installDir}");
 
-        var possibleExes = new[]
-        {
-            Path.Combine(installDir, "Minecraft.Windows.exe"),
-            Path.Combine(installDir, "Minecraft.Windows", "Minecraft.Windows.exe"),
-        };
+        var exe = FindClientExe(installDir);
+        if (exe == null)
+            throw new InvalidOperationException(
+                $"在目录 {installDir} 中找不到 Minecraft.Windows.exe。" +
+                "请确认客户端已正确下载并解压。");
 
-        foreach (var exe in possibleExes)
+        // 自动补全支持库：客户端（GDK/UWP）运行依赖 VC++ 运行库等框架包
+        await BedrockContentService.EnsureSupportLibrariesInstalledAsync(progress);
+
+        // 优先走"真正注册进系统应用清单 + 系统激活路径启动"这条路（见
+        // BedrockPackageRegistrationHelper 类头注释——这才是基岩版作为 UWP/GDK 包
+        // 应有的启动方式）。只有在这条路因为环境原因走不通时（没有 AppxManifest.xml、
+        // 开发者模式没开且用户明确选择跳过等），才退回"直接跑 exe"这种不完整的方式，
+        // 并且要让用户知道这是降级方案，游戏内一些功能可能不正常。
+        var manifestDir = Path.GetDirectoryName(exe)!;
+        // AppxManifest.xml 一般在解压根目录，不一定跟 exe 同级，往上找一层兜底
+        var manifestSearchRoot = BedrockPackageRegistrationHelper.FindAppxManifest(manifestDir) != null
+            ? manifestDir
+            : installDir;
+
+        if (BedrockPackageRegistrationHelper.FindAppxManifest(manifestSearchRoot) != null)
         {
-            if (File.Exists(exe))
+            try
             {
-                var psi = new ProcessStartInfo(exe)
-                {
-                    WorkingDirectory = Path.GetDirectoryName(exe)!,
-                    UseShellExecute = true,
-                };
-                return Process.Start(psi);
+                progress?.Report(new ProgressInfo("正在注册基岩版客户端到系统（首次启动该版本需要这一步）", 0, 1, ""));
+                await BedrockPackageRegistrationHelper.RegisterAndLaunchAsync(manifestSearchRoot,
+                    new Progress<(int Percent, string State)>(p =>
+                        progress?.Report(new ProgressInfo($"正在注册：{p.State}", p.Percent, 100, ""))));
+                return null; // 通过 shell:AppsFolder 启动，拿不到 Process 句柄，跟 BedrockLaunchService.Launch 行为一致
+            }
+            catch (Exception ex)
+            {
+                // 注册这条路失败：明确告诉用户这是降级，不要让用户以为游戏"正常装好了"
+                progress?.Report(new ProgressInfo(
+                    $"注册应用包失败（{ex.Message}），将尝试直接启动可执行文件——" +
+                    "这种方式下存档/账号登录/多人联机等依赖应用包身份的功能可能无法正常使用。",
+                    0, 1, ""));
             }
         }
-
-        var files = Directory.GetFiles(installDir, "*.exe", SearchOption.AllDirectories);
-        var minecraftExe = files.FirstOrDefault(f =>
-            Path.GetFileNameWithoutExtension(f).Contains("Minecraft", StringComparison.OrdinalIgnoreCase));
-
-        if (minecraftExe != null)
+        else
         {
-            var psi = new ProcessStartInfo(minecraftExe)
-            {
-                WorkingDirectory = Path.GetDirectoryName(minecraftExe)!,
-                UseShellExecute = true,
-            };
-            return Process.Start(psi);
+            progress?.Report(new ProgressInfo(
+                "未找到 AppxManifest.xml，无法把这个客户端注册为系统应用，将尝试直接启动可执行文件——" +
+                "这种方式下存档/账号登录/多人联机等依赖应用包身份的功能可能无法正常使用。",
+                0, 1, ""));
         }
 
-        throw new InvalidOperationException(
-            $"在目录 {installDir} 中找不到 Minecraft.Windows.exe。" +
-            "请确认客户端已正确下载并解压。");
+        var psi = new ProcessStartInfo(exe)
+        {
+            WorkingDirectory = Path.GetDirectoryName(exe)!,
+            UseShellExecute = true,
+        };
+        return Process.Start(psi);
     }
+
+    /// <summary>旧的同步签名保留（内部等异步完成）。</summary>
+    public static Process? LaunchClient(string installDir)
+        => LaunchClientAsync(installDir).GetAwaiter().GetResult();
 }

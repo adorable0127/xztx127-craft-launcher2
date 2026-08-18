@@ -83,12 +83,33 @@ public static class AppIconService
     /// <summary>
     /// 给当前所有已打开的窗口刷新图标。由 ThemeService.RefreshOpenWindows 在每次
     /// 深浅色切换后调用，这样已经开着的窗口不用关掉重开就能看到新图标。
+    /// 同时顺带刷新 MainWindow 自绘标题栏左上角那个 Image（如果当前打开的窗口
+    /// 就是 MainWindow 的话），道理跟 Window.Icon 一样——深浅色模式要用两张不同的图。
     /// </summary>
     public static void ApplyToAllOpenWindows()
     {
         if (Application.Current == null) return;
         foreach (Window window in Application.Current.Windows)
+        {
             ApplyTo(window);
+            if (window is Views.MainWindow main) ApplyToTitleBarImage(main, main.TitleBarIconImage);
+        }
+    }
+
+    /// <summary>给自绘标题栏里那个 Image 控件赋当前主题对应的图标（跟 Window.Icon 是
+    /// 同一张位图，共用同一份缓存，不会重复解码）。只有 MainWindow 用得到自绘标题栏，
+    /// 其它 20 多个弹窗仍然是系统标题栏，不需要调用这个方法。</summary>
+    public static void ApplyToTitleBarImage(Window window, System.Windows.Controls.Image image)
+    {
+        try
+        {
+            var icon = GetCurrentIcon();
+            if (icon != null) image.Source = icon;
+        }
+        catch
+        {
+            // 同 ApplyTo：图标只是观感问题，失败了静默跳过，不影响窗口本身。
+        }
     }
 
     private static BitmapFrame? TryLoad(string uri)

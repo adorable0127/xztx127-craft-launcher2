@@ -72,7 +72,7 @@
                         <ComboBoxItem Content="{DynamicResource Str_Ui_Preview}"/>
                     </ComboBox>
 
-                    <!-- 版本选择：暂不支持多版本（禁用），只保留渠道选择，下载始终用该渠道的最新版 -->
+                    <!-- 版本选择：支持选择具体版本，下载对应版本 -->
                     <TextBlock Text="{DynamicResource Str_Ui_Version_Select}" FontSize="12" Margin="0,0,0,4"/>
                     <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
                         <ComboBox x:Name="BedrockClientVersionCombo" Width="260" HorizontalAlignment="Left"
@@ -122,7 +122,7 @@
                     </StackPanel>
 
                     <!-- 渠道：正式版/预览版是官方唯二两条独立分发线，各自维护自己的最新版本号。
-                         版本选择：暂不支持多版本（禁用），只保留渠道选择，下载始终用该渠道的最新版。 -->
+                         版本选择：支持选择具体版本，下载对应版本。 -->
                     <TextBlock Text="{DynamicResource Str_Ui_Channel}" FontSize="12" Margin="0,0,0,4"/>
                     <StackPanel Orientation="Horizontal" Margin="0,0,0,4">
                         <ComboBox x:Name="BedrockServerChannelCombo" Width="160" Margin="0,0,10,0"

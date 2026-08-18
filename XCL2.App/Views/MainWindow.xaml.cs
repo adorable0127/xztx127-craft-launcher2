@@ -7,6 +7,7 @@ using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
+using System.Windows.Shell;
 using System.Windows.Threading;
 using XCL2.App.Models;
 using XCL2.App.Services;
@@ -112,9 +113,23 @@ public partial class MainWindow : Window
         InitializeComponent();
         ApplyFeatureVisibility();
 
+        // 最大化时"留出任务栏空间"：光挂 WindowChrome 不够可靠（见 WindowChromeService.
+        // EnableWorkAreaAwareMaximize 顶部注释里关于 Per-Monitor-V2 DPI 下已知 bug 的说明），
+        // 这里接一个 Win32 级别的钩子自己算工作区，SourceInitialized 时 HWND 才真正创建，
+        // 必须放在这个事件里而不是构造函数本体直接调用。
+        SourceInitialized += (_, _) => WindowChromeService.EnableWorkAreaAwareMaximize(this);
+
         // 标题栏跟随深浅色模式（修复"顶部白条"）现在由 App.xaml.cs 里注册的
         // EventManager.RegisterClassHandler 对所有 Window 统一处理，MainWindow 不需要
-        // 再单独接线，见 WindowChromeService 类注释。
+        // 再单独接线，见 WindowChromeService 类注释。这里改成完全自绘标题栏后，
+        // "白条"问题从根上不存在了（系统标题栏本身已经隐藏），但其它弹窗依然是系统
+        // 标题栏，那批处理逻辑要继续保留。
+
+        // 自绘标题栏左上角图标：跟窗口图标（任务栏/Alt-Tab）用同一套浅色/深色 .ico，
+        // 首次加载先赋一次；之后每次深浅色切换时 AppIconService.ApplyToAllOpenWindows
+        // 会一并刷新（见该方法内对 TitleBarIconImage 的处理）。
+        AppIconService.ApplyToTitleBarImage(this, TitleBarIconImage);
+        UpdateMaximizeRestoreIcon();
 
         // F11 全屏切换：只在主窗口生效，Key.System 分支处理是因为 F11 在部分系统/输入法
         // 状态下会被识别为"系统键"（Alt 组合键那一类路由），PreviewKeyDown 阶段
@@ -124,6 +139,15 @@ public partial class MainWindow : Window
             var key = e.Key == Key.System ? e.SystemKey : e.Key;
             if (key != Key.F11) return;
             WindowChromeService.ToggleFullScreen(this);
+            // 全屏时把自绘标题栏这一行整个收起来（Height=0），同时把 WindowChrome 的
+            // CaptionHeight 一起降到 0：不然虽然标题栏在视觉上被收起了，窗口最上面那
+            // 36px 依然会被当成"可拖拽标题区"响应鼠标，全屏下这块区域应该完全让位给
+            // 页面内容本身。退出全屏时两者一起恢复回 36。
+            var isFullScreen = WindowChromeService.IsFullScreen;
+            TitleBarRow.Height = new GridLength(isFullScreen ? 0 : 32);
+            CustomTitleBar.Visibility = isFullScreen ? Visibility.Collapsed : Visibility.Visible;
+            var chrome = System.Windows.Shell.WindowChrome.GetWindowChrome(this);
+            if (chrome != null) chrome.CaptionHeight = isFullScreen ? 0 : 32;
             e.Handled = true;
         };
 
@@ -171,6 +195,14 @@ public partial class MainWindow : Window
         RefreshExperimentalNavVisibility();
         LocalizationService.LanguageChanged += OnLanguageChanged;
         Closed += (_, _) => LocalizationService.LanguageChanged -= OnLanguageChanged;
+
+        // 需求：关闭主窗口时，如果还有「桌面便签」置顶钉在桌面上（StickyNoteWindow，
+        // 见该类注释），弹窗询问"是否连同便签一起关闭"——默认给用户选择权，而不是
+        // 直接放行导致进程悄悄留在后台（便签窗口默认不设置 Owner，主窗口关闭不会带走它，
+        // 详见 StickyNoteWindow.OpenWindows 上的说明），也不是强制关掉便签打断"贴在桌面"
+        // 这个功能本身的意义。挂在 Closing 而不是 Closed：Closing 支持 e.Cancel，能在
+        // 用户选"取消"时真正拦下这次关闭。
+        Closing += MainWindow_Closing;
 
         // 侧边栏"收起/展开"初始状态：默认展开（跟原来的固定 180 宽行为一致），
         // 不做持久化——每次启动都是展开态，避免"上次不小心点收起了，下次开机
@@ -788,11 +820,55 @@ public partial class MainWindow : Window
         }
     }
 
+    /// <summary>
+    /// 通用的"懒加载切页"辅助方法：先立刻切一个极轻量的"正在加载…"占位内容，让点击
+    /// 有即时反馈、界面不冻结；真正的目标页面挪到下一帧（Background 优先级）再构造，
+    /// 构造完成后再换上去。如果这段时间内用户已经手动切去了别的页面，就不再把过时的
+    /// 页面插回去。
+    ///
+    /// 之前只有「百宝箱」一个入口这么处理，其余 NavigateToXxx 都是点击的同一帧里同步
+    /// new 一个较重的页面（XAML 控件树 + 构造函数里的业务逻辑），在控件多、样式/资源
+    /// 绑定复杂的页面上会有肉眼可见的卡顿——这正是"首页十分卡，特别是切换页面时"的
+    /// 根因：卡顿其实发生在"构造目标页面"这一步，不是首页本身的问题，只是切走/切回
+    /// 首页时正好会经过这一步而被用户感知成"首页卡"。这里把同一套懒加载模式抽成
+    /// 公共方法，应用到所有会切主内容区的导航点。
+    /// </summary>
+    /// <param name="factory">构造目标页面的工厂方法，会在下一帧的后台优先级里调用。</param>
+    /// <param name="onLoaded">页面真正显示出来之后要做的收尾操作（比如带参数跳转时
+    /// 顺带触发一次搜索），只有页面没有被过时切换打断时才会调用。</param>
+    private void NavigateLazy(Func<UIElement> factory, Action<UIElement>? onLoaded = null)
+    {
+        var placeholder = new Border
+        {
+            Background = (System.Windows.Media.Brush)FindResource("PanelBrush"),
+            CornerRadius = new CornerRadius(10),
+            Child = new TextBlock
+            {
+                Text = Loc.T("Str_Ui_Loading", "正在加载…"),
+                FontSize = 14,
+                Foreground = (System.Windows.Media.Brush)FindResource("TextSecondaryBrush"),
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center
+            }
+        };
+        SetMainContent(placeholder);
+
+        Dispatcher.BeginInvoke(new Action(() =>
+        {
+            var page = factory();
+            if (ReferenceEquals(MainContent.Content, placeholder))
+            {
+                SetMainContent(page);
+                onLoaded?.Invoke(page);
+            }
+        }), System.Windows.Threading.DispatcherPriority.Background);
+    }
+
     private void NavHome_Click(object sender, RoutedEventArgs e) => ShowHome();
 
     private void NavVersions_Click(object sender, RoutedEventArgs e)
     {
-        SetMainContent(new VersionSelectPage(this));
+        NavigateLazy(() => new VersionSelectPage(this));
     }
 
     /// <summary>
@@ -813,19 +889,19 @@ public partial class MainWindow : Window
 
     private void NavDownload_Click(object sender, RoutedEventArgs e)
     {
-        SetMainContent(new DownloadCenterPage(this));
+        NavigateLazy(() => new DownloadCenterPage(this));
     }
 
     /// <summary>供其他页面/窗口调用的公开导航方法，跳转到下载中心。</summary>
-    public void NavigateToDownloadCenter() => SetMainContent(new DownloadCenterPage(this));
+    public void NavigateToDownloadCenter() => NavigateLazy(() => new DownloadCenterPage(this));
 
     private void NavMultiplayer_Click(object sender, RoutedEventArgs e)
     {
-        SetMainContent(new MultiplayerPage(this));
+        NavigateLazy(() => new MultiplayerPage(this));
     }
 
     /// <summary>供其他页面调用的公开导航方法，跳转到「联机」页（陶瓦联机/红石联机入口）。</summary>
-    public void NavigateToMultiplayer() => SetMainContent(new MultiplayerPage(this));
+    public void NavigateToMultiplayer() => NavigateLazy(() => new MultiplayerPage(this));
 
     /// <summary>
     /// 从「联机」页跳转到下载中心并直接按给定关键词搜索 Mod——用于"红石联机"的
@@ -834,63 +910,79 @@ public partial class MainWindow : Window
     /// </summary>
     public void NavigateToDownloadCenterWithModSearch(string keyword)
     {
-        var page = new DownloadCenterPage(this);
-        SetMainContent(page);
-        page.SelectModCategoryAndSearch(keyword);
+        NavigateLazy(
+            () => new DownloadCenterPage(this),
+            page => ((DownloadCenterPage)page).SelectModCategoryAndSearch(keyword));
     }
 
     private void NavModManager_Click(object sender, RoutedEventArgs e)
     {
-        SetMainContent(new ModManagerPage(this));
+        NavigateLazy(() => new ModManagerPage(this));
     }
 
     /// <summary>供其他页面/窗口调用的公开导航方法，跳转到本地 Mod 管理页。</summary>
-    public void NavigateToModManager() => SetMainContent(new ModManagerPage(this));
+    public void NavigateToModManager() => NavigateLazy(() => new ModManagerPage(this));
 
     private void NavServerManager_Click(object sender, RoutedEventArgs e)
     {
-        SetMainContent(new ServerManagerPage(this));
+        NavigateLazy(() => new ServerManagerPage(this));
     }
 
     /// <summary>供其他页面/窗口调用的公开导航方法，跳转到服务端管理页。</summary>
-    public void NavigateToServerManager() => SetMainContent(new ServerManagerPage(this));
+    public void NavigateToServerManager() => NavigateLazy(() => new ServerManagerPage(this));
 
     private void NavAccounts_Click(object sender, RoutedEventArgs e)
     {
-        SetMainContent(new LoginPage(this));
+        NavigateLazy(() => new LoginPage(this));
     }
 
     /// <summary>供其他窗口（如首次启动向导）调用的公开导航方法，跳转到账户管理页。</summary>
-    public void NavigateToAccounts() => SetMainContent(new LoginPage(this));
+    public void NavigateToAccounts() => NavigateLazy(() => new LoginPage(this));
 
     private void NavSettings_Click(object sender, RoutedEventArgs e)
     {
-        SetMainContent(new SettingsPage(this));
+        NavigateLazy(() => new SettingsPage(this));
     }
 
     /// <summary>供其他页面/窗口调用的公开导航方法，跳转到设置页。</summary>
-    public void NavigateToSettings() => SetMainContent(new SettingsPage(this));
+    public void NavigateToSettings() => NavigateLazy(() => new SettingsPage(this));
 
     private void NavLogs_Click(object sender, RoutedEventArgs e)
     {
-        SetMainContent(new LogsPage(this));
+        NavigateLazy(() => new LogsPage(this));
     }
 
     /// <summary>供其他页面/弹窗调用的公开导航方法，跳转到日志页（比如崩溃提示弹窗的"查看日志"按钮）。</summary>
-    public void NavigateToLogs() => SetMainContent(new LogsPage(this));
+    public void NavigateToLogs() => NavigateLazy(() => new LogsPage(this));
 
     private void NavExperimental_Click(object sender, RoutedEventArgs e)
     {
         OpenExperimentalFeatures();
     }
 
-    private void NavToolbox_Click(object sender, RoutedEventArgs e)
-    {
-        SetMainContent(new ToolboxPage(this));
-    }
+    private void NavToolbox_Click(object sender, RoutedEventArgs e) => NavigateToToolbox();
 
-    /// <summary>供其他页面/窗口调用的公开导航方法，跳转到「百宝箱」页。</summary>
-    public void NavigateToToolbox() => SetMainContent(new ToolboxPage(this));
+    /// <summary>
+    /// 供其他页面/窗口调用的公开导航方法，跳转到「百宝箱」页。
+    ///
+    /// 「百宝箱」页 XAML 一次性铺了 5 个 Tab 的完整控件树（成就图片生成器、皮肤头像、
+    /// 文件/皮肤下载、加载器 Jar 下载、系统工具），首次 InitializeComponent 时这些控件、
+    /// 样式、DynamicResource 绑定要一次性建好，实测首次点开会有一下明显的卡顿——卡在
+    /// "构造 ToolboxPage 本身"这一步，跟某个具体 Tab 的业务逻辑无关（那些已经各自做过
+    /// 异步化，见 ToolboxPage.xaml.cs 里的相关注释）。
+    ///
+    /// 这里把"构造 ToolboxPage"从点击的同一帧里挪开，做成简单的懒加载：先立刻切一个
+    /// 极轻量的"正在加载…"占位内容，让点击有即时反馈、界面不冻结；真正的 ToolboxPage
+    /// 放到下一帧（Background 优先级）再构造，构造完成后再换上去。如果这段时间内用户
+    /// 已经手动切去了别的页面，就不再把过时的 ToolboxPage 插回去。
+    ///
+    /// 只对百宝箱这一个入口做这个处理，其他所有 NavigateToXxx 方法保持原来的同步
+    /// SetMainContent(new XxxPage(this)) 不变，不会因为这个改动变慢或变卡。
+    /// </summary>
+    public void NavigateToToolbox()
+    {
+        NavigateLazy(() => new ToolboxPage(this));
+    }
 
     private void NavBedrock_Click(object sender, RoutedEventArgs e)
     {
@@ -904,8 +996,7 @@ public partial class MainWindow : Window
     /// 「基岩版启动」统一入口。基岩版客户端/服务端由 Microsoft/Mojang 分发，进入页面
     /// 前必须先同意《基岩版分发协议》（微软的分发法律协议）：未同意时弹协议确认框，
     /// 不同意就直接返回当前页面（不进入），之后可以再点进入重新同意；同意后写入配置
-    /// 持久化，并弹一次公告（当前暂不支持选择具体版本，只支持最新正式版/预览版），
-    /// 然后才进入页面。
+    /// 持久化，然后才进入页面。
     /// </summary>
     private void OpenBedrockWithAgreementGate()
     {
@@ -925,11 +1016,6 @@ public partial class MainWindow : Window
 
             ConfigService.Config.BedrockAgreementAccepted = true;
             ConfigService.Save();
-
-            MessageBoxDialog.ShowInfo(
-                "公告：当前暂不支持选择基岩版的具体版本（多版本支持尚未完成）。" +
-                "进入页面后只能选择「正式版 / 预览版」渠道，下载和使用均为对应渠道的最新版。",
-                "基岩版公告");
         }
         SetMainContent(new BedrockPage(this));
     }
@@ -1322,6 +1408,48 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
+    /// 实际执行"下载补全缺失的 library + natives"的动作，从原来内联在
+    /// catch (MissingLibrariesException) 里的那段代码抽出来，供两处复用：
+    ///   1. 原有的被动修复：BuildArguments 真的抛出 MissingLibrariesException 之后再补；
+    ///   2. 新增的主动修复：真正拉起游戏进程之前，先用 LauncherService.CheckMissingLibraries
+    ///      主动扫一遍、提前把"natives 文件夹是空的"这类 BuildArguments 检测不到的问题也
+    ///      纳入进来（见该方法上方注释）。
+    /// 两处场景的下载逻辑完全一样，只是触发时机不同，没必要维护两份几乎相同的代码。
+    /// </summary>
+    private async Task RepairMissingLibrariesAsync(string minecraftDir, string versionId, AppConfig cfg, ProgressDialog repairWin)
+    {
+        var versionDir = Path.Combine(minecraftDir, "versions", versionId);
+        var versionJsonPath = File.Exists(Path.Combine(versionDir, $"{versionId}.json"))
+            ? Path.Combine(versionDir, $"{versionId}.json")
+            : Directory.GetFiles(versionDir, "*.json").FirstOrDefault();
+        if (versionJsonPath == null)
+            throw new InvalidOperationException("找不到该版本的 version json，无法确定需要补全哪些库。");
+
+        var detail = System.Text.Json.JsonSerializer.Deserialize<VersionDetail>(
+            File.ReadAllText(versionJsonPath)) ?? new VersionDetail();
+        detail.Id = versionId;
+
+        using var repairDownloader = DownloadService.CreateFromConfig(cfg);
+        // 有 inheritsFrom 时(Fabric/Forge 等)，缺库也可能来自父版本(原版)的库列表，
+        // 两份都要补，跟 BuildArguments 里 AddLibs 对父子两份 json 都扫描的逻辑一致。
+        if (!string.IsNullOrEmpty(detail.InheritsFrom))
+        {
+            var parentDir = Path.Combine(minecraftDir, "versions", detail.InheritsFrom);
+            var parentJsonPath = File.Exists(Path.Combine(parentDir, $"{detail.InheritsFrom}.json"))
+                ? Path.Combine(parentDir, $"{detail.InheritsFrom}.json")
+                : (Directory.Exists(parentDir) ? Directory.GetFiles(parentDir, "*.json").FirstOrDefault() : null);
+            if (parentJsonPath != null)
+            {
+                var parentDetail = System.Text.Json.JsonSerializer.Deserialize<VersionDetail>(
+                    File.ReadAllText(parentJsonPath)) ?? new VersionDetail();
+                parentDetail.Id = detail.InheritsFrom;
+                await repairDownloader.DownloadLibrariesOnlyAsync(minecraftDir, parentDetail, repairWin.Progress);
+            }
+        }
+        await repairDownloader.DownloadLibrariesOnlyAsync(minecraftDir, detail, repairWin.Progress);
+    }
+
+    /// <summary>
     /// 启动游戏的实际逻辑，从 Launch_Click 拆出来，专门用于被防手滑冷却的
     /// try/finally 包裹，避免把冷却相关代码和原有的一大段启动流程混在一起、
     /// 显得臃肿难读。
@@ -1702,6 +1830,56 @@ public partial class MainWindow : Window
                 AutoJoinServerAddress = autoJoinServer
             };
 
+            // 启动前主动完整性检查（参考 PCL 等主流第三方启动器的"启动前自动修复"设计）：
+            // 与其等真正拉起 Java 进程、BuildArguments 抛出 MissingLibrariesException 才发现
+            // 问题，这里先主动扫一遍——LauncherService.CheckMissingLibraries 除了跟 BuildArguments
+            // 一样检查 library jar 是否存在，还额外检查了"natives 文件夹是不是空的"这种
+            // BuildArguments 检测不到、但确确实实会导致游戏刚起来就崩(找不到 lwjgl.dll 之类)
+            // 的情况，能提前把这类问题挑出来，而不是让用户对着一闪而过的黑框摸不着头脑。
+            //
+            // 只有真正"会影响启动"的缺失才会走到这里弹窗——用户可以选"否"跳过，不强制
+            // 打断任何人；选完之后无论补没补，后面都会照常继续走原有的启动流程。
+            try
+            {
+                var precheckMissing = launcher.CheckMissingLibraries(folder.Path, cfg.SelectedVersionId);
+                if (precheckMissing.Count > 0 && !cancelToken.IsCancellationRequested)
+                {
+                    var doPrecheckRepair = MessageBoxDialog.ShowConfirm(
+                        $"启动前检测到 {precheckMissing.Count} 个可能导致启动失败的文件缺失或不完整：\n\n" +
+                        string.Join("\n", precheckMissing.Take(10)) +
+                        (precheckMissing.Count > 10 ? $"\n...等共 {precheckMissing.Count} 个" : "") +
+                        "\n\n是否现在自动下载补全？（选择「否」将跳过修复，直接尝试启动）",
+                        Loc.T("Str_Cs_Missing_Library", "缺少依赖库"));
+                    if (doPrecheckRepair && !cancelToken.IsCancellationRequested)
+                    {
+                        var precheckRepairWin = new ProgressDialog("正在补全缺失的依赖库...");
+                        precheckRepairWin.Show();
+                        try
+                        {
+                            await RepairMissingLibrariesAsync(folder.Path, cfg.SelectedVersionId, cfg, precheckRepairWin);
+                        }
+                        catch (Exception precheckRepairEx)
+                        {
+                            ErrorPresenter.ShowFriendlyError(
+                                "自动补全依赖库失败，请检查网络连接后重试，或前往「版本选择」页重新安装该版本。" +
+                                "\n（也可以直接继续尝试启动，游戏是否能正常运行不受这里失败的影响。）",
+                                $"[启动前补全依赖库失败] {precheckRepairEx}", "补全失败");
+                        }
+                        finally
+                        {
+                            precheckRepairWin.Close();
+                        }
+                    }
+                }
+            }
+            catch (Exception precheckEx)
+            {
+                // 主动检查本身失败(比如读取版本 json 出错)不应该阻止启动——只是少了一次
+                // "提前发现问题"的机会，下面 Launch() 内部原有的被动检测兜底逻辑仍然会生效。
+                File.AppendAllText(Path.Combine(App.DataDir, "logs", "crash.log"),
+                    $"[{DateTime.Now}] 启动前完整性检查失败(不影响启动，将回退到启动时检测): {precheckEx}\n\n");
+            }
+
             // 导出启动脚本只是附加功能，不应该在失败时阻止真正的游戏启动
             // （之前 GBK 编码问题就是在这一步抛异常，导致下面的 Launch 根本没执行到）。
             // MissingLibrariesException 在这里也可能抛出，但那是"下面 Launch() 也一定会
@@ -1762,35 +1940,7 @@ public partial class MainWindow : Window
                 repairWin.Show();
                 try
                 {
-                    var versionDir = Path.Combine(folder.Path, "versions", mle.VersionId);
-                    var versionJsonPath = File.Exists(Path.Combine(versionDir, $"{mle.VersionId}.json"))
-                        ? Path.Combine(versionDir, $"{mle.VersionId}.json")
-                        : Directory.GetFiles(versionDir, "*.json").FirstOrDefault();
-                    if (versionJsonPath == null)
-                        throw new InvalidOperationException("找不到该版本的 version json，无法确定需要补全哪些库。");
-
-                    var detail = System.Text.Json.JsonSerializer.Deserialize<VersionDetail>(
-                        File.ReadAllText(versionJsonPath)) ?? new VersionDetail();
-                    detail.Id = mle.VersionId;
-
-                    using var repairDownloader = DownloadService.CreateFromConfig(cfg);
-                    // 有 inheritsFrom 时(Fabric/Forge 等)，缺库也可能来自父版本(原版)的库列表，
-                    // 两份都要补，跟 BuildArguments 里 AddLibs 对父子两份 json 都扫描的逻辑一致。
-                    if (!string.IsNullOrEmpty(detail.InheritsFrom))
-                    {
-                        var parentDir = Path.Combine(folder.Path, "versions", detail.InheritsFrom);
-                        var parentJsonPath = File.Exists(Path.Combine(parentDir, $"{detail.InheritsFrom}.json"))
-                            ? Path.Combine(parentDir, $"{detail.InheritsFrom}.json")
-                            : (Directory.Exists(parentDir) ? Directory.GetFiles(parentDir, "*.json").FirstOrDefault() : null);
-                        if (parentJsonPath != null)
-                        {
-                            var parentDetail = System.Text.Json.JsonSerializer.Deserialize<VersionDetail>(
-                                File.ReadAllText(parentJsonPath)) ?? new VersionDetail();
-                            parentDetail.Id = detail.InheritsFrom;
-                            await repairDownloader.DownloadLibrariesOnlyAsync(folder.Path, parentDetail, repairWin.Progress);
-                        }
-                    }
-                    await repairDownloader.DownloadLibrariesOnlyAsync(folder.Path, detail, repairWin.Progress);
+                    await RepairMissingLibrariesAsync(folder.Path, mle.VersionId, cfg, repairWin);
                 }
                 catch (Exception repairEx)
                 {
@@ -2242,6 +2392,83 @@ public partial class MainWindow : Window
         {
             return null;
         }
+    }
+
+    // ===== 自绘标题栏：最小化/最大化/关闭三个按钮 =====
+    // 用 SystemCommands 而不是直接改 WindowState/调 Close()，是因为这几个方法本身就是
+    // WPF 给"自绘标题栏"场景准备的标准做法，跟 WindowChrome 配合时行为（比如最大化时
+    // 动画、多显示器下记住还原前尺寸位置）跟系统原生按钮完全一致，不用自己再处理一遍。
+    private void MinimizeButton_Click(object sender, RoutedEventArgs e) => SystemCommands.MinimizeWindow(this);
+
+    private void MaximizeRestoreButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (WindowState == WindowState.Maximized) SystemCommands.RestoreWindow(this);
+        else SystemCommands.MaximizeWindow(this);
+    }
+
+    private void CloseButton_Click(object sender, RoutedEventArgs e) => SystemCommands.CloseWindow(this);
+
+    /// <summary>主窗口关闭前的检查：还有便签钉在桌面上的话，弹三选一询问用户——
+    /// "一起关闭"直接把所有便签窗口也 Close() 掉（便签内容已经是自动保存的，不会丢）；
+    /// "仅关闭启动器"保持现状，便签继续留在桌面，XCL2 进程也会因此继续在后台运行
+    /// （这是"贴在桌面"这个功能本身的代价，明确告知用户，不是意外行为）；
+    /// "取消"则拦下这次关闭，两边都不动。没有任何便签在开时直接放行，不打扰。</summary>
+    private void MainWindow_Closing(object? sender, System.ComponentModel.CancelEventArgs e)
+    {
+        if (Views.StickyNoteWindow.OpenWindows.Count == 0) return;
+
+        var count = Views.StickyNoteWindow.OpenWindows.Count;
+        var choice = MessageBoxDialog.ShowThreeChoice(
+            $"还有 {count} 个桌面便签处于置顶状态。\n\n" +
+            "便签窗口不属于启动器主界面，关闭启动器不会自动带走它——如果只关闭启动器，" +
+            "便签会继续显示在桌面上，XCL2 也会因此继续在后台运行（这是便签需要\"贴在桌面\"这个功能本身决定的，不是卡住了）。",
+            "关闭启动器",
+            "取消",
+            "仅关闭启动器（便签继续置顶）",
+            "一起关闭");
+
+        switch (choice)
+        {
+            case XclMessageResult.Cancel:
+                e.Cancel = true;
+                break;
+            case XclMessageResult.Yes:
+                // 一起关闭：便签窗口自己的 Closed 逻辑会先 Save() 再从 OpenWindows 里移除，
+                // 倒序遍历一份快照，避免"遍历同时被回调修改集合"报错。
+                foreach (var note in Views.StickyNoteWindow.OpenWindows.ToArray())
+                {
+                    note.Close();
+                }
+                break;
+            // XclMessageResult.No（仅关闭启动器）以及用户按 Esc/点遮罩关闭弹窗：
+            // 都不用做任何事，维持"只关主窗口、便签留着"的现状，让本次 Closing 正常继续往下走。
+        }
+    }
+
+    /// <summary>标题栏图标区域：单击弹出系统菜单（右键菜单里"移动/大小/最小化/最大化/
+    /// 关闭"那一套），双击关闭窗口——都是 Windows 原生标题栏图标的通行交互，用户
+    /// 换成自绘标题栏后不应该发现这两个手势消失了。</summary>
+    private void TitleBarIcon_MouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+    {
+        if (e.ClickCount >= 2)
+        {
+            SystemCommands.CloseWindow(this);
+            return;
+        }
+        var screenPos = TitleBarIconImage.PointToScreen(new Point(0, TitleBarIconImage.ActualHeight));
+        SystemCommands.ShowSystemMenu(this, screenPos);
+    }
+
+    /// <summary>窗口最大化⇄还原后，标题栏按钮的图标（□ ⇄ 两个重叠的方块）要跟着切换，
+    /// 否则用户点了最大化，按钮图标却还停在"最大化"那个样子，看起来像没生效。</summary>
+    private void MainWindow_StateChanged(object? sender, EventArgs e) => UpdateMaximizeRestoreIcon();
+
+    private void UpdateMaximizeRestoreIcon()
+    {
+        if (MaximizeRestoreIcon == null) return; // 构造函数里 InitializeComponent 之前可能还没生成
+        MaximizeRestoreIcon.Data = WindowState == WindowState.Maximized
+            ? (Geometry)FindResource("IconWinRestore")
+            : (Geometry)FindResource("IconWinMaximize");
     }
 
     private void MainWindow_DragOver(object sender, DragEventArgs e)

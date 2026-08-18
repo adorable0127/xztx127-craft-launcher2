@@ -279,6 +279,55 @@
             <TextBlock Text="{DynamicResource Str_Ui_Guest_Mode_Only_Affects_Temporary_Accoun}"
                        FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,20" TextWrapping="Wrap"/>
 
+            <!-- 保存行为：是否允许设置页改动后自动保存，不需要每次都点"保存设置"按钮。
+                 默认关闭，见 AppConfig.SettingsAutoSaveWithoutConfirm 注释。 -->
+            <TextBlock Text="保存行为" FontSize="14" FontWeight="Bold" Margin="0,0,0,4"/>
+            <CheckBox x:Name="SettingsAutoSaveCheck"
+                      Content="修改设置后自动保存，无需点击下方的“保存设置”按钮（默认关闭）"
+                      ToolTip="开启后每次改动会在短暂延迟后自动保存，并在右下角弹出可回退的提示气泡；关闭时改动只会先留在界面上，需要手动保存或在气泡里点“保存”。"
+                      Margin="0,0,0,20"/>
+
+            <!-- Windows 11 新视觉效果 + 窗口透明度：都是纯装饰性的新功能，默认关闭，
+                 需要用户在这里手动开启才会生效，避免升级后老用户界面突然"变样"。
+                 见 AppConfig.EnableWin11VisualEffects / EnableWindowTransparency 注释、
+                 Services/Win11EffectsService.cs 的具体实现。 -->
+            <TextBlock Text="外观与视觉效果" FontSize="14" FontWeight="Bold" Margin="0,0,0,4"/>
+            <CheckBox x:Name="Win11EffectsCheck"
+                      Content="启用 Windows 11 新光效设计（云母材质背景 / 窗口圆角 / 沉浸光感过渡，仅 Windows 11 生效，默认关闭）"
+                      ToolTip="依赖 Windows 11 才有的 DWM 特性；在 Windows 10 或更早系统上会被自动忽略，不影响正常使用。"
+                      Margin="0,0,0,8" Checked="VisualEffectsToggle_Changed" Unchecked="VisualEffectsToggle_Changed"/>
+            <StackPanel x:Name="BackdropMaterialPanel" Orientation="Horizontal" Margin="0,0,0,12">
+                <TextBlock Text="背景材质" VerticalAlignment="Center" Width="200"/>
+                <ComboBox x:Name="BackdropMaterialCombo" Style="{StaticResource TallPopupComboBox}"
+                          Width="220" SelectionChanged="VisualEffectsToggle_Changed"
+                          ToolTip="Mica：贴合桌面壁纸的柔和渐变（系统默认风格）。云母加深版：层次更明显。毛玻璃：真正的亚克力磨砂模糊，透感最强。">
+                    <ComboBoxItem Content="云母 Mica（默认）" Tag="Mica"/>
+                    <ComboBoxItem Content="云母加深版 Mica Alt" Tag="MicaAlt"/>
+                    <ComboBoxItem Content="毛玻璃 Acrylic（磨砂模糊，透感更强）" Tag="Acrylic"/>
+                </ComboBox>
+            </StackPanel>
+            <CheckBox x:Name="WindowTransparencyCheck"
+                      Content="启用窗口透明度（侧栏 / 卡片等面板呈现半透明玻璃质感，默认关闭）"
+                      Margin="0,0,0,4" Checked="VisualEffectsToggle_Changed" Unchecked="VisualEffectsToggle_Changed"/>
+            <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                <TextBlock Text="面板透明度" VerticalAlignment="Center" Width="200"/>
+                <Slider x:Name="WindowOpacitySlider" Width="220" Minimum="40" Maximum="100"
+                        TickFrequency="5" IsSnapToTickEnabled="True" IsMoveToPointEnabled="True"
+                        ValueChanged="WindowOpacitySlider_ValueChanged"/>
+                <TextBlock x:Name="WindowOpacityValueText" VerticalAlignment="Center" Margin="8,0,0,0" Width="40"/>
+            </StackPanel>
+
+            <CheckBox x:Name="GlobalWindowTransparencyCheck"
+                      Content="启用整窗全局透明（连标题栏/边框一起透明，能透出后方桌面，默认关闭）"
+                      Margin="0,0,0,4" Checked="VisualEffectsToggle_Changed" Unchecked="VisualEffectsToggle_Changed"/>
+            <StackPanel Orientation="Horizontal" Margin="0,0,0,20">
+                <TextBlock Text="整窗透明度" VerticalAlignment="Center" Width="200"/>
+                <Slider x:Name="GlobalWindowOpacitySlider" Width="220" Minimum="50" Maximum="100"
+                        TickFrequency="5" IsSnapToTickEnabled="True" IsMoveToPointEnabled="True"
+                        ValueChanged="GlobalWindowOpacitySlider_ValueChanged"/>
+                <TextBlock x:Name="GlobalWindowOpacityValueText" VerticalAlignment="Center" Margin="8,0,0,0" Width="40"/>
+            </StackPanel>
+
             <!-- 配色皮肤：色系(White/Blue/Yellow/Purple/Pink)，跟明暗是两个独立维度。
                  具体显示成浅色版还是深色版由 IsDarkMode 决定——见首页/主界面的「模式设置」
                  按钮，或者下面的自动循环。这里选的只是色相，不管深浅。 -->

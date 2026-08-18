@@ -99,6 +99,8 @@ public partial class InstallClientLoaderWindow : OverlayDialogControl
                 case ServerCoreType.Forge: LoaderForge.IsChecked = true; break;
                 case ServerCoreType.NeoForge: LoaderNeoForge.IsChecked = true; break;
                 case ServerCoreType.Quilt: LoaderQuilt.IsChecked = true; break;
+                case ServerCoreType.OptiFine: LoaderOptiFine.IsChecked = true; break;
+                case ServerCoreType.LegacyFabric: LoaderLegacyFabric.IsChecked = true; break;
             }
             BuildVersionPanel.Visibility = loaderType == ServerCoreType.NeoForge ? Visibility.Collapsed : Visibility.Visible;
             BuildVersionLabel.Text = loaderType == ServerCoreType.Forge ? "安装器版本" : "构建版本";
@@ -111,12 +113,12 @@ public partial class InstallClientLoaderWindow : OverlayDialogControl
         // Quilt 跟 Fabric 一样不需要本地 Java；Fabric 对应可选的"Fabric API"，Quilt 对应可选的
         // "QSL"（见 ClientLoaderInstallService.InstallQuiltClientAsync 的注释），两者分别只在
         // 各自加载器类型下显示。
-        FabricNoJavaHintText.Visibility = _selectedLoaderType == ServerCoreType.Fabric ? Visibility.Visible : Visibility.Collapsed;
+        FabricNoJavaHintText.Visibility = _selectedLoaderType is ServerCoreType.Fabric or ServerCoreType.LegacyFabric ? Visibility.Visible : Visibility.Collapsed;
         InstallFabricApiCheck.Visibility = _selectedLoaderType == ServerCoreType.Fabric ? Visibility.Visible : Visibility.Collapsed;
         InstallQslCheck.Visibility = _selectedLoaderType == ServerCoreType.Quilt ? Visibility.Visible : Visibility.Collapsed;
-        // 原版/Fabric/Quilt 都不需要本地 Java 来完成"安装"这一步，只有 Forge/NeoForge 需要
-        // （游戏本身运行仍会在启动时自动匹配/下载 Java，跟这里的"安装期 Java"是两回事）。
-        JavaPathPanel.Visibility = _selectedLoaderType is ServerCoreType.Vanilla or ServerCoreType.Quilt
+        // 原版/Fabric/Quilt/Legacy Fabric 都不需要本地 Java 来完成"安装"这一步，只有 Forge/NeoForge
+        // 需要（游戏本身运行仍会在启动时自动匹配/下载 Java，跟这里的"安装期 Java"是两回事）。
+        JavaPathPanel.Visibility = _selectedLoaderType is ServerCoreType.Vanilla or ServerCoreType.Quilt or ServerCoreType.LegacyFabric
             ? Visibility.Collapsed : Visibility.Visible;
 
         _initialized = true;
@@ -141,19 +143,21 @@ public partial class InstallClientLoaderWindow : OverlayDialogControl
         BuildVersionLabel.Text = loaderType switch
         {
             ServerCoreType.Fabric => "Loader 版本",
+            ServerCoreType.LegacyFabric => "Loader 版本",
             ServerCoreType.Quilt => "Loader 版本",
             ServerCoreType.Forge => "安装器版本",
+            ServerCoreType.OptiFine => "OptiFine 版本",
             _ => "构建版本"
         };
 
-        // Fabric/Quilt 都走各自 Meta API 的现成 profile json，不需要本地跑安装器，不强制要求 Java；
-        // Forge/NeoForge 必须本地跑安装器，缺 Java 无法继续。
-        FabricNoJavaHintText.Visibility = loaderType == ServerCoreType.Fabric ? Visibility.Visible : Visibility.Collapsed;
-        // Fabric API 只对 Fabric 有意义，QSL 只对 Quilt 有意义（Forge/NeoForge 生态没有这类概念），
-        // 切换加载器类型时同步显示/隐藏各自对应的可选安装项。
+        // Fabric/Quilt/Legacy Fabric 都走各自 Meta API 的现成 profile json，不需要本地跑安装器，
+        // 不强制要求 Java；Forge/NeoForge 必须本地跑安装器，缺 Java 无法继续。
+        FabricNoJavaHintText.Visibility = loaderType is ServerCoreType.Fabric or ServerCoreType.LegacyFabric ? Visibility.Visible : Visibility.Collapsed;
+        // Fabric API 只对 Fabric 有意义，QSL 只对 Quilt 有意义（Forge/NeoForge/Legacy Fabric 生态
+        // 没有这类概念），切换加载器类型时同步显示/隐藏各自对应的可选安装项。
         InstallFabricApiCheck.Visibility = loaderType == ServerCoreType.Fabric ? Visibility.Visible : Visibility.Collapsed;
         InstallQslCheck.Visibility = loaderType == ServerCoreType.Quilt ? Visibility.Visible : Visibility.Collapsed;
-        JavaPathPanel.Visibility = loaderType is ServerCoreType.Vanilla or ServerCoreType.Quilt
+        JavaPathPanel.Visibility = loaderType is ServerCoreType.Vanilla or ServerCoreType.Quilt or ServerCoreType.LegacyFabric
             ? Visibility.Collapsed : Visibility.Visible;
 
         await LoadMcVersionsAsync();
@@ -190,9 +194,17 @@ public partial class InstallClientLoaderWindow : OverlayDialogControl
                 versions = _selectedLoaderType switch
                 {
                     ServerCoreType.Fabric => await _loaderService.GetFabricMcVersionsAsync(),
+                    ServerCoreType.LegacyFabric => await _loaderService.GetLegacyFabricMcVersionsAsync(),
                     ServerCoreType.Forge => await _loaderService.GetForgeVersionsAsync(),
                     ServerCoreType.NeoForge => await _loaderService.GetNeoForgeVersionsAsync(),
                     ServerCoreType.Quilt => await _loaderService.GetQuiltMcVersionsAsync(),
+                    // OptiFine 没有单独一份"支持哪些 MC 版本"的清单接口，BMCLAPI 是按具体 MC 版本
+                    // 才能查到有没有构建（见 GetOptiFineVersionsAsync）。这里沿用官方正式版清单
+                    // 给用户选，选中某个版本之后如果 OptiFine 恰好没有对应构建，下面
+                    // McVersionCombo_SelectionChanged 里会拿到空列表并提示"该版本暂无 OptiFine 构建"，
+                    // 而不是一开始就要遍历全部版本逐个探测（成本太高、也没有必要）。
+                    ServerCoreType.OptiFine => (_versionManifest ??= await _vanillaDownloader.GetVersionManifestAsync())
+                        .Versions.Where(v => v.GetCategory() == VersionCategory.Release).SortNewestFirst().Select(v => v.Id).ToList(),
                     _ => new List<string>()
                 };
             }
@@ -217,6 +229,7 @@ public partial class InstallClientLoaderWindow : OverlayDialogControl
     private async void McVersionCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         _buildVersions.Clear();
+        BuildVersionHintText.Visibility = Visibility.Collapsed;
         UpdateJavaRequirementHint();
         UpdateDefaultInstanceName();
         if (McVersionCombo.SelectedItem is not string mcVersion) return;
@@ -232,13 +245,25 @@ public partial class InstallClientLoaderWindow : OverlayDialogControl
                 // 后续 profile/json 必然 404（详见 ClientLoaderInstallService
                 // .GetFabricLoaderVersionsAsync 的注释）。
                 ServerCoreType.Fabric => await _loaderService.GetFabricLoaderVersionsAsync(mcVersion),
+                ServerCoreType.LegacyFabric => await _loaderService.GetLegacyFabricLoaderVersionsAsync(mcVersion),
                 ServerCoreType.Forge => await _loaderService.GetForgeInstallerVersionsAsync(mcVersion),
                 ServerCoreType.Quilt => await _loaderService.GetQuiltLoaderVersionsAsync(mcVersion),
+                ServerCoreType.OptiFine => await _loaderService.GetOptiFineVersionsAsync(mcVersion),
                 _ => new List<ServerCoreBuild>()
             };
             foreach (var b in builds) _buildVersions.Add(b);
             BuildVersionCombo.SelectedItem = builds.FirstOrDefault(b => b.IsRecommended) ?? builds.FirstOrDefault();
             UpdateDefaultInstanceName();
+            if (builds.Count == 0 && _selectedLoaderType == ServerCoreType.OptiFine)
+            {
+                // 修复：这句提示之前写进了 ProgressDetailText，而 ProgressPanel 平时是
+                // Visibility="Collapsed"（只有点了「安装」之后才会显示），导致用户选中一个
+                // OptiFine 没有构建的 MC 版本时，界面上什么反馈都看不到——「OptiFine 版本」
+                // 下拉框就是空的，跟"卡住了/装不了"没有任何区别。现在改写到常驻可见的
+                // BuildVersionHintText 上，跟"该版本没有 OptiFine 构建"这个正常情况对应上。
+                BuildVersionHintText.Text = $"Minecraft {mcVersion} 暂无 OptiFine 构建（不是所有版本 OptiFine 官方都发布过），请换一个版本。";
+                BuildVersionHintText.Visibility = Visibility.Visible;
+            }
         }
         catch (InvalidOperationException ex)
         {
@@ -297,6 +322,7 @@ public partial class InstallClientLoaderWindow : OverlayDialogControl
         {
             ServerCoreType.Vanilla => mcVersion,
             ServerCoreType.Fabric => string.IsNullOrEmpty(buildVersion) ? "" : $"fabric-loader-{buildVersion}-{mcVersion}",
+            ServerCoreType.LegacyFabric => string.IsNullOrEmpty(buildVersion) ? "" : $"legacyfabric-loader-{buildVersion}-{mcVersion}",
             ServerCoreType.Quilt => string.IsNullOrEmpty(buildVersion) ? "" : $"quilt-loader-{buildVersion}-{mcVersion}",
             ServerCoreType.Forge => string.IsNullOrEmpty(buildVersion) ? "" : $"{mcVersion}-forge-{buildVersion}",
             ServerCoreType.NeoForge => $"neoforge-{mcVersion}",
@@ -320,9 +346,9 @@ public partial class InstallClientLoaderWindow : OverlayDialogControl
     /// </summary>
     private void UpdateJavaRequirementHint()
     {
-        // Quilt 跟 Fabric 一样不需要本地 Java 来完成"安装"这一步（见类头/InstallQuiltClientAsync 注释），
-        // 一并跳过这个提示。
-        if (_selectedLoaderType is ServerCoreType.Fabric or ServerCoreType.Quilt
+        // Quilt 跟 Fabric/Legacy Fabric 一样不需要本地 Java 来完成"安装"这一步（见类头/
+        // InstallQuiltClientAsync 注释），一并跳过这个提示。
+        if (_selectedLoaderType is ServerCoreType.Fabric or ServerCoreType.Quilt or ServerCoreType.LegacyFabric
             || McVersionCombo.SelectedItem is not string mcVersion)
         {
             JavaRequirementHintText.Visibility = Visibility.Collapsed;
@@ -338,7 +364,7 @@ public partial class InstallClientLoaderWindow : OverlayDialogControl
     private void AutoDetectJava_Click(object sender, RoutedEventArgs e)
     {
         int? preferMajor = null;
-        if (_selectedLoaderType is not (ServerCoreType.Fabric or ServerCoreType.Quilt) && McVersionCombo.SelectedItem is string mcVersion)
+        if (_selectedLoaderType is not (ServerCoreType.Fabric or ServerCoreType.Quilt or ServerCoreType.LegacyFabric) && McVersionCombo.SelectedItem is string mcVersion)
             preferMajor = ServerJavaRequirement.EstimateMajorVersionForMcVersion(mcVersion);
 
         var found = _javaService.FindJava(null, preferMajor, _owner.ConfigService);
@@ -365,10 +391,10 @@ public partial class InstallClientLoaderWindow : OverlayDialogControl
             return;
         }
 
-        // 原版走 Mojang 官方直装，本地不需要跑任何安装器；Fabric/Quilt 客户端安装同样不需要本地 Java
-        // （见 FabricNoJavaHintText / InstallQuiltClientAsync 注释）；只有 Forge/NeoForge 必须
-        // 本地跑安装器，需要有效 Java。
-        if (_selectedLoaderType is not (ServerCoreType.Fabric or ServerCoreType.Quilt or ServerCoreType.Vanilla) &&
+        // 原版走 Mojang 官方直装，本地不需要跑任何安装器；Fabric/Quilt/Legacy Fabric 客户端安装
+        // 同样不需要本地 Java（见 FabricNoJavaHintText / InstallQuiltClientAsync 注释）；只有
+        // Forge/NeoForge 必须本地跑安装器，需要有效 Java。
+        if (_selectedLoaderType is not (ServerCoreType.Fabric or ServerCoreType.Quilt or ServerCoreType.LegacyFabric or ServerCoreType.Vanilla) &&
             (string.IsNullOrWhiteSpace(JavaPathBox.Text) || !File.Exists(JavaPathBox.Text)))
         {
             MessageBoxDialog.ShowInfo("请提供一个有效的 Java 路径（点击「自动检测」或手动填写），Forge/NeoForge 安装器需要本地 Java 才能运行。", Loc.T("Str_Status_Tip", "提示"));
@@ -436,6 +462,11 @@ public partial class InstallClientLoaderWindow : OverlayDialogControl
                     installFabricApi: InstallFabricApiCheck.IsChecked == true,
                     customInstanceName: customName);
             }
+            else if (_selectedLoaderType == ServerCoreType.LegacyFabric)
+            {
+                versionId = await _loaderService.InstallLegacyFabricClientAsync(
+                    minecraftDir, mcVersion, buildVersion!, progress, customInstanceName: customName);
+            }
             else if (_selectedLoaderType == ServerCoreType.Quilt)
             {
                 // Quilt 走独立的 InstallQuiltClientAsync，不能落到下面 Forge/NeoForge 那个
@@ -444,6 +475,16 @@ public partial class InstallClientLoaderWindow : OverlayDialogControl
                 versionId = await _loaderService.InstallQuiltClientAsync(
                     minecraftDir, mcVersion, buildVersion!, progress,
                     installQsl: InstallQslCheck.IsChecked == true,
+                    customInstanceName: customName);
+            }
+            else if (_selectedLoaderType == ServerCoreType.OptiFine)
+            {
+                var raw = (BuildVersionCombo.SelectedItem as ServerCoreBuild)?.RawIdentifier ?? "";
+                var parts = raw.Split('|', 2);
+                var ofType = parts.Length > 0 ? parts[0] : "";
+                var ofPatch = parts.Length > 1 ? parts[1] : "";
+                versionId = await _loaderService.InstallOptiFineClientAsync(
+                    minecraftDir, mcVersion, ofType, ofPatch, JavaPathBox.Text, progress,
                     customInstanceName: customName);
             }
             else

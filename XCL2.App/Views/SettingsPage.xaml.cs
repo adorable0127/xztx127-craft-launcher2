@@ -2,6 +2,8 @@ using System;
 using System.IO;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
+using System.Windows.Threading;
 using Microsoft.Win32;
 using XCL2.App.Models;
 using XCL2.App.Services;
@@ -22,6 +24,19 @@ public partial class SettingsPage : UserControl
 {
     private readonly MainWindow _owner;
 
+    /// <summary>设置页"编辑追踪/自动保存气泡"相关状态，见 HookDirtyTracking / OnSettingsEdited 注释。
+    /// _suppressDirtyTracking 在构造函数里加载初始值期间为 true，避免"打开设置页把控件填充
+    /// 成当前配置值"这个过程本身被误判成一次用户编辑。</summary>
+    private bool _suppressDirtyTracking = true;
+    private bool _hasUnsavedChanges;
+    private DispatcherTimer? _editDebounceTimer;
+    private string? _preAutoSaveSnapshotJson;
+
+    /// <summary>供 MainWindow.SetMainContent 在切页前查询："当前设置页是否有未保存的改动"。
+    /// 只有非自动保存模式下才会变成 true——自动保存模式下每次改动都会立即落盘，
+    /// 不存在"未保存"这个状态。</summary>
+    public bool HasUnsavedChanges => _hasUnsavedChanges;
+
     public SettingsPage(MainWindow owner)
     {
         _owner = owner; // 统一先于 InitializeComponent 赋值，避免控件初始化时触发的事件访问到未赋值字段
@@ -41,6 +56,20 @@ public partial class SettingsPage : UserControl
         ShowModIconsCheck.IsChecked = cfg.ShowModIcons;
         ShowServerNetworkGuideCheck.IsChecked = cfg.ShowServerNetworkGuideOnStart;
         IsolateVersionsCheck.IsChecked = cfg.IsolateVersionsByDefault;
+
+        // 外观与视觉效果：Win11 新光效 + 窗口透明度，均默认关闭，见 AppConfig 对应字段注释。
+        Win11EffectsCheck.IsChecked = cfg.EnableWin11VisualEffects;
+        SelectComboByTag(BackdropMaterialCombo, cfg.Win11BackdropMaterial);
+        if (BackdropMaterialCombo.SelectedItem == null) BackdropMaterialCombo.SelectedIndex = 0; // 兜底：旧配置没有这一项时默认选中"云母 Mica"
+        BackdropMaterialPanel.IsEnabled = cfg.EnableWin11VisualEffects;
+        WindowTransparencyCheck.IsChecked = cfg.EnableWindowTransparency;
+        WindowOpacitySlider.Value = cfg.WindowOpacityPercent;
+        WindowOpacityValueText.Text = $"{cfg.WindowOpacityPercent}%";
+        WindowOpacitySlider.IsEnabled = cfg.EnableWindowTransparency;
+        GlobalWindowTransparencyCheck.IsChecked = cfg.EnableGlobalWindowTransparency;
+        GlobalWindowOpacitySlider.Value = cfg.GlobalWindowOpacityPercent;
+        GlobalWindowOpacityValueText.Text = $"{cfg.GlobalWindowOpacityPercent}%";
+        GlobalWindowOpacitySlider.IsEnabled = cfg.EnableGlobalWindowTransparency;
 
         // 拖拽安装默认值：三个下拉框按 Tag 匹配当前配置值。
         ModpackDropNewInstanceCheck.IsChecked = cfg.ModpackDropCreatesNewInstance;
@@ -102,6 +131,11 @@ public partial class SettingsPage : UserControl
         SelectComboByTag(UiSkinCombo, cfg.UiSkin);
         if (UiSkinCombo.SelectedItem == null) UiSkinCombo.SelectedIndex = 0; // 兜底：配置文件里存了非法值时退回第一项(白色)
 
+        // Win11 高级特效开启时锁定为"水"主题（见 ThemeService.SkinAquatic 类注释）：
+        // 打开设置页时如果配置里已经是开启状态，这里要在控件刚填充完就立即锁一次，
+        // 不然要等用户手动点一下开关才会触发 VisualEffectsToggle_Changed。
+        ApplyAquaticLockIfNeeded();
+
         // 自动循环的两个小时下拉框：0~23 全部可选，内容同样在这里现填。
         for (var hour = 0; hour <= 23; hour++)
         {
@@ -131,6 +165,138 @@ public partial class SettingsPage : UserControl
         // 静默合并新探测到的候选，不弹确认框、不因为探测失败而报错打扰用户——
         // 这只是锦上添花的自动填充，失败了大不了跟以前一样，用户还能手动点按钮。
         _ = AutoDetectJavaOnLoadAsync();
+
+        // "是否可以直接保存，无需点击保存设置"：见 AppConfig.SettingsAutoSaveWithoutConfirm 注释。
+        SettingsAutoSaveCheck.IsChecked = cfg.SettingsAutoSaveWithoutConfirm;
+
+        // 所有加载初始值的代码到这里结束，之后任何控件值变化都应该视为"用户真的动了一下"，
+        // 从这里开始挂编辑追踪、并放开 _suppressDirtyTracking。
+        HookDirtyTracking();
+        _suppressDirtyTracking = false;
+    }
+
+    /// <summary>
+    /// "编辑追踪"：不逐个给上百个控件的各自 Changed 事件手动加代码，而是在 UserControl 根节点
+    /// 上用 AddHandler 监听几种常见控件都会向上冒泡的路由事件（文本框 TextChanged、下拉框
+    /// SelectionChanged、复选框 Checked/Unchecked、滑块 ValueChanged），一次性覆盖本页几乎
+    /// 所有输入控件，新增设置项时不需要再回来给这里加一行。
+    /// 触发后不是每次都立即处理：见 OnSettingsEdited 的防抖说明。
+    /// </summary>
+    private void HookDirtyTracking()
+    {
+        AddHandler(TextBoxBase.TextChangedEvent, new TextChangedEventHandler((_, _) => OnSettingsEdited()));
+        AddHandler(Selector.SelectionChangedEvent, new SelectionChangedEventHandler((_, _) => OnSettingsEdited()));
+        AddHandler(ToggleButton.CheckedEvent, new RoutedEventHandler((sender, e) =>
+        {
+            // 关键修复：ComboBox 下拉箭头在内部也是一个 ToggleButton，展开/收起下拉列表
+            // （包括仅仅点开看一眼、不选任何新项）都会触发 Checked/Unchecked 并冒泡到这里，
+            // 被误判成"用户改了一个设置"从而弹出确认/自动保存气泡。真正的设置项永远是
+            // CheckBox/RadioButton，不会是 ComboBox 内部结构，这里按事件源类型过滤掉。
+            if (e.OriginalSource is not System.Windows.Controls.CheckBox and not System.Windows.Controls.RadioButton) return;
+            OnSettingsEdited();
+        }));
+        AddHandler(ToggleButton.UncheckedEvent, new RoutedEventHandler((sender, e) =>
+        {
+            if (e.OriginalSource is not System.Windows.Controls.CheckBox and not System.Windows.Controls.RadioButton) return;
+            OnSettingsEdited();
+        }));
+        AddHandler(RangeBase.ValueChangedEvent, new RoutedPropertyChangedEventHandler<double>((sender, e) =>
+        {
+            // 关键修复："一动页面就弹提示"的真正原因：本页内容放在 ScrollViewer 里，
+            // 它内部的滚动条本身也是一个 RangeBase，滚动页面时会不停触发 ValueChanged
+            // 并冒泡到这里，被误判成"用户改了一个设置"。只有真正的设置控件（Slider）
+            // 才应该算作编辑，滚动条（ScrollBar）产生的事件必须过滤掉。
+            if (e.OriginalSource is System.Windows.Controls.Primitives.ScrollBar) return;
+            OnSettingsEdited();
+        }));
+    }
+
+    /// <summary>
+    /// 编辑追踪的统一入口：任何被 HookDirtyTracking 监听到的控件变化都会走到这里。
+    /// 用一个 400ms 的防抖计时器合并短时间内的连续触发（比如拖动透明度滑块一次拖动会
+    /// 连续触发几十次 ValueChanged），避免拖一次滑块就自动保存/弹气泡几十次。
+    /// 防抖到点后才真正判断"自动保存"还是"仅提示"两条分支，见 AppConfig.SettingsAutoSaveWithoutConfirm。
+    /// </summary>
+    private void OnSettingsEdited()
+    {
+        if (_suppressDirtyTracking) return;
+
+        _editDebounceTimer?.Stop();
+        _editDebounceTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(400) };
+        _editDebounceTimer.Tick += (_, _) =>
+        {
+            _editDebounceTimer!.Stop();
+            HandleDebouncedEdit();
+        };
+        _editDebounceTimer.Start();
+    }
+
+    private void HandleDebouncedEdit()
+    {
+        var cfg = _owner.ConfigService.Config;
+
+        if (cfg.SettingsAutoSaveWithoutConfirm)
+        {
+            // 自动保存分支：先把保存前的完整配置快照下来（供"回退"按钮用），
+            // 再走跟点击"保存设置"按钮完全相同的落盘逻辑，最后弹气泡告知结果。
+            _preAutoSaveSnapshotJson = System.Text.Json.JsonSerializer.Serialize(cfg);
+            PerformSave();
+            _hasUnsavedChanges = false;
+
+            ToastService.ShowActionPrompt(
+                "设置已保存", "回退", RollbackAutoSave,
+                hint: "点击回退可撤销这一次自动保存",
+                autoDismissSeconds: 2, key: "settings-autosave");
+        }
+        else
+        {
+            _hasUnsavedChanges = true;
+
+            ToastService.ShowActionPrompt(
+                "设置已修改，是否保存？", "保存", () => PerformSave(),
+                "撤销", DiscardChanges,
+                autoDismissSeconds: 2, key: "settings-dirty");
+        }
+    }
+
+    /// <summary>"回退"按钮：把 HandleDebouncedEdit 里保存的那份"自动保存前"配置快照
+    /// 整份写回 Config（走跟 ConfigService.PatchDefaults 同一套反射赋值套路，逐个可写属性
+    /// 复制），持久化后刷新设置页（丢弃当前实例，重新 new 一个显示最新配置），
+    /// 保证界面上的控件立即跟着回退结果同步，不会停留在回退前的值上。</summary>
+    private void RollbackAutoSave()
+    {
+        if (_preAutoSaveSnapshotJson == null) return;
+        var snapshot = System.Text.Json.JsonSerializer.Deserialize<AppConfig>(_preAutoSaveSnapshotJson);
+        if (snapshot == null) return;
+
+        _owner.ConfigService.ReplaceConfigFieldsFrom(snapshot);
+        _owner.ConfigService.Save();
+        ApplyAllVisualEffectsFromConfig();
+        _owner.NavigateToSettings();
+        ToastService.ShowInfo("已回退到上一次自动保存之前的设置。");
+    }
+
+    /// <summary>"撤销"按钮（非自动保存分支）：这次编辑还没落盘，cfg 里的字段仍然是改动前的值，
+    /// 只需要把设置页整页重新打开一次，界面控件就会重新从 cfg 读到没被改动过的旧值，
+    /// 不需要额外维护一份"逐控件原始值"的映射。</summary>
+    private void DiscardChanges()
+    {
+        _hasUnsavedChanges = false;
+        _owner.NavigateToSettings();
+    }
+
+    /// <summary>回退自动保存之后，跟 Save_Click 结尾同样需要重新应用一遍视觉相关的效果
+    /// （配色/透明度/Win11 特效），避免"配置文件已经回退了，但当前已打开窗口的画面
+    /// 还停留在回退前的样子"这种不同步。</summary>
+    private void ApplyAllVisualEffectsFromConfig()
+    {
+        var cfg = _owner.ConfigService.Config;
+        ThemeService.ApplyForCurrentState(cfg.GuestModeEnabled, cfg.UiSkin, cfg.IsDarkMode);
+        ThemeService.ApplyWindowTransparency(cfg.EnableWindowTransparency, cfg.WindowOpacityPercent);
+        ThemeService.ApplyGlobalWindowTransparency(cfg.EnableGlobalWindowTransparency, cfg.GlobalWindowOpacityPercent);
+        var material = Enum.TryParse<Win11EffectsService.BackdropMaterial>(cfg.Win11BackdropMaterial, out var m)
+            ? m : Win11EffectsService.BackdropMaterial.Mica;
+        Win11EffectsService.SetEnabled(cfg.EnableWin11VisualEffects, material);
     }
 
     /// <summary>
@@ -636,7 +802,15 @@ public partial class SettingsPage : UserControl
         Application.Current.Shutdown(0);
     }
 
-    private void Save_Click(object sender, RoutedEventArgs e)
+    private void Save_Click(object sender, RoutedEventArgs e) => PerformSave();
+
+    /// <summary>供 MainWindow 在"切换页面时有未保存改动"的三选一确认里选了"是"时调用，
+    /// 跟点击"保存设置"按钮走的是同一套 PerformSave 逻辑。</summary>
+    public void SaveNow() => PerformSave();
+
+    /// <summary>实际的保存逻辑，从原来的 Save_Click 里抽出来，供"保存设置"按钮点击、
+    /// 以及编辑追踪的自动保存/气泡"保存"按钮共用同一套逻辑，不用维护两份。</summary>
+    private void PerformSave()
     {
         // 注意：cfg.JavaPath 这个字段本身没有删除（仍然被 FindJava 当兜底路径使用，
         // MainWindow/FirstRunWizardWindow 等处在自动探测/下载成功后会自动写入它），
@@ -657,6 +831,22 @@ public partial class SettingsPage : UserControl
         cfg.ShowModIcons = ShowModIconsCheck.IsChecked == true;
         cfg.ShowServerNetworkGuideOnStart = ShowServerNetworkGuideCheck.IsChecked == true;
         cfg.IsolateVersionsByDefault = IsolateVersionsCheck.IsChecked == true;
+
+        cfg.EnableWin11VisualEffects = Win11EffectsCheck.IsChecked == true;
+        cfg.Win11BackdropMaterial = (BackdropMaterialCombo.SelectedItem as ComboBoxItem)?.Tag as string ?? "Mica";
+        cfg.EnableWindowTransparency = WindowTransparencyCheck.IsChecked == true;
+        cfg.WindowOpacityPercent = (int)WindowOpacitySlider.Value;
+        // 跟其它设置不同，这两项一保存就应该立刻能在已打开的窗口上看到效果，不用重启/切页——
+        // 用户在设置页调滑块本来就是想马上比对效果，见 ThemeService.ApplyWindowTransparency
+        // 与 Win11EffectsService.SetEnabled 类注释。
+        cfg.EnableGlobalWindowTransparency = GlobalWindowTransparencyCheck.IsChecked == true;
+        cfg.GlobalWindowOpacityPercent = (int)GlobalWindowOpacitySlider.Value;
+
+        ThemeService.ApplyWindowTransparency(cfg.EnableWindowTransparency, cfg.WindowOpacityPercent);
+        ThemeService.ApplyGlobalWindowTransparency(cfg.EnableGlobalWindowTransparency, cfg.GlobalWindowOpacityPercent);
+        var material = Enum.TryParse<Win11EffectsService.BackdropMaterial>(cfg.Win11BackdropMaterial, out var m)
+            ? m : Win11EffectsService.BackdropMaterial.Mica;
+        Win11EffectsService.SetEnabled(cfg.EnableWin11VisualEffects, material);
 
         cfg.ModpackDropCreatesNewInstance = ModpackDropNewInstanceCheck.IsChecked == true;
         if (Enum.TryParse<DropZipDefault>(TagOf(ZipDropDefaultCombo), out var zipDef))
@@ -744,6 +934,7 @@ public partial class SettingsPage : UserControl
         if (int.TryParse(AccountTokenGraceDaysBox.Text, out var graceDays))
             cfg.AccountTokenGracePeriodDays = Math.Max(0, graceDays);
         cfg.UseMachineWideRegistry = UseMachineWideRegistryCheck.IsChecked == true;
+        cfg.SettingsAutoSaveWithoutConfirm = SettingsAutoSaveCheck.IsChecked == true;
 
         _owner.ConfigService.Save();
 
@@ -764,6 +955,7 @@ public partial class SettingsPage : UserControl
 
         RefreshRegistryStatusText();
         StatusText.Text = "设置已保存。";
+        _hasUnsavedChanges = false;
     }
 
     /// <summary>刷新"注册表存储"区块下方的状态提示文字：当前 HKLM/HKCU 两支实际是否存在
@@ -1003,6 +1195,45 @@ public partial class SettingsPage : UserControl
     {
         // 目前不需要即时联动，保留这个处理器是因为 XAML 里绑了 SelectionChanged；
         // 将来若要做"选了『每次询问』就把某些项灰掉"之类的联动，写在这里。
+    }
+
+    /// <summary>Win11 视觉效果 / 窗口透明度两个 CheckBox 共用的处理器：这里只做纯界面联动
+    /// （窗口透明度关闭时把下面的透明度滑块一并禁用，避免用户以为拖了滑块但其实没生效），
+    /// 不在这里直接落盘/应用效果——跟本页其它设置一样，改动先留在界面上，统一交给
+    /// "保存设置"按钮（Save_Click）落盘并立即应用。InitializeComponent 阶段设置初始
+    /// IsChecked 也会触发这个事件，但此时 WindowOpacitySlider 已经在 XAML 里声明好，
+    /// 直接读取不会有空引用问题。</summary>
+    private void VisualEffectsToggle_Changed(object sender, RoutedEventArgs e)
+    {
+        if (WindowOpacitySlider == null) return; // InitializeComponent 尚未跑完时的极早期事件，忽略
+        WindowOpacitySlider.IsEnabled = WindowTransparencyCheck.IsChecked == true;
+        GlobalWindowOpacitySlider.IsEnabled = GlobalWindowTransparencyCheck.IsChecked == true;
+        if (BackdropMaterialPanel != null) BackdropMaterialPanel.IsEnabled = Win11EffectsCheck.IsChecked == true;
+        ApplyAquaticLockIfNeeded();
+    }
+
+    /// <summary>透明度滑块拖动时只更新旁边的百分比文字，实际生效同样要等点"保存设置"。</summary>
+    private void WindowOpacitySlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+    {
+        if (WindowOpacityValueText == null) return;
+        WindowOpacityValueText.Text = $"{(int)e.NewValue}%";
+    }
+
+    /// <summary>整窗全局透明度滑块拖动时只更新旁边的百分比文字，同样要等"保存设置"才生效。</summary>
+    private void GlobalWindowOpacitySlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+    {
+        if (GlobalWindowOpacityValueText == null) return;
+        GlobalWindowOpacityValueText.Text = $"{(int)e.NewValue}%";
+    }
+
+    /// <summary>原来这里会在勾选 Win11 高级特效时强制把色系锁死成"水"（Aquatic），
+    /// 用户反馈不希望被强制切换主题——现在改成让所有色系都能正常搭配云母/亚克力材质，
+    /// 不再有这条限制，勾选/取消 Win11 特效都不会改动用户选的色系，下拉框也始终可用。
+    /// 方法保留（调用点不动），改成空实现，避免把所有调用点都删掉再引入遗漏。</summary>
+    private void ApplyAquaticLockIfNeeded()
+    {
+        if (UiSkinCombo == null) return;
+        UiSkinCombo.IsEnabled = true;
     }
 
 }

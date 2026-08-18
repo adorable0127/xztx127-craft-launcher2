@@ -592,10 +592,17 @@
                                     <DataTemplate>
                                         <Grid Margin="4,8">
                                             <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="Auto"/>
                                                 <ColumnDefinition Width="*"/>
                                                 <ColumnDefinition Width="Auto"/>
                                             </Grid.ColumnDefinitions>
-                                            <StackPanel>
+                                            <!-- 收藏快照里的 IconUrl 收藏时就已经存了地图封面（见 FavoriteMap_Click /
+                                                 ToggleCommunityFavorite），之前这里没画 Image 元素，封面就白存了。 -->
+                                            <Border Grid.Column="0" Width="40" Height="40" Margin="0,0,10,0" CornerRadius="4"
+                                                    Background="{DynamicResource SideBrush}" VerticalAlignment="Top">
+                                                <Image Source="{Binding DisplayIconUrl}" Width="40" Height="40" Stretch="UniformToFill"/>
+                                            </Border>
+                                            <StackPanel Grid.Column="1">
                                                 <TextBlock FontSize="15" FontWeight="Bold" Text="{Binding Title}"/>
                                                 <TextBlock Text="{Binding Description}" FontSize="12" TextWrapping="Wrap" MaxHeight="34"
                                                            Foreground="{DynamicResource TextSecondaryBrush}"/>
@@ -604,7 +611,7 @@
                                                     <Run Text="{DynamicResource Str_Ui_Downloads}"/><Run Text="{Binding Downloads}"/>
                                                 </TextBlock>
                                             </StackPanel>
-                                            <Button Grid.Column="1" Content="{DynamicResource Str_Ui_Unfavorite}" Padding="8,5" FontSize="11"
+                                            <Button Grid.Column="2" Content="{DynamicResource Str_Ui_Unfavorite}" Padding="8,5" FontSize="11"
                                                     VerticalAlignment="Top" Style="{StaticResource SideNavButton}"
                                                     Tag="{Binding}" Click="UnfavoriteItem_Click"/>
                                         </Grid>
@@ -675,10 +682,18 @@
                                 <Grid Margin="4,8" Cursor="Hand" Background="Transparent" Tag="{Binding}"
                                       MouseLeftButtonUp="MapListItem_Click" ToolTip="{DynamicResource Str_Ui_Click_For_Details_And_Downloadable_Versi}">
                                     <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto"/>
                                         <ColumnDefinition Width="*"/>
                                         <ColumnDefinition Width="Auto"/>
                                     </Grid.ColumnDefinitions>
-                                    <StackPanel>
+                                    <!-- 封面图：跟 Mod 列表同款样式，绑定 CurseForge 返回的 logo.thumbnailUrl。
+                                         地图之前列表里完全没有图，只有点进详情页才能看到封面——这里补上，
+                                         没有封面（Logo 为空）时 Border 底色兜底，不会露出空白。 -->
+                                    <Border Grid.Column="0" Width="40" Height="40" Margin="0,0,10,0" CornerRadius="4"
+                                            Background="{DynamicResource SideBrush}" VerticalAlignment="Top">
+                                        <Image Source="{Binding DisplayIconUrl}" Width="40" Height="40" Stretch="UniformToFill"/>
+                                    </Border>
+                                    <StackPanel Grid.Column="1">
                                         <TextBlock Text="{Binding Name}" FontSize="15" FontWeight="Bold"/>
                                         <TextBlock Text="{Binding Summary}" FontSize="12" TextWrapping="Wrap" MaxHeight="34"
                                                    Foreground="{DynamicResource TextSecondaryBrush}"/>
@@ -687,7 +702,7 @@
                                             <Run Text="{DynamicResource Str_Ui_Downloads}"/><Run Text="{Binding DownloadCount}"/>
                                         </TextBlock>
                                     </StackPanel>
-                                    <Button Grid.Column="1" Content="{Binding FavoriteLabel}" Padding="8,5" FontSize="11"
+                                    <Button Grid.Column="2" Content="{Binding FavoriteLabel}" Padding="8,5" FontSize="11"
                                             VerticalAlignment="Top" Style="{StaticResource SideNavButton}"
                                             Tag="{Binding}" Click="FavoriteMap_Click"/>
                                 </Grid>

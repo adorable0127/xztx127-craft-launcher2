@@ -59,10 +59,46 @@
                     </StackPanel>
                 </RadioButton>
 
-                <RadioButton x:Name="OptQuilt" GroupName="LoaderChoice" Margin="0,0,0,4">
+                <RadioButton x:Name="OptQuilt" GroupName="LoaderChoice" Margin="0,0,0,10">
                     <StackPanel Margin="8,2">
                         <TextBlock Text="Quilt" FontWeight="Bold" FontSize="14"/>
                         <TextBlock Text="{DynamicResource Str_Ui_A_Loader_Forked_From_Fabric_It_Runs_Most}" FontSize="12" TextWrapping="Wrap" Foreground="{DynamicResource TextSecondaryBrush}"/>
+                    </StackPanel>
+                </RadioButton>
+
+                <!--
+                    以下四项不是"五大主流加载器"，默认先当作"不支持"置灰渲染（IsEnabled=False，
+                    见 .xaml.cs 里 InitializeComponent 之后的默认状态），等异步探测
+                    （LoaderAvailabilityService.GetAvailabilityAsync）跑完，真的支持当前 MC 版本的
+                    才会被代码把 IsEnabled 打开、变成正常黑字可点；查不到/探测失败/官方本来就没有
+                    这个版本的构建，则保持灰色不可点，鼠标悬停会看到提示文字说明原因
+                    （ToolTip 在 .xaml.cs 里统一设置，不在这里为每一项分别写）。
+                -->
+                <RadioButton x:Name="OptOptiFine" GroupName="LoaderChoice" Margin="0,0,0,10" IsEnabled="False">
+                    <StackPanel Margin="8,2">
+                        <TextBlock Text="OptiFine" FontWeight="Bold" FontSize="14"/>
+                        <TextBlock Text="经典客户端优化+光影/材质包支持，安装形态跟加载器一致。" FontSize="12" TextWrapping="Wrap" Foreground="{DynamicResource TextSecondaryBrush}"/>
+                    </StackPanel>
+                </RadioButton>
+
+                <RadioButton x:Name="OptLiteLoader" GroupName="LoaderChoice" Margin="0,0,0,10" IsEnabled="False">
+                    <StackPanel Margin="8,2">
+                        <TextBlock Text="LiteLoader" FontWeight="Bold" FontSize="14"/>
+                        <TextBlock Text="早期版本(约 1.12.2 及更早)的轻量加载器，现已停止更新。" FontSize="12" TextWrapping="Wrap" Foreground="{DynamicResource TextSecondaryBrush}"/>
+                    </StackPanel>
+                </RadioButton>
+
+                <RadioButton x:Name="OptCleanroom" GroupName="LoaderChoice" Margin="0,0,0,10" IsEnabled="False">
+                    <StackPanel Margin="8,2">
+                        <TextBlock Text="Cleanroom" FontWeight="Bold" FontSize="14"/>
+                        <TextBlock Text="面向 1.12.2 生态的 Forge 分支，可在新版 Java 上运行。" FontSize="12" TextWrapping="Wrap" Foreground="{DynamicResource TextSecondaryBrush}"/>
+                    </StackPanel>
+                </RadioButton>
+
+                <RadioButton x:Name="OptLabyMod" GroupName="LoaderChoice" Margin="0,0,0,4" IsEnabled="False">
+                    <StackPanel Margin="8,2">
+                        <TextBlock Text="LabyMod" FontWeight="Bold" FontSize="14"/>
+                        <TextBlock Text="客户端增强套件，自带模组/皮肤等生态；暂不支持自动安装。" FontSize="12" TextWrapping="Wrap" Foreground="{DynamicResource TextSecondaryBrush}"/>
                     </StackPanel>
                 </RadioButton>
             </StackPanel>

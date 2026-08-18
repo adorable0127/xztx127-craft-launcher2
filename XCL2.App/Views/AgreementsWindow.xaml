@@ -9,7 +9,9 @@
                             MaxHeight="640">
     <!-- 首次启动协议页：三页依次展示《用户协议》《隐私协议》《开源协议》。
          第 1、2 页是法律性文本：「同意并继续」按钮需要同时满足"已经阅读 5 秒"和
-         "已滚动到页面最底部"两个条件才可点击；第 3 页（开源协议）不强制，
+         "已滚动到页面最底部"两个条件才可点击；顺序是先要求"请认真阅读本协议（5s）"，
+         5 秒计时结束后才轮到"请先滚动阅读到页面最底部"的提示，不是一进页面就先拿滚动条
+         逼着划到底；第 3 页（开源协议）不强制，
          但如果停留不足 3 秒就点同意，页面底部会出现"用人话说"的备注（善意使用 vs
          过度使用）。每页底部都有一段"用人话说"的通俗说明。
          按 Esc 不可关闭（调用方以 OverlayDialogService.ShowModal 的 dismissOnEsc:false
@@ -31,7 +33,7 @@
             </Grid.ColumnDefinitions>
             <StackPanel Grid.Column="0" Margin="0,0,16,0">
                 <TextBlock x:Name="HeaderTitle" Text="欢迎使用 XCL2" FontSize="24" FontWeight="Bold" Foreground="{DynamicResource TextPrimaryBrush}"/>
-                <TextBlock x:Name="HeaderSubtitle" Text="首次使用前，请逐一阅读并同意以下四步：用户协议 → 隐私协议 → 开源协议 → 基本模式（如适用）。前两份需要拖到页面最底部并完整阅读 5 秒后即可继续；第三份（开源协议）不强制。"
+                <TextBlock x:Name="HeaderSubtitle" Text="首次使用前，请逐一阅读并同意以下四步：用户协议 → 隐私协议 → 开源协议 → 基本模式（如适用）。前两份需要认真阅读满 5 秒后才能拖到页面最底部完成确认；第三份（开源协议）不强制。"
                            FontSize="13" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,4,0,0" TextWrapping="Wrap"/>
             </StackPanel>
             <!-- 人话版开关：全局生效于当前显示的这一页，切到"总结全章正常条款"的通俗版本；

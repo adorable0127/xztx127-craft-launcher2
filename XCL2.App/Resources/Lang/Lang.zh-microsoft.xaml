@@ -489,7 +489,7 @@
     <system:String x:Key="Str_Ui_Custom_Java_Arguments_Advanced">自己定义的 爪哇 发射参数们（高高在上的手）</system:String>
     <system:String x:Key="Str_Ui_When_A_Dropped_Zip_Can_T_Be_Identified">被拖入却无法辨认打字类型的 .zip 时：</system:String>
     <system:String x:Key="Str_Ui_Dropping_Jar_On_The_Server_Management_Pa">在「提供服务者的统治」页面把 .jar 丢下来：</system:String>
-    <system:String x:Key="Str_Ui_Custom_Advancement_Image_Generator_Engli">自己定义成就的图片生成器（只支持英国舌头）</system:String>
+    <system:String x:Key="Str_Ui_Custom_Advancement_Image_Generator_Engli">自己定义成就的图片生成器（支持中文搜索方块）</system:String>
     <system:String x:Key="Str_Ui_Extract_Into_This_Instance_S_Saves_Folde">被解压进入当前实例的 拯救(saves) 文件夹子里</system:String>
     <system:String x:Key="Str_Ui_Account_Version_Loader_And_Mods_In_One_P">账单户口、变体、装填者、修改件 走在同一条道路上</system:String>
     <system:String x:Key="Str_Ui_Paste_Or_Type_The_Token_Not_Case_Sensiti">粘上去或是输入 token，对于大号和小号的字并不敏感</system:String>

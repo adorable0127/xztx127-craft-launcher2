@@ -23,6 +23,8 @@ public partial class AboutHelpPage : UserControl
     private const string MinecraftBuyUrl = "https://www.minecraft.net/zh-hans/store/minecraft-java-bedrock-edition-pc";
     private const string GitHubRepoUrl = "https://github.com/adorable0127/xztx127-craft-launcher2";
     private const string DonateUrl = "https://ifdian.net/a/xztx127";
+    private const string ContactAuthorUrl = "https://xztx127.dpdns.org/arcade#contact";
+    private const string AllProjectsUrl = "https://github.com/adorable0127";
 
     // 滚动同步 Tab 选中态时，用这个标记避免"代码触发的 RadioButton.Checked"
     // 反过来又调用一次滚动定位，造成两边来回打架、抖动。
@@ -123,6 +125,10 @@ public partial class AboutHelpPage : UserControl
     private void OpenRepo_Click(object sender, RoutedEventArgs e) => OpenUrl(GitHubRepoUrl);
 
     private void OpenRelease_Click(object sender, RoutedEventArgs e) => OpenUrl(GitHubRepoUrl);
+
+    private void OpenContact_Click(object sender, RoutedEventArgs e) => OpenUrl(ContactAuthorUrl);
+
+    private void OpenAllProjects_Click(object sender, RoutedEventArgs e) => OpenUrl(AllProjectsUrl);
 
     /// <summary>
     /// 统一的"用系统默认浏览器打开链接"入口，跟项目里其它地方（VersionSelectPage 等）

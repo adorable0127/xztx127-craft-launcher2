@@ -30,6 +30,22 @@ public static class BedrockLaunchService
     public const string PackageFamilyName = "Microsoft.MinecraftUWP_8wekyb3d8bbwe";
 
     /// <summary>
+    /// 基岩版官方系统要求：Windows 10 及以上（分发渠道 Microsoft Store 本身也要求 Win10+，
+    /// Win7/Win8.1 没有 Store，且基岩版依赖的 UWP 应用包模型在 Win7/8 上不存在，
+    /// 不是"技术上能不能凑合跑"的问题，是系统层面压根没有这套机制）。
+    /// 用 Environment.OSVersion.Version.Major 判断：Win10/11 内核版本号都是 10.x，
+    /// Win7 是 6.1，Win8/8.1 是 6.2/6.3——所以 Major >= 10 就是 Win10 及以上。
+    /// </summary>
+    public static bool IsOsSupported => Environment.OSVersion.Version.Major >= 10;
+
+    /// <summary>系统不支持时给用户看的说明文案，UI 层直接复用，避免各处措辞不一致。</summary>
+    public const string UnsupportedOsMessage =
+        "基岩版（Minecraft for Windows）官方只支持 Windows 10 及以上系统。\n" +
+        "当前系统版本更低，无法安装/运行基岩版，也没有 Microsoft Store 可用——这是游戏本身的" +
+        "官方限制，不是本启动器能绕过的问题。\n\n" +
+        "如果想在这台电脑上玩 Minecraft，建议使用 Java 版（对系统版本要求更宽松）。";
+
+    /// <summary>
     /// 检测这个包是否已经安装在当前系统里。用 PowerShell 的 Get-AppxPackage 按
     /// PackageFamilyName 查询——这是 Windows 自带、面向普通用户/脚本开放的标准查询方式，
     /// 不需要管理员权限，也不需要读取受保护的 WindowsApps/XboxGames 目录（那些目录哪怕有

@@ -1,0 +1,22 @@
+<Window x:Class="XCL2.App.Views.StartupSplashWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="XCL2" Width="360" Height="180"
+        WindowStyle="None" ResizeMode="NoResize" ShowInTaskbar="True"
+        WindowStartupLocation="CenterScreen" Background="#1E1E1E"
+        Topmost="False">
+    <!-- 需求：启动时不能让用户对着黑框/白屏干等 1-2 秒不知道发生了什么。这个窗口在
+         App.OnStartup 一开始（真正开始 new MainWindow() 之前）就立刻 Show()，
+         用最简单的原生控件（不依赖任何 DynamicResource/主题服务，避免它自己又要
+         等 ThemeService 初始化完才能显示——那样就跟它想解决的问题一样了），
+         MainWindow 首帧真正渲染完成后由 App.xaml.cs 关闭并让位。 -->
+    <Grid>
+        <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center">
+            <TextBlock Text="XCL2" FontSize="26" FontWeight="Bold" Foreground="White"
+                       HorizontalAlignment="Center" Margin="0,0,0,14"/>
+            <ProgressBar Width="220" Height="4" IsIndeterminate="True" Margin="0,0,0,12"/>
+            <TextBlock x:Name="StatusText" Text="正在启动…" FontSize="12" Foreground="#AAAAAA"
+                       HorizontalAlignment="Center"/>
+        </StackPanel>
+    </Grid>
+</Window>
