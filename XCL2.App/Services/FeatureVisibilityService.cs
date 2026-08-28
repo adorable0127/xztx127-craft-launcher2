@@ -19,6 +19,7 @@ public static class FeatureVisibilityService
     public const string NavDownload = "Nav.Download";
     public const string NavSettings = "Nav.Settings";
     public const string NavToolbox = "Nav.Toolbox";
+    public const string NavAiAssistant = "Nav.AiAssistant";
 
     // ===== 子页面：设置 =====
     public const string SettingsLaunch = "Settings.Launch";
@@ -83,6 +84,7 @@ public static class FeatureVisibilityService
                 new FeatureItem { Key = NavDownload, Label = "下载" },
                 new FeatureItem { Key = NavSettings, Label = "设置" },
                 new FeatureItem { Key = NavToolbox, Label = "工具" },
+                new FeatureItem { Key = NavAiAssistant, Label = "AI 助手" },
             }
         },
         new FeatureGroup

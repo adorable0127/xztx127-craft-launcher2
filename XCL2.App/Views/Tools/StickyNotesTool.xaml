@@ -34,10 +34,20 @@
 
         <!-- 右侧：编辑区 -->
         <StackPanel Grid.Column="2" MaxWidth="640" HorizontalAlignment="Left">
-            <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+            <WrapPanel Margin="0,0,0,8">
                 <Button x:Name="NotePinBtn" Content="📌 作为桌面便签打开" Style="{StaticResource PrimaryButton}" Padding="12,6" Click="NotePin_Click"/>
                 <Button Content="📂 打开便签文件夹" Padding="12,6" Margin="8,0,0,0" Click="NoteOpenFolder_Click"/>
-            </StackPanel>
+                <TextBlock Text="便签样式" Margin="14,0,6,0" VerticalAlignment="Center" Foreground="{DynamicResource TextSecondaryBrush}"/>
+                <ComboBox x:Name="NoteStyleCombo" Width="150" SelectionChanged="NoteStyleCombo_SelectionChanged" ToolTip="样式会跟随当前便签保存，下次打开仍会保留">
+                    <ComboBoxItem Content="经典黄纸" Tag="Yellow"/>
+                    <ComboBoxItem Content="天空蓝" Tag="Blue"/>
+                    <ComboBoxItem Content="薄荷绿" Tag="Mint"/>
+                    <ComboBoxItem Content="樱花粉" Tag="Pink"/>
+                    <ComboBoxItem Content="紫晶" Tag="Purple"/>
+                    <ComboBoxItem Content="纸白" Tag="Paper"/>
+                    <ComboBoxItem Content="深夜" Tag="Midnight"/>
+                </ComboBox>
+            </WrapPanel>
             <TextBox x:Name="NoteEditor" AcceptsReturn="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto"
                      MinHeight="260" Padding="8" FontSize="13"
                      TextChanged="NoteEditor_TextChanged" LostFocus="NoteEditor_LostFocus"/>

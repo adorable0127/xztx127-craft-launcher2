@@ -57,6 +57,11 @@ public class DragDropInstallService
         /// 不经过 InstallMany 的客户端实例目录。Classify 永远不会自己产出这个值，
         /// 它只会作为"上层按页面/设置决定的覆盖"传进来。</summary>
         ServerJar,
+
+        /// <summary>"导出所有配置"产出的 XCL2 配置归档（.xclconfig.json，见
+        /// ConfigService.ExportAllConfig/ImportAllConfig）。同样由 MainWindow 单独处理
+        /// （整体替换启动器配置，不走 InstallMany 装进游戏实例目录）。</summary>
+        XclConfigArchive,
     }
 
     /// <summary>
@@ -91,8 +96,42 @@ public class DragDropInstallService
                 return DropKind.BedrockContent;
             case ".zip":
                 return ClassifyZip(path);
+            case ".json":
+                // 修复"拖入 JSON 导出的 XCL 配置无法自动读取，会提示未捕获的格式"：
+                // 之前这里的 switch 完全没有 .json 分支，任何 .json 文件（包括「导出所有
+                // 配置」生成的 *.xclconfig.json）都会直接落到 default → Unknown，界面上
+                // 表现为"无法识别的文件/未捕获的格式"，即使它本来就是启动器自己导出的、
+                // 结构完全已知的配置归档。这里补上识别：不是只看扩展名/文件名（用户可能
+                // 改过文件名，比如去掉了 .xclconfig 中缀只剩 .json），而是像 ClassifyZip
+                // 对 zip 一样，实际打开文件看内容里有没有 ExportAllConfig 产出的归档特征
+                // 字段（"ExportedAtUtc" + "Config"，见 ConfigArchive 类），确认了才当作
+                // 配置归档处理，避免把无关的普通 .json 文件也误判成配置导入。
+                return IsXclConfigArchiveJson(path) ? DropKind.XclConfigArchive : DropKind.Unknown;
             default:
                 return DropKind.Unknown;
+        }
+    }
+
+    /// <summary>探测一个 .json 文件是不是 ConfigService.ExportAllConfig 产出的配置归档。
+    /// 只做轻量的文本特征匹配（避免为了分类就完整反序列化一遍，文件读取失败/内容格式不对
+    /// 都直接当作"不是"，交给上层按 Unknown 处理，不抛异常影响整个拖拽流程）。</summary>
+    private static bool IsXclConfigArchiveJson(string path)
+    {
+        try
+        {
+            using var reader = new StreamReader(path);
+            // 归档文件通常不大（一份 config.json + 少量实例设置），一次性读完足够判断特征，
+            // 但防一份被塞了巨量 InstanceSettings 的极端文件，只读前 64KB 做特征匹配即可——
+            // ExportedAtUtc/Config 这两个字段固定写在顶层，序列化时必然出现在文件靠前位置。
+            var buffer = new char[65536];
+            var len = reader.ReadBlock(buffer, 0, buffer.Length);
+            var head = new string(buffer, 0, len);
+            return head.Contains("\"ExportedAtUtc\"", StringComparison.Ordinal)
+                   && head.Contains("\"Config\"", StringComparison.Ordinal);
+        }
+        catch
+        {
+            return false;
         }
     }
 

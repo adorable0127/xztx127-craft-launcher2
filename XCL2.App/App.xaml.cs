@@ -1,4 +1,4 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
@@ -103,6 +103,32 @@ public partial class App : Application
     /// </summary>
     protected override void OnStartup(StartupEventArgs e)
     {
+        // 基岩版 MSIXVC 解压隔离子进程模式：必须放在整个 OnStartup 最开头、比 Win7 修复
+        // 检测还要早——这个分支根本不是要启动 UI，是自身 exe 被
+        // BedrockDecode.BedrockExtractWorkerProcess.RunAsync 当作命令行工具重新拉起的
+        // 一次性子进程，只需要跑完解压逻辑、把结果打到 stdout、然后整个进程退出。
+        // 绝对不能往下走到 base.OnStartup/创建任何窗口——那样会平白多出一个看不见的
+        // WPF 应用实例、White 掉子进程本该有的"跑完就退出"语义。
+        // 用 Environment.Exit 而不是 Shutdown()：这个阶段 WPF 消息循环还没跑起来，
+        // Shutdown() 依赖的机制此时不生效。
+        if (e.Args.Length > 0 && e.Args[0] == BedrockDecode.BedrockExtractWorkerProcess.WorkerArgMarker)
+        {
+            int exitCode;
+            try
+            {
+                exitCode = BedrockDecode.BedrockExtractWorkerProcess.RunAsWorkerAsync(e.Args).GetAwaiter().GetResult();
+            }
+            catch
+            {
+                // 兜底：worker 逻辑内部已经把能捕获的异常都转成 ERR 行处理了，这里再包一层
+                // 纯粹是防止极端情况下 GetAwaiter().GetResult() 本身抛出未预期异常时，
+                // 子进程还能带着非 0 退出码正常结束，而不是变成另一种诡异的卡死状态。
+                exitCode = 1;
+            }
+            Environment.Exit(exitCode);
+            return;
+        }
+
         // Win7 专属修复：必须在 base.OnStartup / 任何托管代码正式跑起来之前做，
         // 见 TryRelaunchForWin7WriteXorExecuteFix 上面的注释。
         if (TryRelaunchForWin7WriteXorExecuteFix())
@@ -244,9 +270,11 @@ public partial class App : Application
         // 时资源字典里就已经是正确的皮肤颜色和语言，不需要任何事后刷新。这里单独 new 一个
         // ConfigService 只是为了在窗口存在之前读一次持久化配置，跟 MainWindow 自己持有的
         // ConfigService 实例互不冲突。
+        splash.SetStatus("正在读取启动器配置…");
         var earlyConfig = new ConfigService();
         earlyConfig.Load();
-        ThemeService.ApplyForCurrentState(earlyConfig.Config.GuestModeEnabled, earlyConfig.Config.UiSkin, earlyConfig.Config.IsDarkMode);
+        splash.SetStatus("正在应用主题与语言…");
+        ThemeService.ApplyForCurrentState(earlyConfig.Config.GuestModeEnabled, earlyConfig.Config.UiSkin, earlyConfig.Config.IsDarkMode, earlyConfig.Config.CustomAccentColor);
         LocalizationService.ApplyForCurrentState(earlyConfig.Config.LauncherLanguage);
 
         // 窗口透明度 + Win11 新视觉效果：均默认关闭，这里只是把启动时读到的配置状态记下来
@@ -256,6 +284,8 @@ public partial class App : Application
         // Loaded 类处理器自动套用，不需要逐个窗口接线，见 Win11EffectsService 类注释。
         ThemeService.ApplyWindowTransparency(earlyConfig.Config.EnableWindowTransparency, earlyConfig.Config.WindowOpacityPercent);
         ThemeService.ApplyGlobalWindowTransparency(earlyConfig.Config.EnableGlobalWindowTransparency, earlyConfig.Config.GlobalWindowOpacityPercent);
+        ThemeService.SetPopupAppearanceConfig(earlyConfig.Config.PopupUseCustomAppearance, earlyConfig.Config.PopupOpacityPercent, earlyConfig.Config.PopupFrostPercent, earlyConfig.Config.PopupTextOpacityPercent);
+        ThemeService.SetDrawerAppearanceConfig(earlyConfig.Config.DrawerUseCustomAppearance, earlyConfig.Config.DrawerOpacityPercent, earlyConfig.Config.DrawerFrostPercent, earlyConfig.Config.DrawerTextOpacityPercent);
         var earlyMaterial = Enum.TryParse<Win11EffectsService.BackdropMaterial>(earlyConfig.Config.Win11BackdropMaterial, out var earlyM)
             ? earlyM : Win11EffectsService.BackdropMaterial.Mica;
         Win11EffectsService.SetEnabled(earlyConfig.Config.EnableWin11VisualEffects, earlyMaterial);
@@ -271,6 +301,7 @@ public partial class App : Application
                 if (sender is Window w) AppIconService.ApplyTo(w);
             }));
 
+        splash.SetStatus("正在初始化数据目录与日志…");
         Directory.CreateDirectory(DataDir);
         Directory.CreateDirectory(Path.Combine(DataDir, "logs"));
         Directory.CreateDirectory(Path.Combine(DataDir, "runtime")); // java
@@ -340,53 +371,52 @@ public partial class App : Application
         // 主窗口。App.xaml 没有设置 StartupUri，所以 WPF 不会自动创建任何窗口，这一步
         // 是必须的，否则应用会启动后立刻因为"没有任何窗口、也没有设置
         // ShutdownMode=OnExplicitShutdown"而退出。
+        splash.SetStatus("正在构建主界面…");
         var mainWindow = new Views.MainWindow();
+
+        // 不再在 OnStartup 这条同步 UI 调用栈里强制 mainWindow.UpdateLayout() +
+        // Dispatcher.Invoke(Render)。那种“为了保证首帧而强制同步渲染”的做法会让整个主窗口
+        // 的 Measure/Arrange/Render 一次性堵住 UI 线程，复杂配置/低速磁盘机器上 Windows 会
+        // 直接把窗口判成“未响应”。正确做法是先挂 ContentRendered，再 Show，然后尽快让
+        // OnStartup 返回消息循环；首帧真正画出来时事件自然触发，再关闭启动提示窗。
+        EventHandler? closeSplashAfterFirstFrame = null;
+        closeSplashAfterFirstFrame = (_, _) =>
+        {
+            mainWindow.FirstFrameRendered -= closeSplashAfterFirstFrame;
+            try { splash.Close(); } catch { /* splash 已关闭时忽略 */ }
+        };
+        mainWindow.FirstFrameRendered += closeSplashAfterFirstFrame;
+        splash.SetStatus("正在渲染主界面…");
         mainWindow.Show();
-
-        // 修复"首次打开白屏，要手动拖动/全屏窗口才会渲染出内容"：这是 WPF 一个常见坑——
-        // Show() 只是把窗口标记为可见（Win32 层面发出 WM_SHOWWINDOW），真正的首帧
-        // 布局(Measure/Arrange)+渲染要等消息循环空闲下来才会被排上；如果 Show() 之后
-        // 紧接着还有一堆 Loaded 事件、后台任务启动、绑定刷新等工作抢占了 UI 线程，
-        // 第一次 Layout/Render 就会被无限推迟，表现就是"看起来是白屏，直到用户做了一次
-        // 窗口大小变化——不管是拖动改变尺寸还是切换全屏——才会连带强制触发一次
-        // Measure/Arrange，内容才画出来"。
-        //
-        // 之前只用一次 Dispatcher.Invoke(..., DispatcherPriority.Render) 占位，实测
-        // 不够可靠：那一行本身也是在 OnStartup（Send 优先级、比 Render 更高）这个尚未
-        // 返回的调用栈里发起的重入调用，只能强制处理"当时已经排队"的 Render 级工作项，
-        // 而 MainWindow 的首次 Layout 请求往往是 Show() 内部通过 Loaded/布局失效
-        // 才异步排上队的，可能比这次 Dispatcher.Invoke 本身还晚入队，从而被跳过——
-        // 这也是为什么有的机器上这个坑修复了、有的机器上（时序更慢/窗口更复杂）依然
-        // 会白屏。改成直接调用 mainWindow.UpdateLayout()：这是 WPF 提供的同步 API，
-        // 明确语义就是"立刻强制走一次 Measure→Arrange"，不依赖任何消息队列时序/
-        // 优先级排队是否"恰好"发生在这次调用之前，从根上避免"该发生的布局请求还没
-        // 排上就被跳过"这个不确定性。UpdateLayout 只处理布局，不含 Win32
-        // 合成/呈现那一步，所以后面仍然保留一次 Render 优先级的 Dispatcher.Invoke，
-        // 让已经算好的布局结果真正被合成绘制出来——两步合起来才是"强制完整走一遍
-        // 首帧"的完整流程，缺一不可。
-        mainWindow.UpdateLayout();
-        Dispatcher.Invoke(() => { }, System.Windows.Threading.DispatcherPriority.Render);
-
-        // 到这里 MainWindow 的首帧已经真正画出来了，提示窗完成使命，关掉让位。
-        // 放在这两行强制渲染之后而不是 mainWindow.Show() 之后，是为了避免出现
-        // "提示窗先消失、MainWindow 还有一小段黑屏/白屏才画出来"这种反而更难看的空档。
-        splash.Close();
     }
 
+    /// <summary>
+    /// 修复"在部分界面里选择东西（下拉框/列表切换选中项），整个界面突然变卡"：这三个类处理器
+    /// 之前是同步执行的——DescribeElement/DescribeSelectedValue 里既要顺着可视化树找宿主窗口，
+    /// 又可能碰到匿名类型选项(DescribeAnonymousType)触发反射 GetProperties()+逐个 GetValue()，
+    /// 这些都是纯字符串拼接/反射开销，本身不重，但它们跟触发它们的用户操作（点击/选择变化/
+    /// 输入框聚焦）挤在同一次 UI 线程消息处理里同步执行，会直接顶在"选中项要重新布局/重新
+    /// 应用样式"这些真正的渲染工作前面排队；像 ModManager/DownloadCenter 这类列表控件选中项
+    /// 变化时本来就有一波布局+样式刷新，本已经不轻，再叠加同步的反射拼字符串，两者加在一起
+    /// 才会表现成"选一下东西全局都跟着卡一下"。这里的日志本来就只是"锦上添花"的交互留痕
+    /// （见 LauncherLogService 类注释），不需要跟真正的渲染工作抢首选，所以统一改成用
+    /// Dispatcher.InvokeAsync 扔到 Background 优先级（比正常输入/布局/渲染都低，只在
+    /// UI 线程真正闲下来之后才执行），不再阻塞当前这一次事件处理，视觉上的卡顿就消失了。
+    /// </summary>
     private static void RegisterUiInteractionLogging()
     {
         EventManager.RegisterClassHandler(typeof(ButtonBase), ButtonBase.ClickEvent,
             new RoutedEventHandler((sender, _) =>
             {
                 if (sender is ButtonBase button)
-                    LauncherLogService.AppendLine("[交互] 点击 " + DescribeElement(button));
+                    LogInteractionAsync(button, () => "[交互] 点击 " + DescribeElement(button));
             }), handledEventsToo: true);
 
         EventManager.RegisterClassHandler(typeof(Selector), Selector.SelectionChangedEvent,
             new SelectionChangedEventHandler((sender, _) =>
             {
                 if (sender is Selector selector)
-                    LauncherLogService.AppendLine("[交互] 选择变化 " + DescribeElement(selector) +
+                    LogInteractionAsync(selector, () => "[交互] 选择变化 " + DescribeElement(selector) +
                                                   DescribeSelectedValue(selector));
             }), handledEventsToo: true);
 
@@ -394,8 +424,20 @@ public partial class App : Application
             new RoutedEventHandler((sender, _) =>
             {
                 if (sender is TextBox textBox)
-                    LauncherLogService.AppendLine("[交互] 聚焦输入框 " + DescribeElement(textBox));
+                    LogInteractionAsync(textBox, () => "[交互] 聚焦输入框 " + DescribeElement(textBox));
             }), handledEventsToo: true);
+    }
+
+    /// <summary>把"拼描述文本 + 写日志缓冲"这部分工作挪到 Background 优先级异步执行，见
+    /// RegisterUiInteractionLogging 类注释。描述文本要在回调里（而不是调用方）才求值，
+    /// 否则 DescribeElement 等反射/遍历工作还是会在触发事件的那一刻同步跑一遍，白做了这层异步。</summary>
+    private static void LogInteractionAsync(System.Windows.Threading.DispatcherObject element, Func<string> describe)
+    {
+        element.Dispatcher.InvokeAsync(() =>
+        {
+            try { LauncherLogService.AppendLine(describe()); }
+            catch { /* 交互留痕失败不应该影响正常使用 */ }
+        }, System.Windows.Threading.DispatcherPriority.Background);
     }
 
     private static string DescribeElement(FrameworkElement element)

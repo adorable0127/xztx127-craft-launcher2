@@ -1,9 +1,42 @@
-namespace XCL2.App.Models;
+﻿namespace XCL2.App.Models;
 
 public enum DownloadSource
 {
     Official,   // Mojang 官方源
     BMCLAPI     // BMCLAPI 镜像源（国内加速）
+}
+
+/// <summary>
+/// 点击标题栏右上角关闭按钮（叉号）时的默认行为。
+/// DirectClose：跟原来行为一致，直接关闭启动器进程。
+/// MinimizeToTray：不真正退出，隐藏主窗口、缩到系统托盘，进程继续在后台运行
+/// （下载/挂机中的服务器控制台等后台任务不会被打断），需要真正退出时从托盘右键菜单选「退出」。
+/// Minimize：新增。只是普通的最小化到任务栏（跟点标题栏「最小化」按钮效果一样），
+/// 不显示托盘图标——介于「直接关闭」和「最小化到托盘」之间的一个更轻量选项，适合
+/// 不需要托盘图标、只是想暂时把窗口收起来的用户。
+/// AskEachTime：新增。不预设固定行为，每次点叉号都弹出「关闭/最小化/返回任务栏托盘/取消」
+/// 四选一弹窗，跟"下载/启动进行中"时强制弹出的那个提示复用同一个弹窗（见
+/// MainWindow.CloseButton_Click），由用户自己当场选，不由这里的默认值决定。
+/// </summary>
+public enum CloseButtonAction
+{
+    DirectClose,
+    MinimizeToTray,
+    Minimize,
+    AskEachTime
+}
+
+/// <summary>启动/关闭自动实例备份的目标选择方式。</summary>
+public enum LifecycleBackupTargetMode
+{
+    /// <summary>只备份当前选中的一个实例。</summary>
+    Single,
+    /// <summary>备份设置页里手动填写的多个实例 ID；不存在的条目跳过。</summary>
+    Multiple,
+    /// <summary>候选实例里只要存在任意一个，就备份所有实际存在的候选实例。</summary>
+    Any,
+    /// <summary>只有候选实例全部存在时才执行备份；缺任意一个则整次跳过。</summary>
+    All
 }
 
 /// <summary>
@@ -284,6 +317,24 @@ public class AppConfig
     public Dictionary<string, string> VersionJavaIdOverrides { get; set; } = new();
 
     /// <summary>
+    /// "此实例默认使用所选 Java，不再提示切换"：按版本 ID 记录的开关集合，出现在这个集合里的
+    /// 版本，启动时即使检测到 <see cref="VersionJavaIdOverrides"/> 指定的 Java 跟自动匹配的
+    /// 主版本号不一致，也不再弹「Java 版本可能不匹配」的确认/强制切换弹窗——直接照用户为这个
+    /// 实例选定的 Java 启动。用来满足"这个实例我很清楚就是要用这个 Java（比如就是要跑某个只支持
+    /// 老版本 Java 的老 mod/整合包），每次启动都被多问一遍很烦"的场景。
+    /// 只影响"版本不匹配"这一类提示；完全找不到可用 Java 时仍然会正常提示下载，不受这个开关影响。
+    /// </summary>
+    public HashSet<string> VersionSkipJavaMismatchPrompt { get; set; } = new();
+
+    /// <summary>点击标题栏关闭按钮（叉号）时的默认行为，见 CloseButtonAction 枚举注释。
+    /// 默认 DirectClose，保持老用户升级后行为不变（不会突然"点叉号却关不掉"）。</summary>
+    public CloseButtonAction DefaultCloseAction { get; set; } = CloseButtonAction.DirectClose;
+
+    /// <summary>是否开机自启动（写入 HKCU\Software\Microsoft\Windows\CurrentVersion\Run，
+    /// 不需要管理员权限，只影响当前登录用户）。默认关闭。</summary>
+    public bool AutoStartOnBoot { get; set; } = false;
+
+    /// <summary>
     /// 收藏的游戏版本 ID 列表（来自下载中心的"☆ 收藏"按钮）。
     /// 保留这个字段只是为了兼容老版本配置文件（升级前已经收藏过版本的用户，配置文件里
     /// 只有这个字段，没有下面的 FavoriteItems）——ConfigService 加载时会把这里的内容
@@ -363,7 +414,7 @@ public class AppConfig
     public bool GuestModeEnabled { get; set; } = false;
 
     /// <summary>
-    /// 界面配色"色系"：White/Blue/Yellow/Purple/Pink（Dark 作为独立色系保留兼容旧配置，
+    /// 界面配色"色系"：内置色系或 Custom 自定义主题（Dark 作为独立色系保留兼容旧配置，
     /// 见下面 IsDarkMode 的注释）。用户在设置里手动选择，独立于访客模式；访客模式开启期间
     /// 会临时覆盖显示为纯黑深色，关闭访客模式后恢复回这里保存的值。见 <see cref="Services.ThemeService"/>。
     ///
@@ -395,6 +446,20 @@ public class AppConfig
     /// 重新接管一次。见 MainWindow 里的每分钟定时检查逻辑。
     /// </summary>
     public bool AutoThemeCycleEnabled { get; set; } = false;
+
+    /// <summary>
+    /// 是否开启"跟随系统深浅色"：开启后 <see cref="IsDarkMode"/> 由 Windows 系统当前的
+    /// 应用深浅色主题设置（"设置-个性化-颜色-选择您的模式"里的"应用模式"）决定，系统主题
+    /// 一变化就立即跟着切换，不需要用户手动点「模式设置」按钮，也不需要像
+    /// <see cref="AutoThemeCycleEnabled"/> 那样自己配置切换时间点。
+    /// 默认关闭：不影响老用户已经习惯的手动/按时间自动模式。
+    ///
+    /// 跟 <see cref="AutoThemeCycleEnabled"/>（按固定时间点自动循环）是两种互斥的"自动"来源——
+    /// 两个不会同时生效，设置页/首页会保证同一时刻只有一个处于开启状态，开一个会自动关掉
+    /// 另一个。跟用户手动点「模式设置」按钮的关系也是"手动优先"：开着跟随系统时，手动点一下
+    /// 按钮可以临时覆盖，但下一次系统主题变化事件触发时还是会被重新接管。
+    /// </summary>
+    public bool FollowSystemTheme { get; set; } = false;
 
     /// <summary>自动循环下，浅色模式的开始时间（小时，0~23）。默认 8，即早上 8:00 开始浅色模式。
     /// 用户可在设置页自行调整。</summary>
@@ -438,6 +503,49 @@ public class AppConfig
     /// </summary>
     public bool EnablePageAnimations { get; set; } = true;
 
+    /// <summary>低性能模式：关闭页面动画、窗口特效和额外阴影。</summary>
+    public bool LowPerformanceMode { get; set; } = false;
+
+    /// <summary>启动器是否默认置于其它窗口之上；F3 可在当前会话临时切换。</summary>
+    public bool AlwaysOnTop { get; set; } = false;
+
+    public bool ScheduledInstanceBackupEnabled { get; set; } = false;
+    public int ScheduledInstanceBackupIntervalHours { get; set; } = 24;
+    public int ScheduledInstanceBackupRetentionCount { get; set; } = 5;
+    public string? ScheduledInstanceBackupVersionId { get; set; }
+
+    /// <summary>每次启动器启动、主界面首帧显示后自动备份实例。后台执行，不阻塞首帧。</summary>
+    public bool BackupInstanceOnStartup { get; set; } = false;
+
+    /// <summary>每次真正关闭主窗口前自动备份实例；备份完成后才继续退出。</summary>
+    public bool BackupInstanceOnClose { get; set; } = false;
+
+    /// <summary>启动/关闭自动备份时的实例选择方式。</summary>
+    public LifecycleBackupTargetMode LifecycleBackupTargetMode { get; set; } = LifecycleBackupTargetMode.Single;
+
+    /// <summary>Multiple / Any / All 模式下的候选实例 ID，限定在当前选择的游戏文件夹中。</summary>
+    public List<string> LifecycleBackupVersionIds { get; set; } = new();
+    public string? CustomBackgroundImagePath { get; set; }
+
+    /// <summary>
+    /// 自定义毛玻璃背景图片的磨砂强度。取值范围 25~100：25 接近透明/清晰，
+    /// 100 为最强磨砂。该值只控制用户导入的背景图片层，不与“面板透明度”绑定，
+    /// 因此切换面板透明度或 Win11 Mica/Acrylic 材质时不会把用户选好的磨砂度覆盖掉。
+    /// </summary>
+    public int CustomBackgroundFrostPercent { get; set; } = 65;
+
+    /// <summary>实际使用离线账户启动的累计次数。</summary>
+    public int OfflineLaunchCount { get; set; } = 0;
+    /// <summary>用户已完成一次捐助后不再提示。</summary>
+    public bool DonationAcknowledged { get; set; } = false;
+
+    /// <summary>Custom 自定义主题使用的主色。只有 UiSkin=Custom 时作为主题强调色生效；
+    /// 选择其它预设色系时会保留该值但不覆盖预设主题，方便之后切回自定义继续使用。</summary>
+    public string? CustomAccentColor { get; set; }
+
+    /// <summary>是否启用 WinUI 3 风格外观。仅保存设置，修改后提示重启启动器。</summary>
+    public bool EnableWinUi3Design { get; set; } = false;
+
     /// <summary>
     /// 窗口透明度开关。默认 false（关闭），需要用户在设置页「外观与视觉效果」里主动开启——
     /// 这是一个纯装饰性的视觉功能，不影响任何现有窗口行为，所以刻意默认关闭，避免老用户
@@ -453,8 +561,7 @@ public class AppConfig
 
     /// <summary>
     /// 窗口透明度百分比，仅在 <see cref="EnableWindowTransparency"/> 开启时生效。
-    /// 取值范围 60~100（100 等同于完全不透明，60 是允许的最透明程度——低于 60 面板上的文字
-    /// 会难以辨认，所以设置页的滑块把下限卡在 60）。默认 88，是一个观感上\"能看出透明质感、
+    /// 取值范围 20~100（100 等同于完全不透明，20 是允许的最透明程度）。默认 88，是一个观感上\"能看出透明质感、
     /// 又不影响阅读\"的折中值。
     /// </summary>
     public int WindowOpacityPercent { get; set; } = 88;
@@ -596,12 +703,34 @@ public class AppConfig
     /// </summary>
     public string? BedrockServerDefaultDownloadDir { get; set; }
 
-    /// <summary>
-    /// 已下载安装的基岩版服务端实例列表（每个实例对应一个独立目录，互不覆盖），
+/// <summary>
+    /// 基岩版专用服务端（BDS）实例列表（每个实例对应一个独立目录，互不覆盖），
     /// 用于"下载完之后原地启动"、以及下次回到这个页面时能看到之前装过哪些版本。
     /// 存放位置：跟随 xcl2/config.json 一起持久化。
     /// </summary>
     public List<BedrockServerRecord> BedrockServers { get; set; } = new();
+
+    // ===== AI 助手 =====
+
+    /// <summary>AI 助手完整配置（API、模型表、普通/专家路由、上下文等）。</summary>
+    public AiAssistantConfig AiAssistant { get; set; } = new();
+
+    /// <summary>旧版本兼容字段。新版本保存时与 AiAssistant.ShowFloatingButton 同步。</summary>
+    public bool AiAssistantFloatingButton { get; set; } = false;
+
+    // ===== 下载通知设置 =====
+
+    /// <summary>下载完成通知方式：0=弹窗(默认)，1=右下角角标，2=Windows自带通知，3=不提示</summary>
+    public int DownloadNotifyMode { get; set; } = 0;
+
+    /// <summary>游戏版本下载完成是否不再弹窗（改用角标/系统通知）</summary>
+    public bool GameVersionNoPopup { get; set; } = false;
+
+    /// <summary>社区资源下载完成是否不再弹窗</summary>
+    public bool CommunityResourceNoPopup { get; set; } = false;
+
+    /// <summary>整合包下载完成是否不再弹窗</summary>
+    public bool ModpackNoPopup { get; set; } = false;
 
     // ===== 注册表功能（HKLM/HKCU 双路径存储） =====
 
@@ -640,6 +769,31 @@ public class AppConfig
     /// 恢复到功能上线前的行为）。
     /// </summary>
     public int AccountTokenGracePeriodDays { get; set; } = 7;
+
+    // ===== 弹窗（OverlayCard）/ 抽屉（AiAssistantPanel）独立外观 =====
+    // 默认全部关闭（PopupUseCustomAppearance/DrawerUseCustomAppearance = false）：
+    // 关闭时弹窗/抽屉的透明度、磨砂度、文字透明度都直接跟随主界面（WindowOpacityPercent
+    // 等已有设置），跟旧版本行为完全一致，只有用户主动打开"独立设置"开关才会应用下面这几个
+    // 单独的值。见 Views/AiAssistantSettingsDialog 附近的"外观"设置区块和
+    // Services/ThemeService.ApplyPopupAppearance / ApplyDrawerAppearance。
+
+    /// <summary>弹窗是否使用独立于主界面的透明度/磨砂度/文字透明度。默认 false（跟随主界面）。</summary>
+    public bool PopupUseCustomAppearance { get; set; } = false;
+    /// <summary>弹窗背景透明度百分比（20~100，100=完全不透明）。仅在 <see cref="PopupUseCustomAppearance"/> 开启时生效。</summary>
+    public int PopupOpacityPercent { get; set; } = 92;
+    /// <summary>弹窗磨砂强度（0~100，0=不磨砂/清晰，100=最强磨砂）。仅在 <see cref="PopupUseCustomAppearance"/> 开启时生效。</summary>
+    public int PopupFrostPercent { get; set; } = 40;
+    /// <summary>弹窗内文字透明度百分比（40~100）。仅在 <see cref="PopupUseCustomAppearance"/> 开启时生效。</summary>
+    public int PopupTextOpacityPercent { get; set; } = 100;
+
+    /// <summary>抽屉（AI 助手面板）是否使用独立于主界面的透明度/磨砂度/文字透明度。默认 false（跟随主界面）。</summary>
+    public bool DrawerUseCustomAppearance { get; set; } = false;
+    /// <summary>抽屉背景透明度百分比（20~100）。仅在 <see cref="DrawerUseCustomAppearance"/> 开启时生效。</summary>
+    public int DrawerOpacityPercent { get; set; } = 92;
+    /// <summary>抽屉磨砂强度（0~100）。仅在 <see cref="DrawerUseCustomAppearance"/> 开启时生效。</summary>
+    public int DrawerFrostPercent { get; set; } = 40;
+    /// <summary>抽屉内文字透明度百分比（40~100）。仅在 <see cref="DrawerUseCustomAppearance"/> 开启时生效。</summary>
+    public int DrawerTextOpacityPercent { get; set; } = 100;
 }
 
 /// <summary>拖入 .zip 且内容特征不明确时的默认处理方式。</summary>

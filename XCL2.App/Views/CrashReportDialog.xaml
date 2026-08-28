@@ -16,12 +16,28 @@
                        VerticalAlignment="Center" TextWrapping="Wrap"/>
         </StackPanel>
 
-        <ScrollViewer MaxHeight="300" VerticalScrollBarVisibility="Auto">
+        <ScrollViewer MaxHeight="180" VerticalScrollBarVisibility="Auto">
             <TextBlock x:Name="MessageText" FontSize="13" TextWrapping="Wrap" LineHeight="20"/>
         </ScrollViewer>
 
+        <!-- 需求：把日志分析直接放进这个崩溃弹窗里，不用再跳去日志页找。弹窗一打开就自动跑一遍
+             CrashAnalyzerService（跟日志页"崩溃报告分析"Tab 是同一套分析逻辑，只是这里自动挑
+             "这次崩溃对应的那个游戏进程"最新的一份崩溃文件来分析，不需要用户自己在下拉框里选）。
+             找不到崩溃文件/没有进程信息时这块区域直接不显示，不占地方，也不会显示一句空提示。 -->
+        <Border x:Name="AnalysisSection" BorderBrush="{DynamicResource DividerBrush}" BorderThickness="0,1,0,0"
+                Margin="0,12,0,0" Padding="0,12,0,0" Visibility="Collapsed">
+            <StackPanel>
+                <TextBlock Text="自动分析" FontSize="13" FontWeight="Bold" Margin="0,0,0,4"/>
+                <TextBlock x:Name="AnalysisSourceText" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}"
+                           Margin="0,0,0,6" TextWrapping="Wrap"/>
+                <ScrollViewer MaxHeight="180" VerticalScrollBarVisibility="Auto">
+                    <TextBlock x:Name="AnalysisText" FontSize="12" TextWrapping="Wrap" LineHeight="19"/>
+                </ScrollViewer>
+            </StackPanel>
+        </Border>
+
         <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,20,0,0">
-            <Button x:Name="ViewLogButton" Content="查看日志" Padding="20,8" Margin="0,0,8,0"
+            <Button x:Name="ViewLogButton" Content="查看完整日志" Padding="20,8" Margin="0,0,8,0"
                     Style="{DynamicResource SecondaryButton}" Click="ViewLog_Click"/>
             <Button x:Name="ExportLogButton" Content="导出完整日志" Padding="20,8" Margin="0,0,8,0"
                     Style="{DynamicResource SecondaryButton}" Click="ExportLog_Click"/>

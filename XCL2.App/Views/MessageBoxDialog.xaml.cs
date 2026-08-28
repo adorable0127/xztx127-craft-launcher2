@@ -43,6 +43,15 @@ public enum XclMessageResult
     Cancel,
 }
 
+/// <summary>关闭按钮"下载/启动进行中"四选一提示专用结果，见 MessageBoxDialog.ShowFourChoice。</summary>
+public enum XclFourChoiceResult
+{
+    Cancel,
+    Close,
+    Minimize,
+    Tray,
+}
+
 /// <summary>
 /// 通用消息提示弹窗 —— 进程内 Overlay 版本的 MessageBox.Show()替代品。
 ///
@@ -80,6 +89,10 @@ public partial class MessageBoxDialog : OverlayDialogControl
     /// 用户按 Esc/点遮罩关闭（没有点任何按钮）时归类为 Cancel——跟原生 MessageBox
     /// 在 YesNoCancel 模式下"叉掉窗口"等价于点了 Cancel 的行为一致。</summary>
     public XclMessageResult Result3 { get; private set; } = XclMessageResult.Cancel;
+
+    /// <summary>四选一场景专用结果（目前只有关闭按钮的"下载/启动进行中"提示用到），
+    /// 用法跟 Result3 一样：只有走 ShowFourChoice 弹出时才会被设置。</summary>
+    public XclFourChoiceResult Result4 { get; private set; } = XclFourChoiceResult.Cancel;
 
     private MessageBoxDialog(string message, string title, XclMessageKind kind, XclMessageButtons buttons)
     {
@@ -243,6 +256,40 @@ public partial class MessageBoxDialog : OverlayDialogControl
         dlg.ButtonPanel.Children.Add(dlg.MakeButton3(option3, XclMessageResult.Yes, isPrimary: true, isDefault: true));
         OverlayDialogService.ShowModal(dlg);
         return dlg.Result3;
+    }
+
+    /// <summary>四选一专用按钮工厂，用法同 MakeButton3。</summary>
+    private Button MakeButton4(string content, XclFourChoiceResult result, bool isPrimary, bool isDefault)
+    {
+        var btn = new Button
+        {
+            Content = content,
+            Padding = new Thickness(16, 8, 16, 8),
+            Margin = new Thickness(6, 0, 0, 0),
+            IsDefault = isDefault,
+            Style = isPrimary ? (Style)FindResource("PrimaryButton") : (Style)FindResource("SecondaryButton"),
+        };
+        btn.Click += (_, _) =>
+        {
+            Result4 = result;
+            CloseWith(null);
+        };
+        return btn;
+    }
+
+    /// <summary>关闭按钮"下载/启动进行中"专用四选一提示：取消 / 关闭 / 最小化 / 返回任务栏托盘。
+    /// 用户按 Esc/点遮罩关闭时归为 Cancel（什么都不做，维持窗口原样，跟点"取消"等价）。</summary>
+    public static XclFourChoiceResult ShowFourChoice(string message, string title,
+        string cancelText, string closeText, string minimizeText, string trayText)
+    {
+        var dlg = new MessageBoxDialog(message, title, XclMessageKind.Warning, XclMessageButtons.OK);
+        dlg.ButtonPanel.Children.Clear();
+        dlg.ButtonPanel.Children.Add(dlg.MakeButton4(cancelText, XclFourChoiceResult.Cancel, isPrimary: false, isDefault: false));
+        dlg.ButtonPanel.Children.Add(dlg.MakeButton4(trayText, XclFourChoiceResult.Tray, isPrimary: false, isDefault: false));
+        dlg.ButtonPanel.Children.Add(dlg.MakeButton4(minimizeText, XclFourChoiceResult.Minimize, isPrimary: false, isDefault: false));
+        dlg.ButtonPanel.Children.Add(dlg.MakeButton4(closeText, XclFourChoiceResult.Close, isPrimary: true, isDefault: true));
+        OverlayDialogService.ShowModal(dlg);
+        return dlg.Result4;
     }
 
     /// <summary>最通用的入口，其它 ShowXxx 静态方法都是对这个的语义化包装。</summary>

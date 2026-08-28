@@ -246,6 +246,31 @@ public partial class LoginPage : UserControl
         }
     }
 
+    private void CopyUuid_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { Tag: Account acc }) return;
+        Clipboard.SetText(acc.Uuid ?? "");
+        ToastService.ShowSuccess("UUID 已复制");
+    }
+
+    private void OpenAccountPortal_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { Tag: Account acc }) return;
+        var url = acc.Type switch
+        {
+            AccountType.Microsoft => "https://www.minecraft.net/msaprofile",
+            AccountType.AuthServer when !string.IsNullOrWhiteSpace(acc.AuthServerApiRoot) => acc.AuthServerApiRoot,
+            _ => null
+        };
+        if (url == null)
+        {
+            StatusText.Text = "离线账户的皮肤可使用「皮肤」按钮导入或设置预设皮肤。";
+            return;
+        }
+        try { Process.Start(new ProcessStartInfo(url) { UseShellExecute = true }); }
+        catch { StatusText.Text = "打开账户页面失败。"; }
+    }
+
     private void Skin_Click(object sender, RoutedEventArgs e)
     {
         if (sender is not Button { Tag: Account acc }) return;

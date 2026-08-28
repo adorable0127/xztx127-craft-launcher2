@@ -1,6 +1,8 @@
-using System.Runtime.InteropServices;
+﻿using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Interop;
+using System.Windows.Media;
+using System.Windows.Controls;
 using XCL2.App.Views;
 
 namespace XCL2.App.Services;
@@ -33,6 +35,14 @@ public static class Win11EffectsService
 
     [DllImport("dwmapi.dll", PreserveSig = true)]
     private static extern int DwmExtendFrameIntoClientArea(IntPtr hwnd, ref MARGINS pMarInset);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int X, int Y, int cx, int cy, uint uFlags);
+
+    private const uint SWP_NOMOVE = 0x0002;
+    private const uint SWP_NOZORDER = 0x0004;
+    private const uint SWP_NOACTIVATE = 0x0010;
+    private const uint SWP_FRAMECHANGED = 0x0020;
 
     [StructLayout(LayoutKind.Sequential)]
     private struct MARGINS
@@ -88,6 +98,55 @@ public static class Win11EffectsService
     }
 
     /// <summary>
+    /// 真正修复"开启云母/亚克力立刻白屏，重启启动器也没用"：问题根本不在 WPF 这边的
+    /// Measure/Arrange/Render 时序（之前这里用 UpdateLayout + Dispatcher.Invoke(Render) 修过一版，
+    /// 实测没用，因为那一套只能强制 WPF 自己的逻辑布局/呈现流程，而 DwmExtendFrameIntoClientArea
+    /// 生效之后，DWM 会给这块窗口重新分配一块合成用的重定向表面(redirection surface)——这块新表面
+    /// 初始内容是空的（合成器意义上的"白"/透明底），必须等窗口产生一次真正的 WM_SIZE 消息，
+    /// DWM 才会重新把 WPF 呈现出来的内容跟云母/亚克力材质合成进这块表面；不产生 WM_SIZE 的话，
+    /// 不管 WPF 内部再怎么强制刷新，画面永远停在 DWM 分配新表面那一刻的空白状态——这就是"重启
+    /// 启动器也没用"的原因：每次启动只要一开启特效就会立刻踩中同一个坑，跟重不重启无关。
+    /// 用 SetWindowPos 在原地把窗口尺寸改一次再改回去（SWP_FRAMECHANGED 强制连非客户区一起
+    /// 重算），人为触发一次真正的 WM_SIZE，逼 DWM 把新表面跟最新画面重新合成一遍，白屏就消失了。
+    /// 只需要在"已经 Show 过、已有实际尺寸"的窗口上做；还没显示过的窗口走正常首帧流程即可，
+    /// 不会有这个问题（还没被 DwmExtendFrameIntoClientArea 分配过旧表面，没有"陈旧空白表面"要刷）。
+    /// </summary>
+    private static void ForceDwmResurface(IntPtr hwnd)
+    {
+        // 修复"窗口一直抽搐抖动"：这里跟 ThemeService.ApplyNativeGlobalOpacity 里的
+        // ForceLayeredResurface 是同一类"原地缩放1像素逼 DWM 重合成"手法，都会对同一个 hwnd
+        // 调 SetWindowPos。当用户同时开启了 Win11 视觉效果 和 整窗全局透明（正是默认演示配置
+        // 里的组合）时，两边几乎同时各自触发一轮，SetWindowPos 交错调用 + 各自引发的
+        // WM_STYLECHANGED/WM_DWMCOMPOSITIONCHANGED 又互相唤醒对方，肉眼看就是窗口反复抖动。
+        // 用 ThemeService 暴露的忙碌闸门保证同一时刻只有一边在改尺寸，另一边直接跳过——
+        // 跳过是安全的，因为很快会有下一次机会（比如面板刷新时）重新尝试。
+        if (!ThemeService.TryEnterResurface(hwnd)) return;
+        try
+        {
+            if (!GetWindowRect(hwnd, out var rect)) return;
+            var width = rect.Right - rect.Left;
+            var height = rect.Bottom - rect.Top;
+            if (width <= 0 || height <= 0) return;
+
+            const uint flags = SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED;
+            // 高度 +1 再 -1：任何一次真实尺寸变化都会触发 WM_SIZE，幅度只要非零即可，
+            // 1 像素的抖动用户完全看不出来，但足够让 DWM 重新生成/合成重定向表面。
+            SetWindowPos(hwnd, IntPtr.Zero, 0, 0, width, height + 1, flags);
+            SetWindowPos(hwnd, IntPtr.Zero, 0, 0, width, height, flags);
+        }
+        finally { ThemeService.ExitResurface(hwnd); }
+    }
+
+    [DllImport("user32.dll")]
+    private static extern bool GetWindowRect(IntPtr hWnd, out RECT lpRect);
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct RECT
+    {
+        public int Left, Top, Right, Bottom;
+    }
+
+    /// <summary>
     /// 给单个窗口套用（或撤销）背景材质 + 圆角。主窗口(MainWindow)用 CurrentMainWindowMaterial
     /// 里选的材质（Mica / Mica Alt / 亚克力毛玻璃三选一），其它窗口（各种设置/详情弹窗）
     /// 固定用 Acrylic，跟主窗口区分开，视觉上能看出主次。
@@ -115,15 +174,67 @@ public static class Win11EffectsService
         var backdrop = enabled
             ? (isMainWindow ? (int)CurrentMainWindowMaterial : DWMSBT_TRANSIENTWINDOW)
             : DWMSBT_AUTO;
-        _ = DwmSetWindowAttribute(hwnd, DWMWA_SYSTEMBACKDROP_TYPE, ref backdrop, sizeof(int));
+        var backdropResult = DwmSetWindowAttribute(hwnd, DWMWA_SYSTEMBACKDROP_TYPE, ref backdrop, sizeof(int));
+        // Win10 / Win11 早期版本不支持 DWMWA_SYSTEMBACKDROP_TYPE。只有 DWM 明确返回成功时
+        // 才能把 WPF 顶层背景改成透明；否则会把本来正常的 SideBrush 清掉，旧系统上反而变成
+        // 黑底/异常透明。关闭特效时无论属性是否受支持都恢复正常 WPF 背景。
+        var backdropApplied = enabled && backdropResult == 0;
 
         // 把"玻璃"区域扩展到整个客户区（关闭时传全 0 margins 收回，交还给窗口自己绘制）。
         // 注意：这一步不需要 AllowsTransparency="True"——DwmExtendFrameIntoClientArea 走的是
         // DWM 合成层，跟 WPF 自己的逐像素透明窗口（AllowsTransparency）是两套独立机制，
         // 两者同时开启反而会互相冲突/性能变差，所以项目里所有窗口都保持 AllowsTransparency="False"。
-        var margins = enabled
+        var margins = backdropApplied
             ? new MARGINS { Left = -1, Right = -1, Top = -1, Bottom = -1 }
             : new MARGINS { Left = 0, Right = 0, Top = 0, Bottom = 0 };
         _ = DwmExtendFrameIntoClientArea(hwnd, ref margins);
+
+        // 仅设置 DWMWA_SYSTEMBACKDROP_TYPE / 扩展 DWM frame 还不够：WPF 的顶层 Hwnd 默认会用
+        // Window.Background 把客户区整张重定向表面先涂成不透明色，DWM 的 Mica/Acrylic 实际
+        // 已经在下面生成了，却被这层 WPF 底色完全盖住，因此“下拉框选了 Acrylic 但背景没同步”。
+        // MainWindow 使用自绘标题栏，最底层 Grid 本身没有 Background，安全做法是：开启 DWM
+        // 材质时让顶层 Window 背景与 HwndTarget 背景透明，让材质成为真正底板；侧栏/卡片仍由
+        // SideBrush/PanelBrush 绘制，并由“窗口透明度”控制其 alpha。关闭时恢复 SideBrush。
+        if (window is MainWindow)
+        {
+            var source = HwndSource.FromHwnd(hwnd);
+            if (backdropApplied)
+            {
+                window.Background = Brushes.Transparent;
+                if (source?.CompositionTarget != null)
+                    source.CompositionTarget.BackgroundColor = Colors.Transparent;
+            }
+            else
+            {
+                window.SetResourceReference(Control.BackgroundProperty, "SideBrush");
+                if (source?.CompositionTarget != null)
+                {
+                    var targetColor = window.TryFindResource("SideBrush") is SolidColorBrush side
+                        ? side.Color : Colors.Black;
+                    // HwndTarget 的兜底底色保持不透明；面板/自定义底图自己的 alpha 仍由 WPF
+                    // 内容树处理，避免关闭 DWM 材质后意外把桌面透进来。
+                    targetColor.A = 255;
+                    source.CompositionTarget.BackgroundColor = targetColor;
+                }
+            }
+        }
+
+        // 用户自定义底图是 WPF 内容树内的一层，效果强度主要由"面板透明度"滑块决定（见
+        // MainWindow.RefreshCustomBackgroundVisualEffect 注释），跟 DWM 材质无关、不依赖
+        // Windows 11；这里切换材质后仍然调用一次，只是为了让"亚克力"材质带来的那一点点
+        // 额外强度加成同步生效，不是让效果"从无到有"的必要条件。
+        if (window is MainWindow mainWindow)
+            mainWindow.RefreshCustomBackgroundVisualEffect();
+
+        // 开启特效、且窗口已经真正显示过（有实际尺寸）时，补一次强制重合成，
+        // 见 ForceDwmResurface 注释——这是修复"立刻白屏"的关键一步，缺了这步单靠上面
+        // 两个 DWM 调用不会自动出现画面。窗口第一次 Show 的过程中也会经过这里
+        // （App.xaml.cs 里 Loaded 类处理器），所以启动时开着特效同样会走到这一步，
+        // 不需要用户手动拖动/切换窗口大小才能看到内容。
+        if (backdropApplied)
+        {
+            window.Dispatcher.InvokeAsync(() => ForceDwmResurface(hwnd),
+                System.Windows.Threading.DispatcherPriority.Loaded);
+        }
     }
 }

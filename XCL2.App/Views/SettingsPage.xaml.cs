@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.IO;
 using System.Windows;
 using System.Windows.Controls;
@@ -31,6 +31,9 @@ public partial class SettingsPage : UserControl
     private bool _hasUnsavedChanges;
     private DispatcherTimer? _editDebounceTimer;
     private string? _preAutoSaveSnapshotJson;
+    private bool _suppressAccentPickerSync;
+    private string _lastSavedUiFingerprint = "";
+    private bool _uiFingerprintReady;
 
     /// <summary>供 MainWindow.SetMainContent 在切页前查询："当前设置页是否有未保存的改动"。
     /// 只有非自动保存模式下才会变成 true——自动保存模式下每次改动都会立即落盘，
@@ -43,6 +46,14 @@ public partial class SettingsPage : UserControl
         InitializeComponent();
         var cfg = _owner.ConfigService.Config;
 
+        // 不在设置页构造/Loaded 阶段重复 ApplyForCurrentState。MainWindow 在首帧前已经把全局
+        // 主题资源同步到最终配置；这里再刷一次会重建全窗口样式，反而制造“切到设置页时按钮
+        // 先浅蓝→深蓝→浅蓝”的可见闪烁。设置页只读取当前配置，不主动重置全局主题。
+
+        // 防抖预览定时器属于本页；切走设置页后必须停止，否则用户刚输入颜色就切页时，
+        // 300ms 后旧页面的计时器仍会突然改全局主题，看起来像“切页后按钮自己变色”。
+        Unloaded += (_, _) => _accentApplyDebounceTimer?.Stop();
+
         MinMemBox.Text = cfg.MinMemoryMb.ToString();
         MaxMemBox.Text = cfg.MaxMemoryMb.ToString();
         WidthBox.Text = cfg.WindowWidth.ToString();
@@ -51,6 +62,17 @@ public partial class SettingsPage : UserControl
         SelectComboByTag(GameLanguageCombo, cfg.GameLanguage);
         GameVersionTypeLabelBox.Text = cfg.GameVersionTypeLabel;
         PageAnimationsCheck.IsChecked = cfg.EnablePageAnimations;
+        LowPerformanceModeCheck.IsChecked = cfg.LowPerformanceMode;
+        AlwaysOnTopCheck.IsChecked = cfg.AlwaysOnTop;
+        ScheduledBackupCheck.IsChecked = cfg.ScheduledInstanceBackupEnabled;
+        ScheduledBackupIntervalBox.Text = cfg.ScheduledInstanceBackupIntervalHours.ToString();
+        ScheduledBackupRetentionBox.Text = cfg.ScheduledInstanceBackupRetentionCount.ToString();
+        BackupOnStartupCheck.IsChecked = cfg.BackupInstanceOnStartup;
+        BackupOnCloseCheck.IsChecked = cfg.BackupInstanceOnClose;
+        SelectComboByTag(LifecycleBackupTargetModeCombo, cfg.LifecycleBackupTargetMode.ToString());
+        if (LifecycleBackupTargetModeCombo.SelectedItem == null) LifecycleBackupTargetModeCombo.SelectedIndex = 0;
+        LifecycleBackupVersionIdsBox.Text = string.Join(Environment.NewLine, cfg.LifecycleBackupVersionIds ?? new List<string>());
+        UpdateLifecycleBackupTargetsUi();
         InjectionScanCheck.IsChecked = cfg.EnableInjectionScan;
         GameConsoleWindowCheck.IsChecked = cfg.EnableGameConsoleWindow;
         ShowModIconsCheck.IsChecked = cfg.ShowModIcons;
@@ -59,10 +81,15 @@ public partial class SettingsPage : UserControl
 
         // 外观与视觉效果：Win11 新光效 + 窗口透明度，均默认关闭，见 AppConfig 对应字段注释。
         Win11EffectsCheck.IsChecked = cfg.EnableWin11VisualEffects;
+        WinUi3DesignCheck.IsChecked = cfg.EnableWinUi3Design;
         SelectComboByTag(BackdropMaterialCombo, cfg.Win11BackdropMaterial);
         if (BackdropMaterialCombo.SelectedItem == null) BackdropMaterialCombo.SelectedIndex = 0; // 兜底：旧配置没有这一项时默认选中"云母 Mica"
         BackdropMaterialPanel.IsEnabled = cfg.EnableWin11VisualEffects;
         WindowTransparencyCheck.IsChecked = cfg.EnableWindowTransparency;
+        CustomBackgroundImagePathBox.Text = cfg.CustomBackgroundImagePath ?? "";
+        var frostPercent = Math.Clamp(cfg.CustomBackgroundFrostPercent, 25, 100);
+        CustomBackgroundFrostSlider.Value = frostPercent;
+        CustomBackgroundFrostValueText.Text = $"{frostPercent}%";
         WindowOpacitySlider.Value = cfg.WindowOpacityPercent;
         WindowOpacityValueText.Text = $"{cfg.WindowOpacityPercent}%";
         WindowOpacitySlider.IsEnabled = cfg.EnableWindowTransparency;
@@ -70,6 +97,25 @@ public partial class SettingsPage : UserControl
         GlobalWindowOpacitySlider.Value = cfg.GlobalWindowOpacityPercent;
         GlobalWindowOpacityValueText.Text = $"{cfg.GlobalWindowOpacityPercent}%";
         GlobalWindowOpacitySlider.IsEnabled = cfg.EnableGlobalWindowTransparency;
+
+        // 弹窗/抽屉独立外观：见 AppConfig.Popup*/Drawer* 字段注释，默认都关闭（跟随主界面）。
+        PopupCustomAppearanceCheck.IsChecked = cfg.PopupUseCustomAppearance;
+        PopupOpacitySlider.Value = Math.Clamp(cfg.PopupOpacityPercent, 20, 100);
+        PopupOpacityValueText.Text = $"{(int)PopupOpacitySlider.Value}%";
+        PopupFrostSlider.Value = Math.Clamp(cfg.PopupFrostPercent, 0, 100);
+        PopupFrostValueText.Text = $"{(int)PopupFrostSlider.Value}%";
+        PopupTextOpacitySlider.Value = Math.Clamp(cfg.PopupTextOpacityPercent, 40, 100);
+        PopupTextOpacityValueText.Text = $"{(int)PopupTextOpacitySlider.Value}%";
+        PopupOpacitySlider.IsEnabled = PopupFrostSlider.IsEnabled = PopupTextOpacitySlider.IsEnabled = cfg.PopupUseCustomAppearance;
+
+        DrawerCustomAppearanceCheck.IsChecked = cfg.DrawerUseCustomAppearance;
+        DrawerOpacitySlider.Value = Math.Clamp(cfg.DrawerOpacityPercent, 20, 100);
+        DrawerOpacityValueText.Text = $"{(int)DrawerOpacitySlider.Value}%";
+        DrawerFrostSlider.Value = Math.Clamp(cfg.DrawerFrostPercent, 0, 100);
+        DrawerFrostValueText.Text = $"{(int)DrawerFrostSlider.Value}%";
+        DrawerTextOpacitySlider.Value = Math.Clamp(cfg.DrawerTextOpacityPercent, 40, 100);
+        DrawerTextOpacityValueText.Text = $"{(int)DrawerTextOpacitySlider.Value}%";
+        DrawerOpacitySlider.IsEnabled = DrawerFrostSlider.IsEnabled = DrawerTextOpacitySlider.IsEnabled = cfg.DrawerUseCustomAppearance;
 
         // 拖拽安装默认值：三个下拉框按 Tag 匹配当前配置值。
         ModpackDropNewInstanceCheck.IsChecked = cfg.ModpackDropCreatesNewInstance;
@@ -105,10 +151,25 @@ public partial class SettingsPage : UserControl
             SelectComboByTag(SimpleJavaVersionCombo, "21");
         }
 
-        CustomJvmArgsBox.Text = cfg.CustomJvmArgs ?? "";
-
         AdvancedModeCheck.IsChecked = cfg.AdvancedMode; // 与主页的"普通模式/高手模式"开关共享同一个配置项，两边保持同步
         UpdateAdvancedVisibility();
+
+        // 窗口与托盘：下拉框选项顺序跟 XAML 里四个 ComboBoxItem 的声明顺序一一对应
+        // （DirectClose=0，MinimizeToTray=1，Minimize=2，AskEachTime=3），初始化时按当前
+        // 配置选中对应项；用 _isInitializingCloseTraySettings 标记暂时挡住下面
+        // SelectionChanged/Checked 事件在"程序自己赋值触发"时误当成"用户手动改的"再写一次
+        // 配置（虽然写同样的值也不会错，但没必要在页面刚打开时就产生一次多余的
+        // ConfigService.Save() 磁盘写入）。
+        _isInitializingCloseTraySettings = true;
+        CloseActionCombo.SelectedIndex = cfg.DefaultCloseAction switch
+        {
+            CloseButtonAction.MinimizeToTray => 1,
+            CloseButtonAction.Minimize => 2,
+            CloseButtonAction.AskEachTime => 3,
+            _ => 0
+        };
+        AutoStartOnBootCheck.IsChecked = cfg.AutoStartOnBoot;
+        _isInitializingCloseTraySettings = false;
 
         GuestModeCheck.IsChecked = cfg.GuestModeEnabled;
 
@@ -130,6 +191,7 @@ public partial class SettingsPage : UserControl
 
         SelectComboByTag(UiSkinCombo, cfg.UiSkin);
         if (UiSkinCombo.SelectedItem == null) UiSkinCombo.SelectedIndex = 0; // 兜底：配置文件里存了非法值时退回第一项(白色)
+        UpdateCustomThemePanelVisibility();
 
         // Win11 高级特效开启时锁定为"水"主题（见 ThemeService.SkinAquatic 类注释）：
         // 打开设置页时如果配置里已经是开启状态，这里要在控件刚填充完就立即锁一次，
@@ -146,6 +208,7 @@ public partial class SettingsPage : UserControl
         SelectComboByTag(AutoThemeDarkStartHourCombo, cfg.AutoThemeDarkStartHour);
 
         SkinApiRootBox.Text = cfg.SkinApiRoot;
+        CustomAccentColorBox.Text = cfg.CustomAccentColor ?? (cfg.UiSkin == ThemeService.SkinCustom ? "#4C9AFF" : "");
 
         AccountTokenGraceDaysBox.Text = cfg.AccountTokenGracePeriodDays.ToString();
         UseMachineWideRegistryCheck.IsChecked = cfg.UseMachineWideRegistry;
@@ -155,7 +218,7 @@ public partial class SettingsPage : UserControl
         // 用 Loaded 事件而不是构造函数里直接遍历，是因为此时 ItemsControl 的
         // 容器（每个 CheckBox）还没真正生成，直接找子控件会全部落空。
         FeatureHideList.ItemsSource = FeatureVisibilityService.Groups;
-        Loaded += (_, _) => InitFeatureHideChecks(cfg);
+        Loaded += (_, _) => RunWithoutDirtyTracking(() => InitFeatureHideChecks(cfg));
 
         RefreshJavaList();
 
@@ -173,6 +236,16 @@ public partial class SettingsPage : UserControl
         // 从这里开始挂编辑追踪、并放开 _suppressDirtyTracking。
         HookDirtyTracking();
         _suppressDirtyTracking = false;
+
+        // 等动态 ItemsControl/ComboBox 容器真正生成以后再记录一次“已保存界面快照”。
+        // 后续收到任何 Changed 事件时先对比这个快照：值实际没变（例如后台 Java 列表刷新、
+        // 控件重新套主题、程序性重选同一个项目）就不会再误弹“设置已修改”。
+        Loaded += (_, _) => Dispatcher.BeginInvoke(new Action(() =>
+        {
+            _lastSavedUiFingerprint = BuildSettingsUiFingerprint();
+            _uiFingerprintReady = true;
+            _hasUnsavedChanges = false;
+        }), DispatcherPriority.ContextIdle);
     }
 
     /// <summary>
@@ -184,29 +257,37 @@ public partial class SettingsPage : UserControl
     /// </summary>
     private void HookDirtyTracking()
     {
-        AddHandler(TextBoxBase.TextChangedEvent, new TextChangedEventHandler((_, _) => OnSettingsEdited()));
-        AddHandler(Selector.SelectionChangedEvent, new SelectionChangedEventHandler((_, _) => OnSettingsEdited()));
-        AddHandler(ToggleButton.CheckedEvent, new RoutedEventHandler((sender, e) =>
+        AddHandler(TextBoxBase.TextChangedEvent, new TextChangedEventHandler((_, e) =>
         {
-            // 关键修复：ComboBox 下拉箭头在内部也是一个 ToggleButton，展开/收起下拉列表
-            // （包括仅仅点开看一眼、不选任何新项）都会触发 Checked/Unchecked 并冒泡到这里，
-            // 被误判成"用户改了一个设置"从而弹出确认/自动保存气泡。真正的设置项永远是
-            // CheckBox/RadioButton，不会是 ComboBox 内部结构，这里按事件源类型过滤掉。
-            if (e.OriginalSource is not System.Windows.Controls.CheckBox and not System.Windows.Controls.RadioButton) return;
+            // 只把用户正在编辑的文本框算作“修改”。后台 Java 刷新、Loaded 初始化、
+            // 导入操作给只读框回填路径等程序赋值，不应该凭空弹“设置已修改”。
+            if (e.OriginalSource is TextBox tb && !tb.IsKeyboardFocusWithin) return;
             OnSettingsEdited();
         }));
-        AddHandler(ToggleButton.UncheckedEvent, new RoutedEventHandler((sender, e) =>
+        AddHandler(Selector.SelectionChangedEvent, new SelectionChangedEventHandler((_, e) =>
         {
-            if (e.OriginalSource is not System.Windows.Controls.CheckBox and not System.Windows.Controls.RadioButton) return;
+            // ComboBox/ListBox 的程序性刷新会触发 SelectionChanged；只有控件当前处于
+            // 键盘焦点链或下拉框正在打开时，才视为用户主动选择。
+            if (e.OriginalSource is ComboBox combo && !combo.IsKeyboardFocusWithin && !combo.IsDropDownOpen) return;
+            if (e.OriginalSource is ListBox list && !list.IsKeyboardFocusWithin) return;
             OnSettingsEdited();
         }));
-        AddHandler(RangeBase.ValueChangedEvent, new RoutedPropertyChangedEventHandler<double>((sender, e) =>
+        AddHandler(ToggleButton.CheckedEvent, new RoutedEventHandler((_, e) =>
         {
-            // 关键修复："一动页面就弹提示"的真正原因：本页内容放在 ScrollViewer 里，
-            // 它内部的滚动条本身也是一个 RangeBase，滚动页面时会不停触发 ValueChanged
-            // 并冒泡到这里，被误判成"用户改了一个设置"。只有真正的设置控件（Slider）
-            // 才应该算作编辑，滚动条（ScrollBar）产生的事件必须过滤掉。
+            if (e.OriginalSource is not System.Windows.Controls.CheckBox and not System.Windows.Controls.RadioButton) return;
+            if (e.OriginalSource is Control c && !c.IsKeyboardFocusWithin && !c.IsMouseOver) return;
+            OnSettingsEdited();
+        }));
+        AddHandler(ToggleButton.UncheckedEvent, new RoutedEventHandler((_, e) =>
+        {
+            if (e.OriginalSource is not System.Windows.Controls.CheckBox and not System.Windows.Controls.RadioButton) return;
+            if (e.OriginalSource is Control c && !c.IsKeyboardFocusWithin && !c.IsMouseOver) return;
+            OnSettingsEdited();
+        }));
+        AddHandler(RangeBase.ValueChangedEvent, new RoutedPropertyChangedEventHandler<double>((_, e) =>
+        {
             if (e.OriginalSource is System.Windows.Controls.Primitives.ScrollBar) return;
+            if (e.OriginalSource is Slider slider && !slider.IsKeyboardFocusWithin && !slider.IsMouseCaptureWithin) return;
             OnSettingsEdited();
         }));
     }
@@ -231,8 +312,34 @@ public partial class SettingsPage : UserControl
         _editDebounceTimer.Start();
     }
 
+    private void MarkCurrentUiAsSaved()
+    {
+        Dispatcher.BeginInvoke(new Action(() =>
+        {
+            _lastSavedUiFingerprint = BuildSettingsUiFingerprint();
+            _uiFingerprintReady = true;
+            _hasUnsavedChanges = false;
+        }), DispatcherPriority.ContextIdle);
+    }
+
     private void HandleDebouncedEdit()
     {
+        // 路由事件会被 WPF 的模板重建、后台刷新等程序动作触发。只有“可保存控件的实际值”
+        // 跟上一次保存后的快照不同，才算真正修改；这样在什么都没改时不会莫名弹保存提示。
+        if (!_uiFingerprintReady)
+        {
+            _lastSavedUiFingerprint = BuildSettingsUiFingerprint();
+            _uiFingerprintReady = true;
+            return;
+        }
+
+        var currentFingerprint = BuildSettingsUiFingerprint();
+        if (string.Equals(currentFingerprint, _lastSavedUiFingerprint, StringComparison.Ordinal))
+        {
+            _hasUnsavedChanges = false;
+            return;
+        }
+
         var cfg = _owner.ConfigService.Config;
 
         if (cfg.SettingsAutoSaveWithoutConfirm)
@@ -259,6 +366,49 @@ public partial class SettingsPage : UserControl
         }
     }
 
+    /// <summary>把设置页中真正可编辑、会参与保存的常用控件压成稳定字符串，用来判断“值到底有没有变”。</summary>
+    private string BuildSettingsUiFingerprint()
+    {
+        var parts = new List<string>();
+
+        string Key(FrameworkElement element, string fallback)
+        {
+            if (!string.IsNullOrWhiteSpace(element.Name)) return element.Name;
+            if (element.Tag is string tag && !string.IsNullOrWhiteSpace(tag)) return fallback + ":" + tag;
+            if (element is ContentControl cc && cc.Content is string content && !string.IsNullOrWhiteSpace(content))
+                return fallback + ":" + content;
+            return fallback;
+        }
+
+        foreach (var tb in FindVisualChildren<TextBox>(this))
+        {
+            if (tb.IsReadOnly) continue;
+            parts.Add($"T|{Key(tb, "TextBox")}|{tb.Text}");
+        }
+        foreach (var cb in FindVisualChildren<CheckBox>(this))
+            parts.Add($"C|{Key(cb, "CheckBox")}|{cb.IsChecked}");
+        foreach (var rb in FindVisualChildren<RadioButton>(this))
+            parts.Add($"R|{Key(rb, "RadioButton")}|{rb.IsChecked}");
+        foreach (var combo in FindVisualChildren<ComboBox>(this))
+        {
+            string value = combo.SelectedItem switch
+            {
+                JavaListItem java => java.Entry?.Id ?? "",
+                ComboBoxItem item => item.Tag?.ToString() ?? item.Content?.ToString() ?? "",
+                _ => combo.SelectedValue?.ToString() ?? combo.SelectedItem?.ToString() ?? ""
+            };
+            parts.Add($"S|{Key(combo, "ComboBox")}|{value}");
+        }
+        foreach (var slider in FindVisualChildren<Slider>(this))
+            parts.Add($"V|{Key(slider, "Slider")}|{Math.Round(slider.Value, 3)}");
+
+        // 自定义窗口背景现在由“导入/清除”按钮立即应用并立即持久化，
+        // 因此只读路径框不属于批量保存内容，也不参与未保存设置指纹。
+
+        parts.Sort(StringComparer.Ordinal);
+        return string.Join("\n", parts);
+    }
+
     /// <summary>"回退"按钮：把 HandleDebouncedEdit 里保存的那份"自动保存前"配置快照
     /// 整份写回 Config（走跟 ConfigService.PatchDefaults 同一套反射赋值套路，逐个可写属性
     /// 复制），持久化后刷新设置页（丢弃当前实例，重新 new 一个显示最新配置），
@@ -282,6 +432,7 @@ public partial class SettingsPage : UserControl
     private void DiscardChanges()
     {
         _hasUnsavedChanges = false;
+        ApplyAllVisualEffectsFromConfig();
         _owner.NavigateToSettings();
     }
 
@@ -291,9 +442,15 @@ public partial class SettingsPage : UserControl
     private void ApplyAllVisualEffectsFromConfig()
     {
         var cfg = _owner.ConfigService.Config;
-        ThemeService.ApplyForCurrentState(cfg.GuestModeEnabled, cfg.UiSkin, cfg.IsDarkMode);
+        ThemeService.ApplyForCurrentState(cfg.GuestModeEnabled, cfg.UiSkin, cfg.IsDarkMode, cfg.CustomAccentColor);
         ThemeService.ApplyWindowTransparency(cfg.EnableWindowTransparency, cfg.WindowOpacityPercent);
         ThemeService.ApplyGlobalWindowTransparency(cfg.EnableGlobalWindowTransparency, cfg.GlobalWindowOpacityPercent);
+        _owner.Topmost = cfg.AlwaysOnTop;
+        if (!string.IsNullOrWhiteSpace(cfg.CustomBackgroundImagePath) && File.Exists(cfg.CustomBackgroundImagePath))
+            ApplyBackgroundImage(cfg.CustomBackgroundImagePath);
+        else
+            _owner.SetCustomBackgroundImage(null);
+
         var material = Enum.TryParse<Win11EffectsService.BackdropMaterial>(cfg.Win11BackdropMaterial, out var m)
             ? m : Win11EffectsService.BackdropMaterial.Mica;
         Win11EffectsService.SetEnabled(cfg.EnableWin11VisualEffects, material);
@@ -331,7 +488,7 @@ public partial class SettingsPage : UserControl
             if (added > 0)
             {
                 _owner.ConfigService.Save();
-                RefreshJavaList();
+                RunWithoutDirtyTracking(RefreshJavaList);
                 StatusText.Text = $"已自动探测到 {added} 个新 Java 并加入列表。";
             }
         }
@@ -342,7 +499,18 @@ public partial class SettingsPage : UserControl
     /// 如果用户当前正好停留在「设置」页，让新登记的 Java 立刻反映到列表框里，
     /// 不需要用户手动切出去再切回来才能看到。RefreshJavaList 本身保持 private，
     /// 只加这一层公开转发，避免把内部刷新细节暴露给外部随意调用。</summary>
-    public void RefreshJavaListPublic() => RefreshJavaList();
+    public void RefreshJavaListPublic() => RunWithoutDirtyTracking(RefreshJavaList);
+
+    /// <summary>程序内部刷新控件时临时关闭“设置已修改”追踪。
+    /// 自动 Java 探测、功能隐藏列表初始化等都会触发 SelectionChanged/Checked，
+    /// 这些不是用户手动改设置，不能因此弹出“设置已修改”。</summary>
+    private void RunWithoutDirtyTracking(Action action)
+    {
+        var previous = _suppressDirtyTracking;
+        _suppressDirtyTracking = true;
+        try { action(); }
+        finally { _suppressDirtyTracking = previous; }
+    }
 
     /// <summary>重新从 cfg.InstalledJavas 刷新列表框 + 全局默认下拉框的内容，并尽量保留原来选中的那一项。
     /// 按 Priority 升序展示（数值越小越靠前=优先级越高），跟 FindJava 自动匹配实际尝试的顺序一致——
@@ -454,10 +622,9 @@ public partial class SettingsPage : UserControl
         var advanced = AdvancedModeCheck.IsChecked == true;
         SimpleJavaPanel.Visibility = advanced ? Visibility.Collapsed : Visibility.Visible;
         AdvancedJavaPanel.Visibility = advanced ? Visibility.Visible : Visibility.Collapsed;
-        CustomJvmArgsPanel.Visibility = advanced ? Visibility.Visible : Visibility.Collapsed;
         DownloadJavaBtn.Content = advanced ? Loc.T("Str_Cs_Download_Java_Using_The_Settings_Above", "按上方设置下载 Java") : Loc.T("Str_Cs_Download_The_Java_Version_Selected_Above", "按上方版本下载 Java");
         AdvancedModeHintText.Text = advanced
-            ? "已切换到高手模式：本页会显示 Java 版本/架构/安装方式、自定义启动参数等高级选项，左侧「日志」页也建议勾选显示日志面板。"
+            ? "已切换到高手模式：本页会显示 Java 版本、架构与安装方式等高级选项，实例级 JVM 参数请在实例设置中编辑。"
             : "当前是普通模式：启动器只展示必要的选项，Java 会自动探测/下载推荐版本，无需任何手动配置。";
     }
 
@@ -473,6 +640,34 @@ public partial class SettingsPage : UserControl
         _owner.ConfigService.Config.AdvancedMode = AdvancedModeCheck.IsChecked == true;
         _owner.ConfigService.Save();
         UpdateAdvancedVisibility();
+        MarkCurrentUiAsSaved();
+    }
+
+    /// <summary>见字段声明处注释：挡住初始化赋值触发的事件，避免多余的一次保存。</summary>
+    private bool _isInitializingCloseTraySettings;
+
+    private void CloseActionCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_isInitializingCloseTraySettings) return;
+        _owner.ConfigService.Config.DefaultCloseAction = CloseActionCombo.SelectedIndex switch
+        {
+            1 => CloseButtonAction.MinimizeToTray,
+            2 => CloseButtonAction.Minimize,
+            3 => CloseButtonAction.AskEachTime,
+            _ => CloseButtonAction.DirectClose
+        };
+        _owner.ConfigService.Save();
+        MarkCurrentUiAsSaved();
+    }
+
+    private void AutoStartOnBootCheck_Changed(object sender, RoutedEventArgs e)
+    {
+        if (_isInitializingCloseTraySettings) return;
+        var enabled = AutoStartOnBootCheck.IsChecked == true;
+        _owner.ConfigService.Config.AutoStartOnBoot = enabled;
+        _owner.ConfigService.Save();
+        AutoStartService.Apply(enabled);
+        MarkCurrentUiAsSaved();
     }
 
     /// <summary>并发线程数输入框只在"启用多线程下载"勾选时才有意义显示——关闭多线程下载时
@@ -503,6 +698,44 @@ public partial class SettingsPage : UserControl
         SelectComboByTag(GameLanguageCombo, _owner.ConfigService.Config.GameLanguage);
         GameVersionTypeLabelBox.Text = _owner.ConfigService.Config.GameVersionTypeLabel;
         StatusText.Text = Loc.T("Str_Cs_Setup_Is_Complete_And_The_Related_Settin", "新手引导已完成，相关设置已自动刷新。");
+    }
+
+    /// <summary>需求：皮肤站可以自动 API 查询，不用手动输入完整 API Root。用户只填皮肤站
+    /// 主页地址（或者已经填了完整 API Root 也没关系，探测逻辑会原样识别通过），点这个按钮
+    /// 复用登录页"认证服务器登录"同一套探测逻辑（AuthServerAuthService.DetectApiRootAsync：
+    /// 依次尝试 {地址}/api/yggdrasil、{地址}/authlib-injector/api 等常见路径，请求根路径看
+    /// 返回的 JSON 是否带有 meta/skinDomains/signaturePublickey 这些 authlib-injector 特征
+    /// 字段），探测成功直接回填输入框，不需要用户自己去皮肤站后台/文档翻 API 地址。</summary>
+    private async void DetectSkinApiRoot_Click(object sender, RoutedEventArgs e)
+    {
+        var input = SkinApiRootBox.Text?.Trim();
+        if (string.IsNullOrEmpty(input))
+        {
+            MessageBoxDialog.ShowInfo("请先填写皮肤站主页地址（例如 littleskin.cn），再点「自动检测」。", Loc.T("Str_Status_Tip", "提示"));
+            return;
+        }
+
+        DetectSkinApiRootBtn.IsEnabled = false;
+        try
+        {
+            var authService = new AuthServerAuthService();
+            var resolved = await authService.DetectApiRootAsync(input);
+            SkinApiRootBox.Text = resolved;
+            ToastService.ShowSuccess($"已自动检测到 API 地址：{resolved}");
+        }
+        catch (AuthStepException ex)
+        {
+            MessageBoxDialog.ShowWarning(ex.Message, "自动检测失败");
+        }
+        catch (Exception ex)
+        {
+            ErrorPresenter.ShowFriendlyError("自动检测 API 地址失败，请检查网络连接，或直接手动填写完整 API Root。",
+                ex.ToString(), "自动检测失败");
+        }
+        finally
+        {
+            DetectSkinApiRootBtn.IsEnabled = true;
+        }
     }
 
     private async void DownloadJava_Click(object sender, RoutedEventArgs e)
@@ -804,6 +1037,59 @@ public partial class SettingsPage : UserControl
 
     private void Save_Click(object sender, RoutedEventArgs e) => PerformSave();
 
+    /// <summary>一键恢复到默认设置：重置所有可配置项回出厂默认值，并保存配置文件。</summary>
+    private void ResetToDefaults_Click(object sender, RoutedEventArgs e)
+    {
+        // 重置为出厂默认值
+        var cfg = _owner.ConfigService.Config;
+        
+        cfg.AdvancedMode = false;
+        cfg.UiSkin = "White";
+        cfg.IsDarkMode = false;
+        cfg.RegistryFeatureEnabled = true;
+        cfg.UseMachineWideRegistry = false;
+        cfg.RestrictedMode = false;
+        cfg.AgreementsAccepted = false;
+        cfg.BasicAgreementAccepted = false;
+        cfg.FirstRunWizardCompleted = false;
+        cfg.MinMemoryMb = 1024;
+        cfg.MaxMemoryMb = 4096;
+        cfg.WindowWidth = 854;
+        cfg.WindowHeight = 480;
+        cfg.Source = DownloadSource.Official;
+        cfg.GameLanguage = "zh_cn";
+        cfg.GameVersionTypeLabel = "XCL2";
+        cfg.EnablePageAnimations = true;
+        cfg.LowPerformanceMode = false;
+        cfg.AlwaysOnTop = false;
+        cfg.EnableWinUi3Design = false;
+        cfg.EnableWin11VisualEffects = false;
+        cfg.EnableWindowTransparency = false;
+        cfg.EnableGlobalWindowTransparency = false;
+        cfg.CustomBackgroundFrostPercent = 65;
+        cfg.CustomAccentColor = null;
+        cfg.PopupUseCustomAppearance = false;
+        cfg.PopupOpacityPercent = 92;
+        cfg.PopupFrostPercent = 40;
+        cfg.PopupTextOpacityPercent = 100;
+        cfg.DrawerUseCustomAppearance = false;
+        cfg.DrawerOpacityPercent = 92;
+        cfg.DrawerFrostPercent = 40;
+        cfg.DrawerTextOpacityPercent = 100;
+        cfg.MaxDownloadThreads = 8;
+        cfg.DownloadSpeedLimitKBps = 0;
+        cfg.SmartBandwidthThrottle = false;
+        
+        // 保存配置
+        _owner.ConfigService.Save();
+        
+        // 刷新界面反映默认值
+        _owner.NavigateToSettings();
+        
+        // 提示用户
+        ToastService.ShowSuccess("已恢复到默认设置");
+    }
+
     /// <summary>供 MainWindow 在"切换页面时有未保存改动"的三选一确认里选了"是"时调用，
     /// 跟点击"保存设置"按钮走的是同一套 PerformSave 逻辑。</summary>
     public void SaveNow() => PerformSave();
@@ -826,6 +1112,22 @@ public partial class SettingsPage : UserControl
         if ((GameLanguageCombo.SelectedItem as ComboBoxItem)?.Tag is string lang) cfg.GameLanguage = lang;
         cfg.GameVersionTypeLabel = GameVersionTypeLabelBox.Text?.Trim() ?? "";
         cfg.EnablePageAnimations = PageAnimationsCheck.IsChecked == true;
+        cfg.LowPerformanceMode = LowPerformanceModeCheck.IsChecked == true;
+        cfg.AlwaysOnTop = AlwaysOnTopCheck.IsChecked == true;
+        cfg.ScheduledInstanceBackupEnabled = ScheduledBackupCheck.IsChecked == true;
+        cfg.ScheduledInstanceBackupVersionId = cfg.SelectedVersionId;
+        if (int.TryParse(ScheduledBackupIntervalBox.Text, out var backupHours))
+            cfg.ScheduledInstanceBackupIntervalHours = Math.Clamp(backupHours, 1, 720);
+        if (int.TryParse(ScheduledBackupRetentionBox.Text, out var retention))
+            cfg.ScheduledInstanceBackupRetentionCount = Math.Clamp(retention, 1, 100);
+        cfg.BackupInstanceOnStartup = BackupOnStartupCheck.IsChecked == true;
+        cfg.BackupInstanceOnClose = BackupOnCloseCheck.IsChecked == true;
+        if (Enum.TryParse<LifecycleBackupTargetMode>(TagOf(LifecycleBackupTargetModeCombo), out var lifecycleMode))
+            cfg.LifecycleBackupTargetMode = lifecycleMode;
+        cfg.LifecycleBackupVersionIds = LifecycleBackupVersionIdsBox.Text
+            .Split(new[] { '\r', '\n', ',', ';', '；', '，' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
         cfg.EnableInjectionScan = InjectionScanCheck.IsChecked == true;
         cfg.EnableGameConsoleWindow = GameConsoleWindowCheck.IsChecked == true;
         cfg.ShowModIcons = ShowModIconsCheck.IsChecked == true;
@@ -833,8 +1135,14 @@ public partial class SettingsPage : UserControl
         cfg.IsolateVersionsByDefault = IsolateVersionsCheck.IsChecked == true;
 
         cfg.EnableWin11VisualEffects = Win11EffectsCheck.IsChecked == true;
+        cfg.EnableWinUi3Design = WinUi3DesignCheck.IsChecked == true;
+        var newCustomAccentColor = string.IsNullOrWhiteSpace(CustomAccentColorBox.Text) ? null : CustomAccentColorBox.Text.Trim();
+        var customAccentChanged = !string.Equals(cfg.CustomAccentColor, newCustomAccentColor, StringComparison.OrdinalIgnoreCase);
+        cfg.CustomAccentColor = newCustomAccentColor;
         cfg.Win11BackdropMaterial = (BackdropMaterialCombo.SelectedItem as ComboBoxItem)?.Tag as string ?? "Mica";
         cfg.EnableWindowTransparency = WindowTransparencyCheck.IsChecked == true;
+        cfg.CustomBackgroundImagePath = string.IsNullOrWhiteSpace(CustomBackgroundImagePathBox.Text) ? null : CustomBackgroundImagePathBox.Text;
+        cfg.CustomBackgroundFrostPercent = Math.Clamp((int)CustomBackgroundFrostSlider.Value, 25, 100);
         cfg.WindowOpacityPercent = (int)WindowOpacitySlider.Value;
         // 跟其它设置不同，这两项一保存就应该立刻能在已打开的窗口上看到效果，不用重启/切页——
         // 用户在设置页调滑块本来就是想马上比对效果，见 ThemeService.ApplyWindowTransparency
@@ -843,10 +1151,27 @@ public partial class SettingsPage : UserControl
         cfg.GlobalWindowOpacityPercent = (int)GlobalWindowOpacitySlider.Value;
 
         ThemeService.ApplyWindowTransparency(cfg.EnableWindowTransparency, cfg.WindowOpacityPercent);
-        ThemeService.ApplyGlobalWindowTransparency(cfg.EnableGlobalWindowTransparency, cfg.GlobalWindowOpacityPercent);
         var material = Enum.TryParse<Win11EffectsService.BackdropMaterial>(cfg.Win11BackdropMaterial, out var m)
             ? m : Win11EffectsService.BackdropMaterial.Mica;
+        // 先切换 Mica/Acrylic，再最后应用整窗透明；DWM 材质切换可能重建合成属性，
+        // 如果顺序反过来会把刚设置的 layered alpha 覆盖掉，表现成“整窗透明无作用”。
         Win11EffectsService.SetEnabled(cfg.EnableWin11VisualEffects, material);
+        if (!string.IsNullOrWhiteSpace(cfg.CustomBackgroundImagePath) && File.Exists(cfg.CustomBackgroundImagePath))
+            _owner.SetCustomBackgroundImage(cfg.CustomBackgroundImagePath);
+        else
+            _owner.SetCustomBackgroundImage(null);
+        ThemeService.ApplyGlobalWindowTransparency(cfg.EnableGlobalWindowTransparency, cfg.GlobalWindowOpacityPercent);
+
+        cfg.PopupUseCustomAppearance = PopupCustomAppearanceCheck.IsChecked == true;
+        cfg.PopupOpacityPercent = (int)PopupOpacitySlider.Value;
+        cfg.PopupFrostPercent = (int)PopupFrostSlider.Value;
+        cfg.PopupTextOpacityPercent = (int)PopupTextOpacitySlider.Value;
+        cfg.DrawerUseCustomAppearance = DrawerCustomAppearanceCheck.IsChecked == true;
+        cfg.DrawerOpacityPercent = (int)DrawerOpacitySlider.Value;
+        cfg.DrawerFrostPercent = (int)DrawerFrostSlider.Value;
+        cfg.DrawerTextOpacityPercent = (int)DrawerTextOpacitySlider.Value;
+        ThemeService.SetPopupAppearanceConfig(cfg.PopupUseCustomAppearance, cfg.PopupOpacityPercent, cfg.PopupFrostPercent, cfg.PopupTextOpacityPercent);
+        ThemeService.SetDrawerAppearanceConfig(cfg.DrawerUseCustomAppearance, cfg.DrawerOpacityPercent, cfg.DrawerFrostPercent, cfg.DrawerTextOpacityPercent);
 
         cfg.ModpackDropCreatesNewInstance = ModpackDropNewInstanceCheck.IsChecked == true;
         if (Enum.TryParse<DropZipDefault>(TagOf(ZipDropDefaultCombo), out var zipDef))
@@ -863,6 +1188,13 @@ public partial class SettingsPage : UserControl
         if (int.TryParse(SpeedLimitBox.Text, out var speedLimit))
             cfg.DownloadSpeedLimitKBps = Math.Max(0, speedLimit);
         cfg.SmartBandwidthThrottle = SmartThrottleCheck.IsChecked == true;
+
+        cfg.LowPerformanceMode = LowPerformanceModeCheck.IsChecked == true;
+
+        cfg.DownloadNotifyMode = DownloadNotifyModeCombo.SelectedIndex;
+        cfg.GameVersionNoPopup = GameVersionNoPopupCheck.IsChecked == true;
+        cfg.CommunityResourceNoPopup = CommunityResourceNoPopupCheck.IsChecked == true;
+        cfg.ModpackNoPopup = ModpackNoPopupCheck.IsChecked == true;
 
         cfg.SelectedJavaId = (DefaultJavaCombo.SelectedItem as JavaListItem)?.Entry?.Id;
 
@@ -909,28 +1241,6 @@ public partial class SettingsPage : UserControl
             cfg.PreferredJavaMajorVersion = sv;
         }
 
-        // 自定义 JVM 参数：保存前先做一次跟启动时同样的切分校验，
-        // 提前把"引号没闭合"这类明显错误拦在设置页，而不是等到真正启动游戏那一刻才发现。
-        var customJvmArgsRaw = CustomJvmArgsBox.Text?.Trim();
-        if (string.IsNullOrEmpty(customJvmArgsRaw))
-        {
-            cfg.CustomJvmArgs = null;
-        }
-        else
-        {
-            try
-            {
-                LauncherService.SplitArgsRespectingQuotes(customJvmArgsRaw);
-                cfg.CustomJvmArgs = customJvmArgsRaw;
-            }
-            catch (Exception ex)
-            {
-                MessageBoxDialog.ShowWarning(
-                    $"自定义 Java 启动参数格式有误，未保存这一项（其余设置已正常保存）：\n{ex.Message}",
-                    "自定义启动参数格式错误");
-            }
-        }
-
         if (int.TryParse(AccountTokenGraceDaysBox.Text, out var graceDays))
             cfg.AccountTokenGracePeriodDays = Math.Max(0, graceDays);
         cfg.UseMachineWideRegistry = UseMachineWideRegistryCheck.IsChecked == true;
@@ -941,10 +1251,10 @@ public partial class SettingsPage : UserControl
         // 访客模式开关状态发生变化时，让 MainWindow 立即重新计算"当前应该用哪个账户"
         // （开启时切到临时访客账户，关闭时切回真实保存的账户），并刷新侧边栏显示，
         // 不需要用户重启启动器才能看到效果。
-        // 访客模式开关变化 或 皮肤选择变化，任一发生都需要重算当前应该显示的配色——
-        // RefreshGuestModeState 内部已经会调用 ThemeService.ApplyForCurrentState，
-        // 两个条件合并只调一次，避免访客模式没变但只改了皮肤时画面没反应。
-        if (guestModeChanged || uiSkinChanged) _owner.RefreshGuestModeState();
+        // 访客模式、皮肤选择，或“自定义”主题颜色任一变化都要重新应用当前主题。
+        // 特别是 UiSkin 已经是 Custom 时，仅修改十六进制/RGB 颜色也必须立即刷新，
+        // 不能因为 uiSkinChanged=false 就把新颜色只写进 config.json 而界面仍停在旧颜色。
+        if (guestModeChanged || uiSkinChanged || customAccentChanged) _owner.RefreshGuestModeState();
         // 自动循环的时间点可能刚被改过（上面已经清空了 AutoThemeLastAppliedSlotStartHour），
         // 这里立即按新计划重新校验一次，保证"保存后一秒内看到效果"——如果当前时间刚好落在
         // 新设置的时间段边界两侧、导致该切换的深浅色模式发生变化，会立刻应用，不需要等到
@@ -956,6 +1266,8 @@ public partial class SettingsPage : UserControl
         RefreshRegistryStatusText();
         StatusText.Text = "设置已保存。";
         _hasUnsavedChanges = false;
+        _lastSavedUiFingerprint = BuildSettingsUiFingerprint();
+        _uiFingerprintReady = true;
     }
 
     /// <summary>刷新"注册表存储"区块下方的状态提示文字：当前 HKLM/HKCU 两支实际是否存在
@@ -1155,8 +1467,24 @@ public partial class SettingsPage : UserControl
             });
     }
 
+/// <summary>
+    /// 打开 AI 助手设置面板（内嵌在窗口内，不再是 Win32 窗口）。
+    /// </summary>
+    private void AiAssistantSettingsBtn_Click(object sender, RoutedEventArgs e)
+    {
+        var settingsPanel = new AiAssistantSettingsPanel(_owner.AiAssistantConfig);
+        settingsPanel.Saved += (_, config) =>
+        {
+            _owner.AiAssistantConfig = config;
+            _owner.AiAssistantService.UpdateConfig(_owner.AiAssistantConfig);
+            _owner.PersistAiAssistantConfig();
+            _owner.UpdateAiFloatingButtonVisibility();
+        };
+        OverlayDialogService.ShowModal(settingsPanel);
+    }
+
     /// <summary>
-    /// "进入实验性功能"入口：第一次点击（cfg.ExperimentalFeaturesUnlocked 还是 false）会先弹
+    /// "实验性功能"统一入口：第一次打开（cfg.ExperimentalFeaturesUnlocked 还是 false）先弹
     /// ExperimentalGateWindow 强制等待 10 秒确认；确认过一次之后这个标记会持久化保存，
     /// 后续再点直接打开 ExperimentalFeaturesWindow，不需要重复罚站。
     /// 用户在网关窗口点"取消"或者直接关掉窗口（Confirmed 仍为 false）时，什么都不做、
@@ -1197,12 +1525,23 @@ public partial class SettingsPage : UserControl
         // 将来若要做"选了『每次询问』就把某些项灰掉"之类的联动，写在这里。
     }
 
-    /// <summary>Win11 视觉效果 / 窗口透明度两个 CheckBox 共用的处理器：这里只做纯界面联动
-    /// （窗口透明度关闭时把下面的透明度滑块一并禁用，避免用户以为拖了滑块但其实没生效），
-    /// 不在这里直接落盘/应用效果——跟本页其它设置一样，改动先留在界面上，统一交给
-    /// "保存设置"按钮（Save_Click）落盘并立即应用。InitializeComponent 阶段设置初始
-    /// IsChecked 也会触发这个事件，但此时 WindowOpacitySlider 已经在 XAML 里声明好，
-    /// 直接读取不会有空引用问题。</summary>
+
+    private void LifecycleBackupTargetModeCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        UpdateLifecycleBackupTargetsUi();
+    }
+
+    private void UpdateLifecycleBackupTargetsUi()
+    {
+        if (LifecycleBackupTargetsPanel == null || LifecycleBackupTargetModeCombo == null) return;
+        LifecycleBackupTargetsPanel.IsEnabled = TagOf(LifecycleBackupTargetModeCombo) != nameof(LifecycleBackupTargetMode.Single);
+        LifecycleBackupTargetsPanel.Opacity = LifecycleBackupTargetsPanel.IsEnabled ? 1.0 : 0.55;
+    }
+
+    /// <summary>Win11 视觉效果 / 窗口透明度两个 CheckBox 以及背景材质下拉框共用的处理器。
+    /// 先做控件启用状态联动；初始化完成后再做“仅视觉预览”的即时应用，让 Mica/Acrylic 的
+    /// 选择当场反映到主窗口。配置本身仍由保存流程落盘，所以取消/回退时可以恢复旧设置。
+    /// InitializeComponent 阶段设置初始值也会触发此事件，由 _suppressDirtyTracking 拦住预览。</summary>
     private void VisualEffectsToggle_Changed(object sender, RoutedEventArgs e)
     {
         if (WindowOpacitySlider == null) return; // InitializeComponent 尚未跑完时的极早期事件，忽略
@@ -1210,6 +1549,32 @@ public partial class SettingsPage : UserControl
         GlobalWindowOpacitySlider.IsEnabled = GlobalWindowTransparencyCheck.IsChecked == true;
         if (BackdropMaterialPanel != null) BackdropMaterialPanel.IsEnabled = Win11EffectsCheck.IsChecked == true;
         ApplyAquaticLockIfNeeded();
+
+        // 背景材质属于纯视觉预览：用户在下拉框选择 Mica/MicaAlt/Acrylic 后应当立刻同步到
+        // 当前主窗口，而不是等到页面底部“保存设置”或重启。初始化控件时会触发同一个事件，
+        // 用 _suppressDirtyTracking 挡住，避免构造设置页过程中把半初始化的控件值应用出去。
+        if (_suppressDirtyTracking) return;
+        var material = Enum.TryParse<Win11EffectsService.BackdropMaterial>(
+            (BackdropMaterialCombo.SelectedItem as ComboBoxItem)?.Tag as string ?? "Mica", out var parsed)
+            ? parsed : Win11EffectsService.BackdropMaterial.Mica;
+        Win11EffectsService.SetEnabled(Win11EffectsCheck.IsChecked == true, material);
+        ThemeService.ApplyWindowTransparency(WindowTransparencyCheck.IsChecked == true, (int)WindowOpacitySlider.Value);
+        // ApplyWindowTransparency 会触发一次全局背景刷新；设置页若有尚未保存的磨砂度预览，
+        // 这里必须用滑块当前值再覆盖回来，避免切换 Mica/Acrylic/透明开关时磨砂度瞬间跳回旧配置。
+        _owner.PreviewCustomBackgroundFrost((int)CustomBackgroundFrostSlider.Value);
+    }
+
+    /// <summary>
+    /// 自定义背景磨砂度：25% 接近透明/清晰，100% 为最强磨砂。
+    /// 拖动时直接预览，但配置落盘仍交给统一的设置保存/自动保存流程。
+    /// </summary>
+    private void CustomBackgroundFrostSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+    {
+        if (CustomBackgroundFrostValueText == null) return;
+        var percent = Math.Clamp((int)e.NewValue, 25, 100);
+        CustomBackgroundFrostValueText.Text = $"{percent}%";
+        if (_suppressDirtyTracking) return;
+        _owner.PreviewCustomBackgroundFrost(percent);
     }
 
     /// <summary>透明度滑块拖动时只更新旁边的百分比文字，实际生效同样要等点"保存设置"。</summary>
@@ -1226,7 +1591,55 @@ public partial class SettingsPage : UserControl
         GlobalWindowOpacityValueText.Text = $"{(int)e.NewValue}%";
     }
 
-    /// <summary>原来这里会在勾选 Win11 高级特效时强制把色系锁死成"水"（Aquatic），
+    /// <summary>弹窗"独立外观"开关：勾选/取消时联动滑块可用状态，并立即预览一次
+    /// （不落盘，跟其它外观预览一样，真正生效要等"保存设置"）。</summary>
+    private void PopupAppearanceControl_Changed(object sender, RoutedEventArgs e)
+    {
+        if (PopupOpacitySlider == null) return;
+        var useCustom = PopupCustomAppearanceCheck.IsChecked == true;
+        PopupOpacitySlider.IsEnabled = useCustom;
+        PopupFrostSlider.IsEnabled = useCustom;
+        PopupTextOpacitySlider.IsEnabled = useCustom;
+        if (_suppressDirtyTracking) return;
+        ThemeService.SetPopupAppearanceConfig(useCustom, (int)PopupOpacitySlider.Value, (int)PopupFrostSlider.Value, (int)PopupTextOpacitySlider.Value);
+    }
+
+    /// <summary>弹窗三个滑块（背景透明度/磨砂度/文字透明度）共用同一个即时预览处理器，
+    /// 拖动时立即更新百分比文字并预览效果，真正落盘仍交给"保存设置"。</summary>
+    private void PopupAppearanceSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+    {
+        if (PopupOpacityValueText == null || PopupFrostValueText == null || PopupTextOpacityValueText == null) return;
+        PopupOpacityValueText.Text = $"{(int)PopupOpacitySlider.Value}%";
+        PopupFrostValueText.Text = $"{(int)PopupFrostSlider.Value}%";
+        PopupTextOpacityValueText.Text = $"{(int)PopupTextOpacitySlider.Value}%";
+        if (_suppressDirtyTracking) return;
+        ThemeService.SetPopupAppearanceConfig(PopupCustomAppearanceCheck.IsChecked == true, (int)PopupOpacitySlider.Value, (int)PopupFrostSlider.Value, (int)PopupTextOpacitySlider.Value);
+    }
+
+    /// <summary>抽屉（AI 助手侧栏）"独立外观"开关，逻辑跟 PopupAppearanceControl_Changed 对称。</summary>
+    private void DrawerAppearanceControl_Changed(object sender, RoutedEventArgs e)
+    {
+        if (DrawerOpacitySlider == null) return;
+        var useCustom = DrawerCustomAppearanceCheck.IsChecked == true;
+        DrawerOpacitySlider.IsEnabled = useCustom;
+        DrawerFrostSlider.IsEnabled = useCustom;
+        DrawerTextOpacitySlider.IsEnabled = useCustom;
+        if (_suppressDirtyTracking) return;
+        ThemeService.SetDrawerAppearanceConfig(useCustom, (int)DrawerOpacitySlider.Value, (int)DrawerFrostSlider.Value, (int)DrawerTextOpacitySlider.Value);
+    }
+
+    /// <summary>抽屉三个滑块共用的即时预览处理器，逻辑跟 PopupAppearanceSlider_ValueChanged 对称。</summary>
+    private void DrawerAppearanceSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+    {
+        if (DrawerOpacityValueText == null || DrawerFrostValueText == null || DrawerTextOpacityValueText == null) return;
+        DrawerOpacityValueText.Text = $"{(int)DrawerOpacitySlider.Value}%";
+        DrawerFrostValueText.Text = $"{(int)DrawerFrostSlider.Value}%";
+        DrawerTextOpacityValueText.Text = $"{(int)DrawerTextOpacitySlider.Value}%";
+        if (_suppressDirtyTracking) return;
+        ThemeService.SetDrawerAppearanceConfig(DrawerCustomAppearanceCheck.IsChecked == true, (int)DrawerOpacitySlider.Value, (int)DrawerFrostSlider.Value, (int)DrawerTextOpacitySlider.Value);
+    }
+
+/// <summary>原来这里会在勾选 Win11 高级特效时强制把色系锁死成"水"（Aquatic），
     /// 用户反馈不希望被强制切换主题——现在改成让所有色系都能正常搭配云母/亚克力材质，
     /// 不再有这条限制，勾选/取消 Win11 特效都不会改动用户选的色系，下拉框也始终可用。
     /// 方法保留（调用点不动），改成空实现，避免把所有调用点都删掉再引入遗漏。</summary>
@@ -1236,6 +1649,314 @@ public partial class SettingsPage : UserControl
         UiSkinCombo.IsEnabled = true;
     }
 
+    private DispatcherTimer? _accentApplyDebounceTimer;
+
+    // 修复"用户自己取色、设置后没有效果"：以前这里只更新了旁边那个小预览方块的背景，
+    // 从来没有调用 ThemeService.ApplyCustomAccent——色板按钮(AccentSwatch_Click)和
+    // RGB 滑块的"使用 RGB 颜色"按钮都会立即预览生效，唯独直接在"颜色值"文本框里
+    // 输入/粘贴十六进制颜色这条路径不会，用户很容易以为"取色/填色之后没反应"。
+    // 现在改成：格式一合法就用短暂防抖（300ms，等用户打完/粘贴完一整段再应用一次，
+    // 不会在每敲一个字符时都刷一次全局资源）真正把颜色应用到主题，而不只是预览方块。
+    private void CustomAccentColorBox_TextChanged(object sender, TextChangedEventArgs e)
+    {
+        if (CustomAccentColorPreview == null) return;
+        try
+        {
+            var text = CustomAccentColorBox.Text.Trim();
+            var color = (System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString(text)!;
+            CustomAccentColorPreview.Background = new System.Windows.Media.SolidColorBrush(color);
+            if (!_suppressAccentPickerSync) SetAccentPickerColor(color);
+
+            // InitializeComponent/构造函数给文本框回填已保存颜色时也会触发 TextChanged。
+            // 旧代码在这里无条件启动 300ms 定时器，导致“刚切到设置页”就再次 ApplyCustomAccent，
+            // 即使当前色系根本不是 Custom，也会把全局按钮颜色突然改掉一次。初始化阶段只更新
+            // 预览方块，不允许修改全局主题；并且只有当前确实选择“自定义”色系时才做实时预览。
+            if (_suppressDirtyTracking) return;
+            var selectedSkin = (UiSkinCombo?.SelectedItem as ComboBoxItem)?.Tag as string;
+            if (!string.Equals(selectedSkin, ThemeService.SkinCustom, StringComparison.Ordinal)) return;
+
+            _accentApplyDebounceTimer?.Stop();
+            _accentApplyDebounceTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(300) };
+            _accentApplyDebounceTimer.Tick += (_, _) =>
+            {
+                _accentApplyDebounceTimer!.Stop();
+                ThemeService.ApplyCustomAccent(color);
+                OnSettingsEdited();
+            };
+            _accentApplyDebounceTimer.Start();
+        }
+        catch
+        {
+            CustomAccentColorPreview.Background = System.Windows.Media.Brushes.Transparent;
+        }
+    }
+
+    private void UiSkinCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        UpdateCustomThemePanelVisibility();
+    }
+
+    private void UpdateCustomThemePanelVisibility()
+    {
+        if (CustomThemeSettingsPanel == null || UiSkinCombo == null) return;
+        var selectedSkin = (UiSkinCombo.SelectedItem as ComboBoxItem)?.Tag as string;
+        CustomThemeSettingsPanel.Visibility = string.Equals(selectedSkin, ThemeService.SkinCustom, StringComparison.Ordinal)
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+    }
+
+    private void AccentSwatch_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { Tag: string hex }) return;
+        try
+        {
+            var color = (System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString(hex)!;
+            SetAccentPickerColor(color);
+            CustomAccentColorBox.Text = hex;
+            ThemeService.ApplyCustomAccent(color);
+            OnSettingsEdited();
+        }
+        catch { }
+    }
+
+    private void AccentRgbSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+    {
+        if (_suppressAccentPickerSync || AccentPickerPreview == null || AccentRText == null || AccentGText == null || AccentBText == null) return;
+        var color = System.Windows.Media.Color.FromRgb((byte)AccentRSlider.Value, (byte)AccentGSlider.Value, (byte)AccentBSlider.Value);
+        AccentPickerPreview.Background = new System.Windows.Media.SolidColorBrush(color);
+        AccentRText.Text = ((int)AccentRSlider.Value).ToString();
+        AccentGText.Text = ((int)AccentGSlider.Value).ToString();
+        AccentBText.Text = ((int)AccentBSlider.Value).ToString();
+    }
+
+    private void SetAccentPickerColor(System.Windows.Media.Color color)
+    {
+        if (AccentRSlider == null) return;
+        _suppressAccentPickerSync = true;
+        try
+        {
+            AccentRSlider.Value = color.R;
+            AccentGSlider.Value = color.G;
+            AccentBSlider.Value = color.B;
+            AccentRText.Text = color.R.ToString();
+            AccentGText.Text = color.G.ToString();
+            AccentBText.Text = color.B.ToString();
+            AccentPickerPreview.Background = new System.Windows.Media.SolidColorBrush(color);
+        }
+        finally { _suppressAccentPickerSync = false; }
+    }
+
+    private void AccentPickerUse_Click(object sender, RoutedEventArgs e)
+    {
+        var color = System.Windows.Media.Color.FromRgb((byte)AccentRSlider.Value, (byte)AccentGSlider.Value, (byte)AccentBSlider.Value);
+        CustomAccentColorBox.Text = $"#{color.R:X2}{color.G:X2}{color.B:X2}";
+        ThemeService.ApplyCustomAccent(color);
+        OnSettingsEdited();
+        ToastService.ShowSuccess("已预览自定义主题颜色，保存设置后会持久生效");
+    }
+
+    private void CustomAccentColorApply_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            var text = CustomAccentColorBox.Text.Trim();
+            var color = (System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString(text)!;
+            ThemeService.ApplyCustomAccent(color);
+            OnSettingsEdited();
+            ToastService.ShowSuccess("已预览自定义主题颜色，保存设置后会持久生效");
+        }
+        catch
+        {
+            MessageBoxDialog.ShowWarning("颜色格式无效，请填写例如 #4C9AFF。", "输入有误");
+        }
+    }
+
+    private void ImportBackgroundImage_Click(object sender, RoutedEventArgs e)
+    {
+        var dialog = new Microsoft.Win32.OpenFileDialog { Filter = "图片文件|*.png;*.jpg;*.jpeg;*.bmp" };
+        if (dialog.ShowDialog() != true) return;
+
+        var cfg = _owner.ConfigService.Config;
+        var previousPath = cfg.CustomBackgroundImagePath;
+        string? copiedPath = null;
+
+        try
+        {
+            var dir = Path.Combine(App.DataDir, "backgrounds");
+            Directory.CreateDirectory(dir);
+
+            // 不再覆盖固定 custom.png：旧实现的 BitmapImage 默认 CacheOption=OnDemand，
+            // WPF 会长期持有该文件句柄，下一次 File.Copy(..., overwrite:true) 就会 IOException。
+            // 使用带时间戳的新文件名彻底避开旧版本遗留的文件锁，同时 MainWindow 用 OnLoad 读取，
+            // 新版本自身也不会继续锁住图片。
+            var ext = Path.GetExtension(dialog.FileName).ToLowerInvariant();
+            if (ext is not ".png" and not ".jpg" and not ".jpeg" and not ".bmp") ext = ".png";
+            copiedPath = Path.Combine(dir, $"custom-{DateTime.Now:yyyyMMdd-HHmmss-fff}{ext}");
+            File.Copy(dialog.FileName, copiedPath, overwrite: false);
+
+            // 先真正加载到主窗口，成功后再更新路径框和配置。旧代码不检查返回值，
+            // SetCustomBackgroundImage 失败时仍然显示“背景图片已导入”，最终就会出现
+            // “路径已经选上，但窗口背景完全没有同步”的假成功状态。
+            if (!ApplyBackgroundImage(copiedPath))
+                throw new InvalidOperationException("图片无法被 WPF 解码或无法应用到主窗口。");
+
+            // 导入背景属于“立即应用并保存”的操作，所以把当前磨砂度一起落盘，避免
+            // 用户刚调好 25~100 的效果，重启后却回到旧磨砂度。
+            cfg.CustomBackgroundImagePath = copiedPath;
+            cfg.CustomBackgroundFrostPercent = Math.Clamp((int)CustomBackgroundFrostSlider.Value, 25, 100);
+            _owner.PreviewCustomBackgroundFrost(cfg.CustomBackgroundFrostPercent);
+            _owner.ConfigService.Save();
+            SetBackgroundPathTextWithoutDirtyTracking(copiedPath);
+
+            CleanupOldImportedBackgrounds(dir, copiedPath);
+            ToastService.ShowSuccess("背景图片已应用并保存");
+        }
+        catch (Exception ex)
+        {
+            // 任一步失败都恢复到导入前状态，确保“主窗口显示 / 路径框 / config.json”
+            // 始终是同一个背景，不留下半成功状态。BitmapImage 使用 OnLoad，不会锁旧文件。
+            cfg.CustomBackgroundImagePath = previousPath;
+            if (!string.IsNullOrWhiteSpace(previousPath) && File.Exists(previousPath))
+                _owner.SetCustomBackgroundImage(previousPath);
+            else
+                _owner.SetCustomBackgroundImage(null);
+            SetBackgroundPathTextWithoutDirtyTracking(previousPath ?? "");
+
+            if (!string.IsNullOrWhiteSpace(copiedPath) &&
+                !string.Equals(copiedPath, previousPath, StringComparison.OrdinalIgnoreCase))
+            {
+                try { File.Delete(copiedPath); } catch { }
+            }
+
+            MessageBoxDialog.ShowError($"导入背景图片失败：{ex.Message}", "背景图片");
+        }
+    }
+
+    private void ClearBackgroundImage_Click(object sender, RoutedEventArgs e)
+    {
+        var cfg = _owner.ConfigService.Config;
+        var previousPath = cfg.CustomBackgroundImagePath;
+
+        try
+        {
+            if (!_owner.SetCustomBackgroundImage(null)) return;
+
+            cfg.CustomBackgroundImagePath = null;
+            _owner.ConfigService.Save();
+            SetBackgroundPathTextWithoutDirtyTracking("");
+            ToastService.ShowSuccess("窗口背景已清除");
+        }
+        catch (Exception ex)
+        {
+            cfg.CustomBackgroundImagePath = previousPath;
+            if (!string.IsNullOrWhiteSpace(previousPath) && File.Exists(previousPath))
+                _owner.SetCustomBackgroundImage(previousPath);
+            SetBackgroundPathTextWithoutDirtyTracking(previousPath ?? "");
+            MessageBoxDialog.ShowError($"清除窗口背景失败：{ex.Message}", "背景图片");
+        }
+    }
+
+    private bool ApplyBackgroundImage(string path)
+    {
+        if (_owner.SetCustomBackgroundImage(path)) return true;
+        ErrorPresenter.LogTechnicalDetail($"应用背景图片失败或文件不存在：{path}");
+        return false;
+    }
+
+    private void SetBackgroundPathTextWithoutDirtyTracking(string text)
+    {
+        var old = _suppressDirtyTracking;
+        _suppressDirtyTracking = true;
+        try { CustomBackgroundImagePathBox.Text = text; }
+        finally { _suppressDirtyTracking = old; }
+    }
+
+    private static void CleanupOldImportedBackgrounds(string dir, string currentPath)
+    {
+        try
+        {
+            var oldFiles = new DirectoryInfo(dir).GetFiles("custom-*.*")
+                .Where(f => !string.Equals(f.FullName, currentPath, StringComparison.OrdinalIgnoreCase))
+                .OrderByDescending(f => f.LastWriteTimeUtc)
+                .Skip(4);
+            foreach (var file in oldFiles)
+            {
+                try { file.Delete(); } catch { /* 旧版可能仍锁着文件，留到下次再清理 */ }
+            }
+        }
+        catch { }
+    }
+
+    private void WinUi3DesignCheck_Changed(object sender, RoutedEventArgs e)
+    {
+        if (!_suppressDirtyTracking && WinUi3DesignCheck.IsChecked == true)
+            MessageBoxDialog.ShowInfo("WinUI 3 新设计将在重启启动器后应用。Windows 10 以下系统不提供此功能；Windows 10 即使开启也可能没有视觉变化。", "提示");
+    }
+
+    /// <summary>低性能模式开关改变时的处理。</summary>
+    private void LowPerformanceModeCheck_Changed(object sender, RoutedEventArgs e)
+    {
+        if (LowPerformanceModeCheck.IsChecked == true)
+        {
+            // 关闭动画效果
+            PageAnimationsCheck.IsChecked = false;
+            // 关闭阴影效果
+            Win11EffectsCheck.IsChecked = false;
+            // 应用低性能模式
+            ApplyLowPerformanceMode();
+            // 提示用户
+            ToastService.ShowInfo("已启用低性能模式：界面动画和特效已关闭，以提升流畅度");
+        }
+        else
+        {
+            // 恢复默认设置
+            PageAnimationsCheck.IsChecked = true;
+            Win11EffectsCheck.IsChecked = true;
+            RefreshConfigUI();
+        }
+    }
+
+    /// <summary>应用低性能模式：关闭动画、阴影和透视效果。</summary>
+    private void ApplyLowPerformanceMode()
+    {
+        // 禁用页面过渡动画
+        if (PageAnimationsCheck != null)
+            PageAnimationsCheck.IsChecked = false;
+
+        // 禁用窗口透明度
+        if (WindowTransparencyCheck != null)
+            WindowTransparencyCheck.IsChecked = false;
+
+        // 禁用全局透明度
+        if (GlobalWindowTransparencyCheck != null)
+            GlobalWindowTransparencyCheck.IsChecked = false;
+
+        // 设置面板透明度为不透明
+        if (WindowOpacitySlider != null)
+            WindowOpacitySlider.Value = 100;
+
+        // 禁用整窗透明度
+        if (GlobalWindowOpacitySlider != null)
+            GlobalWindowOpacitySlider.Value = 100;
+
+        // 禁用云母/亚克力材质效果
+        if (Win11EffectsCheck != null)
+            Win11EffectsCheck.IsChecked = false;
+
+        // 更新UI状态
+        RefreshConfigUI();
+    }
+
+    /// <summary>应用低性能模式到当前窗口。</summary>
+    private void RefreshConfigUI()
+    {
+        var cfg = _owner.ConfigService.Config;
+        cfg.LowPerformanceMode = LowPerformanceModeCheck.IsChecked == true;
+        cfg.EnablePageAnimations = PageAnimationsCheck.IsChecked == true;
+        cfg.EnableWin11VisualEffects = Win11EffectsCheck.IsChecked == true;
+        cfg.EnableWindowTransparency = WindowTransparencyCheck.IsChecked == true;
+        cfg.EnableGlobalWindowTransparency = GlobalWindowTransparencyCheck.IsChecked == true;
+        ThemeService.ApplyWindowTransparency(cfg.EnableWindowTransparency, (int)WindowOpacitySlider.Value);
+        ThemeService.ApplyGlobalWindowTransparency(cfg.EnableGlobalWindowTransparency, (int)GlobalWindowOpacitySlider.Value);
+    }
 }
-
-

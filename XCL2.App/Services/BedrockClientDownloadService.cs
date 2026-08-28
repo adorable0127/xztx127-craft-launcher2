@@ -476,7 +476,25 @@ public class BedrockClientDownloadService
             // 删除失败以前会整条路回退到"换源重新下载"。overwriteFiles 直接覆盖同名文件，
             // 旧版本残留的额外文件不影响运行，重下才真正浪费流量和时间。
             Directory.CreateDirectory(extractDir);
-            ZipFile.ExtractToDirectory(filePath, extractDir, overwriteFiles: true);
+            // 新版（1.26.x 起）官方包是 .msixvc（GDK/XVD 容器），用内置的 MSIXVC 解码器解压
+            //（见 Services/BedrockDecode/，移植自 BedrockBoot 用的 BedrockLauncher.Core）；
+            // 老版本 .appx 仍是标准 zip 结构，走原来的逐条目解压。
+            if (BedrockDecode.GdkPackageExtractor.IsMsixvcPackage(filePath))
+                // 不直接在当前（主界面）进程里调用 ExtractAsync：MSIXVC 解码涉及大量
+                // Marshal.PtrToStructure 之类的非托管内存操作（移植代码，按要求不改动），
+                // 极端情况下会触发 AccessViolationException 这类连 try/catch(Exception)
+                // 和 AppDomain.UnhandledException 都拦不住的"损坏进程状态"异常，导致整个
+                // 启动器窗口毫无征兆地直接消失。改成拉一个自身 exe 的子进程去跑这一步，
+                // 子进程真被这类异常整个杀掉时，这里能拿到的是子进程退出码/输出缺失，
+                // 可以正常走下面的 catch 提示"解压失败"，不会牵连主界面。
+                // 详见 BedrockExtractWorkerProcess.cs 头部注释。
+                await BedrockDecode.BedrockExtractWorkerProcess.RunAsync(filePath, extractDir, version.Channel, progress, ct);
+            else
+                ExtractAppxPackage(filePath, extractDir);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
         }
         catch (Exception ex)
         {
@@ -490,25 +508,117 @@ public class BedrockClientDownloadService
     }
 
     /// <summary>
-    /// 解析下载链接并下载安装包到 version_save（多源回退仅在下载失败时发生；
-    /// 成功拿到完好的安装包后立即返回，不在这里做解压等安装动作）。
+    /// 手动逐条目解压 appx 包，替代直接调用 <see cref="ZipFile.ExtractToDirectory"/>。
+    ///
+    /// 基岩版官方 appx 安装包能被 .NET 的 ZipFile API 打不开/解压到一半失败，常见原因跟"包本身
+    /// 是不是正版/能不能玩"完全无关，是纯粹的 Windows 文件系统限制，集中在这三类：
+    ///
+    /// 1. 路径过长：appx 里资源文件（多语言、多分辨率贴图等）目录层级很深，加上启动器自己的安装
+    ///    目录前缀后，实际落盘路径经常超过 Windows 传统的 260 字符 MAX_PATH 限制，ZipFile 内部
+    ///    直接用 File.Create 打开，会抛 PathTooLongException 中断整个解压。这里改用 "\\?\" 长路径
+    ///    前缀直接调用底层 API，绕开这个限制（不需要用户去改注册表开长路径支持）。
+    /// 2. 大小写"重名"冲突：appx 内部条目名是大小写敏感的（比如同目录下 Foo.txt 和 foo.txt 是两个
+    ///    不同条目），但 Windows 默认文件系统不区分大小写，第二个文件覆盖第一个不会报错、可第一次
+    ///    创建目标目录时如果两个条目的目标路径"仅大小写不同"，.NET 的 ZipFile 有时会在内部去重逻辑
+    ///    上出问题而整体失败。这里逐条目手动写文件，天然不会因为这个中断整体流程。
+    /// 3. 单个条目失败不该导致"文件已下载完成但要重新下载"：ZipFile.ExtractToDirectory 是要么全部
+    ///    成功要么整体抛异常，中间状态不可控。这里改成逐条目 try/catch，记录失败的条目但不中断
+    ///    其它条目的解压，最后如果有失败再统一抛出汇总信息，尽量让"重试解压"而不是"重新下载"就能
+    ///    解决问题。
     /// </summary>
-    /// <summary>判断这个下载链接是不是已知打不开的包格式（目前是 .msixvc——Xbox/Game Pass
-    /// 云流式安装用的分块格式，不是标准 zip，ZipFile 系列 API 无法读取/解压，
-    /// 下了也没法用，提前跳过，避免白白下载几个 GB 又被判定"无效"重新来过）。</summary>
-    private static bool IsKnownUnextractablePackageUrl(string url)
+    private static void ExtractAppxPackage(string packagePath, string extractDir)
     {
-        try
+        using var archive = ZipFile.OpenRead(packagePath);
+
+        var failures = new List<string>();
+
+        foreach (var entry in archive.Entries)
         {
-            var path = new Uri(url).AbsolutePath;
-            return path.EndsWith(".msixvc", StringComparison.OrdinalIgnoreCase);
+            // 目录条目（entry.Name 为空，只有 FullName 以 / 结尾）：appx 里目录本身通常不会
+            // 单独出现，但保险起见处理一下，避免下面按文件处理时创建出一个同名"文件"。
+            if (string.IsNullOrEmpty(entry.Name))
+                continue;
+
+            // appx 内部路径分隔符固定是 '/'，Windows 上要换成 '\' 才能正确拼目录。
+            var relativePath = entry.FullName.Replace('/', Path.DirectorySeparatorChar);
+            var destPath = Path.GetFullPath(Path.Combine(extractDir, relativePath));
+
+            // 防止 zip 条目里出现 "../" 之类的路径穿越，写到 extractDir 之外。
+            if (!destPath.StartsWith(Path.GetFullPath(extractDir) + Path.DirectorySeparatorChar,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                failures.Add($"{entry.FullName}：非法路径（疑似路径穿越），已跳过");
+                continue;
+            }
+
+            try
+            {
+                ExtractSingleEntry(entry, destPath);
+            }
+            catch (Exception ex)
+            {
+                failures.Add($"{entry.FullName}：{ex.Message}");
+            }
         }
-        catch
+
+        if (failures.Count > 0)
         {
-            return url.Contains(".msixvc", StringComparison.OrdinalIgnoreCase);
+            // 逐条目解压里失败的都是极少数（多半是同一类原因反复出现），只挑前几条列出来，
+            // 避免异常信息本身长到没法看。
+            var shown = string.Join("；", failures.Take(5));
+            var more = failures.Count > 5 ? $"，其余 {failures.Count - 5} 个条目省略" : "";
+            throw new IOException($"{failures.Count} 个文件解压失败：{shown}{more}");
         }
     }
 
+    /// <summary>解压单个 zip 条目到目标路径，用长路径前缀绕开 Windows 260 字符 MAX_PATH 限制。</summary>
+    private static void ExtractSingleEntry(ZipArchiveEntry entry, string destPath)
+    {
+        var destDir = Path.GetDirectoryName(destPath);
+        if (!string.IsNullOrEmpty(destDir))
+            CreateDirectoryLongPath(destDir);
+
+        var writablePath = ToLongPathIfNeeded(destPath);
+
+        using var entryStream = entry.Open();
+        using var fileStream = new FileStream(writablePath, FileMode.Create, FileAccess.Write, FileShare.None);
+        entryStream.CopyTo(fileStream);
+
+        try
+        {
+            File.SetLastWriteTime(writablePath, entry.LastWriteTime.LocalDateTime);
+        }
+        catch
+        {
+            // 时间戳设置失败不影响文件内容本身，不需要让整个条目解压失败。
+        }
+    }
+
+    /// <summary>递归创建目录，超长路径时加 "\\?\" 前缀绕开 MAX_PATH。</summary>
+    private static void CreateDirectoryLongPath(string dir)
+    {
+        var p = ToLongPathIfNeeded(dir);
+        Directory.CreateDirectory(p);
+    }
+
+    /// <summary>
+    /// 路径超过安全阈值时加上 "\\?\" 长路径前缀（仅本地绝对路径有效，UNC 路径要用
+    /// "\\?\UNC\" 前缀，这里的安装目录不会是网络路径，不用额外处理那种情况）。
+    /// 阈值取 240 而不是刚好 260，是给文件名本身、以及 Windows API 内部可能附加的
+    /// 后缀留出余量，避免"差几个字符"卡在边界上。
+    /// </summary>
+    private static string ToLongPathIfNeeded(string path)
+    {
+        if (path.Length < 240 || path.StartsWith(@"\\?\"))
+            return path;
+
+        return @"\\?\" + path;
+    }
+
+    /// <summary>
+    /// 解析下载链接并下载安装包到 version_save（多源回退仅在下载失败时发生；
+    /// 成功拿到完好的安装包后立即返回，不在这里做解压等安装动作）。
+    /// </summary>
     private async Task<string> ResolveAndDownloadPackageAsync(BedrockVersionInfo version, string targetDir,
         IProgress<ProgressInfo>? progress, CancellationToken ct)
     {
@@ -517,19 +627,13 @@ public class BedrockClientDownloadService
             return await DownloadFromUrlAsync(EnumerateCdnMirrors(version.Url), version.Name, targetDir, progress, ct);
 
         // 2. 新版（reversedcodes 列表，1.26.x 等 GDK 通道版本）：
-        //    先拉该版本的 GDK 元数据拿直链，但 GDK 元数据给出来的很多是 .msixvc 格式——
-        //    这是微软 Xbox/Game Pass 那套"云流式安装"用的分块流式包格式，不是标准 zip，
-        //    ZipFile 系列 API 天生打不开、也没法用 ExtractToDirectory 解压。以前的代码把
-        //    这些 .msixvc 链接和真正的 .appx（zip 结构）混在一起、.msixvc 还排在前面优先试，
-        //    结果永远校验失败（"End of Central Directory record could not be found"），
-        //    但每次还是要先把几百 MB~几个 GB 的文件完整下完才能验出来是无效的——这才是
-        //    "重复下载"的真正根因：不是网络问题，是从一开始就注定会验证失败的格式，
-        //    白白重下了一整个文件的流量和时间。
-        //
-        //    现在的策略：Microsoft Store FE3 API 换到的直链是真正的 .appx（合法 zip
-        //    结构），优先试这条；GDK 元数据里的 .msixvc 链接直接过滤掉、根本不去尝试下载
-        //    （下了也白下)，只保留 GDK 元数据里万一给出的非 .msixvc（真正 zip 结构）链接
-        //    作为补充候选。
+        //    先拉该版本的 GDK 元数据拿微软官方直链。1.26.x 起官方给的全是 .msixvc
+        //    （GDK/XVD 容器，Xbox/Game Pass 云安装格式）——以前启动器没有解码器，
+        //    这类链接下了也无法解压，只能跳过并弹窗报错；现在已内置 MSIXVC 解码器
+        //    （Services/BedrockDecode/，BedrockBoot 同款），.msixvc 可以直接下载并解压。
+        //    优先级：Microsoft Store FE3 API 换到的直链是真正的 .appx（zip 结构），
+        //    优先试这条（能拿到就按 UWP 方式安装注册）；GDK 元数据里的 .msixvc 链接
+        //    作为补充候选，全部 .msixvc 时也能正常安装。
         if (version.DirectUrlAvailable)
         {
             var urls = new List<string>();
@@ -539,22 +643,19 @@ public class BedrockClientDownloadService
             if (!string.IsNullOrEmpty(fe3Url))
                 urls.AddRange(EnumerateCdnMirrors(fe3Url));
 
-            // GDK 元数据链接作为补充：过滤掉已知打不开的 .msixvc，避免白下几个 GB。
+            // GDK 元数据链接作为补充：.msixvc 由内置解码器处理，全部参与候选。
             var gdkUrls = await ResolveGdkDownloadUrlsAsync(version, ct);
-            var skippedMsixvc = 0;
             foreach (var url in gdkUrls)
-            {
-                if (IsKnownUnextractablePackageUrl(url)) { skippedMsixvc++; continue; }
                 urls.AddRange(EnumerateCdnMirrors(url));
-            }
-            if (skippedMsixvc > 0)
-                LauncherLogService.AppendLine(
-                    $"[Bedrock下载] GDK 元数据给了 {skippedMsixvc} 个 .msixvc 格式链接（不是 zip 结构，" +
-                    "已知无法用当前的解压方式安装），已跳过不尝试下载。");
 
             var distinct = urls.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
             if (distinct.Count > 0)
             {
+                // 日志冗余：记下候选来源构成，方便排查"为什么走的是哪条路"
+                var msixvcCount = distinct.Count(u => u.Contains(".msixvc", StringComparison.OrdinalIgnoreCase));
+                LauncherLogService.AppendLine(
+                    $"[Bedrock下载] 版本 {version.Name} 共解析出 {distinct.Count} 个官方直链，" +
+                    $"其中 {msixvcCount} 个为 .msixvc（GDK）格式，将由内置 MSIXVC 解码器解压安装。");
                 try
                 {
                     return await DownloadFromUrlAsync(distinct, version.Name, targetDir, progress, ct);
@@ -566,12 +667,6 @@ public class BedrockClientDownloadService
                         $"详细信息：{ex.Message}", ex);
                 }
             }
-
-            if (skippedMsixvc > 0 && gdkUrls.Count == skippedMsixvc)
-                throw new InvalidOperationException(
-                    $"版本 {version.Name} 目前只能拿到 .msixvc 格式的官方包（微软 Xbox/Game Pass 云安装" +
-                    "格式，不是标准 zip 结构），当前启动器的安装方式无法处理这种格式，且 Microsoft Store " +
-                    "接口也没能换到直链。请尝试其他版本，或从 Microsoft Store 直接安装该版本。");
 
             throw new InvalidOperationException("获取该版本的微软官方下载链接失败，所有镜像源均不可用。");
         }
@@ -768,11 +863,11 @@ public class BedrockClientDownloadService
         Directory.CreateDirectory(versionSaveDir);
         var filePath = Path.Combine(versionSaveDir, fileName);
 
-        if (!IsValidZip(filePath))
+        if (!IsValidPackage(filePath))
         {
             // 全局缓存索引：其他目录里已缓存过同一版本的安装包，直接复用，不再重复下载
             var cachedEntry = GamePackageCacheIndex.Find(versionName, "client");
-            if (cachedEntry != null && IsValidZip(cachedEntry.FilePath))
+            if (cachedEntry != null && IsValidPackage(cachedEntry.FilePath))
             {
                 try
                 {
@@ -786,7 +881,7 @@ public class BedrockClientDownloadService
             }
         }
 
-        if (!IsValidZip(filePath, out var initialReason))
+        if (!IsValidPackage(filePath, out var initialReason))
         {
             LauncherLogService.AppendLine($"[Bedrock下载] 目标文件当前不可复用：{initialReason}，开始按镜像列表下载（共 {urlList.Count} 个候选源）");
             Exception? lastError = null;
@@ -801,9 +896,9 @@ public class BedrockClientDownloadService
 
                     await DownloadToFileAsync(url, filePath, versionName, progress, ct);
 
-                    // 下载完先验证是不是完好的压缩包：网上下到一半/被劫持成 HTML 都会在这里暴露，
-                    // 直接删掉换下一个源，全失败再报错，避免后面"解压失败"。
-                    if (IsValidZip(filePath, out var checkReason))
+                    // 下载完先验证是不是完好的安装包（zip 或 MSIXVC/XVD）：网上下到一半/被劫持
+                    // 成 HTML 都会在这里暴露，直接删掉换下一个源，全失败再报错，避免后面"解压失败"。
+                    if (IsValidPackage(filePath, out var checkReason))
                     {
                         LauncherLogService.AppendLine($"[Bedrock下载] 校验通过（{checkReason}），使用此源：{url}");
                         break;
@@ -820,7 +915,7 @@ public class BedrockClientDownloadService
                 }
             }
 
-            if (!IsValidZip(filePath, out var finalReason))
+            if (!IsValidPackage(filePath, out var finalReason))
             {
                 try { File.Delete(filePath); } catch { }
                 LauncherLogService.AppendLine($"[Bedrock下载] 所有源均失败，最终原因：{finalReason}");
@@ -867,6 +962,18 @@ public class BedrockClientDownloadService
                     (int)(done / 1024), (int)(total / 1024),
                     $"{done / 1048576} MB / {total / 1048576} MB"));
         }
+    }
+
+    /// <summary>校验文件是否为完好的安装包：MSIXVC（GDK）走魔数+头解析校验，
+    /// 其余（.appx/.zip 等）走 zip 校验。下载后的完整性与换源判断统一走这里，
+    /// 两个格式共用一个入口。</summary>
+    private static bool IsValidPackage(string path) => IsValidPackage(path, out _);
+
+    private static bool IsValidPackage(string path, out string reason)
+    {
+        if (BedrockDecode.GdkPackageExtractor.IsMsixvcPackage(path))
+            return BedrockDecode.GdkPackageExtractor.ValidateMsixvc(path, out reason);
+        return IsValidZip(path, out reason);
     }
 
     /// <summary>校验文件是否为完好的 zip 压缩包。
@@ -1014,4 +1121,81 @@ public class BedrockClientDownloadService
     /// <summary>旧的同步签名保留（内部等异步完成）。</summary>
     public static Process? LaunchClient(string installDir)
         => LaunchClientAsync(installDir).GetAwaiter().GetResult();
+
+    /// <summary>
+    /// 启动后"崩溃检测 + 句柄泄漏"修复。
+    ///
+    /// 背景（先说清楚能做到什么、做不到什么，避免后来者对着这个方法瞎加期待）：
+    /// LaunchClientAsync 只有两种返回：
+    ///   1) 走"注册进系统应用清单 + shell:AppsFolder 唤起"这条正路（绝大多数情况）→ 返回
+    ///      null。这条路径唤起的是系统另起的独立应用进程，跟 explorer/shell 之间没有
+    ///      父子进程关系，本进程从始至终拿不到、也没有官方合法渠道拿到那个进程的句柄——
+    ///      这跟 BedrockLaunchService 类头注释里说的是同一件事。这种情况下我们能做的
+    ///      只有"如实告诉用户没法监控"，不能假装在监控。
+    ///   2) 走"直接跑 exe"降级路径（AppxManifest 缺失/注册失败时的兜底）→ 返回一个真正
+    ///      的 Process 对象，这是本进程用 Process.Start 直接拉起的子进程，才有条件做
+    ///      "启动后是否短时间内异常退出"的检测。
+    ///
+    /// 这个方法只处理第 2 种情况：
+    ///   - 修复原来 4 处调用点把返回的 Process 直接丢掉不 Dispose 的句柄泄漏
+    ///     （每次通过降级路径启动一次基岩版，就泄漏一个内核对象句柄，多次启动会累积）；
+    ///   - 用 Exited 事件（而不是轮询）等待进程退出，退出时间落在"启动后很短的宽限期内"
+    ///     （EARLY_EXIT_GRACE）就判定为"很可能是启动即崩溃"（对应用户反馈的"启动器窗口
+    ///     还在，游戏窗口没了"），回调 onLikelyEarlyExit 让 UI 层给出提示；超过宽限期后
+    ///     正常退出（比如用户正常玩完退出游戏）不算异常，不会误报。
+    ///   - 无论走到哪个分支，进程对象最终都会被 Dispose，不会常驻占用句柄。
+    ///
+    /// 这是"尽力而为"的启发式判断，不是精确的崩溃检测（做不到读取游戏内部状态/崩溃转储），
+    /// 但已经能覆盖"支持库缺失/驱动不兼容导致进程刚起来就退出"这类最常见的降级路径崩溃。
+    /// </summary>
+    private static readonly TimeSpan EarlyExitGrace = TimeSpan.FromSeconds(8);
+
+    public static void MonitorLaunchedProcess(Process? proc, Action<string>? onLikelyEarlyExit)
+    {
+        if (proc == null) return; // 见上面方法注释：这种情况下没有句柄可监控，什么都不用做
+
+        var startedAt = DateTime.UtcNow;
+        var handled = 0; // 用 Interlocked 做一次性门闩，防止 Exited 事件 + 下面的同步兜底重复处理/重复 Dispose
+
+        void HandleExit()
+        {
+            if (Interlocked.Exchange(ref handled, 1) != 0) return;
+            try
+            {
+                var elapsed = DateTime.UtcNow - startedAt;
+                if (elapsed < EarlyExitGrace)
+                {
+                    onLikelyEarlyExit?.Invoke(
+                        $"基岩版客户端进程在启动后 {elapsed.TotalSeconds:F1} 秒内就退出了，" +
+                        "很可能是刚启动就闪退（常见原因：缺少运行库、显卡驱动过旧、" +
+                        "杀毒软件拦截），而不是正常关闭游戏。");
+                }
+            }
+            finally
+            {
+                // 事件处理完成后释放，防止 Process 对象常驻内存/占用句柄——
+                // 这是原来 4 处调用点丢弃返回值不 Dispose 造成的那部分泄漏的根本修复点。
+                proc.Dispose();
+            }
+        }
+
+        try
+        {
+            proc.EnableRaisingEvents = true;
+        }
+        catch
+        {
+            // 极少数情况下（进程已经退出/权限问题）设置这个属性本身会抛异常，
+            // 此时直接释放句柄，不再尝试监控，避免半途而废地占着句柄。
+            proc.Dispose();
+            return;
+        }
+
+        proc.Exited += (_, _) => HandleExit();
+
+        // 极端时序：进程在我们订阅 Exited 之前就已经退出，Exited 事件在部分系统上可能
+        // 不会再补发。补一次同步检查兜底（HandleExit 内部的门闩保证不会跟 Exited 事件重复处理）。
+        if (proc.HasExited)
+            HandleExit();
+    }
 }

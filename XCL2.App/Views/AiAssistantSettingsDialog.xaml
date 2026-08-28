@@ -1,0 +1,8 @@
+<Window x:Class="XCL2.App.Views.AiAssistantSettingsDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="AI 助手设置" Width="540" SizeToContent="Height"
+        MaxHeight="760" WindowStartupLocation="CenterOwner"
+        Background="{DynamicResource SideBrush}" ResizeMode="CanMinimize">
+    <ContentControl x:Name="PanelHost"/>
+</Window>

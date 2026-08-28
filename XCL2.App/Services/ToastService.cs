@@ -96,6 +96,40 @@ public static class ToastService
     public static void ShowInfo(string message) => Show(message, ToastKind.Info);
     public static void ShowWarning(string message) => Show(message, ToastKind.Warning, 5);
 
+    /// <summary>显示 Windows 系统原生通知（右下角系统通知中心）。</summary>
+    public static void ShowSystemNotification(string message, string title = "XCL2")
+    {
+        try
+        {
+            if (_host?.Dispatcher.CheckAccess() == false)
+            {
+                _host.Dispatcher.Invoke(() => ShowSystemNotification(message, title));
+                return;
+            }
+
+            // 使用 Windows 10+ Toast 通知
+            var toastXml = $@"
+<toast>
+  <visual>
+    <binding template='ToastGeneric'>
+      <text>{System.Security.SecurityElement.Escape(title)}</text>
+      <text>{System.Security.SecurityElement.Escape(message)}</text>
+    </binding>
+  </visual>
+</toast>";
+
+            var xmlDoc = new Windows.Data.Xml.Dom.XmlDocument();
+            xmlDoc.LoadXml(toastXml);
+            var toast = new Windows.UI.Notifications.ToastNotification(xmlDoc);
+            Windows.UI.Notifications.ToastNotificationManager.CreateToastNotifier("XCL2").Show(toast);
+        }
+        catch
+        {
+            // 降级到普通 Toast
+            Show(message, ToastKind.Info);
+        }
+    }
+
     /// <summary>
     /// 左下角"操作类"通知：带 1-2 个按钮，点了按钮或点"关闭"之前不会自动消失
     /// （跟右下角纯告知性 Toast 的关键区别——这里的选择有实际后果，不该在用户还没看到、

@@ -45,6 +45,8 @@ public partial class InstanceSettingsDialog : OverlayDialogControl
             ? javaOverride.ToString()
             : "";
 
+        SkipJavaMismatchPromptCheckDlg.IsChecked = _config.VersionSkipJavaMismatchPrompt.Contains(versionId);
+
         VersionIsolationOverrideCheckDlg.IsChecked = _config.VersionIsolationOverrides.TryGetValue(versionId, out var isolate)
             ? isolate
             : _config.IsolateVersionsByDefault;
@@ -60,6 +62,10 @@ public partial class InstanceSettingsDialog : OverlayDialogControl
         AutoJoinServerAddressBoxDlg.IsEnabled = hasAutoJoin;
 
         var versionDir = Path.Combine(_folderPath, "versions", versionId);
+        var instance = InstanceConfigService.LoadOrCreateDefault(versionDir);
+        InstanceMinMemoryBoxDlg.Text = instance.MinMemoryMb?.ToString() ?? "";
+        InstanceMaxMemoryBoxDlg.Text = instance.MaxMemoryMb?.ToString() ?? "";
+        InstanceCustomJvmArgsBoxDlg.Text = instance.CustomJvmArgs ?? _config.CustomJvmArgs ?? "";
         InstanceXclDirTextDlg.Text = InstanceConfigService.GetXclDir(versionDir);
     }
 
@@ -78,6 +84,15 @@ public partial class InstanceSettingsDialog : OverlayDialogControl
             _config.VersionJavaIdOverrides[versionId] = selectedJava.Id;
         else
             _config.VersionJavaIdOverrides.Remove(versionId);
+
+        // "不再提示切换"这个开关只在确实选了某个具体 Java 时才有意义——没选具体 Java 的话
+        // 启动时走的是自动搜索/下载逻辑，根本不会触发"手动指定的 Java 跟自动匹配不一致"这个
+        // 判断分支，勾了也不会有任何实际效果，这里直接不落盘，避免配置文件里留一条死数据、
+        // 以后用户换掉具体 Java 选择后这个开关却还残留着生效范围以外的旧状态。
+        if (selectedJava != null && SkipJavaMismatchPromptCheckDlg.IsChecked == true)
+            _config.VersionSkipJavaMismatchPrompt.Add(versionId);
+        else
+            _config.VersionSkipJavaMismatchPrompt.Remove(versionId);
 
         var javaText = VersionJavaOverrideBoxDlg.Text.Trim();
         if (javaText.Length == 0)
@@ -114,6 +129,8 @@ public partial class InstanceSettingsDialog : OverlayDialogControl
             _config.VersionAutoJoinServer.Remove(versionId);
         }
 
+        int? instanceMin = ParseNullableMemory(InstanceMinMemoryBoxDlg.Text);
+        int? instanceMax = ParseNullableMemory(InstanceMaxMemoryBoxDlg.Text);
         _config.SelectedVersionId = versionId;
 
         // 镜像写入实例目录：versions/<id>/xcl/settings.json（同 VersionSelectPage 那份逻辑）。
@@ -124,7 +141,9 @@ public partial class InstanceSettingsDialog : OverlayDialogControl
             {
                 IsolateVersion = VersionIsolationOverrideCheckDlg.IsChecked == true,
                 JavaId = selectedJava?.Id,
-                CustomJvmArgs = null,
+                MinMemoryMb = instanceMin,
+                MaxMemoryMb = instanceMax,
+                CustomJvmArgs = string.IsNullOrWhiteSpace(InstanceCustomJvmArgsBoxDlg.Text) ? null : InstanceCustomJvmArgsBoxDlg.Text.Trim(),
                 AutoJoinServerAddress = AutoJoinServerCheckDlg.IsChecked == true ? AutoJoinServerAddressBoxDlg.Text.Trim() : null
             };
             try
@@ -138,6 +157,34 @@ public partial class InstanceSettingsDialog : OverlayDialogControl
         }
 
         CloseWith(true);
+    }
+
+    private static int? ParseNullableMemory(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return null;
+        if (int.TryParse(text, out var value) && value > 0) return value;
+        throw new InvalidOperationException("实例内存必须是正整数或留空");
+    }
+
+    private async void BackupInstanceDlg_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            var path = await InstanceBackupService.CreateBackupAsync(_folderPath, _version.Id, "手动备份");
+            MessageBoxDialog.ShowSuccess($"实例备份已创建：\n{path}");
+        }
+        catch (Exception ex)
+        {
+            MessageBoxDialog.ShowError($"实例备份失败：{ex.Message}");
+        }
+    }
+
+    private void OpenLoaderMaintenance_Click(object sender, RoutedEventArgs e)
+    {
+        var backup = InstanceBackupService.CreateBackupAsync(_folderPath, _version.Id, "加载器维护前备份");
+        _ = backup.ContinueWith(_ => { });
+        _owner.NavigateToSettings();
+        MessageBoxDialog.ShowInfo("已开始创建加载器维护前备份。加载器切换、互换和模组一键更新请在版本选择页的加载器安装入口与 Mod 管理页执行；维护完成后建议同步检查并更新不兼容模组。", "加载器维护");
     }
 
     /// <summary>导出这个版本的启动脚本到实例目录 versions/&lt;id&gt;/xcl/launch.bat。</summary>
@@ -181,15 +228,15 @@ public partial class InstanceSettingsDialog : OverlayDialogControl
             VersionId = versionId,
             JavaPath = javaPath,
             Account = account,
-            MinMemoryMb = cfg.MinMemoryMb,
-            MaxMemoryMb = cfg.MaxMemoryMb,
+            MinMemoryMb = InstanceConfigService.TryLoad(Path.Combine(_folderPath, "versions", versionId))?.MinMemoryMb ?? cfg.MinMemoryMb,
+            MaxMemoryMb = InstanceConfigService.TryLoad(Path.Combine(_folderPath, "versions", versionId))?.MaxMemoryMb ?? cfg.MaxMemoryMb,
             WindowWidth = cfg.WindowWidth,
             WindowHeight = cfg.WindowHeight,
             ShowConsoleWindow = cfg.EnableGameConsoleWindow,
             IsolateVersion = isolateVersion,
             GameLanguage = cfg.GameLanguage,
             VersionTypeLabel = cfg.GameVersionTypeLabel,
-            CustomJvmArgs = cfg.AdvancedMode ? cfg.CustomJvmArgs : null,
+            CustomJvmArgs = InstanceConfigService.TryLoad(Path.Combine(_folderPath, "versions", versionId))?.CustomJvmArgs ?? (cfg.AdvancedMode ? cfg.CustomJvmArgs : null),
             PreLaunchCommand = cfg.PreLaunchCommand,
             AutoJoinServerAddress = autoJoinServer
         };

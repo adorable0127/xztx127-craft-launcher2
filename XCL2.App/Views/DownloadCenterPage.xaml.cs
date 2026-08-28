@@ -679,36 +679,35 @@ public partial class DownloadCenterPage : UserControl
             return;
         }
 
-        var progressWin = new ProgressDialog($"正在安装 {entry.Id} ...");
-        progressWin.Show();
-        try
+        // 需求：下载改走标题栏下载列表，暂停/取消跟"启动游戏"按钮分开，下载过程中依然能点启动。
+        // 不再用会一直悬浮的 ProgressDialog 挡住主界面——DownloadQueueService 登记的条目
+        // 会驱动标题栏那个下载按钮的下拉列表，用户可以切到别的页面、甚至直接点启动游戏，
+        // 两者互不阻塞（启动游戏走 LauncherService 自己的即时补全逻辑，不经过这个队列）。
+        DownloadQueueService.Instance.StartNew($"安装 {entry.Id}", async (item, ct) =>
         {
             // 用 CreateFromConfig 而不是直接 new：这里是真正会下载大批 libraries/assets 文件的
             // 场景，应该按设置页里的"多线程下载/限速/智能限速"配置来，而不是永远单线程不限速。
             using var svc = DownloadService.CreateFromConfig(_owner.ConfigService.Config);
-            await svc.InstallVersionAsync(folder.Path, entry, progressWin.Progress);
-            _owner.EnsureVisibleForDialog();
-            // 同上：原版直装完成后同样默认选中这个刚装好的版本，不需要用户再跑去「版本选择」页手动点一次。
-            // 只有安装的目标文件夹正好是当前选中文件夹时才自动切选中版本——如果用户是往一个
-            // 未被选中的文件夹里装版本（folder 变量取的是"当前选中文件夹"回退到"第一个文件夹"，
-            // 两者可能不是同一个），贸然把 SelectedVersionId 改掉会打乱用户当前正在用的另一个文件夹
-            // 下的版本选择，超出"装完自动选中"这个需求本身的意图。
-            if (folder.Path == _owner.ConfigService.Config.SelectedFolderPath)
+            // 下载队列条目的百分比/状态文字同步更新，供标题栏列表展示。
+            await svc.InstallVersionAsync(folder.Path, entry, item.CreateProgress(), ct);
+
+            await _owner.Dispatcher.InvokeAsync(() =>
             {
-                _owner.ConfigService.Config.SelectedVersionId = entry.Id;
-                _owner.ConfigService.Save();
-                _owner.RefreshSidebar();
-            }
-            MessageBoxDialog.ShowSuccess($"{entry.Id} 安装完成" + (folder.Path == _owner.ConfigService.Config.SelectedFolderPath ? "，已自动选中。" : "！"));
-        }
-        catch (Exception ex)
-        {
-            ErrorPresenter.ShowFriendlyError(Loc.T("Str_Cs_Installation_Failed_This_Could_Be_A_Netw", "安装失败，可能是网络连接问题、下载源暂时不可用，或安装文件已损坏，请检查网络后重试。"), $"[安装失败] {ex}", "安装失败");
-        }
-        finally
-        {
-            progressWin.Close();
-        }
+                _owner.EnsureVisibleForDialog();
+                // 同上：原版直装完成后同样默认选中这个刚装好的版本，不需要用户再跑去「版本选择」页手动点一次。
+                // 只有安装的目标文件夹正好是当前选中文件夹时才自动切选中版本——如果用户是往一个
+                // 未被选中的文件夹里装版本（folder 变量取的是"当前选中文件夹"回退到"第一个文件夹"，
+                // 两者可能不是同一个），贸然把 SelectedVersionId 改掉会打乱用户当前正在用的另一个文件夹
+                // 下的版本选择，超出"装完自动选中"这个需求本身的意图。
+                if (folder.Path == _owner.ConfigService.Config.SelectedFolderPath)
+                {
+                    _owner.ConfigService.Config.SelectedVersionId = entry.Id;
+                    _owner.ConfigService.Save();
+                    _owner.RefreshSidebar();
+                }
+                MessageBoxDialog.ShowSuccess($"{entry.Id} 安装完成" + (folder.Path == _owner.ConfigService.Config.SelectedFolderPath ? "，已自动选中。" : "！"));
+            });
+        });
     }
 
     /// <summary>右键菜单"在中文 Minecraft Wiki 中查看"（下载中心的"游戏版本"列表）：

@@ -220,7 +220,7 @@ public class DownloadService : IDisposable
                     {
                         var tmp = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".jar");
                         await DownloadFileAsync(nativeArt.Url, tmp, nativeArt.Sha1, ct);
-                        ExtractNatives(tmp, nativesDir);
+                        ExtractNatives(tmp, nativesDir, progress);
                         File.Delete(tmp);
                     }
                 }
@@ -290,24 +290,29 @@ public class DownloadService : IDisposable
 
     private static bool LibraryApplies(LibraryEntry lib) => lib.IsApplicableToCurrentOs();
 
-    private static void ExtractNatives(string jarPath, string destDir)
+    private static void ExtractNatives(string jarPath, string destDir, IProgress<ProgressInfo>? progress = null)
     {
         try
         {
             using var archive = System.IO.Compression.ZipFile.OpenRead(jarPath);
-            foreach (var entry in archive.Entries)
+            var nativeEntries = archive.Entries
+                .Where(e => !e.FullName.StartsWith("META-INF") && 
+                           (e.Name.EndsWith(".dll") || e.Name.EndsWith(".so") || e.Name.EndsWith(".dylib")))
+                .ToList();
+            int total = nativeEntries.Count;
+            int done = 0;
+            progress?.Report(new ProgressInfo("解压原生库", 0, total, ""));
+            foreach (var entry in nativeEntries)
             {
-                if (entry.FullName.StartsWith("META-INF")) continue;
-                if (entry.Name.EndsWith(".dll") || entry.Name.EndsWith(".so") || entry.Name.EndsWith(".dylib"))
+                var dest = Path.Combine(destDir, entry.Name);
+                if (!File.Exists(dest))
                 {
-                    var dest = Path.Combine(destDir, entry.Name);
-                    if (!File.Exists(dest))
-                    {
-                        using var entryStream = entry.Open();
-                        using var fileStream = File.Create(dest);
-                        entryStream.CopyTo(fileStream);
-                    }
+                    using var entryStream = entry.Open();
+                    using var fileStream = File.Create(dest);
+                    entryStream.CopyTo(fileStream);
                 }
+                done++;
+                progress?.Report(new ProgressInfo("解压原生库", done, total, entry.Name));
             }
         }
         catch (Exception ex)
@@ -612,7 +617,22 @@ public class DownloadService : IDisposable
 
     private static bool VerifySha1(string path, string expectedSha1)
     {
-        if (string.IsNullOrEmpty(expectedSha1)) return true;
+        // 需求："尽量不要崩溃"——修一个会导致"两个启动器都崩"的根因：Fabric/Quilt 等
+        // "name+url"风格的库条目本身没有官方 sha1（expectedSha1 传空字符串），之前这里对
+        // 空 sha1 直接 return true，等于只要文件在磁盘上"存在"就永远当成"已验证"，哪怕
+        // 是下载中途网络中断/磁盘写满留下的 0 字节或半截文件，也再也不会被重新下载——
+        // 直到某天真正启动游戏，Java 因为这个 jar 里缺类(比如 org.lwjgl.system.CallbackI
+        // 这种 lwjgl 核心类)而崩溃，且用户换别的启动器（共用同一份 libraries 目录）一样崩，
+        // 因为问题根本不在启动器，在这个文件本身从一开始就没验证过完整性。
+        // 没有 sha1 可比对时，至少做"文件非空"这一层最基本的健全性检查：0 字节文件几乎
+        // 不可能是真正下载完整的 jar，判定为未通过校验、触发重新下载。这不是完整的哈希校验
+        // （没有 sha1 就是没有，没法做到 100%），但能拦住"下载中断留下空文件"这个最常见、
+        // 后果也最隐蔽的情况。
+        if (string.IsNullOrEmpty(expectedSha1))
+        {
+            try { return new FileInfo(path).Length > 0; }
+            catch { return false; }
+        }
         try
         {
             using var sha1 = SHA1.Create();

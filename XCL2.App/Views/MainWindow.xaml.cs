@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
@@ -16,6 +16,10 @@ namespace XCL2.App.Views;
 
 public partial class MainWindow : Window
 {
+    /// <summary>主窗口真正完成第一帧渲染时只触发一次。App 用它关闭启动提示窗，
+    /// 避免为了“等首帧”在 OnStartup 里同步 UpdateLayout/Dispatcher.Invoke 卡住 UI 线程。</summary>
+    public event EventHandler? FirstFrameRendered;
+
     public ConfigService ConfigService { get; } = new();
 
     /// <summary>全局游戏进程注册表，供主页进程控制按钮组、日志面板、崩溃/注入分析共用。</summary>
@@ -26,6 +30,12 @@ public partial class MainWindow : Window
 
     /// <summary>正在运行的服务器进程注册表，供服务端管理页的列表/控制台面板共用。</summary>
     public ServerProcessManager ServerProcessManager { get; } = new();
+
+    /// <summary>AI 助手服务实例，持久化配置见 <see cref="Models.AiAssistantConfig"/>。</summary>
+    public AiAssistantService AiAssistantService { get; private set; } = new(new AiAssistantConfig(), App.DataDir);
+
+    /// <summary>AI 助手当前配置，供设置页/面板热更新用。</summary>
+    public AiAssistantConfig AiAssistantConfig { get; set; } = new();
 
     private readonly DispatcherTimer _pruneTimer;
 
@@ -38,6 +48,10 @@ public partial class MainWindow : Window
 
     /// <summary>访客模式服务：生成本次会话的临时账户 + 应用退出前清理本次会话产生的日志/临时下载。</summary>
     private readonly GuestModeService _guestModeService = new();
+    private ScheduledInstanceBackupService? _scheduledInstanceBackupService;
+    private bool _closeLifecycleBackupRunning;
+    private bool _closeLifecycleBackupCompleted;
+    private bool _stickyNoteCloseDecisionHandled;
 
     /// <summary>
     /// 系统内存监视：全程后台运行（不局限于"有游戏在跑"才监控），因为下载/安装模组、
@@ -111,6 +125,23 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
+
+        // 这个处理器必须在后面的 Java/MC 自动扫描、首次协议/向导等 ContentRendered 处理器
+        // 之前注册：第一帧一画出来先通知 App 关闭启动提示窗，然后再启动后台扫描/弹向导。
+        // 否则启动提示窗可能一直盖到这些后续流程结束才消失。
+        EventHandler? firstFrameOnce = null;
+        firstFrameOnce = (_, _) =>
+        {
+            ContentRendered -= firstFrameOnce;
+            FirstFrameRendered?.Invoke(this, EventArgs.Empty);
+            if (ConfigService.Config.BackupInstanceOnStartup)
+            {
+                Dispatcher.BeginInvoke(new Action(() => _ = RunLifecycleBackupAsync("启动时备份", showToast: false)),
+                    DispatcherPriority.Background);
+            }
+        };
+        ContentRendered += firstFrameOnce;
+
         ApplyFeatureVisibility();
 
         // 最大化时"留出任务栏空间"：光挂 WindowChrome 不够可靠（见 WindowChromeService.
@@ -118,6 +149,13 @@ public partial class MainWindow : Window
         // 这里接一个 Win32 级别的钩子自己算工作区，SourceInitialized 时 HWND 才真正创建，
         // 必须放在这个事件里而不是构造函数本体直接调用。
         SourceInitialized += (_, _) => WindowChromeService.EnableWorkAreaAwareMaximize(this);
+
+        // 注意：这里原来试过给最大化按钮加 Win11 贴靠布局(Snap Layout)悬停菜单支持
+        // （声明 WM_NCHITTEST 命中码为 HTMAXBUTTON），已经撤掉——实测这个声明会导致
+        // Windows 11 系统自己在按钮旁弹出贴靠布局选择的九宫格菜单（截图反馈里那个
+        // "旁边多出一个白色图标"就是这个系统菜单），而不是简单的点击直接最大化/还原，
+        // 跟这个项目要的交互不符。现在保持最简单可靠的做法：MaximizeRestoreButton_Click
+        // 直接处理点击，不做任何 WM_NCHITTEST/HTMAXBUTTON 相关声明。
 
         // 标题栏跟随深浅色模式（修复"顶部白条"）现在由 App.xaml.cs 里注册的
         // EventManager.RegisterClassHandler 对所有 Window 统一处理，MainWindow 不需要
@@ -130,6 +168,7 @@ public partial class MainWindow : Window
         // 会一并刷新（见该方法内对 TitleBarIconImage 的处理）。
         AppIconService.ApplyToTitleBarImage(this, TitleBarIconImage);
         UpdateMaximizeRestoreIcon();
+        Topmost = ConfigService.Config.AlwaysOnTop;
 
         // F11 全屏切换：只在主窗口生效，Key.System 分支处理是因为 F11 在部分系统/输入法
         // 状态下会被识别为"系统键"（Alt 组合键那一类路由），PreviewKeyDown 阶段
@@ -149,6 +188,16 @@ public partial class MainWindow : Window
             var chrome = System.Windows.Shell.WindowChrome.GetWindowChrome(this);
             if (chrome != null) chrome.CaptionHeight = isFullScreen ? 0 : 32;
             e.Handled = true;
+        };
+
+        // F3 只切换当前运行会话的置顶状态，不写入配置；关闭并重新启动后恢复设置页中的默认值。
+        PreviewKeyDown += (_, e) =>
+        {
+            var key = e.Key == Key.System ? e.SystemKey : e.Key;
+            if (key != Key.F3) return;
+            Topmost = !Topmost;
+            e.Handled = true;
+            ToastService.ShowInfo(Topmost ? "当前会话已置顶" : "当前会话已取消置顶");
         };
 
         // Esc 关闭当前最顶层的进程内弹窗（Overlay），跟 Windows 系统对话框的通行习惯
@@ -211,6 +260,62 @@ public partial class MainWindow : Window
 
         ConfigService.Load();
         ServerInstanceService.Load();
+        _scheduledInstanceBackupService = new ScheduledInstanceBackupService(ConfigService);
+        Closed += (_, _) => _scheduledInstanceBackupService?.Dispose();
+        Topmost = ConfigService.Config.AlwaysOnTop;
+
+        // 用 MainWindow 自己刚 Load 完的配置，在窗口首帧出现之前一次性同步最终外观状态。
+        // CustomAccentColor 即使当前 UiSkin 不是 Custom 也会被保留；旧代码只要看到它非空就
+        // 无条件 ApplyCustomAccent，随后 ContentRendered 又切回真实 UiSkin，于是启动/切页时
+        // 按钮会肉眼可见地闪成深蓝再恢复。这里只走完整主题入口，绝不单独套自定义强调色。
+        var loadedCfg = ConfigService.Config;
+        ThemeService.ApplyForCurrentState(
+            loadedCfg.GuestModeEnabled, loadedCfg.UiSkin, loadedCfg.IsDarkMode, loadedCfg.CustomAccentColor);
+        ThemeService.ApplyWindowTransparency(loadedCfg.EnableWindowTransparency, loadedCfg.WindowOpacityPercent);
+        ThemeService.ApplyGlobalWindowTransparency(loadedCfg.EnableGlobalWindowTransparency, loadedCfg.GlobalWindowOpacityPercent);
+        var loadedMaterial = Enum.TryParse<Win11EffectsService.BackdropMaterial>(loadedCfg.Win11BackdropMaterial, out var lm)
+            ? lm : Win11EffectsService.BackdropMaterial.Mica;
+        Win11EffectsService.SetEnabled(loadedCfg.EnableWin11VisualEffects, loadedMaterial);
+
+        if (!string.IsNullOrWhiteSpace(ConfigService.Config.CustomBackgroundImagePath) &&
+            File.Exists(ConfigService.Config.CustomBackgroundImagePath))
+        {
+            if (!SetCustomBackgroundImage(ConfigService.Config.CustomBackgroundImagePath))
+                ConfigService.Config.CustomBackgroundImagePath = null;
+        }
+        else
+        {
+            SetCustomBackgroundImage(null);
+        }
+
+        // 见 ThemeService.CustomBackgroundRefreshRequested / ApplyWindowTransparency 方法体注释：
+        // 只要窗口透明度状态发生变化（保存设置、低性能模式联动等任何入口），就重新计算一次
+        // 已导入背景图片的模糊/不透明度，修复\"改了透明度设置，毛玻璃背景图片看起来却没有
+        // 跟着变化\"的问题。窗口关闭时取消订阅，避免残留的静态事件引用导致这个窗口实例
+        // 泄漏无法被回收。
+        ThemeService.CustomBackgroundRefreshRequested += RefreshCustomBackgroundVisualEffect;
+        Closed += (_, _) => ThemeService.CustomBackgroundRefreshRequested -= RefreshCustomBackgroundVisualEffect;
+
+        // 主题资源已经在 ConfigService.Load 后、首帧之前同步完毕。禁止在 ContentRendered 后
+        // 再补刷主题；任何“可见以后再改 ButtonBackgroundBrush”的修复都会重新制造颜色闪烁。
+
+        // AI 助手完整配置现在直接持久化在 AppConfig.AiAssistant；旧版悬浮球字段由 ConfigService 负责迁移。
+        AiAssistantConfig = ConfigService.Config.AiAssistant ?? new AiAssistantConfig();
+        ConfigService.Config.AiAssistant = AiAssistantConfig;
+        AiAssistantService.UpdateConfig(AiAssistantConfig);
+        // 同步悬浮球初始显示状态
+        UpdateAiFloatingButtonVisibility();
+
+        // 系统托盘：需求里的"最小化到托盘""关闭默认最小化到托盘""开机自启"都依赖它，
+        // 图标本身在这里就常驻创建好（Show/Hide 只控制是否可见，不重复创建/销毁），
+        // 避免每次"最小化到托盘"都重新 new 一次 NotifyIcon。
+        InitializeTrayIcon();
+        AutoStartService.Apply(ConfigService.Config.AutoStartOnBoot);
+
+        // 标题栏下载列表：绑定 DownloadQueueService 的全局单例集合，任何地方（目前是
+        // DownloadCenterPage 的"游戏版本"下载）调用 DownloadQueueService.Instance.StartNew(...)
+        // 登记的条目都会自动出现在这里，不需要 MainWindow 手动感知每一次具体的下载调用。
+        InitializeDownloadQueueUi();
 
         // 修复"检测不到以前创建的服务器"：ServerInstanceService.Load() 现在会在主文件损坏时
         // 尝试从 .bak 备份恢复，但恢复与否用户都应该知情——之前这里完全没有任何提示，
@@ -253,9 +358,22 @@ public partial class MainWindow : Window
         // WPF 内部会保证先完整走完一遍 Layout+Render，不会被同一批 Loaded 回调抢占——
         // 从根上避免"渲染工作还没来得及执行就被其它逻辑挤到后面"这个不确定性，
         // 不需要再靠 Dispatcher.Invoke(..., Render) 这种猜时序的占位技巧。
+        // 修复"进入主界面很卡"：ContentRendered 不是只触发一次的"首帧"事件，而是每次
+        // 内容重新渲染（切换页面、窗口尺寸变化、主题切换引起的重绘等）都会再触发一次
+        // ——之前这里直接 += 匿名委托、从不反订阅，导致用户在启动器里正常切换页面时，
+        // 每切一次都会在后台再跑一遍"扫描全盘 .minecraft 目录"和"扫描 Java"，磁盘 IO
+        // 和随之而来的 Dispatcher 封送、配置保存都会跟 UI 线程抢时间片，表现就是主界面
+        // 越用越卡。跟下面"首次启动向导"用的是同一个"局部变量 + 触发后立即反订阅"写法，
+        // 保证这两个扫描只在启动后的首帧真正跑一次。
         if (ConfigService.Config.FirstRunWizardCompleted)
         {
-            ContentRendered += (_, _) => _ = ScanMinecraftFoldersInBackgroundAsync();
+            EventHandler? scanFoldersOnce = null;
+            scanFoldersOnce = (_, _) =>
+            {
+                ContentRendered -= scanFoldersOnce;
+                _ = ScanMinecraftFoldersInBackgroundAsync();
+            };
+            ContentRendered += scanFoldersOnce;
         }
 
         // 需求："在启动的时候，像检测mc的目录一样检测 Javaw.exe，无需用户手动打开设置，
@@ -263,7 +381,14 @@ public partial class MainWindow : Window
         // 出来之后台线程跑，静默登记，不打断/不阻塞主窗口显示。之前只有打开「设置」页时
         // 才会触发 AutoDetectJavaOnLoadAsync（见 SettingsPage.xaml.cs），用户不点进设置页
         // 永远不会自动发现新装的 Java，这里补上真正"程序启动时"这一级的自动探测。
-        ContentRendered += (_, _) => _ = ScanJavaInBackgroundAsync();
+        // 同样只跑一次，原因见上面 scanFoldersOnce 的注释。
+        EventHandler? scanJavaOnce = null;
+        scanJavaOnce = (_, _) =>
+        {
+            ContentRendered -= scanJavaOnce;
+            _ = ScanJavaInBackgroundAsync();
+        };
+        ContentRendered += scanJavaOnce;
 
         // 定时清理已退出的进程记录，保持"进程管理"列表/按钮的可用性状态是最新的
         _pruneTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
@@ -284,6 +409,17 @@ public partial class MainWindow : Window
         _autoThemeCycleTimer.Tick += (_, _) => ReevaluateAutoThemeCycle();
         _autoThemeCycleTimer.Start();
         ReevaluateAutoThemeCycle();
+
+        // 「跟随系统深浅色」：靠 Microsoft.Win32.SystemEvents.UserPreferenceChanged 事件
+        // 实时感知系统主题变化（用户在 Windows 设置里切换"应用模式"的瞬间就能收到通知），
+        // 不用像自动循环那样每秒轮询——系统主题变化本来就不是高频事件，事件驱动更省资源、
+        // 也更及时。事件是 Category=General 触发（AppsUseLightTheme 变化没有专门的分类），
+        // 回调不保证在 UI 线程上，Dispatcher 切回来再处理。
+        // Closed 时反订阅：SystemEvents 是进程级静态事件，不反订阅会导致 MainWindow 实例
+        // 泄漏（永远有一个引用挂在 SystemEvents 上）。
+        Microsoft.Win32.SystemEvents.UserPreferenceChanged += OnSystemUserPreferenceChanged;
+        Closed += (_, _) => Microsoft.Win32.SystemEvents.UserPreferenceChanged -= OnSystemUserPreferenceChanged;
+        ReevaluateFollowSystemTheme();
 
         // 内存溢出预警：每 5 秒检查一次系统可用物理内存，跌破阈值（默认低于 10% 或
         // 低于 1GB，两者任一满足）就弹出警告窗口，让用户能在系统真正卡死/蓝屏之前
@@ -457,6 +593,96 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
+    /// 把用户自定义背景图放到主窗口内容树的最底层。不要再给 Window.Background 塞 ImageBrush：
+    /// Win11 的 Mica/Acrylic 是 DWM 在窗口背后合成的系统材质，Window.Background 自己又是一层
+    /// WPF 背景，两者叠加时经常出现“开了毛玻璃以后图片反而不见”的效果。独立 Image 层则始终
+    /// 位于标题栏/侧栏/页面卡片下面，配合 ThemeService 的半透明面板就能稳定看到图片。
+    /// BitmapCacheOption.OnLoad 保证文件在读取完成后立即释放，继续避免导入同名图片时的文件锁。
+    /// </summary>
+    public bool SetCustomBackgroundImage(string? path)
+    {
+        if (CustomBackgroundImageLayer == null || CustomBackgroundTintLayer == null) return false;
+
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            CustomBackgroundImageLayer.Source = null;
+            CustomBackgroundImageLayer.Visibility = Visibility.Collapsed;
+            CustomBackgroundImageLayer.Opacity = 0;
+            CustomBackgroundTintLayer.Visibility = Visibility.Collapsed;
+            ThemeService.SetCustomBackgroundActive(false);
+            return true;
+        }
+
+        try
+        {
+            if (!File.Exists(path)) return false;
+            // 这里故意回到旧版已经验证过的 UriSource 解码路径，但保留 OnLoad：
+            // 上一版为了绕过 WPF 图片缓存，组合使用了 IgnoreImageCache + StreamSource。
+            // BitmapImage 在这种组合下 UriSource 为 null，FinalizeCreation() 仍会尝试按 URI
+            // 从 ImagingCache 移除条目，最终把 null 当 Hashtable key，抛出
+            // ArgumentNullException("key")。日志里所谓“图片无法解码”其实就是这个初始化
+            // 参数组合触发的 WPF 内部异常，并不是 PNG/JPG/BMP 文件本身坏了。
+            //
+            // UriSource 是旧实现一直使用、已经验证能正常解码的路径；CacheOption=OnLoad
+            // 则保证 EndInit 返回时像素已经完整读入，WPF 不会继续占用源文件。导入逻辑本身
+            // 又使用唯一文件名，所以无需 IgnoreImageCache，也不存在同路径缓存旧图的问题。
+            var image = new System.Windows.Media.Imaging.BitmapImage();
+            image.BeginInit();
+            image.CacheOption = System.Windows.Media.Imaging.BitmapCacheOption.OnLoad;
+            image.UriSource = new Uri(Path.GetFullPath(path), UriKind.Absolute);
+            image.EndInit();
+            image.Freeze();
+
+            CustomBackgroundImageLayer.Source = image;
+            CustomBackgroundImageLayer.Visibility = Visibility.Visible;
+            CustomBackgroundTintLayer.Visibility = Visibility.Visible;
+            RefreshCustomBackgroundVisualEffect();
+            return true;
+        }
+        catch (Exception ex)
+        {
+            ErrorPresenter.LogTechnicalDetail($"应用自定义背景图片失败：{ex}");
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// 按用户单独设置的“背景磨砂度”刷新自定义背景。25% 接近透明/清晰，100% 为最强磨砂。
+    /// 这个参数已经与“面板透明度”和 Win11 的 Mica/Acrylic 材质彻底解耦：面板透明度只负责
+    /// UI 面板自身，背景磨砂度只负责导入图片的 Blur/蒙层/玻璃覆盖强度，互相不会抢值。
+    /// 低性能模式仍然强制关闭 BlurEffect，避免 GPU/CPU 额外合成开销。
+    /// </summary>
+    public void RefreshCustomBackgroundVisualEffect()
+        => ApplyCustomBackgroundFrost(ConfigService.Config.CustomBackgroundFrostPercent);
+
+    /// <summary>设置页拖动磨砂度时的实时预览入口；不写配置，保存逻辑仍由 SettingsPage 统一处理。</summary>
+    public void PreviewCustomBackgroundFrost(int frostPercent)
+        => ApplyCustomBackgroundFrost(frostPercent);
+
+    private void ApplyCustomBackgroundFrost(int frostPercent)
+    {
+        if (CustomBackgroundImageLayer?.Source == null || CustomBackgroundTintLayer == null) return;
+
+        var lowPerformance = ConfigService.Config.LowPerformanceMode;
+        var percent = Math.Clamp(frostPercent, 25, 100);
+        var t = (percent - 25) / 75.0; // 0 = 基本透明，1 = 全磨砂
+
+        // 25%：几乎不糊、图片接近原始亮度、只保留很淡的主题色蒙层。
+        // 100%：明显磨砂、背景被压低并增加主题色蒙层，文字/卡片可读性更稳定。
+        if (CustomBackgroundImageLayer.Effect is System.Windows.Media.Effects.BlurEffect blur)
+            blur.Radius = lowPerformance ? 0 : Lerp(2, 34, t);
+        CustomBackgroundImageLayer.Opacity = Lerp(0.98, 0.76, t);
+        CustomBackgroundTintLayer.Opacity = Lerp(0.04, 0.30, t);
+
+        // 自定义背景存在时始终让上层主题面板具备一定透感。磨砂度越高，面板越“实”，
+        // 从 52% 逐步提高到 82%；25% 时接近通透玻璃，100% 时接近完整磨砂玻璃。
+        var panelCap = (int)Math.Round(Lerp(52, 82, t));
+        ThemeService.SetCustomBackgroundActive(true, panelCap);
+    }
+
+    private static double Lerp(double from, double to, double t) => from + (to - from) * t;
+
+    /// <summary>
     /// 根据 cfg.GuestModeEnabled 的当前值，同步 ConfigService.GuestAccount：
     /// 开启时如果还没有本次会话的临时账户，就生成一个；关闭时清空(GetSelectedAccount 会
     /// 自动回退到真实保存的账户列表)。构造函数里调用一次处理"启动时就是开启状态"，
@@ -480,7 +706,7 @@ public partial class MainWindow : Window
         // 这个约定——访客模式开关本身也是一种设置项变化，调用方（SettingsPage/HomePage）
         // 保存完 GuestModeEnabled 后立刻调这个方法，顺带把当前配色重新应用一次、
         // 触发全窗口刷新，不需要用户切页/重启才能看到访客模式开关本身的即时反馈。
-        ThemeService.ApplyForCurrentState(ConfigService.Config.GuestModeEnabled, ConfigService.Config.UiSkin, ConfigService.Config.IsDarkMode);
+        ThemeService.ApplyForCurrentState(ConfigService.Config.GuestModeEnabled, ConfigService.Config.UiSkin, ConfigService.Config.IsDarkMode, ConfigService.Config.CustomAccentColor);
 
         RefreshSidebar();
     }
@@ -658,14 +884,22 @@ public partial class MainWindow : Window
     {
         try
         {
-            var javaService = new JavaService();
-            var quick = await javaService.QuickDetectJavaAsync();
-            var common = await javaService.ScanCommonJavaLocationsAsync();
+            // 这两个 Java 探测方法虽然返回 Task，但它们在遇到第一个 await 之前会同步枚举
+            // Program Files / AppData / 注册表 / PATH。直接从 ContentRendered 的 UI 回调调用时，
+            // 这段“async 方法的同步前半段”仍然跑在 UI 线程上，目录多的机器就会出现窗口已经
+            // 打开却连续几秒“未响应”的现象。必须把整个探测调用（包括第一个 await 之前的代码）
+            // 一起丢进线程池，而不是只相信方法名里的 Async。
+            var merged = await Task.Run(async () =>
+            {
+                var javaService = new JavaService();
+                var quick = await javaService.QuickDetectJavaAsync().ConfigureAwait(false);
+                var common = await javaService.ScanCommonJavaLocationsAsync().ConfigureAwait(false);
 
-            var merged = quick.Concat(common)
-                .GroupBy(c => c.JavawPath, StringComparer.OrdinalIgnoreCase)
-                .Select(g => g.First())
-                .ToList();
+                return quick.Concat(common)
+                    .GroupBy(c => c.JavawPath, StringComparer.OrdinalIgnoreCase)
+                    .Select(g => g.First())
+                    .ToList();
+            });
             if (merged.Count == 0) return;
 
             var cfg = ConfigService.Config;
@@ -773,7 +1007,7 @@ public partial class MainWindow : Window
     public void ReevaluateAutoThemeCycle()
     {
         var cfg = ConfigService.Config;
-        if (!cfg.AutoThemeCycleEnabled) return;
+        if (!cfg.AutoThemeCycleEnabled || cfg.FollowSystemTheme) return; // 「跟随系统」开启时由它独占接管，见 ReevaluateFollowSystemTheme
 
         var lightStart = Math.Clamp(cfg.AutoThemeLightStartHour, 0, 23);
         var darkStart = Math.Clamp(cfg.AutoThemeDarkStartHour, 0, 23);
@@ -809,11 +1043,53 @@ public partial class MainWindow : Window
         cfg.IsDarkMode = !isLightNow;
         ConfigService.Save();
 
-        ThemeService.ApplyForCurrentState(cfg.GuestModeEnabled, cfg.UiSkin, cfg.IsDarkMode);
+        ThemeService.ApplyForCurrentState(cfg.GuestModeEnabled, cfg.UiSkin, cfg.IsDarkMode, cfg.CustomAccentColor);
 
         // 首页「模式设置」按钮显示的是缓存在 HomePage 里的旧勾选状态，配色已经变了但按钮
         // 文案还没跟上，这里如果当前正显示首页就顺手刷新一下，避免出现"背景已经变深，
         // 按钮却还写着浅色模式"的不一致。
+        if (MainContent?.Content is HomePage homePage)
+        {
+            homePage.RefreshThemeToggles();
+        }
+    }
+
+    /// <summary>Microsoft.Win32.SystemEvents.UserPreferenceChanged 的回调：事件本身不区分
+    /// 具体是哪一类系统偏好变了（背景、强调色、主题模式……都会触发一次 Category=General），
+    /// 直接复用 ReevaluateFollowSystemTheme 内部"跟上次应用的系统深浅色状态比对，没变就
+    /// 快速返回"的判断即可，不需要在这里单独过滤事件类别。回调可能不在 UI 线程上，
+    /// 切回 Dispatcher 再处理，避免跨线程操作 UI 抛异常。</summary>
+    private void OnSystemUserPreferenceChanged(object? sender, Microsoft.Win32.UserPreferenceChangedEventArgs e)
+    {
+        Dispatcher.Invoke(ReevaluateFollowSystemTheme);
+    }
+
+    /// <summary>
+    /// 「跟随系统深浅色」核心逻辑：跟 ReevaluateAutoThemeCycle 是同一套"手动优先、只在真正
+    /// 需要切换时才写配置+重新应用配色"的思路，只是判断依据从"当前系统时间落在哪个区间"
+    /// 换成了"当前 Windows 系统的应用深浅色主题设置"（<see cref="ThemeService.GetSystemIsDarkMode"/>）。
+    /// cfg.FollowSystemTheme 关闭时什么都不做；跟 AutoThemeCycleEnabled 是互斥的两种自动
+    /// 来源（见 AppConfig.FollowSystemTheme 注释），这里不再重复检查——设置页/首页在开启
+    /// 跟随系统时已经保证 AutoThemeCycleEnabled 会被同时关掉。
+    ///
+    /// 由三处触发：(1) MainWindow 构造函数里启动时立即校验一次；(2) SystemEvents.
+    /// UserPreferenceChanged 事件（用户在 Windows 设置里改主题的瞬间）；(3) 用户在设置页/
+    /// 首页刚打开这个开关时，立即调用一次，保证"设置项保存后一秒内必须看到界面刷新"这个
+    /// 项目里一贯的要求。
+    /// </summary>
+    public void ReevaluateFollowSystemTheme()
+    {
+        var cfg = ConfigService.Config;
+        if (!cfg.FollowSystemTheme) return;
+
+        var systemIsDark = ThemeService.GetSystemIsDarkMode();
+        if (cfg.IsDarkMode == systemIsDark) return; // 已经跟系统一致，不重复应用
+
+        cfg.IsDarkMode = systemIsDark;
+        ConfigService.Save();
+
+        ThemeService.ApplyForCurrentState(cfg.GuestModeEnabled, cfg.UiSkin, cfg.IsDarkMode, cfg.CustomAccentColor);
+
         if (MainContent?.Content is HomePage homePage)
         {
             homePage.RefreshThemeToggles();
@@ -836,21 +1112,75 @@ public partial class MainWindow : Window
     /// <param name="factory">构造目标页面的工厂方法，会在下一帧的后台优先级里调用。</param>
     /// <param name="onLoaded">页面真正显示出来之后要做的收尾操作（比如带参数跳转时
     /// 顺带触发一次搜索），只有页面没有被过时切换打断时才会调用。</param>
+    private UIElement CreateLoadingPlaceholder()
+    {
+        var dots = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            Margin = new Thickness(0, 10, 0, 0)
+        };
+        for (int i = 0; i < 3; i++)
+        {
+            var dot = new System.Windows.Shapes.Ellipse
+            {
+                Width = 7,
+                Height = 7,
+                Margin = new Thickness(i == 0 ? 0 : 6, 0, 0, 0),
+                Fill = (Brush)FindResource("AccentBrush"),
+                Opacity = 0.28
+            };
+            dots.Children.Add(dot);
+            if (!ConfigService.Config.LowPerformanceMode)
+            {
+                var pulse = new DoubleAnimation(0.28, 1.0, TimeSpan.FromMilliseconds(520))
+                {
+                    AutoReverse = true,
+                    RepeatBehavior = RepeatBehavior.Forever,
+                    BeginTime = TimeSpan.FromMilliseconds(i * 150),
+                    EasingFunction = new SineEase { EasingMode = EasingMode.EaseInOut }
+                };
+                dot.BeginAnimation(OpacityProperty, pulse);
+            }
+        }
+
+        var content = new StackPanel
+        {
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        content.Children.Add(new TextBlock
+        {
+            Text = Loc.T("Str_Ui_Loading", "正在加载页面…"),
+            FontSize = 14,
+            FontWeight = FontWeights.SemiBold,
+            Foreground = (Brush)FindResource("TextPrimaryBrush"),
+            HorizontalAlignment = HorizontalAlignment.Center
+        });
+        content.Children.Add(dots);
+        content.Children.Add(new TextBlock
+        {
+            Text = "正在准备界面与数据",
+            FontSize = 10,
+            Margin = new Thickness(0, 9, 0, 0),
+            Foreground = (Brush)FindResource("TextSecondaryBrush"),
+            HorizontalAlignment = HorizontalAlignment.Center
+        });
+
+        return new Border
+        {
+            Background = (Brush)FindResource("PanelBrush"),
+            BorderBrush = (Brush)FindResource("BorderBrush2"),
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(16),
+            Margin = new Thickness(10),
+            Child = content
+        };
+    }
+
     private void NavigateLazy(Func<UIElement> factory, Action<UIElement>? onLoaded = null)
     {
-        var placeholder = new Border
-        {
-            Background = (System.Windows.Media.Brush)FindResource("PanelBrush"),
-            CornerRadius = new CornerRadius(10),
-            Child = new TextBlock
-            {
-                Text = Loc.T("Str_Ui_Loading", "正在加载…"),
-                FontSize = 14,
-                Foreground = (System.Windows.Media.Brush)FindResource("TextSecondaryBrush"),
-                HorizontalAlignment = HorizontalAlignment.Center,
-                VerticalAlignment = VerticalAlignment.Center
-            }
-        };
+        var placeholder = CreateLoadingPlaceholder();
         SetMainContent(placeholder);
 
         Dispatcher.BeginInvoke(new Action(() =>
@@ -954,6 +1284,66 @@ public partial class MainWindow : Window
 
     /// <summary>供其他页面/弹窗调用的公开导航方法，跳转到日志页（比如崩溃提示弹窗的"查看日志"按钮）。</summary>
     public void NavigateToLogs() => NavigateLazy(() => new LogsPage(this));
+
+    private void NavAiAssistant_Click(object sender, RoutedEventArgs e)
+    {
+        NavigateToAiAssistant();
+    }
+
+    /// <summary>创建并完成事件接线的 AI 助手面板。普通导航和日志页“提交给 AI”共用这一处，
+    /// 避免两条入口后续出现设置保存逻辑不一致。</summary>
+    private AiAssistantPanel CreateAiAssistantPanel()
+    {
+        var panel = new AiAssistantPanel();
+        panel.Attach(AiAssistantService, AiAssistantConfig);
+        panel.CloseRequested += (_, _) => ShowHome();
+        panel.SettingsRequested += (_, _) =>
+        {
+            var settingsPanel = new AiAssistantSettingsPanel(AiAssistantConfig);
+            settingsPanel.Saved += (_, config) =>
+            {
+                AiAssistantConfig = config;
+                AiAssistantService.UpdateConfig(AiAssistantConfig);
+                PersistAiAssistantConfig();
+                UpdateAiFloatingButtonVisibility();
+                // 保存设置只刷新配置，不重新 Attach；否则 Attach 会重新选择历史 Session，
+                // 用户正在进行的对话会看起来“消失”。
+                panel.ApplyConfig(AiAssistantConfig);
+            };
+            OverlayDialogService.ShowModal(settingsPanel);
+        };
+        return panel;
+    }
+
+    /// <summary>把 AI 助手完整配置立即落盘。面板里的模式/模型快速切换也调用这里。</summary>
+    public void PersistAiAssistantConfig()
+    {
+        AiAssistantConfig.AutoModelRouting = AiAssistantConfig.RoutingMode == AiRoutingMode.Auto;
+        ConfigService.Config.AiAssistant = AiAssistantConfig;
+        ConfigService.Config.AiAssistantFloatingButton = AiAssistantConfig.ShowFloatingButton;
+        ConfigService.Save();
+    }
+
+    /// <summary>供其他页面/窗口调用的公开导航方法，跳转到 AI 助手面板。</summary>
+    public void NavigateToAiAssistant() => NavigateLazy(() => CreateAiAssistantPanel());
+
+    /// <summary>日志/诊断页面专用：打开 AI 助手后自动把分析任务作为一个全新的会话发送。
+    /// NavigateLazy 的 onLoaded 保证控件真正挂到可视树之后才开始发送，不会抢占页面切换的首帧。</summary>
+    public void NavigateToAiAssistantWithPrompt(string prompt, string sessionTitle = "日志分析", bool isCrashLogContext = false)
+    {
+        NavigateLazy(
+            () => CreateAiAssistantPanel(),
+            page =>
+            {
+                if (page is AiAssistantPanel panel)
+                    _ = panel.SubmitExternalPromptAsync(prompt, sessionTitle, isCrashLogContext);
+            });
+    }
+
+    private void AiFloatingButton_Click(object sender, RoutedEventArgs e)
+    {
+        NavigateToAiAssistant();
+    }
 
     private void NavExperimental_Click(object sender, RoutedEventArgs e)
     {
@@ -1081,6 +1471,23 @@ public partial class MainWindow : Window
         NavDownloadButton.Visibility = FeatureVisibilityService.IsVisible(cfg, FeatureVisibilityService.NavDownload) ? Visibility.Visible : Visibility.Collapsed;
         NavSettingsButton.Visibility = FeatureVisibilityService.IsVisible(cfg, FeatureVisibilityService.NavSettings) ? Visibility.Visible : Visibility.Collapsed;
         NavToolboxButton.Visibility = FeatureVisibilityService.IsVisible(cfg, FeatureVisibilityService.NavToolbox) ? Visibility.Visible : Visibility.Collapsed;
+        NavAiAssistantButton.Visibility = FeatureVisibilityService.IsVisible(cfg, FeatureVisibilityService.NavAiAssistant) ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    /// <summary>更新 AI 悬浮球显示状态，由设置页的 FloatingButtonCheck 控制。当 AI 面板打开时隐藏悬浮球。</summary>
+    public void UpdateAiFloatingButtonVisibility(bool? forceShow = null)
+    {
+        if (AiFloatingButton != null)
+        {
+            if (forceShow.HasValue)
+            {
+                AiFloatingButton.Visibility = forceShow.Value && ConfigService.Config.AiAssistantFloatingButton ? Visibility.Visible : Visibility.Collapsed;
+            }
+            else
+            {
+                AiFloatingButton.Visibility = ConfigService.Config.AiAssistantFloatingButton ? Visibility.Visible : Visibility.Collapsed;
+            }
+        }
     }
 
     /// <summary>
@@ -1598,6 +2005,13 @@ public partial class MainWindow : Window
             if (cancelToken.IsCancellationRequested)
                 return;
 
+            // 只统计实际使用离线账户的启动。正版和认证服务器账户均不会触发提示。
+            if (account.Type == AccountType.Offline && !account.IsGuest)
+            {
+                OfflineLaunchReminderService.OnOfflineLaunch(cfg);
+                ConfigService.Save();
+            }
+
             var javaService = new JavaService();
 
             // 版本隔离设置要提前算出来，因为下面判断"这个版本需要 Java 几"时要扫描正确的
@@ -1645,7 +2059,14 @@ public partial class MainWindow : Window
             // 且完全不知道原因。现在改为：这种情况下先弹窗告知"建议改用匹配的 Java"，
             // 用户可以选择"仍然使用当前这个"（尊重用户可能的特殊需求，比如临时测试），
             // 或者"改用推荐的 Java"（自动切到列表里已登记的匹配项，没有就走下载流程）。
-            if (javaIdOverride != null && javaPath != null && preferMajor is > 0)
+            // 需求：给每个实例设置加一个"默认使用选择的 Java，不再提示切换"的开关
+            // （InstanceSettingsDialog 里的 SkipJavaMismatchPromptCheckDlg，落盘在
+            // cfg.VersionSkipJavaMismatchPrompt）。开启后跳过整个"版本不匹配"检测+弹窗分支，
+            // 直接照用户为这个实例选定的 Java 启动——用户既然已经明确表态"就是要用这个"，
+            // 就不应该每次启动都被重新问一遍。跟 EnforceJavaVersionMatch（全局强制切换）是
+            // 两码事：那个是"不问、但自动换掉"，这个是"不问、但保留用户选的不换"。
+            var skipMismatchPrompt = cfg.VersionSkipJavaMismatchPrompt.Contains(cfg.SelectedVersionId);
+            if (javaIdOverride != null && javaPath != null && preferMajor is > 0 && !skipMismatchPrompt)
             {
                 // TryGetJavaMajorVersionSync 内部会起进程等待退出(最多阻塞 5 秒)，用 Task.Run
                 // 丢到线程池执行，避免这几秒内卡住 UI 线程(LaunchInternalAsync 本身是 async 方法)。
@@ -1797,6 +2218,9 @@ public partial class MainWindow : Window
             // 计算失败（非 Windows/API 异常等）时静默回退到用户原有配置，不阻断启动流程。
             var effectiveMinMemoryMb = cfg.MinMemoryMb;
             var effectiveMaxMemoryMb = cfg.MaxMemoryMb;
+            var instanceSettings = InstanceConfigService.TryLoad(Path.Combine(folder.Path, "versions", cfg.SelectedVersionId));
+            if (instanceSettings?.MinMemoryMb is > 0) effectiveMinMemoryMb = instanceSettings.MinMemoryMb.Value;
+            if (instanceSettings?.MaxMemoryMb is > 0) effectiveMaxMemoryMb = instanceSettings.MaxMemoryMb.Value;
             if (cfg.EnableMemoryOptimization)
             {
                 var recommendation = MemoryOptimizerService.Calculate(cfg.MemoryOptimizationReserveMb);
@@ -1825,7 +2249,7 @@ public partial class MainWindow : Window
                 SkinJvmArgs = skinJvmArgs,
                 // 自定义 JVM 参数仅在高手模式下生效：普通模式下即使配置里残留了历史值，
                 // 也不应该被悄悄应用，避免用户切回普通模式后出现"不知道为什么还生效"的困惑。
-                CustomJvmArgs = cfg.AdvancedMode ? cfg.CustomJvmArgs : null,
+                CustomJvmArgs = instanceSettings?.CustomJvmArgs ?? (cfg.AdvancedMode ? cfg.CustomJvmArgs : null),
                 PreLaunchCommand = cfg.PreLaunchCommand,
                 AutoJoinServerAddress = autoJoinServer
             };
@@ -2365,6 +2789,16 @@ public partial class MainWindow : Window
 
     private readonly DragDropInstallService _dragDropService = new();
 
+    // 修复"拖动文件时，只要鼠标晃动，屏幕就会闪烁"：拖拽悬停在窗口上时，DragOver 事件会
+    // 随鼠标每一次移动反复触发（一秒钟能有几十次），而这个事件里原来对拖进来的每个文件都
+    // 调一次 _dragDropService.Classify——这个方法要打开文件（压缩包类型的甚至要读 zip 目录）
+    // 才能判断出"这是 mod / 材质包 / 整合包 / 存档..."，全部同步跑在 UI 线程上。鼠标晃一下
+    // 就触发几十次同步文件 IO，每次都卡住 UI 线程一小段时间，视觉上就是"抖一下、画面闪一下"。
+    // 用这两个字段记住"上一次算过的路径集合"和"算出来的结果"，同一批文件只在真正进入窗口/
+    // 换成另一批文件时才重新分类一次，鼠标在窗口内单纯移动不会重复触发这些 IO。
+    private string[]? _lastDragOverPaths;
+    private List<DragDropInstallService.DropKind>? _lastDragOverKinds;
+
     /// <summary>拖拽的目标实例目录：当前选中的版本 + 当前的版本隔离设置。
     /// 跟 LauncherService 启动时算出来的游戏目录口径完全一致——隔离开启时是
     /// versions/&lt;id&gt;，关闭时是 .minecraft 根目录。口径不一致的话会出现
@@ -2398,7 +2832,101 @@ public partial class MainWindow : Window
     // 用 SystemCommands 而不是直接改 WindowState/调 Close()，是因为这几个方法本身就是
     // WPF 给"自绘标题栏"场景准备的标准做法，跟 WindowChrome 配合时行为（比如最大化时
     // 动画、多显示器下记住还原前尺寸位置）跟系统原生按钮完全一致，不用自己再处理一遍。
-    private void MinimizeButton_Click(object sender, RoutedEventArgs e) => SystemCommands.MinimizeWindow(this);
+    /// <summary>需求："下载/启动进行中时，点最小化/最大化/关闭这三个按钮中的任何一个，
+    /// 都提示可能是手误，需要手动确认"。这里统一判断"是否处于下载/启动进行中"这个状态：
+    /// _isCancelLaunchState 是"启动游戏"流程本身已有的"正在启动中"标记（按钮变成"取消启动"
+    /// 那段时间），DownloadQueueService.Instance.HasActive 是标题栏下载列表里是否还有
+    /// "下载中/已暂停"的任务（已暂停也算，因为用户很可能马上要点继续）。</summary>
+    private TrayIconService? _trayIcon;
+
+    /// <summary>创建并接线系统托盘图标。图标本身构造好之后先不 Show()——只在真正需要
+    /// "最小化到托盘"时才显示，平时启动器正常显示主窗口时没必要让托盘区多一个图标。</summary>
+    private void InitializeTrayIcon()
+    {
+        _trayIcon = new TrayIconService();
+        _trayIcon.ShowMainRequested += () => Dispatcher.Invoke(RestoreFromTray);
+        _trayIcon.IconActivated += () => Dispatcher.Invoke(RestoreFromTray);
+        _trayIcon.LaunchSelectedRequested += () => Dispatcher.Invoke(() =>
+        {
+            RestoreFromTray();
+            Launch_Click(this, new RoutedEventArgs());
+        });
+        _trayIcon.ExitRequested += () => Dispatcher.Invoke(() =>
+        {
+            // 托盘"退出"是用户明确表达的真正退出意图，不应该再走"下载/启动进行中"
+            // 那套确认逻辑一遍——用户已经在托盘菜单这个动作本身里做过一次选择了。
+            _trayIcon?.Hide();
+            System.Windows.Application.Current.Shutdown();
+        });
+        Closed += (_, _) => _trayIcon?.Dispose();
+    }
+
+    /// <summary>隐藏主窗口、显示托盘图标——"关闭按钮默认最小化到托盘"和四选一提示里的
+    /// "返回任务栏托盘"选项共用这一个方法。</summary>
+    private void MinimizeToTray()
+    {
+        _trayIcon?.Show();
+        Hide();
+    }
+
+    private void RestoreFromTray()
+    {
+        Show();
+        WindowState = _lastNonMinimizedWindowState;
+        Activate();
+        _trayIcon?.Hide();
+    }
+
+    /// <summary>绑定标题栏下载列表的数据源，并在集合变化时刷新角标数字/显示状态。</summary>
+    private void InitializeDownloadQueueUi()
+    {
+        var items = DownloadQueueService.Instance.Items;
+        DownloadQueueItemsControl.ItemsSource = items;
+        items.CollectionChanged += (_, _) => Dispatcher.Invoke(RefreshDownloadQueueBadge);
+        RefreshDownloadQueueBadge();
+    }
+
+    private void RefreshDownloadQueueBadge()
+    {
+        var count = DownloadQueueService.Instance.Items.Count;
+        DownloadQueueBadge.Visibility = count > 0 ? Visibility.Visible : Visibility.Collapsed;
+        DownloadQueueBadgeText.Text = count > 9 ? "9+" : count.ToString();
+        DownloadQueueEmptyHint.Visibility = count == 0 ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    private void DownloadQueueButton_Click(object sender, RoutedEventArgs e)
+    {
+        DownloadQueuePopup.IsOpen = !DownloadQueuePopup.IsOpen;
+    }
+
+    private void DownloadItemPauseResume_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { Tag: DownloadQueueItem item }) return;
+        if (item.CanPause) DownloadQueueService.Instance.Pause(item);
+        else if (item.CanResume) DownloadQueueService.Instance.Resume(item);
+    }
+
+    private void DownloadItemCancel_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { Tag: DownloadQueueItem item }) return;
+        DownloadQueueService.Instance.Cancel(item);
+    }
+
+    private static bool IsDownloadOrLaunchBusy(MainWindow window) =>
+        window._isCancelLaunchState || DownloadQueueService.Instance.HasActive;
+
+    /// <summary>修复"下载游戏的时候，最大化/还原、最小化/还原被下载状态干扰"：
+    /// 下载/启动是纯后台任务，跟窗口是最大化、最小化还是还原没有任何关系，不会因为
+    /// 用户调整窗口状态就中断或受影响——之前这里对最小化/最大化按钮也套用了「关闭」
+    /// 按钮那一套"检测到忙碌就弹确认框拦一下"的逻辑，等于是把跟关闭窗口相关的安全提示
+    /// 错误地也搬到了这两个完全无害的操作上，导致下载进行中每点一次最小化/最大化都要
+    /// 先手动确认一次，体验上像是"卡住了"。这里去掉忙碌检测，最小化/最大化永远只是
+    /// 单纯地切换窗口状态，不再关心下载/启动是否正在进行——只有真正会中断下载/启动的
+    /// 「关闭」按钮才需要保留确认提示（见 CloseButton_Click）。</summary>
+    private void MinimizeButton_Click(object sender, RoutedEventArgs e)
+    {
+        SystemCommands.MinimizeWindow(this);
+    }
 
     private void MaximizeRestoreButton_Click(object sender, RoutedEventArgs e)
     {
@@ -2406,42 +2934,140 @@ public partial class MainWindow : Window
         else SystemCommands.MaximizeWindow(this);
     }
 
-    private void CloseButton_Click(object sender, RoutedEventArgs e) => SystemCommands.CloseWindow(this);
+    /// <summary>关闭按钮：
+    /// 1) 下载/启动进行中时，不管设置页配的是什么默认行为，一律弹出专门的四选一提示
+    ///    （取消 / 关闭 / 最小化 / 返回任务栏托盘），明确告知关闭会导致下载/启动失败，
+    ///    需要用户在知情的情况下手动选，不能被默认行为悄悄决定——AskEachTime 的弹窗
+    ///    内容跟这个几乎一样，忙碌状态下这一个提示已经涵盖了"让用户自己选"的诉求，
+    ///    不需要再叠加弹第二个窗。
+    /// 2) 不在忙碌状态时，按设置页「点击叉号时的默认操作」执行：直接关闭 / 最小化到托盘 /
+    ///    单纯最小化 / 每次都弹窗询问（AskEachTime，弹出跟上面同一个四选一窗口，只是措辞
+    ///    换成不带"下载/启动会失败"这句警告，因为这时候并不一定真的在忙）。</summary>
+    private void CloseButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (IsDownloadOrLaunchBusy(this))
+        {
+            var choice = MessageBoxDialog.ShowFourChoice(
+                "当前正在运行下载/启动工作，是否关闭启动器？关闭后会造成下载失败、启动失败。",
+                "确认关闭",
+                cancelText: "取消",
+                closeText: "关闭",
+                minimizeText: "最小化",
+                trayText: "返回任务栏托盘");
+            ApplyFourChoiceResult(choice);
+            return;
+        }
+
+        switch (ConfigService.Config.DefaultCloseAction)
+        {
+            case CloseButtonAction.MinimizeToTray:
+                MinimizeToTray();
+                break;
+            case CloseButtonAction.Minimize:
+                SystemCommands.MinimizeWindow(this);
+                break;
+            case CloseButtonAction.AskEachTime:
+                var choice = MessageBoxDialog.ShowFourChoice(
+                    "确定要关闭启动器吗？也可以选择最小化或返回任务栏托盘继续在后台运行。",
+                    "关闭启动器",
+                    cancelText: "取消",
+                    closeText: "关闭",
+                    minimizeText: "最小化",
+                    trayText: "返回任务栏托盘");
+                ApplyFourChoiceResult(choice);
+                break;
+            default: // DirectClose
+                SystemCommands.CloseWindow(this);
+                break;
+        }
+    }
+
+    /// <summary>ShowFourChoice 弹窗结果的统一处理，供"忙碌时强制弹窗"和"AskEachTime 每次
+    /// 弹窗"两处复用，避免同一套 switch 抄两遍。</summary>
+    private void ApplyFourChoiceResult(XclFourChoiceResult choice)
+    {
+        switch (choice)
+        {
+            case XclFourChoiceResult.Close:
+                SystemCommands.CloseWindow(this);
+                break;
+            case XclFourChoiceResult.Minimize:
+                SystemCommands.MinimizeWindow(this);
+                break;
+            case XclFourChoiceResult.Tray:
+                MinimizeToTray();
+                break;
+            // Cancel：什么都不做。
+        }
+    }
 
     /// <summary>主窗口关闭前的检查：还有便签钉在桌面上的话，弹三选一询问用户——
     /// "一起关闭"直接把所有便签窗口也 Close() 掉（便签内容已经是自动保存的，不会丢）；
     /// "仅关闭启动器"保持现状，便签继续留在桌面，XCL2 进程也会因此继续在后台运行
     /// （这是"贴在桌面"这个功能本身的代价，明确告知用户，不是意外行为）；
     /// "取消"则拦下这次关闭，两边都不动。没有任何便签在开时直接放行，不打扰。</summary>
-    private void MainWindow_Closing(object? sender, System.ComponentModel.CancelEventArgs e)
+    private async void MainWindow_Closing(object? sender, System.ComponentModel.CancelEventArgs e)
     {
-        if (Views.StickyNoteWindow.OpenWindows.Count == 0) return;
-
-        var count = Views.StickyNoteWindow.OpenWindows.Count;
-        var choice = MessageBoxDialog.ShowThreeChoice(
-            $"还有 {count} 个桌面便签处于置顶状态。\n\n" +
-            "便签窗口不属于启动器主界面，关闭启动器不会自动带走它——如果只关闭启动器，" +
-            "便签会继续显示在桌面上，XCL2 也会因此继续在后台运行（这是便签需要\"贴在桌面\"这个功能本身决定的，不是卡住了）。",
-            "关闭启动器",
-            "取消",
-            "仅关闭启动器（便签继续置顶）",
-            "一起关闭");
-
-        switch (choice)
+        // 第一次关闭时仍保留原来的桌面便签三选一；关闭备份完成后第二次 Close() 不重复打扰。
+        if (!_stickyNoteCloseDecisionHandled && Views.StickyNoteWindow.OpenWindows.Count > 0)
         {
-            case XclMessageResult.Cancel:
+            var count = Views.StickyNoteWindow.OpenWindows.Count;
+            var choice = MessageBoxDialog.ShowThreeChoice(
+                $"还有 {count} 个桌面便签处于置顶状态。\n\n" +
+                "便签窗口不属于启动器主界面，关闭启动器不会自动带走它——如果只关闭启动器，" +
+                "便签会继续显示在桌面上，XCL2 也会因此继续在后台运行。",
+                "关闭启动器",
+                "取消",
+                "仅关闭启动器（便签继续置顶）",
+                "一起关闭");
+
+            if (choice == XclMessageResult.Cancel)
+            {
                 e.Cancel = true;
-                break;
-            case XclMessageResult.Yes:
-                // 一起关闭：便签窗口自己的 Closed 逻辑会先 Save() 再从 OpenWindows 里移除，
-                // 倒序遍历一份快照，避免"遍历同时被回调修改集合"报错。
+                return;
+            }
+
+            _stickyNoteCloseDecisionHandled = true;
+            if (choice == XclMessageResult.Yes)
+            {
                 foreach (var note in Views.StickyNoteWindow.OpenWindows.ToArray())
-                {
                     note.Close();
-                }
-                break;
-            // XclMessageResult.No（仅关闭启动器）以及用户按 Esc/点遮罩关闭弹窗：
-            // 都不用做任何事，维持"只关主窗口、便签留着"的现状，让本次 Closing 正常继续往下走。
+            }
+        }
+
+        if (!ConfigService.Config.BackupInstanceOnClose || _closeLifecycleBackupCompleted)
+            return;
+
+        // 真正退出前必须等备份结束；第一次 Closing 先取消，后台 zip 完成后再主动 Close 一次。
+        e.Cancel = true;
+        if (_closeLifecycleBackupRunning) return;
+        _closeLifecycleBackupRunning = true;
+        try
+        {
+            await RunLifecycleBackupAsync("关闭时备份", showToast: true);
+        }
+        finally
+        {
+            _closeLifecycleBackupRunning = false;
+            _closeLifecycleBackupCompleted = true;
+            _ = Dispatcher.BeginInvoke(new Action(Close), DispatcherPriority.Background);
+        }
+    }
+
+    private async Task RunLifecycleBackupAsync(string reason, bool showToast)
+    {
+        try
+        {
+            if (showToast) ToastService.ShowInfo("正在备份实例，完成后自动关闭…");
+            var count = await LifecycleInstanceBackupService.CreateBackupsAsync(ConfigService.Config, reason);
+            LauncherLogService.AppendLine($"[{reason}] 完成，成功备份 {count} 个实例。");
+            if (showToast && count > 0) ToastService.ShowSuccess($"已备份 {count} 个实例");
+        }
+        catch (Exception ex)
+        {
+            ErrorPresenter.LogFallback(reason + "失败", ex);
+            LauncherLogService.AppendLine($"[{reason}] 失败：{ex.Message}");
+            if (showToast) ToastService.ShowWarning("实例备份失败，将继续关闭启动器。\n" + ex.Message);
         }
     }
 
@@ -2462,6 +3088,16 @@ public partial class MainWindow : Window
     /// <summary>窗口最大化⇄还原后，标题栏按钮的图标（□ ⇄ 两个重叠的方块）要跟着切换，
     /// 否则用户点了最大化，按钮图标却还停在"最大化"那个样子，看起来像没生效。</summary>
     private void MainWindow_StateChanged(object? sender, EventArgs e) => UpdateMaximizeRestoreIcon();
+
+    /// <summary>
+    /// 兼容旧版/补丁叠加后的 MainWindow.xaml：部分版本仍然绑定 SizeChanged="MainWindow_SizeChanged"。
+    /// 这里只同步标题栏最大化/还原图标，不再根据窗口宽度修改三个系统按钮的 Margin、Visibility，
+    /// 从根源避免按钮被拆开或在 854×480 窄窗口下消失。
+    /// </summary>
+    private void MainWindow_SizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        UpdateMaximizeRestoreIcon();
+    }
 
     private void UpdateMaximizeRestoreIcon()
     {
@@ -2484,6 +3120,20 @@ public partial class MainWindow : Window
         e.Effects = DragDropEffects.Copy;
         e.Handled = true;
 
+        // 只有当这次拖进来的文件集合跟上次算过的不一样时，才重新分类（涉及文件 IO）；
+        // 同一批文件在窗口内来回晃动鼠标，这里直接复用上一次的结果，不再反复触发 IO。
+        List<DragDropInstallService.DropKind> kinds;
+        if (_lastDragOverPaths != null && _lastDragOverKinds != null && _lastDragOverPaths.SequenceEqual(paths))
+        {
+            kinds = _lastDragOverKinds;
+        }
+        else
+        {
+            kinds = paths.Select(_dragDropService.Classify).ToList();
+            _lastDragOverPaths = paths;
+            _lastDragOverKinds = kinds;
+        }
+
         // 悬停时就把"会发生什么"说清楚，而不是等松手才知道装到哪去了。
         var target = ResolveDropTargetInstanceDir();
         if (target == null)
@@ -2493,12 +3143,12 @@ public partial class MainWindow : Window
         }
         else
         {
-            var kinds = paths.Select(_dragDropService.Classify).ToList();
             DragHintTitle.Text = Loc.T("Str_Drop_Title", "松手即可安装");
             DragHintDetail.Text = $"{DescribeKinds(kinds)}\n将安装到：{Path.GetFileName(target.TrimEnd(Path.DirectorySeparatorChar))}";
         }
 
-        DragHintLayer.Visibility = Visibility.Visible;
+        if (DragHintLayer.Visibility != Visibility.Visible)
+            DragHintLayer.Visibility = Visibility.Visible;
     }
 
     private static string DescribeKinds(List<DragDropInstallService.DropKind> kinds)
@@ -2666,6 +3316,8 @@ public partial class MainWindow : Window
     private void MainWindow_DragLeave(object sender, DragEventArgs e)
     {
         DragHintLayer.Visibility = Visibility.Collapsed;
+        _lastDragOverPaths = null;
+        _lastDragOverKinds = null;
     }
 
     /// <summary>
@@ -2750,6 +3402,8 @@ public partial class MainWindow : Window
     private async void MainWindow_Drop(object sender, DragEventArgs e)
     {
         DragHintLayer.Visibility = Visibility.Collapsed;
+        _lastDragOverPaths = null;
+        _lastDragOverKinds = null;
         if (!e.Data.GetDataPresent(DataFormats.FileDrop)) return;
 
         var paths = (string[])e.Data.GetData(DataFormats.FileDrop)!;

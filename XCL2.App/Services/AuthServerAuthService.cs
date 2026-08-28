@@ -125,6 +125,15 @@ public class AuthServerAuthService
         };
     }
 
+    /// <summary>
+    /// 公开出来的自动探测入口：给"皮肤站地址"这一类只需要探测 API Root、不需要真正登录的场景
+    /// （比如「设置」页的万能皮肤补丁 API 地址输入框）复用，不用为了同一套探测逻辑再写一份。
+    /// 输入可以是主页地址（如 "https://littleskin.cn"）或者已经是完整 API Root，
+    /// 探测成功返回规范化后的完整 API Root；探测失败抛 <see cref="AuthStepException"/>，
+    /// 消息已经是可以直接展示给用户看的人话。
+    /// </summary>
+    public Task<string> DetectApiRootAsync(string input, CancellationToken ct = default) => ResolveApiRootAsync(input, ct);
+
     private async Task<string> ResolveApiRootAsync(string input, CancellationToken ct)
     {
         var candidates = BuildApiRootCandidates(input).ToList();

@@ -243,10 +243,10 @@
                 </TabItem>
 
                 <!-- ===== Tab 6：计算器 ===== -->
-                <TabItem Header="{DynamicResource Str_Ui_Calculator}">
+                <TabItem Header="计算器">
                     <ScrollViewer VerticalScrollBarVisibility="Auto" services:ScrollWheelBehavior.EnableFastWheel="True">
                         <StackPanel Margin="4,12,4,4">
-                            <TextBlock Text="{DynamicResource Str_Ui_Calculator_Desc}" FontSize="12"
+                            <TextBlock Text="基础四则运算计算器：支持键盘输入、百分比、正负号与退格；Enter 计算结果，Esc 清空。" FontSize="12"
                                        Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,10" TextWrapping="Wrap"
                                        MaxWidth="640" HorizontalAlignment="Left"/>
                             <tools:CalculatorTool HorizontalAlignment="Left"/>
@@ -255,10 +255,10 @@
                 </TabItem>
 
                 <!-- ===== Tab 7：桌面便签 ===== -->
-                <TabItem Header="{DynamicResource Str_Ui_Sticky_Notes}">
+                <TabItem Header="桌面便签">
                     <ScrollViewer VerticalScrollBarVisibility="Auto" services:ScrollWheelBehavior.EnableFastWheel="True">
                         <StackPanel Margin="4,12,4,4">
-                            <TextBlock Text="{DynamicResource Str_Ui_Sticky_Notes_Desc}" FontSize="12"
+                            <TextBlock Text="本地便签：自动保存到启动器数据目录，可新建、删除、切换样式，并把任意便签作为置顶桌面便签打开。" FontSize="12"
                                        Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,10" TextWrapping="Wrap"
                                        MaxWidth="640" HorizontalAlignment="Left"/>
                             <tools:StickyNotesTool/>
@@ -527,6 +527,18 @@
                                 <Button x:Name="SeedGenBtn" Content="生成种子" Style="{StaticResource PrimaryButton}" Padding="14,7" Margin="0,0,10,0" Click="SeedGen_Click"/>
                                 <Button Content="复制" Padding="14,7" Click="SeedCopy_Click"/>
                             </StackPanel>
+                        </StackPanel>
+                    </ScrollViewer>
+                </TabItem>
+
+                <!-- ===== 种子结构查询：WebView2 懒加载，只有用户打开本工具后才创建浏览器。 ===== -->
+                <TabItem Header="种子结构查询">
+                    <ScrollViewer VerticalScrollBarVisibility="Auto" services:ScrollWheelBehavior.EnableFastWheel="True">
+                        <StackPanel Margin="4,12,4,4">
+                            <TextBlock Text="种子结构查询 / Seed Map" FontWeight="Bold" Margin="0,0,0,8"/>
+                            <TextBlock Text="输入世界种子后在内嵌地图中查询村庄、要塞、远古城市、林地府邸、下界堡垒等结构。查询页面由 Chunkbase 提供，需要联网；WebView2 只在点“打开查询地图”后加载。"
+                                       TextWrapping="Wrap" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,10" MaxWidth="760" HorizontalAlignment="Left"/>
+                            <tools:SeedStructureQueryTool/>
                         </StackPanel>
                     </ScrollViewer>
                 </TabItem>
@@ -922,6 +934,13 @@
                                 <TextBlock x:Name="BookshelfResultText" FontSize="12" TextWrapping="Wrap" Foreground="{DynamicResource TextSecondaryBrush}"/>
                             </Border>
                         </StackPanel>
+                    </ScrollViewer>
+                </TabItem>
+
+                <!-- ===== Tab 33：基岩版 ↔ Java 版数据包互转 ===== -->
+                <TabItem Header="数据包互转">
+                    <ScrollViewer VerticalScrollBarVisibility="Auto" services:ScrollWheelBehavior.EnableFastWheel="True">
+                        <tools:DatapackConverterTool Margin="4,12,4,4"/>
                     </ScrollViewer>
                 </TabItem>
 

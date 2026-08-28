@@ -23,11 +23,39 @@ namespace XCL2.App.Services;
 /// （Microsoft.MinecraftWindowsBeta_8wekyb3d8bbwe），本类默认只处理正式版，不猜测/不兼顾
 /// Preview，避免装了 Preview 没装正式版的用户被"检测到已安装"误导。
 /// </summary>
+/// <summary>
+/// 关于"授权状态分流"的技术边界（写在最前面，避免后来者想当然地去做一个实际做不到的事）：
+///
+/// 本类唯一能合法查询的是"这个包有没有在系统里注册"（Get-AppxPackage），这跟"这个包
+/// 当前有没有有效的购买/Trial 授权"是两回事——后者（正版 / 官方 Trial-Demo / 无授权）
+/// 由 Windows Store 的许可证服务（clipsvc）维护，官方公开 API 里唯一能查询许可证状态的
+/// 是 <c>Windows.Services.Store.StoreContext.GetAppLicenseAsync()</c>，而这个 API 只能查询
+/// "调用方自己所在包" 的许可证——也就是说，只有 Minecraft for Windows 自己（它是被 MSIX/
+/// UWP 打包、有自己包身份的应用）才能合法查到"我自己是正版/Trial/没授权"，一个独立的、
+/// 未打包的第三方 Win32 启动器（本项目）没有任何官方支持的方式替它读这个状态——能读到的
+/// 途径只剩 clipsvc 的本地许可证存储（未公开格式、需要逆向/绕过其访问控制），这正是
+/// 用户明确要求不做的"不得伪造许可证、绕过 DRM"的范畴，所以本类不做，也不应该有人后续
+/// 加上去。
+///
+/// 因此这里实际能做、且完全合规的"分流"是：把三态判断的活交给 Minecraft for Windows
+/// 自己——它启动时会自己读取自己的许可证状态，该正常进正式版就进正式版、该进 Trial 就进
+/// Trial、没有任何授权就自己弹登录/购买/试用引导，这本来就是官方客户端自带的行为，
+/// 跟用户在开始菜单里点这个应用图标是完全一样的路径。本启动器负责的只是：
+///   1) 已安装 → 唤起（Launch），让 Minecraft 自己决定进哪个状态；
+///   2) 未安装 / 无法确认已装 → 引导去 Microsoft Store 商品页（OpenStorePage），
+///      登录账户、领取官方 Trial、购买正版这三件事都是在那个官方页面里完成的，
+///      本启动器不代为伪造、不代为绕过，只做"带路"。
+/// </summary>
 public static class BedrockLaunchService
 {
     /// <summary>Minecraft for Windows（正式版）固定的 PackageFamilyName，Windows 应用商店包的
     /// 稳定标识符，不随版本号变化。</summary>
     public const string PackageFamilyName = "Microsoft.MinecraftUWP_8wekyb3d8bbwe";
+
+    /// <summary>Minecraft for Windows 在 Microsoft Store 里的商品 ID，固定不变。用于"未安装 /
+    /// 无有效授权"时引导用户去官方页面登录账户、领取官方 Trial 或购买正版——这三件事全部由
+    /// Store/Minecraft 官方页面完成，本类只负责跳转，不代为处理账户或许可证。</summary>
+    public const string StoreProductId = "9NBLGGH2JHXJ";
 
     /// <summary>
     /// 基岩版官方系统要求：Windows 10 及以上（分发渠道 Microsoft Store 本身也要求 Win10+，
@@ -86,17 +114,59 @@ public static class BedrockLaunchService
     /// 这里不重复检测——跟项目里其他"前置条件由外层页面负责校验"的约定一致（比如
     /// ExperimentalFeaturesWindow 不重复校验 token 解锁状态）。
     ///
-    /// 用 explorer.exe 启动 shell:AppsFolder\...!App 而不是直接 Process.Start 那个协议字符串，
-    /// 是因为 shell: 协议在部分 Windows 版本/权限组合下用 UseShellExecute=true 直接启动会
-    /// 抛 Win32Exception("找不到该文件")，而交给 explorer.exe 去解析这个虚拟文件夹路径
-    /// 是官方文档推荐、兼容性最好的方式（跟命令行下 "explorer shell:AppsFolder\..." 手动能跑通
-    /// 是同一条路径）。"!App" 是 Minecraft for Windows 清单里的默认 Application Id。
+    /// 修复"启动基岩版时会错误地唤起文件夹"：原来这里借道 explorer.exe 去解析
+    /// shell:AppsFolder\...!App 这个虚拟路径——问题在于，一旦这个包身份解析失败
+    /// （比如系统里实际注册的包，其 PackageFamilyName 跟这里写死的正式版 PFN 不一致，
+    /// 侧载/开发者模式注册的包就可能出现这种情况），explorer.exe 并不会像正常的
+    /// Win32 API 调用那样抛异常，而是把这个解析不了的参数当成普通路径处理，
+    /// 静默地打开一个新的资源管理器窗口（默认目录，比如"此电脑"）——这正是用户看到
+    /// "点启动基岩版结果弹出一个文件夹"的原因，而且因为没有异常抛出，catch 块也接不到，
+    /// 用户体验上就是"莫名其妙弹了个文件夹，游戏没启动，也没有任何报错"。
+    ///
+    /// 改成直接把 shell:AppsFolder\...!App 作为 ProcessStartInfo.FileName、
+    /// UseShellExecute=true 直接调用（不再经过 explorer.exe 这层转发）：这是
+    /// ShellExecuteEx 原生支持的用法，解析失败时会按标准 Win32 规则抛出
+    /// Win32Exception（通常是 ERROR_FILE_NOT_FOUND / ERROR_NO_ASSOCIATION），
+    /// 调用方 catch 得到，能给用户一个清楚的"唤起失败"提示，而不是无声无息地弹出一个
+    /// 完全不相关的文件夹。"!App" 是 Minecraft for Windows 清单里的默认 Application Id。
     /// </summary>
     public static void Launch()
     {
-        Process.Start(new ProcessStartInfo("explorer.exe", $"shell:AppsFolder\\{PackageFamilyName}!App")
+        // Process.Start 的返回值这里不需要长期持有（前面类注释已经说明：这条路径唤起的是
+        // 系统另起的独立应用，跟这个返回的 Process 对象没有稳定的对应关系，没法也不该拿它
+        // 做后续监控），但仍然要 Dispose——不然每点一次「启动基岩版」就泄漏一个内核句柄，
+        // 原来这里直接丢弃返回值就是这个问题。
+        using var proc = Process.Start(new ProcessStartInfo($"shell:AppsFolder\\{PackageFamilyName}!App")
         {
             UseShellExecute = true
         });
+    }
+
+    /// <summary>
+    /// 跳转到 Minecraft for Windows 在 Microsoft Store 里的商品页——"未安装"或者"没有任何
+    /// 有效授权"时该走的路径：登录 Microsoft 账户、领取官方 Trial/Demo、购买正版，这三件事
+    /// 都在这个官方页面里完成，本方法只负责带用户过去，不做任何本地许可证判断或修改。
+    ///
+    /// 优先用 ms-windows-store: 协议直接拉起 Store 客户端里的商品页（体验最好，能直接点
+    /// "试用"/"购买"/切换登录账户）；如果这台机器 Store 客户端本身不可用（拉起失败），
+    /// 回退到网页版商品页，好歹能让用户看到购买入口。两条路径都是官方地址，没有绕过任何
+    /// 东西。
+    /// </summary>
+    public static void OpenStorePage()
+    {
+        try
+        {
+            using var proc = Process.Start(new ProcessStartInfo($"ms-windows-store://pdp/?productid={StoreProductId}")
+            {
+                UseShellExecute = true
+            });
+        }
+        catch
+        {
+            using var proc = Process.Start(new ProcessStartInfo($"https://www.microsoft.com/store/productId/{StoreProductId}")
+            {
+                UseShellExecute = true
+            });
+        }
     }
 }

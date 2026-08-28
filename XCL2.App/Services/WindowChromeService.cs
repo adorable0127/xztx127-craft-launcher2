@@ -1,6 +1,7 @@
-using System.Runtime.InteropServices;
+﻿using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Interop;
+using System.Windows.Media;
 
 namespace XCL2.App.Services;
 
@@ -177,6 +178,17 @@ public static class WindowChromeService
             if (msg != WM_GETMINMAXINFO) return IntPtr.Zero;
 
             var mmi = Marshal.PtrToStructure<MINMAXINFO>(lParam);
+
+            // 我们自己把 WM_GETMINMAXINFO 标记为 handled 后，WPF / WindowChrome 后续默认处理
+            // 就不会再有机会把 Window.MinWidth / MinHeight 写进 ptMinTrackSize。此前 MainWindow
+            // XAML 虽然声明了最小尺寸，实际上仍能被原生拖拽缩到更小，标题栏右侧按钮就会被
+            // 挤出/裁掉，看起来像“离奇消失”。这里显式把 WPF 的 DIP 最小尺寸换算成当前显示器
+            // 的物理像素并写回原生结构，确保 854x480 在 100%/125%/150% 等 DPI 下都真正生效。
+            var dpi = VisualTreeHelper.GetDpi(window);
+            if (!double.IsNaN(window.MinWidth) && !double.IsInfinity(window.MinWidth) && window.MinWidth > 0)
+                mmi.ptMinTrackSize.X = Math.Max(mmi.ptMinTrackSize.X, (int)Math.Ceiling(window.MinWidth * dpi.DpiScaleX));
+            if (!double.IsNaN(window.MinHeight) && !double.IsInfinity(window.MinHeight) && window.MinHeight > 0)
+                mmi.ptMinTrackSize.Y = Math.Max(mmi.ptMinTrackSize.Y, (int)Math.Ceiling(window.MinHeight * dpi.DpiScaleY));
 
             var monitor = MonitorFromWindow(hWnd, MONITOR_DEFAULTTONEAREST);
             if (monitor != IntPtr.Zero)

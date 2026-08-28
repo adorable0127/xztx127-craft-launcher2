@@ -1,4 +1,4 @@
-using System.IO;
+﻿using System.IO;
 using System.Linq;
 using System.Text.Json;
 using XCL2.App.Models;
@@ -31,7 +31,39 @@ public class ConfigService
     public ConfigService()
     {
         ConfigPath = Path.Combine(App.DataDir, "config.json");
-        AccountsPath = Path.Combine(App.DataDir, "accounts.json");
+
+        // 修复"登录好的账户，在另一个文件夹启动时就不会显示了"：
+        // App.DataDir 是 AppContext.BaseDirectory（启动器自身 exe 所在目录）下的 "xcl2" 子目录，
+        // 这是刻意的"便携版"设计——游戏文件、下载缓存都应该跟着 exe 走，拷到哪个文件夹/哪个盘
+        // 都能带着一起用。但账户登录状态不应该跟着这条"便携"规则走：同一个人常见的用法是把
+        // 启动器复制到好几个不同的文件夹（比如给不同的整合包/存档各建一份），如果账户缓存也
+        // 存在 exe 旁边，每一份拷贝都会各自读到一个空的 accounts.json，表现就是"明明登录过，
+        // 换个文件夹打开启动器账户又不见了"，还得重新登录一遍微软账户。
+        //
+        // 账户信息（尤其是微软账户的 refresh token）改存到当前 Windows 用户的漫游 AppData 下
+        // 一个固定路径，不随 exe 所在目录变化，这样不管从哪个文件夹启动、启动器本体被拷贝了
+        // 多少份，读到的都是同一份账户缓存。首次运行时如果这个固定位置还没有文件，
+        // 而 exe 旁边的旧路径存在账户数据，就自动搬过去一次（迁移老用户数据，不让人凭空
+        // "丢失"已登录的账户），迁移后旧文件删除，避免同一份账户数据出现两个不同步的副本。
+        var roamingAccountsDir = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "XCL2");
+        Directory.CreateDirectory(roamingAccountsDir);
+        AccountsPath = Path.Combine(roamingAccountsDir, "accounts.json");
+
+        var legacyAccountsPath = Path.Combine(App.DataDir, "accounts.json");
+        try
+        {
+            if (!File.Exists(AccountsPath) && File.Exists(legacyAccountsPath))
+            {
+                File.Copy(legacyAccountsPath, AccountsPath, overwrite: false);
+                File.Delete(legacyAccountsPath);
+            }
+        }
+        catch
+        {
+            // 迁移失败（比如没权限删旧文件）不影响后续正常读写，旧文件留着不管，
+            // 新账户缓存路径照常使用。
+        }
     }
 
     /// <summary>
@@ -67,6 +99,12 @@ public class ConfigService
         if (RegistryFeatureEnabled)
             RegistrySyncedFields.LoadFromRegistry(Config);
 
+        // 默认如有管理员权限，就把注册表的全局设置（全设备注册表）开启
+        if (RegistryConfigService.IsRunningAsAdministrator())
+        {
+            Config.UseMachineWideRegistry = true;
+        }
+
         // 反序列化后，若 JSON 中某属性显式写了 null（旧版本/手动编辑损坏的配置文件），
         // 该属性会被覆盖为 null 而不会走字段初始值，这里做兜底修复，避免后续 NullReferenceException。
         Config.Folders ??= new List<GameFolder>();
@@ -93,6 +131,17 @@ public class ConfigService
         }
 
         Config.VersionJavaIdOverrides ??= new Dictionary<string, string>();
+
+        // AI 助手旧配置迁移/空值修复。旧版只持久化悬浮球，完整 AI 配置以前每次启动都会丢失；
+        // 新版统一存到 AppConfig.AiAssistant，同时保留 AiAssistantFloatingButton 做向后兼容。
+        Config.AiAssistant ??= new AiAssistantConfig();
+        Config.AiAssistant.CustomModels ??= new List<AiModelDefinition>();
+        Config.AiAssistant.CustomModels.RemoveAll(m => m == null || string.IsNullOrWhiteSpace(m.Id));
+        if (Config.AiAssistantFloatingButton && !Config.AiAssistant.ShowFloatingButton)
+            Config.AiAssistant.ShowFloatingButton = true;
+        if (Config.AiAssistant.RoutingMode == AiRoutingMode.Auto && !Config.AiAssistant.AutoModelRouting)
+            Config.AiAssistant.RoutingMode = AiRoutingMode.SpecificModel;
+        Config.AiAssistant.AutoModelRouting = Config.AiAssistant.RoutingMode == AiRoutingMode.Auto;
 
         // 老配置文件迁移：只要有 FavoriteVersionIds 里的旧版本收藏、并且还没搬进
         // FavoriteItems（避免每次启动重复搬运出现重复项），就补一条 Type=Version 的记录。
@@ -151,6 +200,9 @@ public class ConfigService
     public void Save()
     {
         Directory.CreateDirectory(App.DataDir);
+        Config.AiAssistant ??= new AiAssistantConfig();
+        Config.AiAssistant.AutoModelRouting = Config.AiAssistant.RoutingMode == AiRoutingMode.Auto;
+        Config.AiAssistantFloatingButton = Config.AiAssistant.ShowFloatingButton;
         File.WriteAllText(ConfigPath, JsonSerializer.Serialize(Config, JsonOpts));
 
         RegistryFeatureEnabled = Config.RegistryFeatureEnabled;

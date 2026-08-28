@@ -906,7 +906,7 @@
     <system:String x:Key="Str_Ui_Refresh_Version_List">Refresh list</system:String>
     <system:String x:Key="Str_Ui_Bedrock_Server_Version_Tip">All historical versions of the Bedrock dedicated server (from the community archive). If no version is selected, the latest version of the channel is downloaded.</system:String>
     <system:String x:Key="Str_Ui_Download_Bedrock_Client">Download client</system:String>
-    <system:String x:Key="Str_Ui_Launch_Downloaded_Client">Launch downloaded client</system:String>
+    <system:String x:Key="Str_Ui_Launch_Downloaded_Client">Launch locally installed client</system:String>
     <system:String x:Key="Str_Ui_Installed_Client_Instances">Downloaded client instances</system:String>
 
     <system:String x:Key="Str_Cs_Loading_Version_List">Loading version list...</system:String>
@@ -922,7 +922,7 @@
     <system:String x:Key="Str_Cs_No_Client_Instance_Selected_Body">Please select a downloaded Bedrock client instance from the list below.</system:String>
     <system:String x:Key="Str_Cs_Bedrock_Client_Launch_Failed">Failed to launch Bedrock client.</system:String>
     <system:String x:Key="Str_Cs_Bedrock_Client_Auto_Launched">The game has been launched automatically.</system:String>
-    <system:String x:Key="Str_Cs_Bedrock_Client_Auto_Launch_Failed">Auto-launch failed. You can click "Launch Downloaded Client" above to retry.</system:String>
+    <system:String x:Key="Str_Cs_Bedrock_Client_Auto_Launch_Failed">Auto-launch failed. You can click "Launch Locally Installed Client" above to retry.</system:String>
 
     <system:String x:Key="Str_Ui_Channel_Client">Channel:</system:String>
 

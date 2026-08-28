@@ -238,12 +238,12 @@ public partial class ModManagerPage : UserControl
             return;
         }
 
-        var listText = string.Join("\n", candidates.Select(c =>
-            $"「{c.DisplayName}」：{(string.IsNullOrEmpty(c.CurrentVersionName) ? "当前版本" : c.CurrentVersionName)} → {c.NewVersionName}"));
-        var confirm = MessageBoxDialog.ShowConfirm(
-            $"发现 {candidates.Count} 个模组有更新：\n\n{listText}\n\n是否全部升级？",
-            "一键批量升级");
-        if (!confirm) return;
+        // 需求：加入"选择模组升级"功能——弹一个可勾选的清单，而不是只有全部升级/全部放弃
+        // 两个选项。默认全部勾选，维持"一键全部升级"这个最常见场景的操作习惯，需要跳过
+        // 某几个的时候用户自己取消勾选即可。ModUpdateSelectionDialog 关闭时会把用户的勾选
+        // 结果写回每个 candidate.Selected，ApplyAsync 内部本来就只处理 Selected=true 的项。
+        var selectionDlg = new ModUpdateSelectionDialog(candidates);
+        if (selectionDlg.ShowDialog() != true) return;
 
         var (succeeded, failed) = await batchUpdate.ApplyAsync(modsDir, candidates, progress: null, ct: default);
 

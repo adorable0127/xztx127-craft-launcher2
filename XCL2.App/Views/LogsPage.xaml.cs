@@ -1,5 +1,6 @@
-using System.IO;
+﻿using System.IO;
 using System.Text;
+using System.Text.RegularExpressions;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Threading;
@@ -58,6 +59,10 @@ public partial class LogsPage : UserControl
     // 之后才会创建；可以重复点击复用同一个实例（Open() 内部每次都会弹一个新窗口+新同步定时器，
     // 这里只是持有引用方便页面卸载时统一 Dispose 掉同步定时器）。
     private LauncherLogWindowService? _launcherLogWindowService;
+
+    // 最近一次注入扫描的可序列化快照。ListView 只是展示层，AI 分析不从控件反向拼数据，
+    // 避免排序/虚拟化后丢字段，也方便把 PID、风险统计等一起带上。
+    private string? _lastInjectionScanSnapshot;
 
     public LogsPage(MainWindow owner)
     {
@@ -194,6 +199,167 @@ public partial class LogsPage : UserControl
         GameLogBox.Text = Loc.T("Str_Cs_No_Output_Yet", "(暂无输出)");
         _lastKnownLogSnapshot = null;
         _lastKnownLogVersionId = null;
+    }
+
+    // --- 日志提交给 AI ---
+    private void AnalyzeCurrentGameLogWithAi_Click(object sender, RoutedEventArgs e)
+    {
+        string? raw = null;
+        string source = "当前游戏日志";
+
+        if (ProcessCombo.SelectedItem is GameProcessInfo info)
+        {
+            lock (info.OutputBuffer) raw = info.OutputBuffer.ToString();
+            source = $"当前游戏日志 - {info.VersionId}";
+        }
+        else if (!string.IsNullOrWhiteSpace(_lastKnownLogSnapshot))
+        {
+            raw = _lastKnownLogSnapshot;
+            source = string.IsNullOrWhiteSpace(_lastKnownLogVersionId)
+                ? "最近一次游戏日志"
+                : $"最近一次游戏日志 - {_lastKnownLogVersionId}";
+        }
+
+        if (string.IsNullOrWhiteSpace(raw))
+        {
+            MessageBoxDialog.ShowInfo("当前没有可提交的游戏日志。请先启动游戏，或保留一次已退出游戏的日志快照。", "AI 日志分析");
+            return;
+        }
+
+        SubmitLogToAi(
+            source,
+            raw,
+            "请分析下面的 Minecraft 游戏日志。先给出最可能的根因，再列出关键证据（错误类型、类名、Mod/Loader 名、退出码等），最后给出按优先级排序且可直接执行的修复步骤。不要把普通 INFO/WARN 当成崩溃根因；信息不足时明确说明还缺什么。" );
+    }
+
+    private void AnalyzeLauncherLogWithAi_Click(object sender, RoutedEventArgs e)
+    {
+        var crashLog = Path.Combine(App.DataDir, "logs", "crash.log");
+        if (!File.Exists(crashLog))
+        {
+            MessageBoxDialog.ShowInfo("当前没有启动器异常日志可提交。", "AI 日志分析");
+            return;
+        }
+
+        string raw;
+        try
+        {
+            using var stream = new FileStream(crashLog, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+            using var reader = new StreamReader(stream, Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
+            raw = reader.ReadToEnd();
+        }
+        catch (Exception ex)
+        {
+            MessageBoxDialog.ShowError("读取启动器日志失败：" + ex.Message, "AI 日志分析");
+            return;
+        }
+
+        SubmitLogToAi(
+            "启动器异常日志",
+            raw,
+            "请分析下面的 XCL2 启动器异常日志。区分启动器自身代码错误、Java、网络/下载、权限、文件占用、配置或 Minecraft 环境问题；给出最可能根因、关键证据和最短修复路径。" );
+    }
+
+    private void AnalyzeCrashLogWithAi_Click(object sender, RoutedEventArgs e)
+    {
+        if (!_owner.AiAssistantConfig.AllowCrashLogReading)
+        {
+            MessageBoxDialog.ShowWarning("请先在 AI 助手设置中开启“允许把日志/崩溃内容发给 AI 分析”，再提交崩溃报告。", "AI 日志分析");
+            return;
+        }
+        if (string.IsNullOrWhiteSpace(CrashRawBox.Text))
+        {
+            MessageBoxDialog.ShowInfo("请先选择一个崩溃报告。", "AI 日志分析");
+            return;
+        }
+
+        SubmitLogToAi(
+            "Minecraft 崩溃报告",
+            CrashRawBox.Text,
+            "请深入分析下面的 Minecraft 崩溃报告。优先定位第一责任方（具体 Mod、前置依赖、Mixin、Loader、Java 版本、显卡驱动或资源问题），区分根因与后续连锁异常，并给出可执行的修复顺序。",
+            isCrashLogContext: true);
+    }
+
+    private void AnalyzeInjectionLogWithAi_Click(object sender, RoutedEventArgs e)
+    {
+        if (string.IsNullOrWhiteSpace(_lastInjectionScanSnapshot))
+        {
+            MessageBoxDialog.ShowInfo("请先选择游戏进程并执行一次“扫描”。", "AI 注入分析");
+            return;
+        }
+
+        SubmitLogToAi(
+            "游戏进程注入扫描",
+            _lastInjectionScanSnapshot,
+            "请分析下面的 Minecraft/Java 进程模块注入扫描结果。重点判断 Suspicious/Unknown 项更像系统组件、显卡驱动、JVM/LWJGL、录屏/Overlay/输入法等正常模块，还是需要人工排查的注入模块。不要仅凭 Unknown 就判定恶意；列出最值得核实的文件、理由和安全的核实步骤。" );
+    }
+
+    private async void AnalyzeFullLauncherLogWithAi_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            // 汇总磁盘日志可能涉及多个文件，放在线程池做，避免用户点 AI 分析时界面卡住。
+            var raw = await Task.Run(BuildAllLauncherLogsText);
+            SubmitLogToAi(
+                "完整启动器日志",
+                raw,
+                "请综合分析下面的 XCL2 当前会话日志与磁盘日志。先按时间线找出真正导致失败/异常的第一处错误，再区分连锁报错与噪音，最后给出按优先级排序的修复方案。" );
+        }
+        catch (Exception ex)
+        {
+            MessageBoxDialog.ShowError("汇总日志失败：" + ex.Message, "AI 日志分析");
+        }
+    }
+
+    private void SubmitLogToAi(string sourceName, string rawText, string guidance, bool isCrashLogContext = true)
+    {
+        if (isCrashLogContext && !_owner.AiAssistantConfig.AllowCrashLogReading)
+        {
+            MessageBoxDialog.ShowWarning("请先在 AI 助手设置中开启“允许把日志/崩溃内容发给 AI 分析”。", "AI 日志分析");
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(rawText))
+        {
+            MessageBoxDialog.ShowInfo("没有可提交的日志内容。", "AI 日志分析");
+            return;
+        }
+
+        var prepared = PrepareLogForAi(rawText, out var truncated);
+        var prompt = new StringBuilder()
+            .AppendLine(guidance)
+            .AppendLine()
+            .AppendLine($"日志来源：{sourceName}")
+            .AppendLine("说明：XCL2 已在本地尝试隐藏常见 access token / refresh token / API Key / Bearer 凭据。")
+            .AppendLine(truncated ? "说明：原始日志过长，本次保留了开头环境信息和末尾错误区段，中间部分已截断。" : "说明：以下为本次日志内容。")
+            .AppendLine("```text")
+            .AppendLine(prepared)
+            .AppendLine("```")
+            .ToString();
+
+        _owner.NavigateToAiAssistantWithPrompt(prompt, sourceName, isCrashLogContext);
+    }
+
+    /// <summary>日志发往 AI 前做两件事：隐藏最常见的认证凭据；限制单次文本体积。
+    /// 错误通常集中在日志末尾，因此超长时保留少量开头（环境/版本）+ 大部分末尾（异常堆栈）。</summary>
+    private static string PrepareLogForAi(string rawText, out bool truncated)
+    {
+        var text = rawText.Replace("\0", "");
+        text = Regex.Replace(text, @"(?i)(--(?:accessToken|clientToken|refreshToken)\s+)(\S+)", "$1<REDACTED>");
+        text = Regex.Replace(text, @"(?i)(Authorization\s*:\s*Bearer\s+)(\S+)", "$1<REDACTED>");
+        text = Regex.Replace(text, @"(?i)((?:accessToken|refreshToken|clientToken|apiKey|api_key)\s*[:=]\s*)(""[^""]*""|\S+)", "$1<REDACTED>");
+
+        const int maxChars = 32000;
+        const int headChars = 6000;
+        truncated = text.Length > maxChars;
+        if (!truncated) return text.Trim();
+
+        var tailChars = maxChars - headChars;
+        return text[..headChars].TrimEnd() +
+               Environment.NewLine + Environment.NewLine +
+               $"===== 中间 {text.Length - maxChars:N0} 个字符已截断 =====" +
+               Environment.NewLine + Environment.NewLine +
+               text[^tailChars..].TrimStart();
     }
 
     // --- 启动器日志 Tab ---
@@ -433,6 +599,7 @@ public partial class LogsPage : UserControl
         }
 
         var result = _injectionScan.Scan(info.Process);
+        _lastInjectionScanSnapshot = BuildInjectionScanSnapshot(info, result);
         ModuleListView.ItemsSource = result.Modules
             .OrderByDescending(m => m.Risk)
             .Select(m => new ModuleRow
@@ -452,5 +619,32 @@ public partial class LogsPage : UserControl
 
         if (result.HasSuspiciousModule)
             MessageBoxDialog.ShowWarning(Loc.T("Str_Cs_Suspicious_Modules_Were_Found_Check_The_", "扫描发现可疑模块，请在列表中查看标记为「⚠ 可疑」的条目，建议立即处理。"), Loc.T("Str_Cs_Injection_Scan", "注入检测"));
+    }
+
+    private static string BuildInjectionScanSnapshot(GameProcessInfo info, InjectionScanResult result)
+    {
+        var sb = new StringBuilder();
+        sb.AppendLine($"版本: {info.VersionId}");
+        sb.AppendLine($"PID: {result.Pid}");
+        sb.AppendLine($"模块总数: {result.Modules.Count}");
+        sb.AppendLine($"可疑: {result.Modules.Count(m => m.Risk == ModuleRisk.Suspicious)}");
+        sb.AppendLine($"未知: {result.UnknownCount}");
+        sb.AppendLine();
+
+        foreach (var m in result.Modules.OrderByDescending(m => m.Risk).ThenBy(m => m.FileName, StringComparer.OrdinalIgnoreCase))
+        {
+            var risk = m.Risk switch
+            {
+                ModuleRisk.Suspicious => "Suspicious",
+                ModuleRisk.Unknown => "Unknown",
+                _ => "Trusted"
+            };
+            sb.Append('[').Append(risk).Append("] ").AppendLine(m.FileName);
+            if (!string.IsNullOrWhiteSpace(m.MatchedRule)) sb.Append("  规则: ").AppendLine(m.MatchedRule);
+            if (!string.IsNullOrWhiteSpace(m.CompanyName)) sb.Append("  厂商: ").AppendLine(m.CompanyName);
+            if (!string.IsNullOrWhiteSpace(m.FileDescription)) sb.Append("  描述: ").AppendLine(m.FileDescription);
+            if (!string.IsNullOrWhiteSpace(m.FullPath)) sb.Append("  路径: ").AppendLine(m.FullPath);
+        }
+        return sb.ToString();
     }
 }

@@ -30,6 +30,11 @@
                                Margin="10,0,0,0" TextWrapping="Wrap"/>
                 </StackPanel>
 
+                <CheckBox x:Name="SkipJavaMismatchPromptCheckDlg" Content="此实例默认使用上面选择的 Java，不再提示切换"
+                          Margin="0,0,0,4"/>
+                <TextBlock Text="勾选后，即使这个 Java 跟版本自动匹配的主版本号不一致，启动时也不会再弹出确认/强制切换的提示，直接使用你在上面选定的 Java（仅在选择了具体 Java 时生效）。"
+                           FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,8" TextWrapping="Wrap"/>
+
                 <CheckBox x:Name="VersionIsolationOverrideCheckDlg" Content="{DynamicResource Str_Ui_Turn_On_Version_Isolation_Just_For_This_}"
                           Margin="0,0,0,4"/>
                 <TextBlock Text="{DynamicResource Str_Ui_Leave_Unchecked_To_Follow_The_Global_Def}" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,8"/>
@@ -37,7 +42,18 @@
                 <CheckBox x:Name="VersionResourcePackIsolationOverrideCheckDlg" Content="{DynamicResource Str_Ui_Keep_This_Instance_S_Resource_And_Shader}"
                           Margin="0,0,0,4"/>
                 <TextBlock Text="{DynamicResource Str_Ui_Independent_Of_The_Version_Isolation_Swi}" FontSize="11"
-                           Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,8" TextWrapping="Wrap"/>
+                            Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,8" TextWrapping="Wrap"/>
+
+                <TextBlock Text="实例内存与 JVM 参数" FontSize="12" FontWeight="Bold" Margin="0,8,0,4"/>
+                <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
+                    <TextBox x:Name="InstanceMinMemoryBoxDlg" Width="80" Padding="6" ToolTip="留空跟随全局设置"/>
+                    <TextBlock Text=" - " VerticalAlignment="Center" Margin="6,0"/>
+                    <TextBox x:Name="InstanceMaxMemoryBoxDlg" Width="80" Padding="6" ToolTip="留空跟随全局设置"/>
+                    <TextBlock Text=" MB" VerticalAlignment="Center" Margin="6,0,0,0"/>
+                </StackPanel>
+                <TextBox x:Name="InstanceCustomJvmArgsBoxDlg" Height="58" Padding="6" TextWrapping="Wrap" AcceptsReturn="True"/>
+                <TextBlock Text="留空表示跟随全局设置；实例设置优先级高于全局设置。" FontSize="11"
+                           Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,4,0,8" TextWrapping="Wrap"/>
 
                 <CheckBox x:Name="AutoJoinServerCheckDlg" Content="{DynamicResource Str_Ui_Join_A_Specific_Server_On_Launch_Connect}"
                           Margin="0,0,0,4" Checked="AutoJoinServerCheckDlg_Changed" Unchecked="AutoJoinServerCheckDlg_Changed"/>
@@ -54,6 +70,10 @@
                                    Margin="0,0,0,8" TextWrapping="Wrap" TextTrimming="CharacterEllipsis"/>
                         <Button Content="导出这个版本的启动脚本" Style="{StaticResource SecondaryButton}" HorizontalAlignment="Left"
                                 Padding="10,6" Click="ExportInstanceLaunchScriptDlg_Click"/>
+                        <Button Content="备份实例" Style="{StaticResource SecondaryButton}" HorizontalAlignment="Left"
+                                Padding="10,6" Margin="0,6,0,0" Click="BackupInstanceDlg_Click"/>
+                        <Button Content="加载器维护与模组更新" Style="{StaticResource SecondaryButton}" HorizontalAlignment="Left"
+                                Padding="10,6" Margin="0,6,0,0" Click="OpenLoaderMaintenance_Click"/>
                     </StackPanel>
                 </Border>
             </StackPanel>

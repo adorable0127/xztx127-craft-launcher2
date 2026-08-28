@@ -26,5 +26,12 @@ public class BedrockClientRecord
     /// <summary>下载的原始文件名（.appx/.msix/.zip），用于识别下载来源。"</summary>
     public string? OriginalFileName { get; set; }
 
+    /// <summary>是否是用户手动选择已有文件夹/exe 导入的（而不是本启动器下载安装的）。
+    /// 这类实例只保证能通过"直接跑 exe"这条降级路径启动——正版登录能否完整生效取决于
+    /// 这个目录本身有没有正确的 AppxManifest.xml 并成功注册进系统（LaunchClientAsync
+    /// 会尝试，失败则回退成直接跑 exe，回退之后账号登录只能停留在离线/Demo 模式，
+    /// 见 BedrockPage.xaml.cs 里 BedrockImportExisting_Click 的说明）。</summary>
+    public bool IsManuallyImported { get; set; }
+
     public DateTime InstalledAtUtc { get; set; } = DateTime.UtcNow;
 }

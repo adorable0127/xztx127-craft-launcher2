@@ -913,7 +913,7 @@
     <system:String x:Key="Str_Ui_Refresh_Version_List">刷新列表</system:String>
     <system:String x:Key="Str_Ui_Bedrock_Server_Version_Tip">基岩版服务端全部历史版本（来自社区归档）。不选时下载该渠道的最新版。</system:String>
     <system:String x:Key="Str_Ui_Download_Bedrock_Client">下载客户端</system:String>
-    <system:String x:Key="Str_Ui_Launch_Downloaded_Client">启动已下载客户端</system:String>
+    <system:String x:Key="Str_Ui_Launch_Downloaded_Client">启动已安装在本地的客户端</system:String>
     <system:String x:Key="Str_Ui_Installed_Client_Instances">已下载的客户端实例</system:String>
 
     <system:String x:Key="Str_Cs_Loading_Version_List">正在加载版本列表...</system:String>
@@ -929,7 +929,7 @@
     <system:String x:Key="Str_Cs_No_Client_Instance_Selected_Body">请先在下面的列表里选中一个已下载的基岩版客户端实例。</system:String>
     <system:String x:Key="Str_Cs_Bedrock_Client_Launch_Failed">启动基岩版客户端失败。</system:String>
     <system:String x:Key="Str_Cs_Bedrock_Client_Auto_Launched">游戏已自动启动。</system:String>
-    <system:String x:Key="Str_Cs_Bedrock_Client_Auto_Launch_Failed">游戏自动启动失败，可点上面的「启动已下载客户端」手动重试。</system:String>
+    <system:String x:Key="Str_Cs_Bedrock_Client_Auto_Launch_Failed">游戏自动启动失败，可点上面的「启动已安装在本地的客户端」手动重试。</system:String>
 
     <system:String x:Key="Str_Ui_Channel_Client">渠道：</system:String>
 

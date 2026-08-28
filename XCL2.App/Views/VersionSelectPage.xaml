@@ -87,7 +87,7 @@
                             <ColumnDefinition Width="*"/>
                             <ColumnDefinition Width="Auto"/>
                         </Grid.ColumnDefinitions>
-                        <TextBlock Grid.Column="0" Text="{DynamicResource Str_Ui_Installed_Versions}" FontSize="18" FontWeight="Bold" VerticalAlignment="Center"/>
+                        <TextBlock Grid.Column="0" Text="{DynamicResource Str_Ui_Installed_Versions}" FontSize="18" FontWeight="Bold" VerticalAlignment="Center" Foreground="{DynamicResource TextPrimaryBrush}"/>
                         <Button Grid.Column="1" Content="{DynamicResource Str_Ui_Install_New_Version}" Style="{StaticResource PrimaryButton}"
                                 Padding="12,6" Click="InstallNewVersion_Click"/>
                     </Grid>
@@ -120,7 +120,7 @@
                                     <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
                                         <TextBlock Text="🧊" FontSize="18" Margin="0,0,10,0"/>
                                         <StackPanel>
-                                            <TextBlock Text="{Binding Id}" FontSize="15"/>
+                                            <TextBlock Text="{Binding Id}" FontSize="15" Foreground="{DynamicResource TextPrimaryBrush}"/>
                                             <TextBlock Text="{Binding SubTitle}" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}"/>
                                         </StackPanel>
                                     </StackPanel>

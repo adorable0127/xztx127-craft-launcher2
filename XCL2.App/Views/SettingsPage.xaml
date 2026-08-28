@@ -30,6 +30,22 @@
             <Button Content="{DynamicResource Str_Ui_Reopen_Setup_Wizard}" HorizontalAlignment="Left" Padding="10,6" Margin="0,0,0,16"
                     Click="ReopenWizard_Click"/>
 
+            <!-- 窗口与托盘：点击标题栏叉号时的默认行为 + 开机自启动。两个都是"立即生效"型
+                 开关（跟上面 AdvancedModeCheck 一个逻辑），不用等下面的"保存设置"按钮，
+                 因为这两项影响的是"下一次关闭/下一次开机"这种时间点较远的动作，用户改完
+                 之后没有理由还要求他们记得点保存。 -->
+            <TextBlock Text="窗口与托盘" FontSize="14" FontWeight="Bold" Margin="0,0,0,4"/>
+            <TextBlock Text="点击标题栏叉号(关闭按钮)时" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4"/>
+            <ComboBox x:Name="CloseActionCombo" Width="260" HorizontalAlignment="Left" Margin="0,0,0,10"
+                      SelectionChanged="CloseActionCombo_SelectionChanged">
+                <ComboBoxItem Content="直接关闭启动器"/>
+                <ComboBoxItem Content="最小化到系统托盘"/>
+                <ComboBoxItem Content="最小化（仅收进任务栏，不显示托盘图标）"/>
+                <ComboBoxItem Content="每次都弹窗询问"/>
+            </ComboBox>
+            <CheckBox x:Name="AutoStartOnBootCheck" Content="开机自启动"
+                      Margin="0,0,0,20" Checked="AutoStartOnBootCheck_Changed" Unchecked="AutoStartOnBootCheck_Changed"/>
+
             <!-- 普通模式下才显示：简化版 Java 版本选择，只给 Java 8 / 17 / 21 / 25 四个选项，
                  每个选项对应一段能大致覆盖的游戏版本区间，帮用户不用去查资料就能选对。
                  选中项直接决定"一键下载 Java"下载哪个版本；不涉及架构/安装方式，
@@ -134,18 +150,6 @@
                       DisplayMemberPath="DisplayText"
                       ToolTip="{DynamicResource Str_Ui_Pick_One_From_The_Java_List_Above_As_The}"/>
 
-
-            <!-- 高手模式下才显示：自定义 JVM 启动参数。全局一份，跟 AdvancedJavaPanel 共享同一个
-                 AdvancedModeCheck 显隐开关，但单独成一个 StackPanel，因为这是不同的关注点
-                 （Java 版本/架构/安装方式 vs 启动参数本身），拆开更清晰。 -->
-            <StackPanel x:Name="CustomJvmArgsPanel" Margin="0,0,0,16" Visibility="Collapsed">
-                <TextBlock Text="{DynamicResource Str_Ui_Custom_Java_Arguments_Advanced}" Margin="0,0,0,4" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="12"/>
-                <TextBox x:Name="CustomJvmArgsBox" Padding="8" Height="60" TextWrapping="Wrap" AcceptsReturn="True"
-                         VerticalScrollBarVisibility="Auto"
-                         ToolTip="{DynamicResource Str_Ui_E_G_Xx_Useg1gc_Dsomething_Quot_Value_Wit}"/>
-                <TextBlock Text="{DynamicResource Str_Ui_Separate_Arguments_With_Spaces_And_Wrap_}"
-                           Margin="0,6,0,0" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap"/>
-            </StackPanel>
 
             <TextBlock Text="{DynamicResource Str_Ui_Min_Memory_Mb}" Margin="0,0,0,4"/>
             <TextBox x:Name="MinMemBox" Padding="8" Margin="0,0,0,16"/>
@@ -296,6 +300,11 @@
                       Content="启用 Windows 11 新光效设计（云母材质背景 / 窗口圆角 / 沉浸光感过渡，仅 Windows 11 生效，默认关闭）"
                       ToolTip="依赖 Windows 11 才有的 DWM 特性；在 Windows 10 或更早系统上会被自动忽略，不影响正常使用。"
                       Margin="0,0,0,8" Checked="VisualEffectsToggle_Changed" Unchecked="VisualEffectsToggle_Changed"/>
+            <CheckBox x:Name="WinUi3DesignCheck"
+                      Content="启用 WinUI 3 新设计（修改后需要重启启动器）"
+                      Margin="0,0,0,4" Checked="WinUi3DesignCheck_Changed" Unchecked="WinUi3DesignCheck_Changed"/>
+            <TextBlock Text="Windows 11 才提供完整支持；Windows 10 仍可开启，但系统没有对应 API 时可能没有视觉变化。此功能不会联网或向 GitHub 报告。"
+                       FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap" Margin="0,0,0,8"/>
             <StackPanel x:Name="BackdropMaterialPanel" Orientation="Horizontal" Margin="0,0,0,12">
                 <TextBlock Text="背景材质" VerticalAlignment="Center" Width="200"/>
                 <ComboBox x:Name="BackdropMaterialCombo" Style="{StaticResource TallPopupComboBox}"
@@ -310,8 +319,22 @@
                       Content="启用窗口透明度（侧栏 / 卡片等面板呈现半透明玻璃质感，默认关闭）"
                       Margin="0,0,0,4" Checked="VisualEffectsToggle_Changed" Unchecked="VisualEffectsToggle_Changed"/>
             <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                <TextBlock Text="毛玻璃背景图片" VerticalAlignment="Center" Width="200"/>
+                <TextBox x:Name="CustomBackgroundImagePathBox" Width="180" Padding="6" IsReadOnly="True"/>
+                <Button Content="导入" Margin="8,0,0,0" Padding="10,5" Click="ImportBackgroundImage_Click"/>
+                <Button Content="清除" Margin="8,0,0,0" Padding="10,5" Click="ClearBackgroundImage_Click"/>
+            </StackPanel>
+            <StackPanel Orientation="Horizontal" Margin="0,0,0,8"
+                        ToolTip="25% 接近透明/清晰，100% 为最强磨砂；拖动时立即预览，保存设置后重启仍保持。">
+                <TextBlock Text="背景磨砂度" VerticalAlignment="Center" Width="200"/>
+                <Slider x:Name="CustomBackgroundFrostSlider" Width="220" Minimum="25" Maximum="100"
+                        TickFrequency="5" IsSnapToTickEnabled="True" IsMoveToPointEnabled="True"
+                        ValueChanged="CustomBackgroundFrostSlider_ValueChanged"/>
+                <TextBlock x:Name="CustomBackgroundFrostValueText" VerticalAlignment="Center" Margin="8,0,0,0" Width="40"/>
+            </StackPanel>
+            <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
                 <TextBlock Text="面板透明度" VerticalAlignment="Center" Width="200"/>
-                <Slider x:Name="WindowOpacitySlider" Width="220" Minimum="40" Maximum="100"
+                <Slider x:Name="WindowOpacitySlider" Width="220" Minimum="20" Maximum="100"
                         TickFrequency="5" IsSnapToTickEnabled="True" IsMoveToPointEnabled="True"
                         ValueChanged="WindowOpacitySlider_ValueChanged"/>
                 <TextBlock x:Name="WindowOpacityValueText" VerticalAlignment="Center" Margin="8,0,0,0" Width="40"/>
@@ -328,14 +351,197 @@
                 <TextBlock x:Name="GlobalWindowOpacityValueText" VerticalAlignment="Center" Margin="8,0,0,0" Width="40"/>
             </StackPanel>
 
+            <!-- 弹窗（所有确认框/选择框等）与抽屉（AI 助手侧栏面板）的独立外观：默认关闭，
+                 跟随主界面的面板透明度设置；用户开启后可以单独给弹窗/抽屉设置不同于主界面的
+                 透明度、磨砂度、文字透明度。见 AppConfig.Popup*/Drawer* 字段注释和
+                 ThemeService.ApplyPopupAppearance/ApplyDrawerAppearance。 -->
+            <TextBlock Text="弹窗与抽屉外观" FontSize="14" FontWeight="Bold" Margin="0,0,0,4"/>
+            <TextBlock Text="默认弹窗（确认框/选择框等）和抽屉（AI 助手侧栏）都跟随上面的主界面外观；开启下面的开关后可以单独设置，互不影响。"
+                       FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,8" TextWrapping="Wrap"/>
+
+            <CheckBox x:Name="PopupCustomAppearanceCheck"
+                      Content="弹窗使用独立外观（不勾选则跟随主界面面板透明度）"
+                      Margin="0,0,0,4" Checked="PopupAppearanceControl_Changed" Unchecked="PopupAppearanceControl_Changed"/>
+            <StackPanel Orientation="Horizontal" Margin="0,0,0,4">
+                <TextBlock Text="弹窗背景透明度" VerticalAlignment="Center" Width="200"/>
+                <Slider x:Name="PopupOpacitySlider" Width="220" Minimum="20" Maximum="100"
+                        TickFrequency="5" IsSnapToTickEnabled="True" IsMoveToPointEnabled="True"
+                        ValueChanged="PopupAppearanceSlider_ValueChanged"/>
+                <TextBlock x:Name="PopupOpacityValueText" VerticalAlignment="Center" Margin="8,0,0,0" Width="40"/>
+            </StackPanel>
+            <StackPanel Orientation="Horizontal" Margin="0,0,0,4">
+                <TextBlock Text="弹窗磨砂度" VerticalAlignment="Center" Width="200"/>
+                <Slider x:Name="PopupFrostSlider" Width="220" Minimum="0" Maximum="100"
+                        TickFrequency="5" IsSnapToTickEnabled="True" IsMoveToPointEnabled="True"
+                        ValueChanged="PopupAppearanceSlider_ValueChanged"/>
+                <TextBlock x:Name="PopupFrostValueText" VerticalAlignment="Center" Margin="8,0,0,0" Width="40"/>
+            </StackPanel>
+            <StackPanel Orientation="Horizontal" Margin="0,0,0,12">
+                <TextBlock Text="弹窗文字透明度" VerticalAlignment="Center" Width="200"/>
+                <Slider x:Name="PopupTextOpacitySlider" Width="220" Minimum="40" Maximum="100"
+                        TickFrequency="5" IsSnapToTickEnabled="True" IsMoveToPointEnabled="True"
+                        ValueChanged="PopupAppearanceSlider_ValueChanged"/>
+                <TextBlock x:Name="PopupTextOpacityValueText" VerticalAlignment="Center" Margin="8,0,0,0" Width="40"/>
+            </StackPanel>
+
+            <CheckBox x:Name="DrawerCustomAppearanceCheck"
+                      Content="抽屉（AI 助手）使用独立外观（不勾选则跟随主界面面板透明度）"
+                      Margin="0,0,0,4" Checked="DrawerAppearanceControl_Changed" Unchecked="DrawerAppearanceControl_Changed"/>
+            <StackPanel Orientation="Horizontal" Margin="0,0,0,4">
+                <TextBlock Text="抽屉背景透明度" VerticalAlignment="Center" Width="200"/>
+                <Slider x:Name="DrawerOpacitySlider" Width="220" Minimum="20" Maximum="100"
+                        TickFrequency="5" IsSnapToTickEnabled="True" IsMoveToPointEnabled="True"
+                        ValueChanged="DrawerAppearanceSlider_ValueChanged"/>
+                <TextBlock x:Name="DrawerOpacityValueText" VerticalAlignment="Center" Margin="8,0,0,0" Width="40"/>
+            </StackPanel>
+            <StackPanel Orientation="Horizontal" Margin="0,0,0,4">
+                <TextBlock Text="抽屉磨砂度" VerticalAlignment="Center" Width="200"/>
+                <Slider x:Name="DrawerFrostSlider" Width="220" Minimum="0" Maximum="100"
+                        TickFrequency="5" IsSnapToTickEnabled="True" IsMoveToPointEnabled="True"
+                        ValueChanged="DrawerAppearanceSlider_ValueChanged"/>
+                <TextBlock x:Name="DrawerFrostValueText" VerticalAlignment="Center" Margin="8,0,0,0" Width="40"/>
+            </StackPanel>
+            <StackPanel Orientation="Horizontal" Margin="0,0,0,20">
+                <TextBlock Text="抽屉文字透明度" VerticalAlignment="Center" Width="200"/>
+                <Slider x:Name="DrawerTextOpacitySlider" Width="220" Minimum="40" Maximum="100"
+                        TickFrequency="5" IsSnapToTickEnabled="True" IsMoveToPointEnabled="True"
+                        ValueChanged="DrawerAppearanceSlider_ValueChanged"/>
+                <TextBlock x:Name="DrawerTextOpacityValueText" VerticalAlignment="Center" Margin="8,0,0,0" Width="40"/>
+            </StackPanel>
+
+            <!-- 自定义颜色：只有上面"配色皮肤"选中"自定义"时才显示。挪到这里（本区块最下方），
+                 跟预设色系下拉框拉开距离，避免用户以为它只是下拉框旁边的临时强调色小部件——
+                 保存设置后 Custom 会作为真正的主题色系持久化，下次启动继续生效。 -->
+            <Border x:Name="CustomThemeSettingsPanel" Visibility="Collapsed" Margin="0,0,0,14" Padding="14"
+                    Background="{DynamicResource SideBrush}" BorderBrush="{DynamicResource BorderBrush2}"
+                    BorderThickness="1" CornerRadius="10" MaxWidth="620" HorizontalAlignment="Left">
+                <StackPanel>
+                    <Grid Margin="0,0,0,10">
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                        <StackPanel>
+                            <TextBlock Text="自定义颜色" FontSize="14" FontWeight="SemiBold"/>
+                            <TextBlock Text="选择颜色后会同时应用到强调色、按钮、悬停和光晕，选好后会立即预览；保存设置后下次启动继续使用。"
+                                       Margin="0,3,18,0" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap"/>
+                        </StackPanel>
+                        <Border x:Name="CustomAccentColorPreview" Grid.Column="1" Width="36" Height="36" CornerRadius="8"
+                                BorderBrush="{DynamicResource BorderBrush2}" BorderThickness="1" ToolTip="当前自定义主题颜色"/>
+                    </Grid>
+
+                    <Grid Margin="0,0,0,10">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto"/><ColumnDefinition Width="150"/><ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Text="颜色值" VerticalAlignment="Center" Margin="0,0,10,0"/>
+                        <TextBox x:Name="CustomAccentColorBox" Grid.Column="1" Padding="7" ToolTip="例如 #4C9AFF，输入/粘贴后会自动预览生效"
+                                 TextChanged="CustomAccentColorBox_TextChanged"/>
+                        <Button Grid.Column="2" Content="应用主题" Style="{StaticResource PrimaryButton}" Margin="8,0,0,0" Padding="12,6"
+                                Click="CustomAccentColorApply_Click"/>
+                    </Grid>
+
+                    <TextBlock Text="预设颜色" FontWeight="SemiBold" Margin="0,0,0,5"/>
+                    <UniformGrid Columns="6" Rows="2" Margin="0,0,0,10">
+                        <Button Tag="#4C9AFF" Background="#4C9AFF" Height="30" Margin="2" Click="AccentSwatch_Click" ToolTip="#4C9AFF"/>
+                        <Button Tag="#7C5CFC" Background="#7C5CFC" Height="30" Margin="2" Click="AccentSwatch_Click" ToolTip="#7C5CFC"/>
+                        <Button Tag="#D946EF" Background="#D946EF" Height="30" Margin="2" Click="AccentSwatch_Click" ToolTip="#D946EF"/>
+                        <Button Tag="#EC4899" Background="#EC4899" Height="30" Margin="2" Click="AccentSwatch_Click" ToolTip="#EC4899"/>
+                        <Button Tag="#EF4444" Background="#EF4444" Height="30" Margin="2" Click="AccentSwatch_Click" ToolTip="#EF4444"/>
+                        <Button Tag="#F97316" Background="#F97316" Height="30" Margin="2" Click="AccentSwatch_Click" ToolTip="#F97316"/>
+                        <Button Tag="#EAB308" Background="#EAB308" Height="30" Margin="2" Click="AccentSwatch_Click" ToolTip="#EAB308"/>
+                        <Button Tag="#22C55E" Background="#22C55E" Height="30" Margin="2" Click="AccentSwatch_Click" ToolTip="#22C55E"/>
+                        <Button Tag="#14B8A6" Background="#14B8A6" Height="30" Margin="2" Click="AccentSwatch_Click" ToolTip="#14B8A6"/>
+                        <Button Tag="#06B6D4" Background="#06B6D4" Height="30" Margin="2" Click="AccentSwatch_Click" ToolTip="#06B6D4"/>
+                        <Button Tag="#64748B" Background="#64748B" Height="30" Margin="2" Click="AccentSwatch_Click" ToolTip="#64748B"/>
+                        <Button Tag="#111827" Background="#111827" Height="30" Margin="2" Click="AccentSwatch_Click" ToolTip="#111827"/>
+                    </UniformGrid>
+
+                    <Grid Margin="0,2,0,4">
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="20"/><ColumnDefinition Width="*"/><ColumnDefinition Width="42"/></Grid.ColumnDefinitions>
+                        <TextBlock Text="R" VerticalAlignment="Center"/>
+                        <Slider x:Name="AccentRSlider" Grid.Column="1" Minimum="0" Maximum="255" TickFrequency="1" ValueChanged="AccentRgbSlider_ValueChanged"/>
+                        <TextBlock x:Name="AccentRText" Grid.Column="2" Text="76" HorizontalAlignment="Right" VerticalAlignment="Center"/>
+                    </Grid>
+                    <Grid Margin="0,2,0,4">
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="20"/><ColumnDefinition Width="*"/><ColumnDefinition Width="42"/></Grid.ColumnDefinitions>
+                        <TextBlock Text="G" VerticalAlignment="Center"/>
+                        <Slider x:Name="AccentGSlider" Grid.Column="1" Minimum="0" Maximum="255" TickFrequency="1" ValueChanged="AccentRgbSlider_ValueChanged"/>
+                        <TextBlock x:Name="AccentGText" Grid.Column="2" Text="154" HorizontalAlignment="Right" VerticalAlignment="Center"/>
+                    </Grid>
+                    <Grid Margin="0,2,0,10">
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="20"/><ColumnDefinition Width="*"/><ColumnDefinition Width="42"/></Grid.ColumnDefinitions>
+                        <TextBlock Text="B" VerticalAlignment="Center"/>
+                        <Slider x:Name="AccentBSlider" Grid.Column="1" Minimum="0" Maximum="255" TickFrequency="1" ValueChanged="AccentRgbSlider_ValueChanged"/>
+                        <TextBlock x:Name="AccentBText" Grid.Column="2" Text="255" HorizontalAlignment="Right" VerticalAlignment="Center"/>
+                    </Grid>
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                        <Border x:Name="AccentPickerPreview" Width="38" Height="30" CornerRadius="6" Margin="0,0,8,0"
+                                BorderBrush="{DynamicResource BorderBrush2}" BorderThickness="1"/>
+                        <Button Content="使用 RGB 颜色" Style="{StaticResource PrimaryButton}" Padding="12,6" Click="AccentPickerUse_Click"/>
+                    </StackPanel>
+                </StackPanel>
+            </Border>
+            <TextBlock Text="选择预设主题时使用内置配色；选择“自定义”后才会启用上面“配色皮肤”下拉框旁的自定义颜色卡片。"
+                       FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,20" TextWrapping="Wrap"/>
+
+            <!-- 低性能模式：关闭动画、阴影、透视效果，减少渲染负担，提升流畅度。
+                 勾选后界面将变得更基础，但启动器在老旧硬件上将更流畅运行。 -->
+            <CheckBox x:Name="LowPerformanceModeCheck"
+                      Content="启用低性能模式（关闭动画、阴影、透视效果）"
+                      Margin="0,0,0,4"
+                      Checked="LowPerformanceModeCheck_Changed"
+                      Unchecked="LowPerformanceModeCheck_Changed"/>
+            <CheckBox x:Name="AlwaysOnTopCheck" Content="启动器始终置顶（F3 可临时切换，本次会话有效）"
+                      Margin="0,0,0,8"/>
+            <TextBlock Text="实例定时备份" FontSize="14" FontWeight="Bold" Margin="0,10,0,4"/>
+            <CheckBox x:Name="ScheduledBackupCheck" Content="定时备份当前选择的实例" Margin="0,0,0,4"/>
+            <StackPanel Orientation="Horizontal" Margin="0,0,0,12">
+                <TextBlock Text="间隔（小时）" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                <TextBox x:Name="ScheduledBackupIntervalBox" Width="60" Padding="5"/>
+                <TextBlock Text="保留数量" VerticalAlignment="Center" Margin="12,0,8,0"/>
+                <TextBox x:Name="ScheduledBackupRetentionBox" Width="60" Padding="5"/>
+            </StackPanel>
+            <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
+                <CheckBox x:Name="BackupOnStartupCheck" Content="每次启动时备份实例" Margin="0,0,18,0"/>
+                <CheckBox x:Name="BackupOnCloseCheck" Content="每次关闭时备份实例"/>
+            </StackPanel>
+            <Grid Margin="0,0,0,6">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="200"/>
+                    <ColumnDefinition Width="260"/>
+                </Grid.ColumnDefinitions>
+                <TextBlock Text="启动/关闭备份目标" VerticalAlignment="Center"/>
+                <ComboBox x:Name="LifecycleBackupTargetModeCombo" Grid.Column="1" Padding="6"
+                          SelectionChanged="LifecycleBackupTargetModeCombo_SelectionChanged">
+                    <ComboBoxItem Content="单一（当前选中的实例）" Tag="Single"/>
+                    <ComboBoxItem Content="多个（按下面实例 ID 列表）" Tag="Multiple"/>
+                    <ComboBoxItem Content="满足任意一（存在的候选都备份）" Tag="Any"/>
+                    <ComboBoxItem Content="满足所有（候选必须全部存在）" Tag="All"/>
+                </ComboBox>
+            </Grid>
+            <Grid x:Name="LifecycleBackupTargetsPanel" Margin="0,0,0,14">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="200"/>
+                    <ColumnDefinition Width="360"/>
+                </Grid.ColumnDefinitions>
+                <TextBlock Text="候选实例 ID" VerticalAlignment="Top" Margin="0,7,0,0"/>
+                <StackPanel Grid.Column="1">
+                    <TextBox x:Name="LifecycleBackupVersionIdsBox" Height="58" Padding="7" AcceptsReturn="True"
+                             VerticalScrollBarVisibility="Auto" TextWrapping="Wrap"/>
+                    <TextBlock Text="多个 ID 用逗号、分号或换行分隔；只在当前选择的游戏文件夹中查找。"
+                               FontSize="10" Margin="0,4,0,0" TextWrapping="Wrap"
+                               Foreground="{DynamicResource TextSecondaryBrush}"/>
+                </StackPanel>
+            </Grid>
+
             <!-- 配色皮肤：色系(White/Blue/Yellow/Purple/Pink)，跟明暗是两个独立维度。
                  具体显示成浅色版还是深色版由 IsDarkMode 决定——见首页/主界面的「模式设置」
-                 按钮，或者下面的自动循环。这里选的只是色相，不管深浅。 -->
+                 按钮，或者下面的自动循环。这里选的只是色相，不管深浅。选中"自定义"时，
+                 真正的调色卡片挪到了本区块最下方的"自定义颜色"里（见下面 CustomThemeSettingsPanel），
+                 不再紧跟在下拉框后面——这样"外观与视觉效果"这一整块的阅读顺序是先看完所有
+                 预设开关/滑块，最后才是"如果都不合适，自己调一个"的自定义颜色，逻辑上更顺。 -->
             <TextBlock Text="{DynamicResource Str_Ui_Colour_Theme}" FontSize="14" FontWeight="Bold" Margin="0,0,0,4"/>
-            <ComboBox x:Name="UiSkinCombo" Style="{StaticResource TallPopupComboBox}" Padding="8" Margin="0,0,0,4" HorizontalAlignment="Left" MinWidth="160"
+            <ComboBox x:Name="UiSkinCombo" Style="{StaticResource TallPopupComboBox}" Padding="8" Margin="0,0,0,20" HorizontalAlignment="Left" MinWidth="180"
+                      SelectionChanged="UiSkinCombo_SelectionChanged"
                       ToolTip="{DynamicResource Str_Ui_Changes_The_Launcher_S_Colour_Family_Eac}"/>
-            <TextBlock Text="{DynamicResource Str_Ui_Press_Save_Settings_Below_To_Apply_The_R}"
-                       FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,20" TextWrapping="Wrap"/>
 
             <!-- 自动循环：开启后由系统时间自动决定深浅色模式，不需要手动点主界面的
                  「模式设置」按钮。这两个小时数只在这里设置，主界面按钮只负责开关这个功能
@@ -365,10 +571,31 @@
                  有自己皮肤站的用户可以在这里替换成自己的 API Root。只影响"离线账户选择了
                  自定义皮肤"这一种场景，史蒂夫/艾利克斯默认皮肤不受影响。 -->
             <TextBlock Text="{DynamicResource Str_Ui_Offline_Skin_Service_Url_Customskinloade}" Margin="0,0,0,4"/>
-            <TextBox x:Name="SkinApiRootBox" Padding="8" Margin="0,0,0,4"
-                     ToolTip="{DynamicResource Str_Ui_Offline_Accounts_Set_To_Use_A_Custom_Ski}"/>
+            <Grid Margin="0,0,0,4">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <TextBox x:Name="SkinApiRootBox" Grid.Column="0" Padding="8" Margin="0,0,8,0"
+                         ToolTip="{DynamicResource Str_Ui_Offline_Accounts_Set_To_Use_A_Custom_Ski}"/>
+                <!-- 需求：皮肤站可以自动 API 查询，不用手动查完整 API Root 再填。
+                     只需要填皮肤站主页地址（如 littleskin.cn），点这个按钮自动探测出真正的
+                     API Root（复用登录页"认证服务器登录"同一套探测逻辑，见
+                     AuthServerAuthService.DetectApiRootAsync），探测成功直接回填输入框，
+                     不需要用户自己去皮肤站后台/文档里翻 API 地址。 -->
+                <Button x:Name="DetectSkinApiRootBtn" Grid.Column="1" Content="自动检测"
+                        Style="{StaticResource SecondaryButton}" Padding="12,8" Click="DetectSkinApiRoot_Click"/>
+            </Grid>
             <TextBlock Text="{DynamicResource Str_Ui_Only_Affects_Offline_Accounts_Set_To_Use}"
+                       FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4" TextWrapping="Wrap"/>
+            <TextBlock Text="填皮肤站主页地址后点「自动检测」即可自动查出完整 API 地址；也可以直接手动填写完整 API Root。"
                        FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,20" TextWrapping="Wrap"/>
+
+            <!-- AI 助手设置入口 -->
+            <TextBlock Text="AI 助手" FontSize="14" FontWeight="Bold" Margin="0,0,0,4"/>
+            <TextBlock Text="配置 API Key、模型档位、上下文压缩、悬浮球显示等" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,8" TextWrapping="Wrap"/>
+            <Button x:Name="AiAssistantSettingsBtn" Content="AI 助手设置" Style="{StaticResource SecondaryButton}"
+                    HorizontalAlignment="Left" Padding="14,8" Click="AiAssistantSettingsBtn_Click" Margin="0,0,0,20"/>
 
             <!-- 实验性功能入口：第一次点击会先弹一个不能跳过、强制等待 10 秒的确认窗口
                  （ExperimentalGateWindow），确认过一次之后（cfg.ExperimentalFeaturesUnlocked=true）
@@ -404,6 +631,25 @@
             <CheckBox x:Name="SmartThrottleCheck"
                       Content="{DynamicResource Str_Ui_Smart_Throttling_Watches_What_Other_Prog}"
                       Margin="0,0,0,20"/>
+
+            <!-- 下载完成后提示方式：下载完成后是否弹出气泡提示、仅显示角标还是使用Windows通知。
+                 分类设置：游戏版本、社区资源、整合包各自独立开关，互不影响。 -->
+            <TextBlock Text="下载完成后提示" FontSize="14" FontWeight="Bold" Margin="0,0,0,4"/>
+            <CheckBox x:Name="GameVersionNoPopupCheck" Content="游戏版本下载完成后不弹窗提示"
+                      Margin="0,0,0,4"/>
+            <TextBlock Text="（已装的版本不会再次弹出完成提示）" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,-2,0,0"/>
+            <CheckBox x:Name="CommunityResourceNoPopupCheck" Content="社区资源下载完成后不弹窗提示"
+                      Margin="0,0,0,4"/>
+            <TextBlock Text="（Mod/材质包/地图等）" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,-2,0,0"/>
+            <CheckBox x:Name="ModpackNoPopupCheck" Content="整合包下载完成后不弹窗提示"
+                      Margin="0,0,0,4"/>
+            <TextBlock Text="（整合包安装完成后不会再次弹出）" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,-2,0,0"/>
+            <ComboBox x:Name="DownloadNotifyModeCombo" Width="160" Margin="0,4,0,4" HorizontalAlignment="Left">
+                <ComboBoxItem Content="气泡提示" Tag="0" IsSelected="True"/>
+                <ComboBoxItem Content="仅显示角标" Tag="1"/>
+                <ComboBoxItem Content="Windows 通知" Tag="2"/>
+                <ComboBoxItem Content="不提示（完全静默）" Tag="3"/>
+            </ComboBox>
 
             <!-- 功能隐藏：勾选的功能项在界面上不再显示（导航按钮/子页面按钮/特定功能入口）。
                  分组和 key 定义在 Services/FeatureVisibilityService.cs 里，这里用 ItemsControl
@@ -508,7 +754,11 @@
                 <Button x:Name="ClearTracesBtn" Content="清除本机痕迹" Padding="14,8" Margin="0,0,8,8" Click="ClearTraces_Click"/>
             </WrapPanel>
 
-            <Button Content="{DynamicResource Str_Ui_Save_Settings}" Style="{StaticResource PrimaryButton}" Width="140" HorizontalAlignment="Left" Click="Save_Click"/>
+            <WrapPanel HorizontalAlignment="Left" Margin="0,0,0,8">
+                <Button Content="{DynamicResource Str_Ui_Save_Settings}" Style="{StaticResource PrimaryButton}" MinWidth="140" Padding="18,9" Click="Save_Click" Margin="0,0,10,6"/>
+                <Button Content="一键恢复到默认设置" Style="{StaticResource SecondaryButton}" MinWidth="190" Padding="18,9" Click="ResetToDefaults_Click" Margin="0,0,0,6"
+                        ToolTip="恢复启动器设置为默认值"/>
+            </WrapPanel>
             <TextBlock x:Name="StatusText" Foreground="{DynamicResource AccentBrush}" Margin="0,12,0,0"/>
         </StackPanel>
         </ScrollViewer>

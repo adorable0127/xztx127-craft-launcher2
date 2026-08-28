@@ -20,17 +20,35 @@
                  不动 AccentBrush 本身——AccentBrush 还继续用作强调文字色/描边色/焦点色等
                  场景（SecondaryButton 文字、输入框光标、选中态描边等），只有按钮的背景
                  换成这一套更柔和的浅色，两者互不影响。 -->
-            <SolidColorBrush x:Key="ButtonBackgroundBrush" Color="#D3E6FC"/>
-            <SolidColorBrush x:Key="ButtonHoverBackgroundBrush" Color="#B9D8FA"/>
-            <SolidColorBrush x:Key="ButtonForegroundBrush" Color="#0F3F8C"/>
+            <SolidColorBrush x:Key="ButtonBackgroundBrush" Color="#CDE2FA"/>
+            <SolidColorBrush x:Key="ButtonHoverBackgroundBrush" Color="#B3D3F7"/>
+            <SolidColorBrush x:Key="ButtonForegroundBrush" Color="#0A356F"/>
             <SolidColorBrush x:Key="GlowBrush" Color="#00C2E8"/>
             <SolidColorBrush x:Key="GlowSoftBrush" Color="#E3F7FC"/>
             <SolidColorBrush x:Key="PanelBrush" Color="#FFFFFF"/>
-            <SolidColorBrush x:Key="SideBrush" Color="#F4F7FB"/>
-            <SolidColorBrush x:Key="BorderBrush2" Color="#D6E2F0"/>
-            <SolidColorBrush x:Key="BorderHoverBrush" Color="#9DC0EC"/>
-            <SolidColorBrush x:Key="TextPrimaryBrush" Color="#151B26"/>
-            <SolidColorBrush x:Key="TextSecondaryBrush" Color="#6B7686"/>
+            <SolidColorBrush x:Key="SideBrush" Color="#F3F6FA"/>
+            <SolidColorBrush x:Key="BorderBrush2" Color="#BCCBDB"/>
+            <SolidColorBrush x:Key="BorderHoverBrush" Color="#7FA7D8"/>
+            <SolidColorBrush x:Key="TextPrimaryBrush" Color="#0B1220"/>
+            <SolidColorBrush x:Key="TextSecondaryBrush" Color="#465568"/>
+
+            <!-- 弹窗（OverlayCard，见 MainWindow.xaml/OverlayDialogService.cs）与"抽屉"
+                 （AiAssistantPanel 侧栏面板）独立外观：默认直接等于 PanelBrush/SideBrush/
+                 TextPrimaryBrush（即"跟随主界面"），只有用户在设置页里为弹窗/抽屉单独开启
+                 "独立设置"时，ThemeService.ApplyPopupAppearance / ApplyDrawerAppearance
+                 才会往这几个 key 里塞不同于主界面的颜色（不同的透明度 alpha / 磨砂模糊半径）。
+                 这样不用改动任何一个具体弹窗/AiAssistantPanel 内部已经写好的
+                 {DynamicResource PanelBrush} 引用——只需要把 OverlayCard 和
+                 AiAssistantPanel 根容器这两处"总入口"的 Background/Effect 改指到这一组
+                 新 key 上即可整体生效。BlurEffect 的 Radius=0 表示不磨砂（默认关闭），
+                 跟 SetBrushColor 遇到的"Style Seal 后 Freezable 被冻结"是同一个坑，
+                 见 ThemeService.SetBlurRadius 的处理方式。 -->
+            <SolidColorBrush x:Key="PopupPanelBrush" Color="#FFFFFF"/>
+            <SolidColorBrush x:Key="PopupTextPrimaryBrush" Color="#0B1220"/>
+            <BlurEffect x:Key="PopupBlurEffect" Radius="0"/>
+            <SolidColorBrush x:Key="DrawerBackgroundBrush" Color="#F3F6FA"/>
+            <SolidColorBrush x:Key="DrawerTextPrimaryBrush" Color="#0B1220"/>
+            <BlurEffect x:Key="DrawerBlurEffect" Radius="0"/>
 
             <!-- 首页磁贴图标底色 + 少数状态色，之前是每个磁贴直接写死的浅色 hex（比如
                  Background="#E3F7FC"），只在白色系皮肤下好看，切到黑色皮肤后这些色块
@@ -48,7 +66,7 @@
             <SolidColorBrush x:Key="DangerBrush" Color="#D64545"/>
             <!-- 细分隔线/步骤圆点用的中性灰边框，之前很多地方直接写死 #DDDDDD/#E0E0E0/#EEEEEE，
                  同样的"只在白皮肤下能看清"问题，改成跟随皮肤的资源。 -->
-            <SolidColorBrush x:Key="DividerBrush" Color="#E0E0E0"/>
+            <SolidColorBrush x:Key="DividerBrush" Color="#D2DAE4"/>
             <FontFamily x:Key="MonoFontFamily">Consolas</FontFamily>
 
             <!-- 卡片内联展开（仿 PCL）通用：IsExpanded/IsLoadingVersions 都是 bool，
@@ -122,10 +140,19 @@
                  背景/边框/文字全部走本项目已有的主题画刷（PanelBrush/BorderBrush2/TextPrimaryBrush），
                  这些画刷本身已经会跟随 ThemeService 的深色/浅色切换重新着色，不再有任何系统原生
                  渲染层参与，从根上避免"系统深色标记 vs WPF 默认模板"这种不同步。 -->
+            <!-- 这里必须用 DynamicResource，不能用 StaticResource：ToolTip 是靠 Popup 临时弹出的，
+                 首次弹出时其 Style 会被 Seal，Seal 时 StaticResource 引用会把当时取到的画刷"焼死"
+                 进 Style 的缓存里；之后 ThemeService 切换深浅色时，只有当前已打开窗口里的可见元素
+                 会被 RefreshVisualTree 强制摘 Style 再装回去重新取值，ToolTip 这种"未显示时不在
+                 可见树里"的控件摸不到，导致它永远停留在第一次弹出那一刻的深浅色（表现为截图里那种
+                 "整体已经是深色主题、但提示条还是刺眼的浅色底、字也看不清"）。DynamicResource 是
+                 实时绑定，资源字典里的画刷条目一变（包括 ThemeService 把冻结画刷换成新实例那种
+                 情况），所有引用方都会自动跟着刷新，不依赖 Style 有没有被摘装过，从根上避免这个
+                 时序问题。 -->
             <Style TargetType="ToolTip">
-                <Setter Property="Background" Value="{StaticResource PanelBrush}"/>
-                <Setter Property="Foreground" Value="{StaticResource TextPrimaryBrush}"/>
-                <Setter Property="BorderBrush" Value="{StaticResource BorderBrush2}"/>
+                <Setter Property="Background" Value="{DynamicResource PanelBrush}"/>
+                <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}"/>
+                <Setter Property="BorderBrush" Value="{DynamicResource BorderBrush2}"/>
                 <Setter Property="BorderThickness" Value="1"/>
                 <Setter Property="Padding" Value="10,6"/>
                 <Setter Property="FontSize" Value="12"/>
@@ -146,6 +173,11 @@
                                 <Border.Effect>
                                     <DropShadowEffect Color="#000000" BlurRadius="12" ShadowDepth="2" Opacity="0.25"/>
                                 </Border.Effect>
+                                <Border.Resources>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="TextWrapping" Value="Wrap"/>
+                                    </Style>
+                                </Border.Resources>
                                 <ContentPresenter TextBlock.Foreground="{TemplateBinding Foreground}"
                                                    TextBlock.FontSize="{TemplateBinding FontSize}"
                                                    TextElement.Foreground="{TemplateBinding Foreground}"/>
@@ -202,6 +234,13 @@
                  同时跟其它导航图标一样是单色线条风格，不引入实心填充打破视觉统一。 -->
             <Geometry x:Key="IconHeart">M12 20 C12 20 4 14.5 4 9 A4 4 0 0 1 12 6.5 A4 4 0 0 1 20 9 C20 14.5 12 20 12 20 Z</Geometry>
             <Geometry x:Key="IconDot">M12 8.5 A3.5 3.5 0 1 1 12 15.5 A3.5 3.5 0 1 1 12 8.5 Z</Geometry>
+            <Geometry x:Key="IconAI">M12 2.8 L13.35 7.05 L17.6 8.4 L13.35 9.75 L12 14 L10.65 9.75 L6.4 8.4 L10.65 7.05 Z M18.2 13.2 L18.95 15.45 L21.2 16.2 L18.95 16.95 L18.2 19.2 L17.45 16.95 L15.2 16.2 L17.45 15.45 Z M5.2 14.4 L5.75 16.05 L7.4 16.6 L5.75 17.15 L5.2 18.8 L4.65 17.15 L3 16.6 L4.65 16.05 Z</Geometry>
+            <!-- AI 助手工具栏图标。AiAssistantPanel 会在应用资源初始化阶段通过 StaticResource 解析，
+                 所以这些 Geometry 必须定义在 App.xaml 中；缺任意一个都会让整个主窗口在 XAML Parse 阶段直接启动失败。 -->
+            <Geometry x:Key="IconHistory">M5 6 H15 A6 6 0 1 1 6.5 18 M5 6 V11 M5 6 H10 M15 9 V13 L18 15</Geometry>
+            <Geometry x:Key="IconPlus">M12 5 V19 M5 12 H19</Geometry>
+            <Geometry x:Key="IconClose">M6 6 L18 18 M18 6 L6 18</Geometry>
+            <Geometry x:Key="IconSend">M3 4 L21 12 L3 20 L7 12 Z M7 12 H15</Geometry>
 
             <!-- 导航图标统一样式：**尺寸写死在这里**，是上面两个 bug 不再复发的关键。
                  Width/Height 固定 20，Stretch=Uniform 让 24 的 viewBox 等比缩到 20；
@@ -418,6 +457,66 @@
                         <Setter Property="Opacity" Value="0.5"/>
                     </Trigger>
                 </Style.Triggers>
+            </Style>
+
+            <!-- 右下角悬浮球按钮：圆形、带阴影/发光效果，用于 AI 助手入口 -->
+            <Style TargetType="Button" x:Key="FloatingButton">
+                <Setter Property="Background" Value="{DynamicResource AccentBrush}"/>
+                <Setter Property="Foreground" Value="{DynamicResource ButtonForegroundBrush}"/>
+                <Setter Property="BorderThickness" Value="0"/>
+                <Setter Property="Cursor" Value="Hand"/>
+                <Setter Property="Width" Value="44"/>
+                <Setter Property="Height" Value="44"/>
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="Button">
+                            <Border x:Name="bd" Background="{TemplateBinding Background}" CornerRadius="22"
+                                    Effect="{StaticResource GlowEffect}">
+                                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                            </Border>
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="IsMouseOver" Value="True">
+                                    <Setter TargetName="bd" Property="Background" Value="{DynamicResource AccentHoverBrush}"/>
+                                    <Setter TargetName="bd" Property="Effect">
+                                        <Setter.Value>
+                                            <DropShadowEffect Color="#00C2E8" BlurRadius="16" ShadowDepth="0" Opacity="0.7"/>
+                                        </Setter.Value>
+                                    </Setter>
+                                </Trigger>
+                                <Trigger Property="IsEnabled" Value="False">
+                                    <Setter Property="Opacity" Value="0.5"/>
+                                </Trigger>
+                            </ControlTemplate.Triggers>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+            </Style>
+
+            <!-- 图标按钮样式：用于 AI 面板顶部工具栏按钮 -->
+            <Style TargetType="Button" x:Key="IconButtonStyle">
+                <Setter Property="Background" Value="Transparent"/>
+                <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}"/>
+                <Setter Property="BorderThickness" Value="0"/>
+                <Setter Property="Cursor" Value="Hand"/>
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="Button">
+                            <Border x:Name="bd" Background="{TemplateBinding Background}" CornerRadius="6" Padding="4">
+                                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                            </Border>
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="IsMouseOver" Value="True">
+                                    <Setter TargetName="bd" Property="Background" Value="{DynamicResource GlowSoftBrush}"/>
+                                    <Setter TargetName="bd" Property="Effect" Value="{StaticResource GlowEffect}"/>
+                                </Trigger>
+                                <Trigger Property="IsEnabled" Value="False">
+                                    <Setter Property="Opacity" Value="0.4"/>
+                                    <Setter Property="Cursor" Value="No"/>
+                                </Trigger>
+                            </ControlTemplate.Triggers>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
             </Style>
 
             <!-- 版本快捷选择条用的小胶囊按钮，仿截图里"全部 26.2 26.1 1.21..."那种圆角条样式。
@@ -878,13 +977,25 @@
                 </Setter>
             </Style>
 
+            <!-- 修复"深色模式下拉框选项文字看不见"：ComboBoxItem 实际渲染在 ComboBox 模板里的
+                 Popup（见上面 615 行 ComboBox 默认样式的弹层 Border）内部——Popup 的内容走的是
+                 独立的可视化树（PopupRoot），WPF 的属性值继承在 Popup 边界这里会被截断，
+                 ComboBoxItem/ContentPresenter 即使外层 ComboBox.Foreground 已经正确绑定了
+                 TextPrimaryBrush，也不会继承到，会退回 WPF 默认的系统黑字——深色皮肤下背景是深色
+                 （Popup 外层 Border 用的 PanelBrush），黑字糊在深色背景上就完全看不清了。
+                 跟本文件前面 125 行 ToolTip 样式踩过的是同一个坑（那边注释里已经写明原因），
+                 解法一致：Style 级别显式声明 Foreground，并且在模板里通过
+                 TextBlock.Foreground/TextElement.Foreground 附加属性把它强制"传"给
+                 ContentPresenter 包裹的实际内容，不依赖会被 Popup 打断的正常继承链。 -->
             <Style TargetType="ComboBoxItem">
+                <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}"/>
                 <Setter Property="Padding" Value="8,6"/>
                 <Setter Property="Template">
                     <Setter.Value>
                         <ControlTemplate TargetType="ComboBoxItem">
                             <Border x:Name="bd" Background="Transparent" CornerRadius="4" Padding="{TemplateBinding Padding}">
-                                <ContentPresenter/>
+                                <ContentPresenter TextBlock.Foreground="{TemplateBinding Foreground}"
+                                                   TextElement.Foreground="{TemplateBinding Foreground}"/>
                             </Border>
                             <ControlTemplate.Triggers>
                                 <Trigger Property="IsHighlighted" Value="True">
@@ -1191,6 +1302,9 @@
                 </Setter>
             </Style>
 
+            <!-- 同样的 Popup 继承截断问题（见上面 ComboBoxItem 处注释）也发生在右键菜单：
+                 ContextMenu 本身就是 Popup 承载的，MenuItem 的 Header 内容通过 ContentPresenter
+                 显示，之前没有显式转发 Foreground，深色皮肤下右键菜单文字同样会变成看不清的黑字。 -->
             <Style TargetType="MenuItem">
                 <Setter Property="Background" Value="Transparent"/>
                 <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}"/>
@@ -1201,7 +1315,9 @@
                         <ControlTemplate TargetType="MenuItem">
                             <Border x:Name="bd" Background="{TemplateBinding Background}" CornerRadius="4" Padding="{TemplateBinding Padding}">
                                 <ContentPresenter ContentSource="Header" RecognizesAccessKey="True"
-                                                   HorizontalAlignment="Left" VerticalAlignment="Center"/>
+                                                   HorizontalAlignment="Left" VerticalAlignment="Center"
+                                                   TextBlock.Foreground="{TemplateBinding Foreground}"
+                                                   TextElement.Foreground="{TemplateBinding Foreground}"/>
                             </Border>
                             <ControlTemplate.Triggers>
                                 <Trigger Property="IsHighlighted" Value="True">

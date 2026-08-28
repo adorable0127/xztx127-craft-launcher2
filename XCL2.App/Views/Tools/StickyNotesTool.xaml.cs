@@ -20,6 +20,7 @@ public partial class StickyNotesTool : UserControl
 
     private string? _currentFile;          // 当前正在编辑的便签文件路径
     private bool _suppressSave;            // 程序自己改文本框（加载内容）时抑制保存
+    private bool _suppressStyleSelection;
     private readonly DispatcherTimer _saveTimer;
 
     private sealed record NoteItem(string Path, string Title, string TimeText);
@@ -30,6 +31,7 @@ public partial class StickyNotesTool : UserControl
         _saveTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(800) };
         _saveTimer.Tick += (_, _) => SaveCurrent();
         RefreshNoteList();
+        SelectStyle("Yellow");
         NoteStatusText.Text = "便签保存在：" + NotesDir;
     }
 
@@ -88,6 +90,7 @@ public partial class StickyNotesTool : UserControl
             NoteEditor.Clear();
             NoteEditor.IsEnabled = false;
             NotePinBtn.IsEnabled = false;
+            NoteStyleCombo.IsEnabled = false;
             return;
         }
 
@@ -108,6 +111,8 @@ public partial class StickyNotesTool : UserControl
         }
         NoteEditor.IsEnabled = true;
         NotePinBtn.IsEnabled = true;
+        NoteStyleCombo.IsEnabled = true;
+        SelectStyle(StickyNoteWindow.ReadStyleKey(_currentFile));
     }
 
     // ==================== 编辑保存 ====================
@@ -137,6 +142,36 @@ public partial class StickyNotesTool : UserControl
         {
             NoteStatusText.Text = "保存便签失败：" + ex.Message;
         }
+    }
+
+    private void SelectStyle(string styleKey)
+    {
+        _suppressStyleSelection = true;
+        try
+        {
+            foreach (var item in NoteStyleCombo.Items.OfType<ComboBoxItem>())
+            {
+                if (string.Equals(item.Tag?.ToString(), styleKey, StringComparison.OrdinalIgnoreCase))
+                {
+                    NoteStyleCombo.SelectedItem = item;
+                    return;
+                }
+            }
+            NoteStyleCombo.SelectedIndex = 0;
+        }
+        finally { _suppressStyleSelection = false; }
+    }
+
+    private void NoteStyleCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_suppressStyleSelection || _currentFile == null) return;
+        var key = (NoteStyleCombo.SelectedItem as ComboBoxItem)?.Tag?.ToString() ?? "Yellow";
+        StickyNoteWindow.WriteStyleKey(_currentFile, key);
+        NoteStatusText.Text = $"已切换便签样式：{(NoteStyleCombo.SelectedItem as ComboBoxItem)?.Content}";
+
+        foreach (var window in StickyNoteWindow.OpenWindows.Where(w =>
+                     string.Equals(w.FilePath, _currentFile, StringComparison.OrdinalIgnoreCase)))
+            window.ApplyStyle(key, persist: false);
     }
 
     // ==================== 按钮 ====================
@@ -175,7 +210,12 @@ public partial class StickyNotesTool : UserControl
                 "删除便签")) return;
 
         SaveCurrent();
-        try { File.Delete(_currentFile); } catch (Exception ex) { MessageBoxDialog.ShowError($"删除失败：{ex.Message}"); return; }
+        try
+        {
+            File.Delete(_currentFile);
+            try { File.Delete(_currentFile + ".style"); } catch { }
+        }
+        catch (Exception ex) { MessageBoxDialog.ShowError($"删除失败：{ex.Message}"); return; }
         _currentFile = null;
         RefreshNoteList();
         NoteStatusText.Text = "已删除便签";
@@ -191,7 +231,8 @@ public partial class StickyNotesTool : UserControl
     {
         if (_currentFile == null) return;
         SaveCurrent();
-        var win = new StickyNoteWindow(_currentFile) { Topmost = true };
+        var styleKey = (NoteStyleCombo.SelectedItem as ComboBoxItem)?.Tag?.ToString() ?? StickyNoteWindow.ReadStyleKey(_currentFile);
+        var win = new StickyNoteWindow(_currentFile, styleKey) { Topmost = true };
         win.Show();
         NoteStatusText.Text = $"已弹出桌面便签：{Path.GetFileName(_currentFile)}（窗口置顶，可拖动）";
     }

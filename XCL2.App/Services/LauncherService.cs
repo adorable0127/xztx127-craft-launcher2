@@ -282,7 +282,24 @@ public class LauncherService
 
                 var p = Path.Combine(librariesDir, relativePath.Replace('/', Path.DirectorySeparatorChar));
                 if (!File.Exists(p))
+                {
                     missing.Add($"{lib.Name} (期望路径: {p})");
+                }
+                else
+                {
+                    // 同 DownloadService.VerifySha1 的修复动机："文件存在"不等于"文件完整"——
+                    // 0 字节的库 jar（下载中断/磁盘写满留下的半成品）之前完全没人检查，
+                    // 直接被当成"已安装"放行，直到 Java 进程真正加载这个 jar 才崩溃
+                    // （比如 lwjgl 的 jar 是空文件，报 NoClassDefFoundError: org/lwjgl/...）。
+                    // 这里补上启动前的最后一道防线：哪怕文件"存在"，0 字节也判定为缺失，
+                    // 让下面的"自动补全"提示能覆盖到这种情况，而不是放任它一路崩到 Java 里。
+                    try
+                    {
+                        if (new FileInfo(p).Length == 0)
+                            missing.Add($"{lib.Name} (文件已损坏/大小为 0，路径: {p})");
+                    }
+                    catch { /* 拿不到文件大小就不额外判定，交给后面真正启动时的检测兜底 */ }
+                }
             }
         }
         if (parent != null) Scan(parent);
@@ -688,6 +705,18 @@ public class LauncherService
         return result;
     }
 
+    /// <summary>需求："尽量不要崩溃"——0 字节的库 jar（下载中断留下的半成品）不该被当成
+    /// "文件存在=可用"放行，否则会一路带着这个空文件拼进 classpath，直到 Java 进程真正
+    /// 加载它才崩溃(如 NoClassDefFoundError: org/lwjgl/...)，且这种"存在但损坏"的文件
+    /// 不会被上面 CheckMissingLibraries 这种预检查以外的路径自动发现。这里跟
+    /// CheckMissingLibraries/DownloadService.VerifySha1 保持同一个判定口径，作为
+    /// 真正拼 classpath 前的最后一道防线，兜底"用户跳过了预检查直接启动"的情况。</summary>
+    private static bool IsNonEmptyFile(string path)
+    {
+        try { return new FileInfo(path).Length > 0; }
+        catch { return false; }
+    }
+
     private (string mainClass, List<string> args) BuildArguments(LaunchOptions opts)
     {
         var versionDir = Path.Combine(opts.MinecraftDir, "versions", opts.VersionId);
@@ -784,7 +813,7 @@ public class LauncherService
                 if (string.IsNullOrEmpty(relativePath)) continue;
 
                 var p = Path.Combine(librariesDir, relativePath.Replace('/', Path.DirectorySeparatorChar));
-                if (File.Exists(p))
+                if (File.Exists(p) && IsNonEmptyFile(p))
                     classpath.Add(p);
                 else
                     missingLibraries.Add($"{lib.Name} (期望路径: {p})");

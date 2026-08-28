@@ -9,7 +9,7 @@
 
     <!-- ============ 舌头选择弹窗它自己 ============ -->
     <system:String x:Key="Str_Lang_DialogTitle">选择你的舌头</system:String>
-    <system:String x:Key="Str_Lang_EntryButton">舌头/Language</system:String>
+    <system:String x:Key="Str_Lang_EntryButton">舌头/Language/语言）</system:String>
     <system:String x:Key="Str_Lang_ExperimentalNotice">一些实验室里的机能仅仅对着简体中文的面貌开放；在您切换到其他的舌头之后，这些实验室机能会暂时隐藏它们自己（机能自身不受到打击，只是还没有供给对应舌头的面貌翻译）。</system:String>
     <system:String x:Key="Str_Lang_Ok">好的</system:String>
     <system:String x:Key="Str_Lang_Cancel">使之作废</system:String>

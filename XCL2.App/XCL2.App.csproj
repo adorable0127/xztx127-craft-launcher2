@@ -15,11 +15,17 @@
     <SupportedOSPlatformVersion>10.0.17763.0</SupportedOSPlatformVersion>
     <Nullable>enable</Nullable>
     <UseWPF>true</UseWPF>
+    <!-- 仅用来拿 System.Windows.Forms.NotifyIcon 做系统托盘图标——WPF 本身没有托盘 API，
+         这是 .NET 官方支持的标准做法（WPF+WinForms 混用），不会影响原有 WPF 窗口/控件。 -->
+    <UseWindowsForms>true</UseWindowsForms>
     <ImplicitUsings>enable</ImplicitUsings>
     <AssemblyName>XCL2</AssemblyName>
     <RootNamespace>XCL2.App</RootNamespace>
     <Platforms>AnyCPU</Platforms>
     <LangVersion>latest</LangVersion>
+    <!-- Services/BedrockDecode（基岩版 MSIXVC/XVD 解码，移植自 BedrockLauncher.Core，MIT）
+         里用 fixed/Marshal.PtrToStructure 做二进制结构体反序列化，需要 unsafe 编译支持。 -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <!-- 离线/受限网络环境下，NuGet restore 会因无法访问漏洞审计源反复输出 NU1900。
          项目依赖版本固定，日常本地构建不需要联网审计；发布前可在 CI 或联网环境单独开启审计。 -->
     <NuGetAudit>false</NuGetAudit>
@@ -48,6 +54,19 @@
          其实该装 8.0。 -->
     <RollForward>LatestMinor</RollForward>
   </PropertyGroup>
+
+  <!-- UseWPF + UseWindowsForms 同时开启时，SDK 会各自隐式注入一批全局 using
+       （WPF: System.Windows / System.Windows.Controls / System.Windows.Input 等；
+       WinForms: System.Drawing / System.Windows.Forms 等），两边有大量同名类型
+       (Application/UserControl/Button/TextBox/ComboBox/ListBox/RadioButton/
+       KeyEventArgs/DragEventArgs/Color……)，于是几乎全项目全部报 CS0104 不明确引用。
+       这里显式移除 WinForms 那两个隐式 using，改成"默认全是 WPF 类型"，
+       真正需要 WinForms/System.Drawing 类型的少数文件（目前只有
+       Services/TrayIconService.cs）自己写 using 别名，两边就不会再打架。 -->
+  <ItemGroup>
+    <Using Remove="System.Windows.Forms" />
+    <Using Remove="System.Drawing" />
+  </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="System.Text.Json" Version="8.0.5" />

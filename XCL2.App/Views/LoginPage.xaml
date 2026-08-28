@@ -51,9 +51,11 @@
                         <Grid Margin="6">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="*"/>
-                                <ColumnDefinition Width="Auto"/>
-                                <ColumnDefinition Width="Auto"/>
-                                <ColumnDefinition Width="Auto"/>
+                                 <ColumnDefinition Width="Auto"/>
+                                 <ColumnDefinition Width="Auto"/>
+                                 <ColumnDefinition Width="Auto"/>
+                                 <ColumnDefinition Width="Auto"/>
+                                 <ColumnDefinition Width="Auto"/>
                             </Grid.ColumnDefinitions>
                             <StackPanel>
                                 <TextBlock Text="{Binding DisplayLabel}" FontSize="15"/>
@@ -63,9 +65,11 @@
                             <Button Grid.Column="1" Content="{DynamicResource Str_Ui_Skin}" Tag="{Binding}" Click="Skin_Click"
                                     Margin="0,0,8,0"
                                     Visibility="{Binding Type, Converter={StaticResource AccountTypeToOfflineVisibilityConverter}}"/>
-                            <Button Grid.Column="2" Content="{DynamicResource Str_Ui_Use}" Style="{StaticResource PrimaryButton}" Margin="0,0,8,0"
-                                    Tag="{Binding}" Click="SelectAccount_Click"/>
-                            <Button Grid.Column="3" Content="{DynamicResource Str_Common_Delete}" Tag="{Binding}" Click="RemoveAccount_Click"/>
+                             <Button Grid.Column="2" Content="{DynamicResource Str_Ui_Use}" Style="{StaticResource PrimaryButton}" Margin="0,0,8,0"
+                                     Tag="{Binding}" Click="SelectAccount_Click"/>
+                              <Button Grid.Column="3" Content="复制 UUID" Margin="0,0,8,0" Tag="{Binding}" Click="CopyUuid_Click"/>
+                              <Button Grid.Column="4" Content="账户页面" Margin="0,0,8,0" Tag="{Binding}" Click="OpenAccountPortal_Click"/>
+                              <Button Grid.Column="5" Content="{DynamicResource Str_Common_Delete}" Tag="{Binding}" Click="RemoveAccount_Click"/>
                         </Grid>
                     </DataTemplate>
                 </ListBox.ItemTemplate>

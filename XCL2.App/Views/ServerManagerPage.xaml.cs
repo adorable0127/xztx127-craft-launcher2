@@ -814,6 +814,10 @@ public partial class ServerManagerPage : UserControl
         importItem.Click += (_, _) => ImportInstance(instance);
         menu.Items.Add(importItem);
 
+        var modpackItem = new MenuItem { Header = "安装整合包到此服务器..." };
+        modpackItem.Click += async (_, _) => await InstallModpackToServerAsync(instance);
+        menu.Items.Add(modpackItem);
+
         menu.Items.Add(new Separator());
 
         var iconItem = new MenuItem { Header = "设置自定义图标..." };
@@ -1106,6 +1110,65 @@ public partial class ServerManagerPage : UserControl
         {
             MessageBoxDialog.ShowError($"导入失败：\n{ex.Message}");
         }
+    }
+
+    private async Task InstallModpackToServerAsync(ServerInstance instance, string? suppliedPath = null)
+    {
+        var path = suppliedPath;
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            var dialog = new OpenFileDialog
+            {
+                Title = "选择 Modrinth、CurseForge 或 XCL2 整合包",
+                Filter = "整合包|*.mrpack;*.zip;*.xclpack|所有文件|*.*"
+            };
+            if (dialog.ShowDialog() != true) return;
+            path = dialog.FileName;
+        }
+
+        try
+        {
+            var service = new ModpackService();
+            if (ModpackService.IsMrpack(path))
+            {
+                var result = await service.ImportMrpackAsync(path, instance.Directory);
+                MessageBoxDialog.ShowSuccess($"Modrinth 整合包已安装到服务器「{instance.DisplayName}」。" +
+                    (result.FailedFiles.Count == 0 ? "" : $"\n有 {result.FailedFiles.Count} 个文件下载失败，可重试。"));
+            }
+            else
+            {
+                // XCL 包与 CurseForge ZIP 都先按覆盖目录导入。标准 CurseForge overrides 会被保留到服务端目录，
+                // 供用户补充服务端核心/不兼容客户端 Mod 后直接启动。
+                service.Import(path, instance.Directory);
+                MessageBoxDialog.ShowSuccess($"整合包内容已导入服务器「{instance.DisplayName}」。");
+            }
+        }
+        catch (Exception ex)
+        {
+            MessageBoxDialog.ShowError($"服务器整合包安装失败：{ex.Message}");
+        }
+    }
+
+    private void ServerManagerPage_DragOver(object sender, DragEventArgs e)
+    {
+        e.Effects = e.Data.GetDataPresent(DataFormats.FileDrop) ? DragDropEffects.Copy : DragDropEffects.None;
+        e.Handled = true;
+    }
+
+    private async void ServerManagerPage_Drop(object sender, DragEventArgs e)
+    {
+        if (!e.Data.GetDataPresent(DataFormats.FileDrop)) return;
+        var files = (string[])e.Data.GetData(DataFormats.FileDrop)!;
+        var path = files.FirstOrDefault(f => f.EndsWith(".mrpack", StringComparison.OrdinalIgnoreCase) ||
+                                             f.EndsWith(".zip", StringComparison.OrdinalIgnoreCase) ||
+                                             f.EndsWith(".xclpack", StringComparison.OrdinalIgnoreCase));
+        var target = _owner.ServerInstanceService.Instances.FirstOrDefault(i => i.IsDefault) ?? _owner.ServerInstanceService.Instances.FirstOrDefault();
+        if (path == null || target == null)
+        {
+            MessageBoxDialog.ShowInfo("请先创建或选择一个服务器，再拖入整合包。", "提示");
+            return;
+        }
+        await InstallModpackToServerAsync(target, path);
     }
 
     private void SetInstanceIcon(ServerInstance instance)

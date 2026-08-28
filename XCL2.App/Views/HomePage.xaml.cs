@@ -20,6 +20,7 @@ public partial class HomePage : UserControl
     private bool _modeToggleInitializing;
     private bool _darkModeToggleInitializing;
     private bool _autoThemeToggleInitializing;
+    private bool _followSystemThemeToggleInitializing;
 
     public HomePage(MainWindow owner)
     {
@@ -36,6 +37,23 @@ public partial class HomePage : UserControl
         RefreshModeToggle();
         RefreshThemeToggles();
         ApplyRestrictedModeGating(_owner.ConfigService.Config.RestrictedMode);
+
+        UpdateLanguageEntryButtonText();
+        LocalizationService.LanguageChanged += () => UpdateLanguageEntryButtonText();
+    }
+
+    /// <summary>语言胶囊文字：Str_Lang_EntryButton 里的「*」通配符替换为当前语言的本地名，
+    /// 例如「（简体中文（Microsoft）/简体中文（Microsoft）/选择语言）」。三个语言文件里这条
+    /// 都是模板「（*/*/选择语言）」，不随语言翻译，运行时这里统一填当前语言名。</summary>
+    private void UpdateLanguageEntryButtonText()
+    {
+        var template = Application.Current.FindResource("Str_Lang_EntryButton") as string
+                       ?? "（*/*/选择语言）";
+        var current = System.Linq.Enumerable.FirstOrDefault(
+            LocalizationService.SupportedLanguages,
+            l => l.Code == LocalizationService.CurrentLanguageCode);
+        var name = current?.NativeName ?? LocalizationService.CurrentLanguageCode;
+        LanguageEntryButtonText.Text = template.Replace("*", name);
     }
 
     /// <summary>基本模式（RestrictedMode=true）下的功能门控。
@@ -143,6 +161,11 @@ public partial class HomePage : UserControl
         AutoThemeCycleToggle.IsChecked = cfg.AutoThemeCycleEnabled;
         UpdateAutoThemeCycleToggleText();
         _autoThemeToggleInitializing = false;
+
+        _followSystemThemeToggleInitializing = true;
+        FollowSystemThemeToggle.IsChecked = cfg.FollowSystemTheme;
+        UpdateFollowSystemThemeToggleText();
+        _followSystemThemeToggleInitializing = false;
     }
 
     private void UpdateModeToggleText()
@@ -189,7 +212,7 @@ public partial class HomePage : UserControl
         _owner.ConfigService.Save();
         UpdateDarkModeToggleText();
 
-        ThemeService.ApplyForCurrentState(cfg.GuestModeEnabled, cfg.UiSkin, cfg.IsDarkMode);
+        ThemeService.ApplyForCurrentState(cfg.GuestModeEnabled, cfg.UiSkin, cfg.IsDarkMode, cfg.CustomAccentColor);
     }
 
     private void UpdateAutoThemeCycleToggleText()
@@ -211,10 +234,55 @@ public partial class HomePage : UserControl
         // 开关状态一变化，"上次自动切换的时间段"记录就作废了：不管是刚打开（需要立即按当前
         // 时间校正一次）还是刚关闭（下次重新打开时不该沿用很久以前的旧记录），都清空。
         cfg.AutoThemeLastAppliedSlotStartHour = null;
+
+        // 「跟随系统」是另一种互斥的自动来源，开启「自动循环」时顺带关掉它，不让两边同时
+        // 抢着接管 IsDarkMode（见 AppConfig.FollowSystemTheme 注释）。
+        if (cfg.AutoThemeCycleEnabled && cfg.FollowSystemTheme)
+        {
+            cfg.FollowSystemTheme = false;
+            _followSystemThemeToggleInitializing = true;
+            FollowSystemThemeToggle.IsChecked = false;
+            UpdateFollowSystemThemeToggleText();
+            _followSystemThemeToggleInitializing = false;
+        }
+
         _owner.ConfigService.Save();
         UpdateAutoThemeCycleToggleText();
 
         _owner.ReevaluateAutoThemeCycle();
+    }
+
+    private void UpdateFollowSystemThemeToggleText()
+    {
+        FollowSystemThemeToggleText.Text = FollowSystemThemeToggle.IsChecked == true ? "跟随系统：已开启" : "跟随系统";
+    }
+
+    /// <summary>
+    /// 「跟随系统」开关：开启后深浅色由 Windows 系统当前的应用主题设置决定，见
+    /// MainWindow.ReevaluateFollowSystemTheme。点击立即写回配置、保存；刚打开的瞬间立即
+    /// 按当前系统主题校正一次，不用等下一次系统主题变化事件才生效。
+    /// 跟「自动循环」互斥：开启这个时顺带关掉「自动循环」，避免两边同时接管。
+    /// </summary>
+    private void FollowSystemThemeToggle_Changed(object sender, RoutedEventArgs e)
+    {
+        if (_followSystemThemeToggleInitializing) return;
+        var cfg = _owner.ConfigService.Config;
+        cfg.FollowSystemTheme = FollowSystemThemeToggle.IsChecked == true;
+
+        if (cfg.FollowSystemTheme && cfg.AutoThemeCycleEnabled)
+        {
+            cfg.AutoThemeCycleEnabled = false;
+            cfg.AutoThemeLastAppliedSlotStartHour = null;
+            _autoThemeToggleInitializing = true;
+            AutoThemeCycleToggle.IsChecked = false;
+            UpdateAutoThemeCycleToggleText();
+            _autoThemeToggleInitializing = false;
+        }
+
+        _owner.ConfigService.Save();
+        UpdateFollowSystemThemeToggleText();
+
+        _owner.ReevaluateFollowSystemTheme();
     }
 
     private void UpdateGuestModeToggleText()

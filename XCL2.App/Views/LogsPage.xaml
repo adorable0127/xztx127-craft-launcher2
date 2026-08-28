@@ -22,9 +22,9 @@
                                 <RowDefinition Height="Auto"/>
                                 <RowDefinition Height="*"/>
                             </Grid.RowDefinitions>
-                            <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="0,8,0,8">
+                            <WrapPanel Grid.Row="0" Orientation="Horizontal" Margin="0,8,0,8">
                                 <TextBlock Text="{DynamicResource Str_Ui_Choose_A_Running_Or_Recent_Game_Process}" VerticalAlignment="Center"/>
-                                <ComboBox x:Name="ProcessCombo" Width="260" Margin="8,0,8,0"
+                                <ComboBox x:Name="ProcessCombo" Width="220" Margin="8,0,8,0"
                                           SelectionChanged="ProcessCombo_SelectionChanged"/>
                                 <Button Content="{DynamicResource Str_Common_Refresh}" Style="{StaticResource SideNavButton}" Padding="10,4" Click="RefreshGameLog_Click"/>
                                 <!-- 需求：游戏崩溃后日志不应该瞬间清空/消失，要保留到用户自己点这个按钮手动清空为止。
@@ -32,7 +32,9 @@
                                  本身（那份缓冲区是进程管理/其它面板还要用的底层数据），也不会影响磁盘上的
                                  latest.log —— 纯粹是这一个 TextBox 的可见内容归零，语义上等价于"清屏"。 -->
                                 <Button Content="{DynamicResource Str_Ui_Clear_This_View}" Style="{StaticResource SideNavButton}" Padding="10,4" Margin="8,0,0,0" Click="ClearGameLogView_Click"/>
-                            </StackPanel>
+                                <Button Content="AI 分析当前游戏日志" Style="{StaticResource PrimaryButton}" Padding="10,4" Margin="8,0,0,0"
+                                        ToolTip="将当前游戏日志脱敏后提交给已配置的 AI 服务分析" Click="AnalyzeCurrentGameLogWithAi_Click"/>
+                            </WrapPanel>
                             <TextBox x:Name="GameLogBox" Grid.Row="1" IsReadOnly="True" TextWrapping="NoWrap"
                                      FontFamily="Consolas" FontSize="12" VerticalScrollBarVisibility="Auto"
                                      HorizontalScrollBarVisibility="Auto" Background="#1E1E1E" Foreground="#D4D4D4"/>
@@ -45,8 +47,12 @@
                                 <RowDefinition Height="Auto"/>
                                 <RowDefinition Height="*"/>
                             </Grid.RowDefinitions>
-                            <Button Grid.Row="0" Content="{DynamicResource Str_Common_Refresh}" Style="{StaticResource SideNavButton}" Padding="10,4"
-                                    HorizontalAlignment="Left" Margin="0,8,0,8" Click="RefreshLauncherLog_Click"/>
+                            <WrapPanel Grid.Row="0" Orientation="Horizontal" Margin="0,8,0,8">
+                                <Button Content="{DynamicResource Str_Common_Refresh}" Style="{StaticResource SideNavButton}" Padding="10,4"
+                                        Click="RefreshLauncherLog_Click"/>
+                                <Button Content="AI 分析启动器日志" Style="{StaticResource PrimaryButton}" Padding="10,4" Margin="8,0,0,0"
+                                        ToolTip="将当前启动器异常日志脱敏后提交给已配置的 AI 服务分析" Click="AnalyzeLauncherLogWithAi_Click"/>
+                            </WrapPanel>
                             <TextBox x:Name="LauncherLogBox" Grid.Row="1" IsReadOnly="True" TextWrapping="NoWrap"
                                      FontFamily="Consolas" FontSize="12" VerticalScrollBarVisibility="Auto"
                                      HorizontalScrollBarVisibility="Auto" Background="#1E1E1E" Foreground="#D4D4D4"/>
@@ -60,12 +66,14 @@
                             <RowDefinition Height="Auto"/>
                             <RowDefinition Height="*"/>
                         </Grid.RowDefinitions>
-                        <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="0,8,0,8">
+                        <WrapPanel Grid.Row="0" Orientation="Horizontal" Margin="0,8,0,8">
                             <TextBlock Text="{DynamicResource Str_Ui_Crash_File}" VerticalAlignment="Center"/>
-                            <ComboBox x:Name="CrashFileCombo" Width="360" Margin="8,0,8,0"
+                            <ComboBox x:Name="CrashFileCombo" Width="300" Margin="8,0,8,0"
                                       SelectionChanged="CrashFileCombo_SelectionChanged"/>
                             <Button Content="{DynamicResource Str_Ui_Rescan}" Style="{StaticResource SideNavButton}" Padding="10,4" Click="RescanCrash_Click"/>
-                        </StackPanel>
+                            <Button Content="AI 分析崩溃报告" Style="{StaticResource PrimaryButton}" Padding="10,4" Margin="8,0,0,0"
+                                    ToolTip="需要先在 AI 助手设置中允许读取崩溃报告" Click="AnalyzeCrashLogWithAi_Click"/>
+                        </WrapPanel>
                         <Border Grid.Row="1" Background="{DynamicResource WarningBannerBrush}" CornerRadius="6" Padding="10" Margin="0,0,0,8">
                             <TextBlock x:Name="CrashFindingsText" TextWrapping="Wrap" FontSize="13"
                                        Foreground="{DynamicResource TextPrimaryBrush}"
@@ -83,11 +91,13 @@
                             <RowDefinition Height="Auto"/>
                             <RowDefinition Height="*"/>
                         </Grid.RowDefinitions>
-                        <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="0,8,0,8">
+                        <WrapPanel Grid.Row="0" Orientation="Horizontal" Margin="0,8,0,8">
                             <TextBlock Text="{DynamicResource Str_Ui_Select_A_Running_Game_Process}" VerticalAlignment="Center"/>
-                            <ComboBox x:Name="ScanProcessCombo" Width="260" Margin="8,0,8,0"/>
+                            <ComboBox x:Name="ScanProcessCombo" Width="220" Margin="8,0,8,0"/>
                             <Button Content="{DynamicResource Str_Ui_Scan_Now}" Style="{StaticResource PrimaryButton}" Padding="12,4" Click="ScanNow_Click"/>
-                        </StackPanel>
+                            <Button Content="AI 分析注入日志" Style="{StaticResource PrimaryButton}" Padding="10,4" Margin="8,0,0,0"
+                                    ToolTip="先执行注入检测，再将扫描结果提交给 AI 分析" Click="AnalyzeInjectionLogWithAi_Click"/>
+                        </WrapPanel>
                         <ListView x:Name="ModuleListView" Grid.Row="1">
                             <ListView.View>
                                 <GridView>
@@ -117,6 +127,8 @@
                                  不是同进程内的第二个 WPF 窗口，主窗口卡死/被关闭都不会影响它。 -->
                             <Button Content="{DynamicResource Str_Ui_Open_In_Independent_Window}" Style="{StaticResource SideNavButton}" Padding="10,4"
                                     Margin="10,0,0,0" Click="OpenLauncherLogInIndependentWindow_Click"/>
+                            <Button Content="AI 分析完整日志" Style="{StaticResource PrimaryButton}" Padding="10,4" Margin="10,0,0,0"
+                                    ToolTip="汇总当前会话与磁盘日志，脱敏并提交给 AI 分析" Click="AnalyzeFullLauncherLogWithAi_Click"/>
                         </StackPanel>
                         <TextBox x:Name="FullLauncherLogBox" Grid.Row="1" IsReadOnly="True" TextWrapping="NoWrap"
                                  FontFamily="Consolas" FontSize="12" VerticalScrollBarVisibility="Auto"

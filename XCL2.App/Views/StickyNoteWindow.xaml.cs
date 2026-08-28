@@ -2,29 +2,43 @@ using System.Collections.Generic;
 using System.IO;
 using System.Windows;
 using System.Windows.Input;
+using System.Windows.Media;
 using System.Windows.Threading;
 
 namespace XCL2.App.Views;
 
 /// <summary>
-/// 桌面便签窗口（百宝箱「桌面便签」工具的置顶弹出窗口）：
-/// - 无边框、可拖动、默认置顶，仿真实便利贴的黄底样式（不随启动器深浅色主题变，
-///   它是"贴在桌面上"的东西，跟桌面环境走，保持醒目的固定配色）；
-/// - 内容编辑后自动写回同一个便签文件（防抖 800ms），关闭时强制保存；
-/// - 「📌」按钮切换是否置顶，图标随状态变化。
+/// 桌面便签窗口（百宝箱「桌面便签」工具的置顶弹出窗口）。
+/// 内容与样式都纯本地保存；正文仍是原来的 .txt，样式另存为同名 .style 文件，
+/// 不破坏用户已有便签文本格式。
 /// </summary>
 public partial class StickyNoteWindow : Window
 {
-    /// <summary>当前所有已置顶到桌面、仍处于打开状态的便签窗口——供 MainWindow 关闭时
-    /// 检测"是否还有便签钉在桌面上"，从而决定要不要弹出"是否连同便签一起关闭"的提示。
-    /// 构造时加入、Closed 时移除，不需要调用方手动维护。</summary>
     public static readonly List<StickyNoteWindow> OpenWindows = new();
+
+    private sealed record NotePalette(
+        string Key, string Card, string TitleBar, string Editor, string Text,
+        string TitleText, string Selection, string Grip);
+
+    private static readonly NotePalette[] Palettes =
+    {
+        new("Yellow",   "#FFF9C4", "#F7E28A", "#FFFDF0", "#3D3D3D", "#6B5B1E", "#F0DE84", "#B8A45A"),
+        new("Blue",     "#DCEEFF", "#BBDDFC", "#EFF8FF", "#17324D", "#24547B", "#A8D4FA", "#5A93BE"),
+        new("Mint",     "#DDF7E8", "#BDEBCF", "#F0FCF5", "#173C2B", "#286548", "#A9E2C0", "#65A982"),
+        new("Pink",     "#FFE2EC", "#F7C4D7", "#FFF3F7", "#4D2635", "#7D3E57", "#F2B6CE", "#BA718F"),
+        new("Purple",   "#EDE3FF", "#D5C0F6", "#F8F4FF", "#35284C", "#604B82", "#CDB7EE", "#8B70B2"),
+        new("Paper",    "#F7F7F4", "#E4E5E1", "#FFFFFF", "#262A2F", "#505963", "#D9E0E6", "#88929D"),
+        new("Midnight", "#232936", "#30394B", "#1C222D", "#EEF3FA", "#D9E6F5", "#4B5F7A", "#8AA1BF")
+    };
 
     private readonly string _filePath;
     private readonly DispatcherTimer _saveTimer;
     private bool _suppressSave;
+    private string _styleKey = "Yellow";
 
-    public StickyNoteWindow(string filePath)
+    public string FilePath => _filePath;
+
+    public StickyNoteWindow(string filePath, string? styleKey = null)
     {
         _filePath = filePath;
         InitializeComponent();
@@ -35,17 +49,80 @@ public partial class StickyNoteWindow : Window
         _saveTimer.Tick += (_, _) => Save();
 
         _suppressSave = true;
-        ContentBox.Text = File.Exists(filePath) ? File.ReadAllText(filePath) : "";
+        try { ContentBox.Text = File.Exists(filePath) ? File.ReadAllText(filePath) : ""; }
+        catch { ContentBox.Text = ""; }
         _suppressSave = false;
+
+        ApplyStyle(string.IsNullOrWhiteSpace(styleKey) ? ReadStyleKey(filePath) : styleKey!, persist: false);
 
         OpenWindows.Add(this);
         Closed += (_, _) => OpenWindows.Remove(this);
     }
 
+    private static string StylePath(string notePath) => notePath + ".style";
+
+    public static string ReadStyleKey(string notePath)
+    {
+        try
+        {
+            var value = File.Exists(StylePath(notePath)) ? File.ReadAllText(StylePath(notePath)).Trim() : "Yellow";
+            return Palettes.Any(p => string.Equals(p.Key, value, StringComparison.OrdinalIgnoreCase)) ? value : "Yellow";
+        }
+        catch { return "Yellow"; }
+    }
+
+    public static void WriteStyleKey(string notePath, string styleKey)
+    {
+        var normalized = Palettes.FirstOrDefault(p => string.Equals(p.Key, styleKey, StringComparison.OrdinalIgnoreCase))?.Key ?? "Yellow";
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(notePath)!);
+            File.WriteAllText(StylePath(notePath), normalized);
+        }
+        catch { }
+    }
+
+    public void ApplyStyle(string styleKey, bool persist = true)
+    {
+        var palette = Palettes.FirstOrDefault(p => string.Equals(p.Key, styleKey, StringComparison.OrdinalIgnoreCase)) ?? Palettes[0];
+        _styleKey = palette.Key;
+
+        Brush B(string hex) => new SolidColorBrush((Color)ColorConverter.ConvertFromString(hex)!);
+        NoteCard.Background = B(palette.Card);
+        TitleBar.Background = B(palette.TitleBar);
+        ContentBox.Background = B(palette.Editor);
+        ContentBox.Foreground = B(palette.Text);
+        ContentBox.CaretBrush = B(palette.Text);
+        ContentBox.SelectionBrush = B(palette.Selection);
+        TitleText.Foreground = B(palette.TitleText);
+        NoteResizeGrip.Foreground = B(palette.Grip);
+
+        if (persist) WriteStyleKey(_filePath, _styleKey);
+        StyleBtn.ToolTip = $"切换便签样式（当前：{GetStyleDisplayName(_styleKey)}）";
+    }
+
+    private static string GetStyleDisplayName(string key) => key switch
+    {
+        "Blue" => "天空蓝",
+        "Mint" => "薄荷绿",
+        "Pink" => "樱花粉",
+        "Purple" => "紫晶",
+        "Paper" => "纸白",
+        "Midnight" => "深夜",
+        _ => "经典黄纸"
+    };
+
+    private void StyleBtn_Click(object sender, RoutedEventArgs e)
+    {
+        var current = Array.FindIndex(Palettes, p => string.Equals(p.Key, _styleKey, StringComparison.OrdinalIgnoreCase));
+        var next = Palettes[(current + 1 + Palettes.Length) % Palettes.Length];
+        ApplyStyle(next.Key);
+    }
+
     private void TitleBar_MouseDown(object sender, MouseButtonEventArgs e)
     {
         if (e.LeftButton != MouseButtonState.Pressed) return;
-        try { DragMove(); } catch { /* 窗口正在被系统操作时拖不动，忽略 */ }
+        try { DragMove(); } catch { }
     }
 
     private void PinBtn_Click(object sender, RoutedEventArgs e)
@@ -69,7 +146,6 @@ public partial class StickyNoteWindow : Window
     }
 
     private void ContentBox_LostFocus(object sender, RoutedEventArgs e) => Save();
-
     private void StickyNoteWindow_Closing(object sender, System.ComponentModel.CancelEventArgs e) => Save();
 
     private void Save()
@@ -81,6 +157,6 @@ public partial class StickyNoteWindow : Window
             Directory.CreateDirectory(Path.GetDirectoryName(_filePath)!);
             File.WriteAllText(_filePath, ContentBox.Text);
         }
-        catch { /* 保存失败不影响窗口使用，下次输入还会再触发保存 */ }
+        catch { }
     }
 }

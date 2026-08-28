@@ -1,3 +1,4 @@
+﻿using System.Collections.Generic;
 using System.Windows;
 using System.Windows.Media;
 
@@ -41,11 +42,22 @@ namespace XCL2.App.Services;
 /// </summary>
 public static class ThemeService
 {
+    public static void ApplyCustomAccent(Color color)
+    {
+        // “自定义”是完整主题色系，不只是临时覆盖 AccentBrush。先用白色主题作为中性底色，
+        // 再把自定义色派生到按钮/悬停/光晕等资源；最后把 _currentHue 设回 Custom，
+        // 这样后续调整透明度时不会把按钮颜色重置成白色主题。
+        Apply(SkinWhite, CurrentIsDarkMode);
+        _currentHue = SkinCustom;
+        _currentCustomAccent = color;
+        ApplyCustomAccentResources(color, CurrentIsDarkMode);
+    }
     public const string SkinWhite = "White";
     public const string SkinBlue = "Blue";
     public const string SkinYellow = "Yellow";
     public const string SkinPurple = "Purple";
     public const string SkinPink = "Pink";
+    public const string SkinCustom = "Custom";
     /// <summary>银色系：新增。强调色用冷灰蓝调的金属银，浅色版带一点金属光泽感的冷灰。</summary>
     public const string SkinSilver = "Silver";
     /// <summary>金色系：新增。强调色用暖金色，浅色版带一点香槟金的暖调背景。</summary>
@@ -142,7 +154,7 @@ public static class ThemeService
 
     /// <summary>提供给设置页"色系"下拉框遍历用的可选值，不包含 SkinDark（见上面注释，
     /// 深色已经拆成 IsDarkMode 独立维度，不再是一个单独的色系选项）。</summary>
-    public static readonly string[] AllSkins = { SkinWhite, SkinBlue, SkinYellow, SkinPurple, SkinPink, SkinSilver, SkinGold, SkinEmerald, SkinNether, SkinEndStone, SkinWarmYellow, SkinOrange, SkinObsidian, SkinFrostglass, SkinChampagneFrost, SkinPearl, SkinAlabaster, SkinGlacier, SkinCopper, SkinDeepslate, SkinAmethyst, SkinPrismarine, SkinLava, SkinLapis, SkinAquatic };
+    public static readonly string[] AllSkins = { SkinWhite, SkinBlue, SkinYellow, SkinPurple, SkinPink, SkinSilver, SkinGold, SkinEmerald, SkinNether, SkinEndStone, SkinWarmYellow, SkinOrange, SkinObsidian, SkinFrostglass, SkinChampagneFrost, SkinPearl, SkinAlabaster, SkinGlacier, SkinCopper, SkinDeepslate, SkinAmethyst, SkinPrismarine, SkinLava, SkinLapis, SkinAquatic, SkinCustom };
 
     /// <summary>当前是否深色模式，Apply 每次调用时同步更新。供 WindowChromeService 在
     /// 新窗口刚创建（SourceInitialized）时查询"现在该用深色标题栏还是浅色标题栏"——
@@ -161,6 +173,16 @@ public static class ThemeService
     /// 出现两边不一致的情况。</summary>
     private static bool _transparencyEnabled;
     private static int _transparencyPercent = 88;
+
+    /// <summary>主窗口是否正在使用用户导入的底图。底图存在时，即使用户没有额外开启
+    /// “面板透明度”，主窗口的大面积面板也会自动保留一部分透明度，否则 SideBrush/PanelBrush
+    /// 的不透明色会把底图完全盖住，看起来像“毛玻璃背景图片没有生效”。</summary>
+    private static bool _customBackgroundActive;
+    private static int _customBackgroundMaxPanelOpacityPercent = 78;
+
+    /// <summary>当前 Custom 主题的主色。用于透明度重新计算时继续生成同色系按钮背景，
+    /// 避免拖动面板透明度以后 Custom 主题的按钮颜色突然退回默认白色主题。</summary>
+    private static Color _currentCustomAccent = Color.FromRgb(0x4C, 0x9A, 0xFF);
 
     /// <summary>全局（整窗级）透明度相关状态，见 AppConfig.EnableGlobalWindowTransparency 注释。
     /// 跟 _transparencyEnabled/_transparencyPercent（面板透明）是两套独立状态：这套通过
@@ -191,11 +213,11 @@ public static class ThemeService
     // 白色系配色方案（复用给彩蛋皮肤）
     private static readonly Palette WhiteLight = new(
         Accent: "#5B9BF2", AccentHover: "#4488EB", Glow: "#00C2E8", GlowSoft: "#E3F7FC",
-        Panel: "#FFFFFF", Side: "#F4F7FB", Border: "#D6E2F0", BorderHover: "#9DC0EC",
-        TextPrimary: "#151B26", TextSecondary: "#6B7686",
+        Panel: "#FFFFFF", Side: "#F3F6FA", Border: "#BCCBDB", BorderHover: "#7FA7D8",
+        TextPrimary: "#0B1220", TextSecondary: "#465568",
         TileBlue: "#E3F7FC", TileIndigo: "#EAF1FF", TileGreen: "#E7F6EC", TileOrange: "#FFF1E3", TilePurple: "#F1E9FF",
-        SuccessText: "#1E9E4F", WarningText: "#D9822B", WarningBanner: "#FFF7E6", Danger: "#D64545", Divider: "#E0E0E0",
-        ButtonBackground: "#D3E6FC", ButtonHoverBackground: "#B9D8FA", ButtonForeground: "#0F3F8C");
+        SuccessText: "#1E8E49", WarningText: "#B96513", WarningBanner: "#FFF5DD", Danger: "#C93636", Divider: "#D2DAE4",
+        ButtonBackground: "#CDE2FA", ButtonHoverBackground: "#B3D3F7", ButtonForeground: "#0A356F");
 
     private static readonly Palette WhiteDark = new(
         Accent: "#4C9AFF", AccentHover: "#6BAEFF", Glow: "#22D3F5", GlowSoft: "#1E3A4A",
@@ -707,7 +729,7 @@ public static class ThemeService
     /// 显示成完全没配色的默认灰；兼容历史数据：hue 等于旧的 SkinDark 常量时按
     /// "SkinWhite + 深色"处理。
     /// </summary>
-    public static void ApplyForCurrentState(bool guestModeEnabled, string? persistedSkin, bool isDarkMode)
+    public static void ApplyForCurrentState(bool guestModeEnabled, string? persistedSkin, bool isDarkMode, string? customAccentColor = null)
     {
         var hue = persistedSkin;
         if (hue == SkinDark)
@@ -717,6 +739,23 @@ public static class ThemeService
             hue = SkinWhite;
             isDarkMode = true;
         }
+
+        if (string.Equals(hue, SkinCustom, StringComparison.Ordinal))
+        {
+            var color = Color.FromRgb(0x4C, 0x9A, 0xFF);
+            if (!string.IsNullOrWhiteSpace(customAccentColor))
+            {
+                try { color = (Color)ColorConverter.ConvertFromString(customAccentColor)!; }
+                catch { /* 配置被手改坏时使用默认自定义蓝，不影响启动。 */ }
+            }
+
+            Apply(SkinWhite, isDarkMode);
+            _currentHue = SkinCustom;
+            _currentCustomAccent = color;
+            ApplyCustomAccentResources(color, isDarkMode);
+            return;
+        }
+
         if (hue is null || !Palettes.ContainsKey((hue, false)))
         {
             hue = SkinWhite;
@@ -724,6 +763,45 @@ public static class ThemeService
 
         Apply(hue, isDarkMode);
     }
+
+    private static void ApplyCustomAccentResources(Color color, bool isDark)
+    {
+        var resources = Application.Current?.Resources;
+        if (resources == null) return;
+
+        var hover = Mix(color, isDark ? Colors.White : Colors.Black, isDark ? 0.16 : 0.12);
+        var glow = Mix(color, Colors.White, isDark ? 0.10 : 0.18);
+        var glowSoft = Mix(color, isDark ? Color.FromRgb(0x20, 0x24, 0x2B) : Colors.White, isDark ? 0.72 : 0.84);
+        var borderHover = Mix(color, isDark ? Colors.White : Color.FromRgb(0x4A, 0x55, 0x68), isDark ? 0.32 : 0.42);
+        var buttonBackground = Mix(color, isDark ? Color.FromRgb(0x20, 0x24, 0x2B) : Colors.White, isDark ? 0.58 : 0.76);
+        var buttonHover = Mix(color, isDark ? Color.FromRgb(0x20, 0x24, 0x2B) : Colors.White, isDark ? 0.42 : 0.62);
+        var buttonForeground = isDark ? Colors.White : Mix(color, Colors.Black, 0.62);
+
+        SetBrushColor(resources, "AccentBrush", ToHex(color));
+        SetBrushColor(resources, "AccentHoverBrush", ToHex(hover));
+        SetBrushColor(resources, "GlowBrush", ToHex(glow));
+        SetBrushColor(resources, "GlowSoftBrush", ToHex(glowSoft));
+        SetBrushColor(resources, "BorderHoverBrush", ToHex(borderHover));
+        SetBrushColor(resources, "ButtonBackgroundBrush", ToHex(buttonBackground));
+        SetBrushColor(resources, "ButtonHoverBackgroundBrush", ToHex(buttonHover));
+        SetBrushColor(resources, "ButtonForegroundBrush", ToHex(buttonForeground));
+        SetBrushColor(resources, "TileBadgeBlueBrush", ToHex(Mix(color, isDark ? Color.FromRgb(0x20, 0x24, 0x2B) : Colors.White, isDark ? 0.72 : 0.86)));
+        SetBrushColor(resources, "TileBadgeIndigoBrush", ToHex(Mix(color, isDark ? Color.FromRgb(0x20, 0x24, 0x2B) : Colors.White, isDark ? 0.66 : 0.82)));
+
+        // Custom 主题的 ButtonBackgroundBrush 也参与面板透明度/底图透出效果；
+        // 必须在派生完自定义色后再按当前透明度重算一次。
+        ReapplyPanelAlpha();
+        RefreshOpenWindows();
+    }
+
+    private static Color Mix(Color a, Color b, double amountOfB)
+    {
+        amountOfB = Math.Clamp(amountOfB, 0.0, 1.0);
+        byte Blend(byte x, byte y) => (byte)Math.Clamp((int)Math.Round(x + (y - x) * amountOfB), 0, 255);
+        return Color.FromRgb(Blend(a.R, b.R), Blend(a.G, b.G), Blend(a.B, b.B));
+    }
+
+    private static string ToHex(Color color) => $"#{color.R:X2}{color.G:X2}{color.B:X2}";
 
     private static void Apply(string hue, bool isDark)
     {
@@ -771,14 +849,45 @@ public static class ThemeService
     /// 窗口透明度功能的唯一入口：设置页保存时调用这个方法（而不是直接改资源字典），
     /// 同时负责记住状态（供色系切换时复用，见 _transparencyEnabled/_transparencyPercent）、
     /// 重新计算面板画刷的透明度、以及刷新已打开窗口。
-    /// 默认关闭（percent 参数无意义）；开启时 percent 会被夹在 40~100 之间——原下限是 60，
-    /// 放宽到 40 是为了配合"水"主题追求更通透的玻璃质感；40 以下文字会难以辨认，所以
-    /// 仍然保留一个下限，不允许无限透明。
+    /// 默认关闭（percent 参数无意义）；开启时 percent 会被夹在 20~100 之间，让喜欢更通透效果的用户可以继续往下调。
     /// </summary>
     public static void ApplyWindowTransparency(bool enabled, int percent)
     {
         _transparencyEnabled = enabled;
-        _transparencyPercent = Math.Clamp(percent, 40, 100);
+        _transparencyPercent = Math.Clamp(percent, 20, 100);
+        ReapplyPanelAlpha();
+        RefreshOpenWindows();
+
+        // 修复：\"启用窗口透明度\"开关/\"面板透明度\"滑块保存后，已经导入的毛玻璃背景图片
+        // 底图模糊/不透明度、面板穿透上限没有跟着重新计算，看起来像\"设置了没用\"——
+        // 这两项其实是分开维护的两套状态：这里的 ReapplyPanelAlpha 只管 Panel/Side/按钮
+        // 画刷的 alpha，而底图的模糊半径、图片不透明度、蒙层不透明度是 MainWindow.
+        // RefreshCustomBackgroundVisualEffect 单独算的（历史原因是它同时还要参考 Win11
+        // 背景材质、低性能模式等 MainWindow 才知道的状态，没法直接搬进 ThemeService）。
+        // 以前只有\"导入/清除背景图片\"这两个操作会触发它，其它任何改变透明度效果的入口
+        // （包括这里）都不会连带刷新，导致背景图已经导入好之后，单纯调整\"启用窗口透明度\"
+        // 或拖动\"面板透明度\"滑块保存，图片本身的通透感完全不会跟着变化。现在改成
+        // ApplyWindowTransparency 每次调用都广播一次事件，由持有背景图层的 MainWindow
+        // 订阅并重新计算，保证这一类入口（现在有的、以后新增的）都不会再漏刷新。
+        CustomBackgroundRefreshRequested?.Invoke();
+    }
+
+    /// <summary>见 <see cref="ApplyWindowTransparency"/> 方法体注释：每次窗口透明度状态变化时
+    /// 广播，通知持有自定义背景图层的窗口（目前只有 MainWindow）重新计算底图模糊/不透明度。
+    /// 放在 ThemeService 而不是直接让 ApplyWindowTransparency 依赖 MainWindow，是为了不引入
+    /// Services 层对 Views 层的反向引用。</summary>
+    public static event Action? CustomBackgroundRefreshRequested;
+
+    /// <summary>通知主题系统主窗口底层是否有用户背景图。背景图存在时把大面积面板的
+    /// 最大不透明度限制在 78%，保证图片确实能从主题卡片/侧栏下面透出来；如果用户本来把
+    /// “面板透明度”调得更低，则尊重用户更透明的值。清除背景图时立即恢复原来的透明度设置。
+    /// </summary>
+    public static void SetCustomBackgroundActive(bool active, int maxPanelOpacityPercent = 78)
+    {
+        maxPanelOpacityPercent = Math.Clamp(maxPanelOpacityPercent, 55, 90);
+        if (_customBackgroundActive == active && _customBackgroundMaxPanelOpacityPercent == maxPanelOpacityPercent) return;
+        _customBackgroundActive = active;
+        _customBackgroundMaxPanelOpacityPercent = maxPanelOpacityPercent;
         ReapplyPanelAlpha();
         RefreshOpenWindows();
     }
@@ -810,9 +919,162 @@ public static class ThemeService
     [System.Runtime.InteropServices.DllImport("user32.dll")]
     private static extern bool SetLayeredWindowAttributes(IntPtr hWnd, uint crKey, byte bAlpha, uint dwFlags);
 
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int X, int Y, int cx, int cy, uint uFlags);
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern bool GetWindowRect(IntPtr hWnd, out RECT lpRect);
+
+    [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
+    private struct RECT
+    {
+        public int Left, Top, Right, Bottom;
+    }
+
+    private const uint SWP_NOMOVE = 0x0002;
+    private const uint SWP_NOZORDER = 0x0004;
+    private const uint SWP_NOACTIVATE = 0x0010;
+    private const uint SWP_FRAMECHANGED = 0x0020;
+
     private const int GWL_EXSTYLE = -20;
     private const int WS_EX_LAYERED = 0x80000;
     private const uint LWA_ALPHA = 0x2;
+
+
+    private sealed class GlobalOpacityHookState
+    {
+        public System.Windows.Interop.HwndSource? Source;
+        public System.Windows.Interop.HwndSourceHook? Hook;
+        // 修复"窗口一直抽搐抖动"：以前这个钩子每次收到 WM_STYLECHANGED / WM_DWMCOMPOSITIONCHANGED
+        // 都会无条件排队一次 BeginInvoke -> ApplyNativeGlobalOpacity -> (首次分层时)
+        // ForceLayeredResurface -> SetWindowPos。而 SetWindowPos(SWP_FRAMECHANGED) 本身、以及
+        // Win11EffectsService 那边的 ForceDwmResurface，在开启了 Win11 视觉效果(Mica/Acrylic)
+        // 又同时开启了整窗全局透明时，都会让系统再发一轮 WM_STYLECHANGED/WM_DWMCOMPOSITIONCHANGED
+        // 回来——没有任何节流/合并的话，两套"人为触发 WM_SIZE"的手法会互相反复打断对方触发的
+        // 消息，形成消息->回调->再发消息->再回调的连续循环，表现成窗口持续小幅度抽搐抖动。
+        // 用 PendingApply 合并同一时刻的多次消息（已经排了一次就不用再排)，用 LastAppliedTicks
+        // 做一个很短的冷却时间，避免同一个窗口在极短时间内被反复"原地缩放1像素"。
+        public bool PendingApply;
+        public long LastAppliedTicks;
+    }
+
+    // Win11EffectsService.ForceDwmResurface 和这里的 ForceLayeredResurface 都会对同一个 hwnd
+    // 做"原地改尺寸再改回去"的操作；如果两边几乎同时触发，SetWindowPos 调用交错执行，视觉上
+    // 就是窗口反复抖动。用这个全局忙碌集合让同一个 hwnd 在同一时刻只有一边在做重合成操作。
+    internal static readonly HashSet<IntPtr> ResurfaceBusyHandles = new();
+    private static readonly object ResurfaceBusyLock = new();
+    internal static bool TryEnterResurface(IntPtr hwnd)
+    {
+        lock (ResurfaceBusyLock)
+        {
+            if (!ResurfaceBusyHandles.Add(hwnd)) return false;
+            return true;
+        }
+    }
+    internal static void ExitResurface(IntPtr hwnd)
+    {
+        lock (ResurfaceBusyLock) { ResurfaceBusyHandles.Remove(hwnd); }
+    }
+
+    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<Window, GlobalOpacityHookState> GlobalOpacityHooks = new();
+    private const int WM_STYLECHANGED = 0x007D;
+    private const int WM_SHOWWINDOW = 0x0018;
+    private const int WM_DPICHANGED = 0x02E0;
+    private const int WM_DWMCOMPOSITIONCHANGED = 0x031E;
+
+    private static void EnsureGlobalOpacityHook(Window window, IntPtr hwnd)
+    {
+        var state = GlobalOpacityHooks.GetValue(window, _ => new GlobalOpacityHookState());
+        if (state.Source != null) return;
+        var source = System.Windows.Interop.HwndSource.FromHwnd(hwnd);
+        if (source == null) return;
+
+        System.Windows.Interop.HwndSourceHook hook = (IntPtr h, int msg, IntPtr wParam, IntPtr lParam, ref bool handled) =>
+        {
+            if (msg == WM_STYLECHANGED || msg == WM_SHOWWINDOW || msg == WM_DPICHANGED || msg == WM_DWMCOMPOSITIONCHANGED)
+            {
+                // 已经有一次回调排队等着执行，就不再重复排队——避免消息风暴时堆积一堆
+                // 几乎同时执行的 ApplyNativeGlobalOpacity 调用互相打断。
+                if (state.PendingApply) return IntPtr.Zero;
+                // 刚刚（200ms 内）已经应用过一次，这次大概率就是上一次操作自己引发的
+                // 连锁反应消息，直接忽略，从根上掐断"消息->操作->再发消息"的循环。
+                var nowTicks = Environment.TickCount64;
+                if (nowTicks - state.LastAppliedTicks < 200) return IntPtr.Zero;
+
+                state.PendingApply = true;
+                window.Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Background,
+                    new Action(() =>
+                    {
+                        state.PendingApply = false;
+                        state.LastAppliedTicks = Environment.TickCount64;
+                        var current = new System.Windows.Interop.WindowInteropHelper(window).Handle;
+                        if (current != IntPtr.Zero) ApplyNativeGlobalOpacity(current);
+                    }));
+            }
+            return IntPtr.Zero;
+        };
+        source.AddHook(hook);
+        state.Source = source;
+        state.Hook = hook;
+    }
+
+    private static void ApplyNativeGlobalOpacity(IntPtr hwnd)
+    {
+        var exStyle = GetWindowLong(hwnd, GWL_EXSTYLE);
+        if (CurrentGlobalTransparencyEnabled)
+        {
+            var wasLayered = (exStyle & WS_EX_LAYERED) != 0;
+            if (!wasLayered)
+            {
+                SetWindowLong(hwnd, GWL_EXSTYLE, exStyle | WS_EX_LAYERED);
+                exStyle |= WS_EX_LAYERED;
+            }
+            var alpha = (byte)Math.Round(CurrentGlobalOpacityPercent / 100.0 * 255.0);
+            SetLayeredWindowAttributes(hwnd, 0, alpha, LWA_ALPHA);
+
+            // 修复"设置页保存后整窗透明看起来完全没生效，得手动拖一下窗口大小才会更新"：
+            // 窗口第一次从"非分层"切到 WS_EX_LAYERED 时，DWM 需要先把这块窗口原本按不透明
+            // 方式合成的重定向表面，重新按分层窗口的规则接管一遍；这一步在部分系统/显卡驱动
+            // 上不会立刻触发重绘，必须等窗口产生一次真正的尺寸变化（WM_SIZE）才会重新合成，
+            // 跟 Win11EffectsService.ForceDwmResurface 注释里说的"Mica/Acrylic 立刻白屏"是完全
+            // 同一类问题、同一套成因，这里用同样的手法解决：原地把窗口尺寸改一次再改回去，
+            // 人为触发一次 WM_SIZE，逼 DWM 把新的分层表面跟当前画面重新合成。只在"由不透明
+            // 切换成分层"的这一刻做一次即可，之后单纯调节 alpha（拖滑块）不需要这一步。
+            if (!wasLayered)
+            {
+                ForceLayeredResurface(hwnd);
+            }
+        }
+        else if ((exStyle & WS_EX_LAYERED) != 0)
+        {
+            // 先恢复 alpha，再摘 layered，避免部分显卡驱动在直接摘样式时留下上一帧缓存。
+            SetLayeredWindowAttributes(hwnd, 0, 255, LWA_ALPHA);
+            SetWindowLong(hwnd, GWL_EXSTYLE, exStyle & ~WS_EX_LAYERED);
+        }
+    }
+
+    /// <summary>见 ApplyNativeGlobalOpacity 里的调用点注释：人为制造一次 1 像素的尺寸抖动，
+    /// 触发真正的 WM_SIZE，逼 DWM 重新合成刚切换成分层窗口的重定向表面。用户完全看不出这
+    /// 1 像素的变化，但足够让画面从"卡在切换前那一帧"变成实时更新。</summary>
+    private static void ForceLayeredResurface(IntPtr hwnd)
+    {
+        // 见 ResurfaceBusyHandles 注释：跟 Win11EffectsService.ForceDwmResurface 共用这道闸门，
+        // 防止同一个窗口在同一时刻被两套"原地缩放1像素"逻辑同时操作，那才是真正表现为
+        // "窗口一直抽搐抖动"的原因——不是缩放本身有问题，是两边交错执行导致的。
+        if (!TryEnterResurface(hwnd)) return;
+        try
+        {
+            if (!GetWindowRect(hwnd, out var rect)) return;
+            var width = rect.Right - rect.Left;
+            var height = rect.Bottom - rect.Top;
+            if (width <= 0 || height <= 0) return;
+
+            const uint flags = SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED;
+            SetWindowPos(hwnd, IntPtr.Zero, 0, 0, width, height + 1, flags);
+            SetWindowPos(hwnd, IntPtr.Zero, 0, 0, width, height, flags);
+        }
+        finally { ExitResurface(hwnd); }
+    }
 
     /// <summary>
     /// 把当前全局透明度状态应用到单个窗口——新开窗口在 Loaded 时（见 App.xaml.cs 里
@@ -834,24 +1096,9 @@ public static class ThemeService
     public static void ApplyGlobalOpacityToWindow(Window window)
     {
         var hwnd = new System.Windows.Interop.WindowInteropHelper(window).Handle;
-        if (hwnd == IntPtr.Zero) return; // 窗口还没 Show，句柄未创建，等 Loaded 里再调一次
-
-        var exStyle = GetWindowLong(hwnd, GWL_EXSTYLE);
-        if (CurrentGlobalTransparencyEnabled)
-        {
-            if ((exStyle & WS_EX_LAYERED) == 0)
-                SetWindowLong(hwnd, GWL_EXSTYLE, exStyle | WS_EX_LAYERED);
-
-            var alpha = (byte)Math.Round(CurrentGlobalOpacityPercent / 100.0 * 255.0);
-            SetLayeredWindowAttributes(hwnd, 0, alpha, LWA_ALPHA);
-        }
-        else if ((exStyle & WS_EX_LAYERED) != 0)
-        {
-            // 关闭时把 WS_EX_LAYERED 样式摘掉，而不是只设 alpha=255：分层窗口即使 alpha
-            // 拉满，合成路径跟普通窗口仍不完全一样（尤其跟下面的 Mica/Acrylic 背景材质叠加时），
-            // 摘掉样式才是真正回到"完全不透明"的原始状态。
-            SetWindowLong(hwnd, GWL_EXSTYLE, exStyle & ~WS_EX_LAYERED);
-        }
+        if (hwnd == IntPtr.Zero) return;
+        EnsureGlobalOpacityHook(window, hwnd);
+        ApplyNativeGlobalOpacity(hwnd);
     }
 
     /// <summary>
@@ -863,17 +1110,32 @@ public static class ThemeService
     /// </summary>
     private static void ReapplyPanelAlpha()
     {
-        if (!Palettes.TryGetValue((_currentHue, CurrentIsDarkMode), out var p))
+        // Custom 主题以 White 的中性面板为底，但按钮背景继续由用户颜色派生。
+        // 其它主题则直接使用各自 Palette。
+        var paletteHue = _currentHue == SkinCustom ? SkinWhite : _currentHue;
+        if (!Palettes.TryGetValue((paletteHue, CurrentIsDarkMode), out var p))
         {
             p = Palettes[(SkinWhite, CurrentIsDarkMode)];
         }
 
         var res = Application.Current.Resources;
-        var alpha = _transparencyEnabled ? (byte)Math.Round(_transparencyPercent / 100.0 * 255.0) : (byte)255;
+        var effectivePercent = _transparencyEnabled ? _transparencyPercent : 100;
+        if (_customBackgroundActive)
+            effectivePercent = Math.Min(effectivePercent, _customBackgroundMaxPanelOpacityPercent);
+        var alpha = (byte)Math.Round(effectivePercent / 100.0 * 255.0);
+
+        var buttonBackground = p.ButtonBackground;
+        if (_currentHue == SkinCustom)
+        {
+            var customButton = Mix(_currentCustomAccent,
+                CurrentIsDarkMode ? Color.FromRgb(0x20, 0x24, 0x2B) : Colors.White,
+                CurrentIsDarkMode ? 0.58 : 0.76);
+            buttonBackground = ToHex(customButton);
+        }
 
         SetBrushColorWithAlpha(res, "PanelBrush", p.Panel, alpha);
         SetBrushColorWithAlpha(res, "SideBrush", p.Side, alpha);
-        SetBrushColorWithAlpha(res, "ButtonBackgroundBrush", p.ButtonBackground, alpha);
+        SetBrushColorWithAlpha(res, "ButtonBackgroundBrush", buttonBackground, alpha);
     }
 
     /// <summary>
@@ -890,8 +1152,49 @@ public static class ThemeService
     /// Apply 一执行完，当前所有已打开的窗口立即重新取到最新画刷，不需要用户切页/重启
     /// 才能看到效果。
     /// </summary>
+    /// <summary>
+    /// 弹窗/抽屉独立外观的最近一次设置值，跟 <see cref="_transparencyEnabled"/>/
+    /// <see cref="_transparencyPercent"/> 是同一种"静态字段缓存调用方传入的配置"模式——
+    /// ThemeService 是静态类，不持有 ConfigService 实例，没法自己去读配置文件，只能靠
+    /// 调用方（App 启动时 / SettingsPage 保存时）通过 <see cref="SetPopupAppearanceConfig"/>/
+    /// <see cref="SetDrawerAppearanceConfig"/> 把当前配置值推进来缓存住，后续每次
+    /// RefreshOpenWindows（色系/明暗切换）时才能拿着最新值重新计算，不需要每个 Apply 调用点
+    /// 都额外传一遍这四个参数。
+    /// </summary>
+    private static bool _popupUseCustom;
+    private static int _popupOpacityPercent = 92, _popupFrostPercent = 40, _popupTextOpacityPercent = 100;
+    private static bool _drawerUseCustom;
+    private static int _drawerOpacityPercent = 92, _drawerFrostPercent = 40, _drawerTextOpacityPercent = 100;
+
+    /// <summary>缓存弹窗独立外观配置并立即应用一次。App 启动读完配置后、以及设置页保存/
+    /// 拖动滑块实时预览时调用。</summary>
+    public static void SetPopupAppearanceConfig(bool useCustom, int opacityPercent, int frostPercent, int textOpacityPercent)
+    {
+        _popupUseCustom = useCustom;
+        _popupOpacityPercent = opacityPercent;
+        _popupFrostPercent = frostPercent;
+        _popupTextOpacityPercent = textOpacityPercent;
+        ApplyPopupAppearance(useCustom, opacityPercent, frostPercent, textOpacityPercent);
+    }
+
+    /// <summary>跟 <see cref="SetPopupAppearanceConfig"/> 对应，作用对象是抽屉。</summary>
+    public static void SetDrawerAppearanceConfig(bool useCustom, int opacityPercent, int frostPercent, int textOpacityPercent)
+    {
+        _drawerUseCustom = useCustom;
+        _drawerOpacityPercent = opacityPercent;
+        _drawerFrostPercent = frostPercent;
+        _drawerTextOpacityPercent = textOpacityPercent;
+        ApplyDrawerAppearance(useCustom, opacityPercent, frostPercent, textOpacityPercent);
+    }
+
     private static void RefreshOpenWindows()
     {
+        // 每次主题相关的 Apply 收尾都顺带用最近一次缓存的配置重算一次弹窗/抽屉的独立外观
+        // （见上面 SetPopupAppearanceConfig/SetDrawerAppearanceConfig 的类注释），保证切换
+        // 色系/明暗时弹窗/抽屉的基色跟着联动，不需要每条 Apply 路径各自记得调用一次。
+        ApplyPopupAppearance(_popupUseCustom, _popupOpacityPercent, _popupFrostPercent, _popupTextOpacityPercent);
+        ApplyDrawerAppearance(_drawerUseCustom, _drawerOpacityPercent, _drawerFrostPercent, _drawerTextOpacityPercent);
+
         foreach (Window window in Application.Current.Windows)
         {
             RefreshVisualTree(window);
@@ -937,6 +1240,72 @@ public static class ThemeService
         {
             RefreshVisualTree(System.Windows.Media.VisualTreeHelper.GetChild(node, i));
         }
+    }
+
+    /// <summary>
+    /// 按 <see cref="Models.AppConfig.PopupUseCustomAppearance"/> 刷新弹窗（MainWindow.xaml
+    /// 里的 OverlayCardBackgroundLayer/OverlayContentHost，见该文件注释）的背景透明度/磨砂/
+    /// 文字透明度。关闭"独立设置"时，PopupPanelBrush/PopupTextPrimaryBrush 直接跟当前主题的
+    /// PanelBrush/TextPrimaryBrush 保持一致颜色但完全不透明、PopupBlurEffect.Radius=0——
+    /// 也就是"看起来跟旧版本行为完全一样"。开启后按用户单独设置的百分比重新计算。
+    /// 每次色系/明暗切换（Apply）末尾都会调用一次，保证弹窗颜色跟主题联动；设置页拖动
+    /// 滑块时也会单独调用做实时预览。
+    /// </summary>
+    public static void ApplyPopupAppearance(bool useCustom, int opacityPercent, int frostPercent, int textOpacityPercent)
+    {
+        var res = Application.Current.Resources;
+        var panelColor = (res["PanelBrush"] as SolidColorBrush)?.Color ?? Colors.White;
+        var textColor = (res["TextPrimaryBrush"] as SolidColorBrush)?.Color ?? Colors.Black;
+
+        byte bgAlpha = useCustom ? PercentToAlpha(opacityPercent, 20, 100) : (byte)255;
+        byte textAlpha = useCustom ? PercentToAlpha(textOpacityPercent, 40, 100) : (byte)255;
+        double blurRadius = useCustom ? Math.Clamp(frostPercent, 0, 100) / 100.0 * 28.0 : 0.0;
+
+        SetBrushColorRgba(res, "PopupPanelBrush", panelColor, bgAlpha);
+        SetBrushColorRgba(res, "PopupTextPrimaryBrush", textColor, textAlpha);
+        SetBlurRadius(res, "PopupBlurEffect", blurRadius);
+    }
+
+    /// <summary>跟 <see cref="ApplyPopupAppearance"/> 是同一套逻辑，作用对象是"抽屉"
+    /// （AiAssistantPanel 侧栏面板，见该文件里 DrawerBackgroundLayer 的注释），基色取
+    /// SideBrush（抽屉默认背景本来就是 SideBrush，不是 PanelBrush）而不是弹窗的 PanelBrush。</summary>
+    public static void ApplyDrawerAppearance(bool useCustom, int opacityPercent, int frostPercent, int textOpacityPercent)
+    {
+        var res = Application.Current.Resources;
+        var sideColor = (res["SideBrush"] as SolidColorBrush)?.Color ?? Colors.WhiteSmoke;
+        var textColor = (res["TextPrimaryBrush"] as SolidColorBrush)?.Color ?? Colors.Black;
+
+        byte bgAlpha = useCustom ? PercentToAlpha(opacityPercent, 20, 100) : (byte)255;
+        byte textAlpha = useCustom ? PercentToAlpha(textOpacityPercent, 40, 100) : (byte)255;
+        double blurRadius = useCustom ? Math.Clamp(frostPercent, 0, 100) / 100.0 * 28.0 : 0.0;
+
+        SetBrushColorRgba(res, "DrawerBackgroundBrush", sideColor, bgAlpha);
+        SetBrushColorRgba(res, "DrawerTextPrimaryBrush", textColor, textAlpha);
+        SetBlurRadius(res, "DrawerBlurEffect", blurRadius);
+    }
+
+    /// <summary>百分比(min~100)线性映射到 0~255 的 alpha 通道，供弹窗/抽屉透明度使用。</summary>
+    private static byte PercentToAlpha(int percent, int min, int max)
+    {
+        var clamped = Math.Clamp(percent, min, max);
+        return (byte)Math.Round(clamped / 100.0 * 255.0);
+    }
+
+    private static void SetBrushColorRgba(ResourceDictionary res, string key, Color baseColor, byte alpha)
+    {
+        var color = baseColor;
+        color.A = alpha;
+        if (res[key] is not SolidColorBrush brush) return;
+        if (!brush.IsFrozen) { brush.Color = color; return; }
+        res[key] = new SolidColorBrush(color);
+    }
+
+    /// <summary>跟 SetBrushColor 同样的"已冻结就换新实例"套路，作用对象是 BlurEffect.Radius。</summary>
+    private static void SetBlurRadius(ResourceDictionary res, string key, double radius)
+    {
+        if (res[key] is not System.Windows.Media.Effects.BlurEffect blur) return;
+        if (!blur.IsFrozen) { blur.Radius = radius; return; }
+        res[key] = new System.Windows.Media.Effects.BlurEffect { Radius = radius };
     }
 
     /// <summary>
@@ -992,6 +1361,30 @@ public static class ThemeService
         res[key] = new SolidColorBrush(color);
     }
 
+    /// <summary>
+    /// 读取 Windows 系统当前的"应用深浅色"主题设置（设置-个性化-颜色-选择您的模式），
+    /// 供"跟随系统"功能使用。对应注册表键
+    /// HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize
+    /// 下的 AppsUseLightTheme（DWORD，0=深色，1=浅色，Win10 1809+ 才有）。
+    /// 读取失败（键不存在/极老系统/权限问题等）时兜底返回 false（浅色），不抛异常，
+    /// 避免"跟随系统"功能因为读取不到系统状态就把整个启动器搞崩溃。
+    /// </summary>
+    public static bool GetSystemIsDarkMode()
+    {
+        try
+        {
+            using var key = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(
+                @"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize");
+            var value = key?.GetValue("AppsUseLightTheme");
+            if (value is int i) return i == 0;
+        }
+        catch
+        {
+            // 忽略：兜底返回浅色。
+        }
+        return false;
+    }
+
     /// <summary>用于设置页"色系"下拉框的中文显示名，UI 展示用，不参与持久化。</summary>
     public static string GetDisplayName(string skin) => skin switch
     {
@@ -1000,6 +1393,7 @@ public static class ThemeService
         SkinYellow => "黄色",
         SkinPurple => "紫色",
         SkinPink => "粉色",
+        SkinCustom => "自定义…",
         SkinSilver => "银色",
         SkinGold => "金色",
         SkinEmerald => "绿宝石绿",

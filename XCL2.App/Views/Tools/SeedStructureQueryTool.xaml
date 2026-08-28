@@ -1,0 +1,56 @@
+<UserControl x:Class="XCL2.App.Views.Tools.SeedStructureQueryTool"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             Unloaded="SeedStructureQueryTool_Unloaded">
+    <StackPanel MaxWidth="900" HorizontalAlignment="Left">
+        <Border Background="{DynamicResource SideBrush}" BorderBrush="{DynamicResource BorderBrush2}"
+                BorderThickness="1" CornerRadius="8" Padding="12" Margin="0,0,0,10">
+            <StackPanel>
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="140"/>
+                        <ColumnDefinition Width="140"/>
+                    </Grid.ColumnDefinitions>
+                    <StackPanel Grid.Column="0" Margin="0,0,10,0">
+                        <TextBlock Text="世界种子" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4"/>
+                        <TextBox x:Name="SeedBox" Padding="8,6" ToolTip="数字种子或字符串种子都可以"/>
+                    </StackPanel>
+                    <StackPanel Grid.Column="1" Margin="0,0,10,0">
+                        <TextBlock Text="版本" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4"/>
+                        <ComboBox x:Name="VersionCombo" SelectedIndex="0">
+                            <ComboBoxItem Content="Java 1.21.x" Tag="java_1_21"/>
+                            <ComboBoxItem Content="Java 1.20.x" Tag="java_1_20"/>
+                            <ComboBoxItem Content="Java 1.19.x" Tag="java_1_19"/>
+                            <ComboBoxItem Content="Java 1.18.x" Tag="java_1_18"/>
+                            <ComboBoxItem Content="基岩版 1.21.x" Tag="bedrock_1_21"/>
+                            <ComboBoxItem Content="基岩版 1.20.x" Tag="bedrock_1_20"/>
+                        </ComboBox>
+                    </StackPanel>
+                    <StackPanel Grid.Column="2">
+                        <TextBlock Text="维度" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4"/>
+                        <ComboBox x:Name="DimensionCombo" SelectedIndex="0">
+                            <ComboBoxItem Content="主世界" Tag="overworld"/>
+                            <ComboBoxItem Content="下界" Tag="nether"/>
+                            <ComboBoxItem Content="末地" Tag="end"/>
+                        </ComboBox>
+                    </StackPanel>
+                </Grid>
+                <StackPanel Orientation="Horizontal" Margin="0,10,0,0">
+                    <Button x:Name="OpenMapButton" Content="打开查询地图" Style="{StaticResource PrimaryButton}"
+                            Padding="14,7" Click="OpenMapButton_Click"/>
+                    <Button Content="复制种子" Padding="14,7" Margin="8,0,0,0" Click="CopySeedButton_Click"/>
+                    <Button Content="用浏览器打开" Padding="14,7" Margin="8,0,0,0" Click="OpenExternalButton_Click"/>
+                </StackPanel>
+                <TextBlock x:Name="SeedQueryStatusText" Margin="0,8,0,0" FontSize="11"
+                           Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap"
+                           Text="地图加载后可在网页左侧勾选需要查询的结构；首次加载 WebView2 可能需要几秒。"/>
+            </StackPanel>
+        </Border>
+
+        <Border x:Name="BrowserCard" Visibility="Collapsed" Background="{DynamicResource PanelBrush}"
+                BorderBrush="{DynamicResource BorderBrush2}" BorderThickness="1" CornerRadius="8" Padding="2">
+            <Grid x:Name="BrowserHost" MinHeight="560" Width="880"/>
+        </Border>
+    </StackPanel>
+</UserControl>

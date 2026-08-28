@@ -40,24 +40,26 @@
     <!-- 最外层留一点透明边距专门给阴影用；AllowsTransparency + 阴影特效让便签看起来
          是"悬浮"在桌面上的一张卡片，而不是一块生硬的方框。 -->
     <Grid Margin="10">
-        <Border CornerRadius="10" Background="#FFF9C4" ClipToBounds="True">
+        <Border x:Name="NoteCard" CornerRadius="10" Background="#FFF9C4" ClipToBounds="True">
             <Border.Effect>
                 <DropShadowEffect Color="#000000" Opacity="0.28" BlurRadius="18" ShadowDepth="3" Direction="270"/>
             </Border.Effect>
             <Border.BorderBrush>
                 <SolidColorBrush Color="#00000000"/>
             </Border.BorderBrush>
-            <DockPanel>
-                <!-- 标题栏：按住拖动窗口；右侧置顶/关闭按钮 -->
-                <Border DockPanel.Dock="Top" Height="34" MouseLeftButtonDown="TitleBar_MouseDown" Cursor="SizeAll">
-                    <Border.Background>
-                        <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
-                            <GradientStop Color="#FDEDA0" Offset="0"/>
-                            <GradientStop Color="#F7E28A" Offset="1"/>
-                        </LinearGradientBrush>
-                    </Border.Background>
+            <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="34"/>
+                    <RowDefinition Height="*"/>
+                </Grid.RowDefinitions>
+
+                <!-- 标题栏：按住拖动窗口；右侧样式/置顶/关闭按钮 -->
+                <Border x:Name="TitleBar" Grid.Row="0" Background="#F7E28A"
+                        MouseLeftButtonDown="TitleBar_MouseDown" Cursor="SizeAll">
                     <DockPanel LastChildFill="True">
                         <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Margin="0,0,4,0">
+                            <Button x:Name="StyleBtn" Content="🎨" Style="{StaticResource NoteTitleBtnStyle}"
+                                    ToolTip="切换便签样式" Click="StyleBtn_Click"/>
                             <Button x:Name="PinBtn" Content="📌" Style="{StaticResource NoteTitleBtnStyle}"
                                     ToolTip="切换是否置顶" Click="PinBtn_Click"/>
                             <Button Content="✕" Style="{StaticResource NoteTitleBtnStyle}" FontSize="12"
@@ -69,17 +71,19 @@
                     </DockPanel>
                 </Border>
 
-                <!-- 内容编辑区：自动保存到便签文件 -->
-                <TextBox x:Name="ContentBox" AcceptsReturn="True" TextWrapping="Wrap"
-                         VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"
-                         BorderThickness="0" Background="#FFFDF0" Foreground="#3D3D3D"
-                         FontSize="14" Padding="12,10" CaretBrush="#3D3D3D" SelectionBrush="#F0DE84"
-                         TextChanged="ContentBox_TextChanged" LostFocus="ContentBox_LostFocus"/>
+                <Grid Grid.Row="1">
+                    <!-- 内容编辑区：自动保存到便签文件 -->
+                    <TextBox x:Name="ContentBox" AcceptsReturn="True" TextWrapping="Wrap"
+                             VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"
+                             BorderThickness="0" Background="#FFFDF0" Foreground="#3D3D3D"
+                             FontSize="14" Padding="12,10,20,18" CaretBrush="#3D3D3D" SelectionBrush="#F0DE84"
+                             TextChanged="ContentBox_TextChanged" LostFocus="ContentBox_LostFocus"/>
 
-                <!-- 右下角缩放手柄 -->
-                <ResizeGrip DockPanel.Dock="Bottom" HorizontalAlignment="Right" Margin="0,0,4,4"
-                            Foreground="#B8A45A" Width="14" Height="14" Background="Transparent"/>
-            </DockPanel>
+                    <!-- 右下角缩放手柄作为叠层，不再挤占正文编辑区。 -->
+                    <ResizeGrip x:Name="NoteResizeGrip" HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="0,0,4,4"
+                                Foreground="#B8A45A" Width="14" Height="14" Background="Transparent"/>
+                </Grid>
+            </Grid>
         </Border>
     </Grid>
 </Window>

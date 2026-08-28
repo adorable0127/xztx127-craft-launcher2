@@ -8,7 +8,7 @@
 
     <!-- ============ 語言選擇彈窗 ============ -->
     <system:String x:Key="Str_Lang_DialogTitle">擇語</system:String>
-    <system:String x:Key="Str_Lang_EntryButton">語文</system:String>
+    <system:String x:Key="Str_Lang_EntryButton">言語/Language/语言/</system:String>
     <system:String x:Key="Str_Lang_ExperimentalNotice">實驗諸端，惟簡體中文界面備焉；易以他語，則暫隱其目，功能固無恙，但譯文未備耳。</system:String>
     <system:String x:Key="Str_Lang_Ok">然</system:String>
     <system:String x:Key="Str_Lang_Cancel">止</system:String>

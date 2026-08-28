@@ -42,10 +42,19 @@
                                 Click="BedrockDetect_Click"/>
                         <Button Content="{DynamicResource Str_Ui_Open_Data_Folder}" Padding="14,7" Margin="10,0,0,0"
                                 Click="BedrockOpenDataDir_Click"/>
+                        <Button Content="登录 / 获取试用 / 购买正版" Padding="14,7" Margin="10,0,0,0"
+                                Click="BedrockOpenStore_Click"
+                                ToolTip="打开 Microsoft Store 商品页：登录账户、领取官方 Trial、购买正版都在这里完成"/>
+                        <Button Content="手动导入已有基岩版" Padding="14,7" Margin="10,0,0,0"
+                                Click="BedrockImportExisting_Click"
+                                ToolTip="选择电脑上已经存在的基岩版安装文件夹或 Minecraft.Windows.exe（比如别的启动器下载的）。&#10;正版登录能否完整生效取决于这个文件夹本身有没有正确的应用包信息；如果不完整，只能进入离线/Demo（试用）模式。"/>
                     </StackPanel>
                     <TextBlock TextWrapping="Wrap" FontSize="11" Margin="0,0,0,10"
                                Foreground="{DynamicResource TextSecondaryBrush}"
                                Text="{DynamicResource Str_Ui_Note_The_Bedrock_Client_Is_Distributed_T}"/>
+                    <TextBlock TextWrapping="Wrap" FontSize="11" Margin="0,0,0,10"
+                               Foreground="{DynamicResource TextSecondaryBrush}"
+                               Text="点「启动基岩版」后由 Minecraft for Windows 自己判断当前账户的授权状态：正版直接进入游戏，只有官方 Trial/Demo 就进入 Trial，都没有则由它自己引导登录/试用/购买——启动器不读取、不修改这个状态。"/>
 
                     <!-- 基岩版客户端下载 -->
                     <TextBlock Text="{DynamicResource Str_Ui_Bedrock_Client_Download}" FontWeight="Bold" FontSize="13" Margin="0,0,0,4"/>

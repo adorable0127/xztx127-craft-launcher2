@@ -26,6 +26,10 @@ public static class RegistrySyncedFields
     private const string LauncherLanguage = "LauncherLanguage";
     private const string AdvancedMode = "AdvancedMode";
     private const string UseMachineWideRegistry = "UseMachineWideRegistry";
+    private const string CustomBackgroundImagePath = "CustomBackgroundImagePath";
+    private const string CustomBackgroundFrostPercent = "CustomBackgroundFrostPercent";
+    private const string EnableWindowTransparency = "EnableWindowTransparency";
+    private const string WindowOpacityPercent = "WindowOpacityPercent";
 
     /// <summary>用注册表里的值覆盖 <paramref name="config"/> 对应字段。
     /// 某个值两支注册表都没有（全新安装、或注册表刚被清空过）时，保留 config 里已有的值不动，
@@ -43,6 +47,13 @@ public static class RegistrySyncedFields
         config.LauncherLanguage = RegistryConfigService.GetString(LauncherLanguage, config.LauncherLanguage, out _) ?? config.LauncherLanguage;
         config.AdvancedMode = RegistryConfigService.GetBool(AdvancedMode, config.AdvancedMode);
         config.UseMachineWideRegistry = RegistryConfigService.GetBool(UseMachineWideRegistry, config.UseMachineWideRegistry);
+        // 需求："背景，磨砂都，透明度保存在注册表中"——切换背景后这几项也要经注册表镜像持久化，
+        // 不只是留在 config.json 里。字符串/DWORD 都可能因为极端配置文件损坏而拿到异常值，
+        // 交给 AppConfig 各自属性 setter/后续使用处的 Clamp 兜底，这里只管原样读回。
+        config.CustomBackgroundImagePath = RegistryConfigService.GetString(CustomBackgroundImagePath, config.CustomBackgroundImagePath, out _) ?? config.CustomBackgroundImagePath;
+        config.CustomBackgroundFrostPercent = RegistryConfigService.GetInt(CustomBackgroundFrostPercent, config.CustomBackgroundFrostPercent);
+        config.EnableWindowTransparency = RegistryConfigService.GetBool(EnableWindowTransparency, config.EnableWindowTransparency);
+        config.WindowOpacityPercent = RegistryConfigService.GetInt(WindowOpacityPercent, config.WindowOpacityPercent);
     }
 
     /// <summary>把 <paramref name="config"/> 对应字段写入注册表。写入分支（HKLM/HKCU）
@@ -62,5 +73,12 @@ public static class RegistrySyncedFields
         // UseMachineWideRegistry 这个开关自己也镜像写一份：不管这次写去了 HKLM 还是 HKCU，
         // 下次任何一边被读到，都能正确恢复"用户希望使用全设备范围"这个意图本身。
         RegistryConfigService.SetBool(UseMachineWideRegistry, config.UseMachineWideRegistry, machine);
+        // 背景图片路径/磨砂度/窗口透明度开关与百分比：见 LoadFromRegistry 同名字段注释。
+        // 路径可能为 null（用户清除了自定义背景），SetString 要求非空字符串，这里退化写空串；
+        // 读回时空串会被 LoadFromRegistry 当成"没有自定义背景路径"，跟 null 语义等价。
+        RegistryConfigService.SetString(CustomBackgroundImagePath, config.CustomBackgroundImagePath ?? string.Empty, machine);
+        RegistryConfigService.SetInt(CustomBackgroundFrostPercent, config.CustomBackgroundFrostPercent, machine);
+        RegistryConfigService.SetBool(EnableWindowTransparency, config.EnableWindowTransparency, machine);
+        RegistryConfigService.SetInt(WindowOpacityPercent, config.WindowOpacityPercent, machine);
     }
 }

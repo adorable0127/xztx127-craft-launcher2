@@ -146,7 +146,7 @@
                         ToolTip="{DynamicResource Str_Ui_Changes_The_Launcher_S_Language_Only_The}">
                     <StackPanel Orientation="Horizontal">
                         <TextBlock Text="&#127760;" FontSize="13" Margin="0,0,6,0"/>
-                        <TextBlock Text="{DynamicResource Str_Lang_EntryButton}" FontSize="13"/>
+                        <TextBlock x:Name="LanguageEntryButtonText" FontSize="13"/>
                     </StackPanel>
                 </Button>
 
@@ -175,6 +175,20 @@
                     <StackPanel Orientation="Horizontal">
                         <TextBlock Text="&#128260;" FontSize="13" Margin="0,0,6,0"/>
                         <TextBlock x:Name="AutoThemeCycleToggleText" Text="{DynamicResource Str_Home_Toggle_AutoCycle}" FontSize="13"/>
+                    </StackPanel>
+                </ToggleButton>
+
+                <!-- 「跟随系统」按钮：开启后深浅色由 Windows 系统当前的应用主题设置决定，
+                     系统主题一变就立即跟着切换。跟「自动循环」是互斥的两种自动来源——开启
+                     这个会自动关掉「自动循环」，反过来也一样，同一时刻只允许一种自动机制
+                     接管，避免两边互相打架、结果谁说了算完全看谁最后触发。 -->
+                <ToggleButton x:Name="FollowSystemThemeToggle" Margin="0,0,10,10"
+                              Style="{StaticResource GuestModeToggleStyle}"
+                              Checked="FollowSystemThemeToggle_Changed" Unchecked="FollowSystemThemeToggle_Changed"
+                              ToolTip="开启后深浅色跟随 Windows 系统当前的应用主题设置，系统主题变化时自动切换">
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Text="&#128187;" FontSize="13" Margin="0,0,6,0"/>
+                        <TextBlock x:Name="FollowSystemThemeToggleText" Text="跟随系统" FontSize="13"/>
                     </StackPanel>
                 </ToggleButton>
 

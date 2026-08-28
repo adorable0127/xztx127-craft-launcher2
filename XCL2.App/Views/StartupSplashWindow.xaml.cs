@@ -1,4 +1,4 @@
-using System.Windows;
+﻿using System.Windows;
 
 namespace XCL2.App.Views;
 
@@ -24,5 +24,8 @@ public partial class StartupSplashWindow : Window
     public void SetStatus(string text)
     {
         StatusText.Text = text;
+        // 启动主流程仍有少量必须在 UI 线程完成的同步初始化；这里主动让一次 Render 优先级
+        // 的消息通过，使状态文字/旋转环/跳动圆点能在各真实阶段之间继续刷新，而不是一直冻住。
+        Dispatcher.Invoke(() => { }, System.Windows.Threading.DispatcherPriority.Render);
     }
 }
