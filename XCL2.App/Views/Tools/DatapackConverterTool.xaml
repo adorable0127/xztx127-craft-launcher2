@@ -1,0 +1,70 @@
+<UserControl x:Class="XCL2.App.Views.Tools.DatapackConverterTool"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <StackPanel MaxWidth="720" HorizontalAlignment="Left">
+        <TextBlock Text="基岩版 ↔ Java 版数据包互转" FontWeight="Bold" Margin="0,0,0,4"/>
+        <TextBlock TextWrapping="Wrap" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,10">
+            自动转换包清单（manifest.json ↔ pack.mcmeta）和目录结构，并对 .mcfunction 里最常见的
+            "function 命名空间:路径" 写法做互转。战利品表/配方等 JSON 会原样复制过去供你参考；
+            进度、谓词、标签、结构文件等两边没有直接对应物的内容不会被瞎转换，只会在下方报告里提示。
+            转换完成后请务必打开输出目录核对一遍，不建议直接拿去覆盖正式存档或已发布的资源。
+        </TextBlock>
+
+        <Border Background="{DynamicResource SideBrush}" BorderBrush="{DynamicResource BorderBrush2}"
+                BorderThickness="1" CornerRadius="8" Padding="12" Margin="0,0,0,10">
+            <StackPanel>
+                <TextBlock Text="转换方向" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4"/>
+                <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
+                    <RadioButton x:Name="DirJavaToBedrock" Content="Java 数据包 → 基岩版行为包" GroupName="DpcDir"
+                                 IsChecked="True" Margin="0,0,20,0" VerticalAlignment="Center"/>
+                    <RadioButton x:Name="DirBedrockToJava" Content="基岩版行为包 → Java 数据包" GroupName="DpcDir"
+                                 VerticalAlignment="Center"/>
+                </StackPanel>
+
+                <TextBlock Text="源目录（数据包 / 行为包根目录，需包含 pack.mcmeta 或 manifest.json）"
+                           FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4"/>
+                <Grid Margin="0,0,0,10">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    <TextBox x:Name="DpcSourceDirBox" Grid.Column="0" Padding="6,5" Margin="0,0,8,0"
+                             TextChanged="DpcSourceDirBox_TextChanged"/>
+                    <Button x:Name="DpcBrowseSourceButton" Grid.Column="1" Content="浏览…" Padding="12,5"
+                            Click="DpcBrowseSource_Click"/>
+                </Grid>
+
+                <TextBlock x:Name="DpcDetectedText" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}"
+                           Margin="0,0,0,10" Text="尚未选择源目录"/>
+
+                <TextBlock x:Name="DpcNamespaceLabel" Text="转换为 Java 数据包时使用的命名空间（默认 converted）"
+                           FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4"/>
+                <TextBox x:Name="DpcNamespaceBox" Padding="6,5" Text="converted" Margin="0,0,0,10"/>
+
+                <TextBlock Text="输出目录" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4"/>
+                <Grid Margin="0,0,0,10">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    <TextBox x:Name="DpcOutputDirBox" Grid.Column="0" Padding="6,5" Margin="0,0,8,0"/>
+                    <Button x:Name="DpcBrowseOutputButton" Grid.Column="1" Content="浏览…" Padding="12,5"
+                            Click="DpcBrowseOutput_Click"/>
+                </Grid>
+
+                <StackPanel Orientation="Horizontal">
+                    <Button x:Name="DpcConvertButton" Content="开始转换" Padding="16,6" Click="DpcConvert_Click"/>
+                    <Button x:Name="DpcOpenOutputButton" Content="打开输出目录" Padding="16,6" Margin="10,0,0,0"
+                            IsEnabled="False" Click="DpcOpenOutput_Click"/>
+                </StackPanel>
+            </StackPanel>
+        </Border>
+
+        <TextBlock x:Name="DpcSummaryText" FontSize="12" FontWeight="SemiBold" Margin="0,0,0,6" Visibility="Collapsed"/>
+
+        <TextBlock Text="转换报告" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4"/>
+        <TextBox x:Name="DpcLogBox" IsReadOnly="True" TextWrapping="Wrap" AcceptsReturn="True"
+                 VerticalScrollBarVisibility="Auto" Height="240" FontFamily="Consolas"
+                 FontSize="11" Padding="8"/>
+    </StackPanel>
+</UserControl>

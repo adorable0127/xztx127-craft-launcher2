@@ -1,0 +1,123 @@
+﻿<UserControl x:Class="XCL2.App.Views.AiAssistantSettingsPanel"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             Background="{DynamicResource SideBrush}">
+    <ScrollViewer VerticalScrollBarVisibility="Auto" MaxHeight="700">
+        <StackPanel Margin="16">
+            <TextBlock Text="AI 助手设置" FontSize="20" FontWeight="SemiBold"/>
+            <TextBlock Text="普通/专家是路由档位；下面的模型才是真正提交给 API 的 model ID。"
+                       Margin="0,3,0,14" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}"/>
+
+            <Border Padding="12" CornerRadius="10" Background="{DynamicResource PanelBrush}"
+                    BorderBrush="{DynamicResource BorderBrush2}" BorderThickness="1" Margin="0,0,0,10">
+                <StackPanel>
+                    <CheckBox x:Name="EnabledCheck" Content="启用 AI 助手" Margin="0,0,0,8"/>
+                    <CheckBox x:Name="FloatingButtonCheck" Content="显示右下角常驻 AI 悬浮按钮"/>
+                </StackPanel>
+            </Border>
+
+            <Border Padding="12" CornerRadius="10" Background="{DynamicResource PanelBrush}"
+                    BorderBrush="{DynamicResource BorderBrush2}" BorderThickness="1" Margin="0,0,0,10">
+                <StackPanel>
+                    <TextBlock Text="API 与模型来源" FontSize="14" FontWeight="SemiBold" Margin="0,0,0,8"/>
+                    <CheckBox x:Name="UseCustomKeyCheck" Content="使用自定义 OpenAI 兼容 API"
+                              Checked="UseCustomKeyCheck_CheckedChanged" Unchecked="UseCustomKeyCheck_CheckedChanged"/>
+                    <TextBlock Text="关闭时使用启动器内置接口和预设模型；打开后不会猜模型列表，必须自己填写模型 ID 与显示名称。"
+                               TextWrapping="Wrap" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,4,0,10"/>
+
+                    <TextBlock Text="接口地址（Base URL）" FontSize="11"/>
+                    <TextBox x:Name="BaseUrlBox" Margin="0,4,0,8"/>
+                    <TextBlock Text="API Key" FontSize="11"/>
+                    <PasswordBox x:Name="ApiKeyBox" Margin="0,4,0,8"/>
+
+                    <StackPanel x:Name="BuiltInModelsHintPanel">
+                        <TextBlock Text="内置模型" FontSize="11" FontWeight="SemiBold" Margin="0,3,0,4"/>
+                        <TextBlock Text="Hy3 Free · MiMo V2.5 Free · Muse Spark 1.2 Free · Nemotron 3 Ultra Free · Nemotron 3.5 Lightning Free"
+                                   TextWrapping="Wrap" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}"/>
+                    </StackPanel>
+
+                    <StackPanel x:Name="CustomModelsEditor" Visibility="Collapsed" Margin="0,4,0,0">
+                        <TextBlock Text="自定义 API 模型列表" FontSize="11" FontWeight="SemiBold" Margin="0,2,0,6"/>
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBox x:Name="CustomModelIdBox" Grid.Column="0" Margin="0,0,6,0" ToolTip="例如：gpt-4.1-mini"/>
+                            <TextBox x:Name="CustomModelNameBox" Grid.Column="1" Margin="0,0,6,0" ToolTip="例如：GPT-4.1 Mini"/>
+                            <Button Grid.Column="2" Content="添加" Padding="12,5" Click="AddCustomModel_Click"/>
+                        </Grid>
+                        <Grid Margin="0,3,0,2">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                            <TextBlock Text="模型 ID（请求用）" FontSize="9" Foreground="{DynamicResource TextSecondaryBrush}"/>
+                            <TextBlock Grid.Column="1" Text="显示名称（界面用）" FontSize="9" Foreground="{DynamicResource TextSecondaryBrush}"/>
+                        </Grid>
+                        <TextBlock Text="注意：模型 ID 必须与 API 文档中的 model 值完全一致，不能填显示名称；填错时接口通常会返回 HTTP 400/404。"
+                                   TextWrapping="Wrap" FontSize="9" Margin="0,0,0,5" Foreground="{DynamicResource WarningTextBrush}"/>
+                        <ListBox x:Name="CustomModelsList" MaxHeight="160" BorderBrush="{DynamicResource BorderBrush2}" BorderThickness="1">
+                            <ListBox.ItemTemplate>
+                                <DataTemplate>
+                                    <Grid Margin="5,3">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <StackPanel>
+                                            <TextBlock Text="{Binding DisplayName}" FontWeight="SemiBold" FontSize="11"/>
+                                            <TextBlock Text="{Binding Id}" FontSize="9" Foreground="{DynamicResource TextSecondaryBrush}"/>
+                                        </StackPanel>
+                                        <Button Grid.Column="1" Content="删除" FontSize="10" Padding="8,3" Margin="8,0,0,0"
+                                                Click="RemoveCustomModel_Click" Tag="{Binding}" Style="{StaticResource SecondaryButton}"/>
+                                    </Grid>
+                                </DataTemplate>
+                            </ListBox.ItemTemplate>
+                        </ListBox>
+                    </StackPanel>
+                </StackPanel>
+            </Border>
+
+            <Border Padding="12" CornerRadius="10" Background="{DynamicResource PanelBrush}"
+                    BorderBrush="{DynamicResource BorderBrush2}" BorderThickness="1" Margin="0,0,0,10">
+                <StackPanel>
+                    <TextBlock Text="模型路由" FontSize="14" FontWeight="SemiBold" Margin="0,0,0,8"/>
+                    <TextBlock Text="默认回答模式" FontSize="11"/>
+                    <ComboBox x:Name="DefaultModeCombo" Margin="0,4,0,9">
+                        <ComboBoxItem Content="自动 · 普通问题/专家问题自动切换" Tag="Auto"/>
+                        <ComboBoxItem Content="普通 · 始终使用普通模型" Tag="Normal"/>
+                        <ComboBoxItem Content="专家 · 始终使用专家模型" Tag="Expert"/>
+                        <ComboBoxItem Content="指定模型 · 始终使用手动模型" Tag="SpecificModel"/>
+                    </ComboBox>
+
+                    <TextBlock Text="普通模型（功能入口、使用说明、常规问题）" FontSize="11"/>
+                    <ComboBox x:Name="NormalModelCombo" Margin="0,4,0,9" DisplayMemberPath="DisplayName" SelectedValuePath="Id"/>
+
+                    <TextBlock Text="专家模型（日志/崩溃/注入/复杂排障）" FontSize="11"/>
+                    <ComboBox x:Name="ExpertModelCombo" Margin="0,4,0,9" DisplayMemberPath="DisplayName" SelectedValuePath="Id"/>
+
+                    <TextBlock Text="指定模型模式的默认模型" FontSize="11"/>
+                    <ComboBox x:Name="ManualModelCombo" Margin="0,4,0,0" DisplayMemberPath="DisplayName" SelectedValuePath="Id"/>
+                </StackPanel>
+            </Border>
+
+            <Border Padding="12" CornerRadius="10" Background="{DynamicResource PanelBrush}"
+                    BorderBrush="{DynamicResource BorderBrush2}" BorderThickness="1" Margin="0,0,0,10">
+                <StackPanel>
+                    <TextBlock Text="能力与上下文" FontSize="14" FontWeight="SemiBold" Margin="0,0,0,8"/>
+                    <CheckBox x:Name="EnableDeepThinkingCheck" Content="默认启用深度思考" Margin="0,0,0,6"/>
+                    <CheckBox x:Name="EnableWebSearchCheck" Content="默认启用联网搜索" Margin="0,0,0,9"/>
+                    <TextBlock Text="上下文压缩阈值（估算 token）" FontSize="11"/>
+                    <TextBox x:Name="ThresholdBox" Margin="0,4,0,9"/>
+                    <CheckBox x:Name="AllowCrashLogCheck" Content="允许把用户主动提交的崩溃/日志内容发给 AI 分析" Margin="0,0,0,6"/>
+                    <CheckBox x:Name="ClearGuestHistoryCheck" Content="访客会话结束时清空访客 AI 历史"/>
+                </StackPanel>
+            </Border>
+
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                <Button Content="恢复默认" Width="86" Margin="0,0,8,0" Click="ResetDefaults_Click" Style="{StaticResource SecondaryButton}"/>
+                <Button Content="取消" Width="80" Margin="0,0,8,0" Click="Cancel_Click"/>
+                <Button Content="保存" Width="80" Click="Save_Click" IsDefault="True"/>
+            </StackPanel>
+        </StackPanel>
+    </ScrollViewer>
+</UserControl>

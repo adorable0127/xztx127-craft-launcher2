@@ -1,0 +1,39 @@
+﻿<Window x:Class="XCL2.App.Views.InstanceConflictDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="XCL2" Width="440" SizeToContent="Height"
+        WindowStartupLocation="CenterScreen" ResizeMode="NoResize"
+        WindowStyle="None" AllowsTransparency="True" Background="Transparent"
+        ShowInTaskbar="True" Topmost="True">
+    <!--
+        独立 Window 而不是项目里其它弹窗常用的 OverlayDialogControl：这个弹窗要在
+        MainWindow 创建之前（RunStartupSequence 里检测多开）就能弹出来，OverlayDialogControl
+        需要挂在 MainWindow 的 OverlayContentHost 上才能显示，此时还没有宿主可挂，
+        跟 App.xaml.cs 里两处系统原生 MessageBox 是同样的原因。
+        这里仍然用 DynamicResource 引用 App.xaml 里的主题画刷——这个弹窗出现的时机已经在
+        ThemeService.ApplyForCurrentState 之后（见 App.xaml.cs RunStartupSequence 的调用
+        顺序），皮肤颜色已经就绪，不需要退化成纯硬编码颜色。
+    -->
+    <Border CornerRadius="12" Background="{DynamicResource PanelBrush}"
+            BorderBrush="{DynamicResource BorderBrush2}" BorderThickness="1" Padding="24">
+        <Border.Effect>
+            <DropShadowEffect Color="#000000" BlurRadius="24" ShadowDepth="4" Opacity="0.3"/>
+        </Border.Effect>
+        <StackPanel>
+            <TextBlock Text="检测到已有 XCL2 实例正在运行" FontSize="17" FontWeight="Bold"
+                       Foreground="{DynamicResource TextPrimaryBrush}" TextWrapping="Wrap"/>
+            <TextBlock Margin="0,10,0,18" TextWrapping="Wrap" FontSize="13"
+                       Foreground="{DynamicResource TextSecondaryBrush}"
+                       Text="当前电脑上已经有一个 XCL2 启动器在运行，你想怎么处理这次新打开的实例？"/>
+
+            <Button Content="保留此实例（两个实例都继续运行）" Style="{StaticResource SecondaryButton}"
+                    HorizontalContentAlignment="Left" Margin="0,0,0,8" Click="KeepBothRunning_Click"/>
+            <Button Content="关闭此实例（保留原有实例不变）" Style="{StaticResource SecondaryButton}"
+                    HorizontalContentAlignment="Left" Margin="0,0,0,8" Click="CloseNewInstance_Click"/>
+            <Button Content="关闭此实例，并切换到原有实例" Style="{StaticResource SecondaryButton}"
+                    HorizontalContentAlignment="Left" Margin="0,0,0,8" Click="CloseNewAndActivateOld_Click"/>
+            <Button Content="打开此实例，并关闭原有实例" Style="{StaticResource PrimaryButton}"
+                    HorizontalContentAlignment="Left" Click="CloseOldKeepNewInstance_Click"/>
+        </StackPanel>
+    </Border>
+</Window>

@@ -1,0 +1,27 @@
+<local:OverlayDialogControl x:Class="XCL2.App.Views.DeleteInstanceChoiceDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="clr-namespace:XCL2.App.Views"
+        Width="400">
+    <!-- 点删除图标后先弹这一层"选择要干什么"：从列表中删除(不删文件) / 从电脑中删除(删除所有文件) /
+         取消。真正的物理删除不在这里做二次确认——选中"从电脑中删除"后关闭本弹窗，调用方
+         (VersionSelectPage) 再弹一次 DangerousConfirmDialog 要求输入 xztx127，两层弹窗职责
+         分开：这里只负责"选哪种删除方式"，确认码校验统一复用已有的危险操作确认弹窗，不重复造轮子。 -->
+    <StackPanel Margin="20">
+        <TextBlock x:Name="TitleText" FontSize="16" FontWeight="SemiBold" Margin="0,0,0,14"/>
+
+        <Button x:Name="RemoveFromListBtn" Content="从列表中删除（不删除文件）" HorizontalAlignment="Stretch"
+                Padding="14,10" Margin="0,0,0,8" HorizontalContentAlignment="Left" Click="RemoveFromList_Click"/>
+        <TextBlock Text="只是不再显示在实例列表里，磁盘上的文件完全不动，随时可以在「已隐藏的实例」里找回来。"
+                   FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap" Margin="0,0,0,14"/>
+
+        <Button x:Name="DeleteFromDiskBtn" Content="从电脑中删除（删除所有文件）" HorizontalAlignment="Stretch"
+                Padding="14,10" Margin="0,0,0,8" HorizontalContentAlignment="Left"
+                Background="{DynamicResource DangerBrush}" Click="DeleteFromDisk_Click"/>
+        <TextBlock Text="彻底删除这个实例目录下的所有文件（存档、mod、资源包等），不可恢复。需要额外输入确认码。"
+                   FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap" Margin="0,0,0,18"/>
+
+        <Button x:Name="CancelBtn" Content="{DynamicResource Str_Common_Cancel}" HorizontalAlignment="Right"
+                Width="80" Click="Cancel_Click"/>
+    </StackPanel>
+</local:OverlayDialogControl>

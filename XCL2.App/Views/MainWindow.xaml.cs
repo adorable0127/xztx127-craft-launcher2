@@ -1,0 +1,3759 @@
+﻿using System;
+using System.IO;
+using System.Threading;
+using System.Threading.Tasks;
+using System.Windows;
+using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
+using System.Windows.Input;
+using System.Windows.Media;
+using System.Windows.Media.Animation;
+using System.Windows.Shell;
+using System.Windows.Threading;
+using XCL2.App.Models;
+using XCL2.App.Services;
+
+namespace XCL2.App.Views;
+
+public partial class MainWindow : Window
+{
+    /// <summary>主窗口真正完成第一帧渲染时只触发一次。App 用它关闭启动提示窗，
+    /// 避免为了“等首帧”在 OnStartup 里同步 UpdateLayout/Dispatcher.Invoke 卡住 UI 线程。</summary>
+    public event EventHandler? FirstFrameRendered;
+
+    public ConfigService ConfigService { get; } = new();
+
+    /// <summary>全局游戏进程注册表，供主页进程控制按钮组、日志面板、崩溃/注入分析共用。</summary>
+    public GameProcessManager ProcessManager { get; } = new();
+
+    /// <summary>已创建的服务器实例列表（服务端管理模块），持久化于 xcl2/servers.json。</summary>
+    public ServerInstanceService ServerInstanceService { get; } = new();
+
+    /// <summary>正在运行的服务器进程注册表，供服务端管理页的列表/控制台面板共用。</summary>
+    public ServerProcessManager ServerProcessManager { get; } = new();
+
+    /// <summary>AI 助手服务实例，持久化配置见 <see cref="Models.AiAssistantConfig"/>。</summary>
+    public AiAssistantService AiAssistantService { get; private set; } = new(new AiAssistantConfig(), App.DataDir);
+
+    /// <summary>AI 助手当前配置，供设置页/面板热更新用。</summary>
+    public AiAssistantConfig AiAssistantConfig { get; set; } = new();
+
+    private readonly DispatcherTimer _pruneTimer;
+
+    /// <summary>「自动循环」深浅色模式的定时检查器：每分钟醒一次，比较当前系统时间落在
+    /// 哪个区间（浅色/深色），需要切换时才动配置+重新应用配色，不需要切换时什么都不做——
+    /// 这样即使用户在两次检查之间手动点了「模式设置」按钮临时覆盖，也不会被这个每分钟的
+    /// 检查在同一个时间段内反复纠正回去（见 AppConfig.AutoThemeLastAppliedSlotStartHour
+    /// 的"手动优先"注释）。</summary>
+    private readonly DispatcherTimer _autoThemeCycleTimer;
+
+    /// <summary>访客模式服务：生成本次会话的临时账户 + 应用退出前清理本次会话产生的日志/临时下载。</summary>
+    private readonly GuestModeService _guestModeService = new();
+    private ScheduledInstanceBackupService? _scheduledInstanceBackupService;
+    private bool _closeLifecycleBackupRunning;
+    private bool _closeLifecycleBackupCompleted;
+    private bool _stickyNoteCloseDecisionHandled;
+
+    /// <summary>
+    /// 系统内存监视：全程后台运行（不局限于"有游戏在跑"才监控），因为下载/安装模组、
+    /// 解压大文件等操作同样可能把系统内存吃满；一旦检测到可用内存过低就弹出警告窗口，
+    /// 提醒用户在系统卡死/蓝屏之前主动关闭游戏进程，而不是等真的撑爆了才发现。
+    /// </summary>
+    private readonly MemoryWatchdogService _memoryWatchdog = new();
+
+    /// <summary>避免同一时刻已经有一个内存警告窗口在显示时又弹出第二个。</summary>
+    private MemoryWarningWindow? _activeMemoryWarningWindow;
+
+    /// <summary>
+    /// "启动游戏"按钮的防手滑冷却：记录上一次点击被接受处理的时间。
+    /// 测试时发现连续手滑点击「启动游戏」会在很短时间内触发多次 Launch_Click，
+    /// 每次都要走账户校验/Java 检测/下载/进程启动一整套逻辑，多个 MessageBox 弹窗、
+    /// 甚至多个游戏进程同时起来，体验很糟。这里用时间戳做一个简单的冷却锁：
+    /// 冷却期内的点击直接忽略，不进入下面任何逻辑，也不弹任何提示（静默吞掉），
+    /// 避免手滑连点时反而又弹出一堆"操作太快"之类的提示框，制造更多噪音。
+    /// </summary>
+    private DateTime _lastLaunchClickAtUtc = DateTime.MinValue;
+
+    /// <summary>启动按钮的冷却时长。1 秒足够挡住手滑连点，又不会让正常用户感觉卡顿。</summary>
+    private static readonly TimeSpan LaunchClickCooldown = TimeSpan.FromSeconds(1);
+
+    /// <summary>
+    /// 需求："点击'启动游戏'到等待游戏窗口出现的间隙，把按钮改成'取消启动'；
+    /// 点击'取消启动'不弹出账户选择框，直接中止本次启动流程"。
+    /// 这个 CancellationTokenSource 在 Launch_Click 进入"处理中"状态时创建，
+    /// LaunchInternalAsync 内部所有可以安全中止的等待点（下载/安装、等待游戏窗口出现的轮询）
+    /// 都会传入它的 Token；用户点"取消启动"时调用它的 Cancel()，流程在下一个检查点
+    /// 自行退出，不需要真的杀掉刚拉起的游戏进程（进程可能已经起来了，取消只是让启动器
+    /// 不再继续等待/不再弹出后续确认框，不影响已经拉起的进程本身）。
+    /// </summary>
+    private CancellationTokenSource? _launchCts;
+
+    /// <summary>
+    /// "启动游戏"→"取消启动"→"启动游戏" 之间来回切换的最短间隔。
+    /// 需求明确要求保留 1~2 秒，避免用户在两个状态之间快速连点造成
+    /// "启动-取消-启动-取消"的死循环（比如手滑连点，或者误以为没点中而反复点）。
+    /// 取区间中点 1.5 秒：比 LaunchClickCooldown 的 1 秒稍宽松一点，因为这里挡的是
+    /// "点了取消/点了启动"这种状态切换动作本身，而不是同一个按钮的连续误触。
+    /// </summary>
+    private static readonly TimeSpan LaunchStateSwitchGuard = TimeSpan.FromSeconds(1.5);
+
+    /// <summary>上一次"启动游戏"⇄"取消启动"两个状态之间切换的时间，配合 LaunchStateSwitchGuard 使用。</summary>
+    private DateTime _lastLaunchStateSwitchAtUtc = DateTime.MinValue;
+
+    /// <summary>当前是否处于"取消启动"可点击状态（即已经在启动流程中，按钮显示为取消）。</summary>
+    private bool _isCancelLaunchState;
+
+    /// <summary>记录窗口最近一次处于"非最小化"状态时的 WindowState(Normal 或 Maximized)。
+    /// 修复"启动/下载成功弹窗出现时启动器窗口会自动最小化"：如果窗口在弹窗前已经被系统
+    /// (或前台焦点被刚拉起的游戏进程抢走)意外最小化，简单粗暴地把 WindowState 设成
+    /// Normal 会导致原本是最大化的窗口意外变回还原态；这里记住恢复前的真实状态，
+    /// 保证"最小化前是最大化"的窗口在恢复时也还是最大化，而不是每次都被强制还原成小窗。</summary>
+    private WindowState _lastNonMinimizedWindowState = WindowState.Normal;
+
+    /// <summary>修复"启动成功/下载成功等提示弹窗出现时启动器主窗口会自动最小化"：耗时操作
+    /// (下载、安装、启动游戏等)执行期间，用户可能切到了其它窗口，或者刚拉起的游戏进程抢走了
+    /// 前台焦点，导致主窗口在弹提示的这一刻已经不是前台/甚至被系统最小化。各个页面
+    /// (DownloadCenterPage/ModManagerPage 等)在弹出"成功"提示前调用这个方法，统一把主窗口
+    /// 从 Minimized 恢复到恢复前的真实状态(Normal 或 Maximized，见 _lastNonMinimizedWindowState
+    /// 的注释)并带到前台，不需要每个调用点各自处理窗口状态。</summary>
+    public void EnsureVisibleForDialog()
+    {
+        if (WindowState == WindowState.Minimized)
+            WindowState = _lastNonMinimizedWindowState;
+        Activate();
+    }
+
+    public MainWindow()
+    {
+        InitializeComponent();
+
+        // 这个处理器必须在后面的 Java/MC 自动扫描、首次协议/向导等 ContentRendered 处理器
+        // 之前注册：第一帧一画出来先通知 App 关闭启动提示窗，然后再启动后台扫描/弹向导。
+        // 否则启动提示窗可能一直盖到这些后续流程结束才消失。
+        EventHandler? firstFrameOnce = null;
+        firstFrameOnce = (_, _) =>
+        {
+            ContentRendered -= firstFrameOnce;
+            FirstFrameRendered?.Invoke(this, EventArgs.Empty);
+            if (ConfigService.Config.BackupInstanceOnStartup)
+            {
+                Dispatcher.BeginInvoke(new Action(() => _ = RunLifecycleBackupAsync("启动时备份", showToast: false)),
+                    DispatcherPriority.Background);
+            }
+        };
+        ContentRendered += firstFrameOnce;
+
+        ApplyFeatureVisibility();
+
+        // 愚人节彩蛋：只在 4 月 1 日、且没有被注册表 noyrj 关闭时才会真正抽中/生效，
+        // 其余 364 天这行调用直接是空操作。见 AprilFoolsService/AprilFoolsUi 类注释。
+        AprilFoolsService.EnsureTodaysStateLoaded();
+        AprilFoolsUi.Attach(this);
+
+        // 最大化时"留出任务栏空间"：光挂 WindowChrome 不够可靠（见 WindowChromeService.
+        // EnableWorkAreaAwareMaximize 顶部注释里关于 Per-Monitor-V2 DPI 下已知 bug 的说明），
+        // 这里接一个 Win32 级别的钩子自己算工作区，SourceInitialized 时 HWND 才真正创建，
+        // 必须放在这个事件里而不是构造函数本体直接调用。
+        SourceInitialized += (_, _) => WindowChromeService.EnableWorkAreaAwareMaximize(this);
+
+        // 注意：这里原来试过给最大化按钮加 Win11 贴靠布局(Snap Layout)悬停菜单支持
+        // （声明 WM_NCHITTEST 命中码为 HTMAXBUTTON），已经撤掉——实测这个声明会导致
+        // Windows 11 系统自己在按钮旁弹出贴靠布局选择的九宫格菜单（截图反馈里那个
+        // "旁边多出一个白色图标"就是这个系统菜单），而不是简单的点击直接最大化/还原，
+        // 跟这个项目要的交互不符。现在保持最简单可靠的做法：MaximizeRestoreButton_Click
+        // 直接处理点击，不做任何 WM_NCHITTEST/HTMAXBUTTON 相关声明。
+
+        // 标题栏跟随深浅色模式（修复"顶部白条"）现在由 App.xaml.cs 里注册的
+        // EventManager.RegisterClassHandler 对所有 Window 统一处理，MainWindow 不需要
+        // 再单独接线，见 WindowChromeService 类注释。这里改成完全自绘标题栏后，
+        // "白条"问题从根上不存在了（系统标题栏本身已经隐藏），但其它弹窗依然是系统
+        // 标题栏，那批处理逻辑要继续保留。
+
+        // 自绘标题栏左上角图标：跟窗口图标（任务栏/Alt-Tab）用同一套浅色/深色 .ico，
+        // 首次加载先赋一次；之后每次深浅色切换时 AppIconService.ApplyToAllOpenWindows
+        // 会一并刷新（见该方法内对 TitleBarIconImage 的处理）。
+        AppIconService.ApplyToTitleBarImage(this, TitleBarIconImage);
+        UpdateMaximizeRestoreIcon();
+        Topmost = ConfigService.Config.AlwaysOnTop;
+
+        // Ctrl+滚轮 / Ctrl+方向键 缩放整窗界面：接到 UiZoomTransform（AppBodyGrid 的
+        // LayoutTransform），具体开关/步进逻辑见 UiZoomService 类注释。放在 Window 级别的
+        // Preview 事件上（而不是某个子控件），保证不管鼠标停在页面哪个区域、当前焦点在
+        // 哪个控件上，只要按住 Ctrl 滚/按方向键就能触发，不用先把光标移到特定位置。
+        UiZoomService.Initialize(UiZoomTransform, ConfigService);
+        PreviewMouseWheel += (_, e) =>
+        {
+            if (!UiZoomService.ShouldHandleWheel(ConfigService.Config)) return;
+            UiZoomService.StepZoom(e.Delta > 0 ? 1 : -1);
+            e.Handled = true;
+        };
+        PreviewKeyDown += (_, e) =>
+        {
+            if (!UiZoomService.ShouldHandleKey(ConfigService.Config, e.Key)) return;
+            UiZoomService.StepZoom(e.Key == Key.Up ? 1 : -1);
+            e.Handled = true;
+        };
+
+        // F11 全屏切换：只在主窗口生效，Key.System 分支处理是因为 F11 在部分系统/输入法
+        // 状态下会被识别为"系统键"（Alt 组合键那一类路由），PreviewKeyDown 阶段
+        // e.Key == Key.System 时真正的键值在 e.SystemKey 里，两个都要判断到才不会漏掉。
+        PreviewKeyDown += (_, e) =>
+        {
+            var key = e.Key == Key.System ? e.SystemKey : e.Key;
+            if (key != Key.F11) return;
+            // 愚人节彩蛋 5 号手段生效期间："无法全屏，强制窗口模式"——直接吃掉这次 F11，
+            // 不调用 ToggleFullScreen，也不改任何 Chrome/标题栏状态。
+            if (AprilFoolsService.Has(AprilFoolsService.Effect.WindowChaos)) { e.Handled = true; return; }
+            WindowChromeService.ToggleFullScreen(this);
+            // 全屏时把自绘标题栏这一行整个收起来（Height=0），同时把 WindowChrome 的
+            // CaptionHeight 一起降到 0：不然虽然标题栏在视觉上被收起了，窗口最上面那
+            // 36px 依然会被当成"可拖拽标题区"响应鼠标，全屏下这块区域应该完全让位给
+            // 页面内容本身。退出全屏时两者一起恢复回 36。
+            var isFullScreen = WindowChromeService.IsFullScreen;
+            TitleBarRow.Height = new GridLength(isFullScreen ? 0 : 32);
+            CustomTitleBar.Visibility = isFullScreen ? Visibility.Collapsed : Visibility.Visible;
+            var chrome = System.Windows.Shell.WindowChrome.GetWindowChrome(this);
+            if (chrome != null) chrome.CaptionHeight = isFullScreen ? 0 : 32;
+            e.Handled = true;
+        };
+
+        // F3 只切换当前运行会话的置顶状态，不写入配置；关闭并重新启动后恢复设置页中的默认值。
+        PreviewKeyDown += (_, e) =>
+        {
+            var key = e.Key == Key.System ? e.SystemKey : e.Key;
+            if (key != Key.F3) return;
+            Topmost = !Topmost;
+            e.Handled = true;
+            ToastService.ShowInfo(Topmost ? "当前会话已置顶" : "当前会话已取消置顶");
+        };
+
+        // Esc 关闭当前最顶层的进程内弹窗（Overlay），跟 Windows 系统对话框的通行习惯
+        // 一致。放在这里而不是每个弹窗 UserControl 自己接线，是因为 Esc 需要在整个
+        // MainWindow 范围内都能生效（弹窗内部任意控件获得焦点时都要能按 Esc 关闭），
+        // 而不是只在弹窗自己的可视化树内监听——同一个原因，F11 全屏判断也放在这一层。
+        PreviewKeyDown += (_, e) =>
+        {
+            if (e.Key != Key.Escape) return;
+            if (!OverlayDialogService.HasActiveOverlay) return;
+            OverlayDialogService.RequestDismissTopByEscape();
+            e.Handled = true;
+        };
+
+        // F12：临时显示被"功能隐藏"设置隐藏起来的功能项，方便用户手滑隐藏了什么之后
+        // 还能找回入口去设置页取消勾选。这是"按下就切换一次状态"，不是"按住才显示"——
+        // 再按一次 F12 变回正常隐藏状态。只在这里改内存里的标记 + 立即重新应用一次
+        // 导航栏可见性，不碰 HiddenFeatureKeys 配置本身，松开也不会自动还原。
+        PreviewKeyDown += (_, e) =>
+        {
+            var key = e.Key == Key.System ? e.SystemKey : e.Key;
+            if (key != Key.F12) return;
+            FeatureVisibilityService.TemporaryRevealActive = !FeatureVisibilityService.TemporaryRevealActive;
+            ApplyFeatureVisibility();
+            e.Handled = true;
+        };
+
+        // 注册为 Overlay 弹窗宿主：进程内只有一个 MainWindow 实例，全部 24 个原独立
+        // Window 弹窗迁移后都通过 OverlayDialogService 挂载到这里的 OverlayRoot。
+        // 见 OverlayDialogService.cs 顶部的整体设计注释。
+        OverlayDialogService.Register(this);
+        // Toast 通知层宿主（右下角自动消失的轻提示，见 ToastService 类头注释）。
+        ToastService.Register(this);
+
+        StateChanged += (_, _) =>
+        {
+            if (WindowState != WindowState.Minimized) _lastNonMinimizedWindowState = WindowState;
+        };
+
+        // 「实验性功能」导航按钮只在启动器界面语言是简体中文时显示（见
+        // LocalizationService.ExperimentalFeaturesLanguageGate 注释）。构造时立即按当前语言
+        // 同步一次，并订阅 LanguageChanged，保证用户在运行时切换语言后这个按钮立即跟着
+        // 显示/隐藏，不需要重启或切页面才生效。
+        RefreshExperimentalNavVisibility();
+        LocalizationService.LanguageChanged += OnLanguageChanged;
+        Closed += (_, _) => LocalizationService.LanguageChanged -= OnLanguageChanged;
+
+        // 需求：关闭主窗口时，如果还有「桌面便签」置顶钉在桌面上（StickyNoteWindow，
+        // 见该类注释），弹窗询问"是否连同便签一起关闭"——默认给用户选择权，而不是
+        // 直接放行导致进程悄悄留在后台（便签窗口默认不设置 Owner，主窗口关闭不会带走它，
+        // 详见 StickyNoteWindow.OpenWindows 上的说明），也不是强制关掉便签打断"贴在桌面"
+        // 这个功能本身的意义。挂在 Closing 而不是 Closed：Closing 支持 e.Cancel，能在
+        // 用户选"取消"时真正拦下这次关闭。
+        Closing += MainWindow_Closing;
+
+        // 侧边栏"收起/展开"初始状态：默认展开（跟原来的固定 180 宽行为一致），
+        // 不做持久化——每次启动都是展开态，避免"上次不小心点收起了，下次开机
+        // 一脸懵不知道导航栏去哪了"这种体验问题。
+        ApplySidebarCollapsedState(collapsed: false);
+
+        ConfigService.Load();
+        ServerInstanceService.Load();
+        _scheduledInstanceBackupService = new ScheduledInstanceBackupService(ConfigService);
+        Closed += (_, _) => _scheduledInstanceBackupService?.Dispose();
+        Topmost = ConfigService.Config.AlwaysOnTop;
+
+        // 用 MainWindow 自己刚 Load 完的配置，在窗口首帧出现之前一次性同步最终外观状态。
+        // CustomAccentColor 即使当前 UiSkin 不是 Custom 也会被保留；旧代码只要看到它非空就
+        // 无条件 ApplyCustomAccent，随后 ContentRendered 又切回真实 UiSkin，于是启动/切页时
+        // 按钮会肉眼可见地闪成深蓝再恢复。这里只走完整主题入口，绝不单独套自定义强调色。
+        var loadedCfg = ConfigService.Config;
+        ThemeService.ApplyForCurrentState(
+            loadedCfg.GuestModeEnabled, loadedCfg.UiSkin, loadedCfg.IsDarkMode, loadedCfg.CustomAccentColor);
+        ThemeService.ApplyWindowTransparency(loadedCfg.EnableWindowTransparency, loadedCfg.WindowOpacityPercent);
+        ThemeService.ApplyGlobalWindowTransparency(loadedCfg.EnableGlobalWindowTransparency, loadedCfg.GlobalWindowOpacityPercent);
+        var loadedMaterial = Enum.TryParse<Win11EffectsService.BackdropMaterial>(loadedCfg.Win11BackdropMaterial, out var lm)
+            ? lm : Win11EffectsService.BackdropMaterial.Mica;
+        Win11EffectsService.SetEnabled(loadedCfg.EnableWin11VisualEffects, loadedMaterial);
+        FrameRateMonitorService.SetEnabled(loadedCfg.EnableHighPerformanceMode);
+
+        if (!string.IsNullOrWhiteSpace(ConfigService.Config.CustomBackgroundImagePath) &&
+            File.Exists(ConfigService.Config.CustomBackgroundImagePath))
+        {
+            if (!SetCustomBackgroundImage(ConfigService.Config.CustomBackgroundImagePath))
+                ConfigService.Config.CustomBackgroundImagePath = null;
+        }
+        else
+        {
+            SetCustomBackgroundImage(null);
+        }
+
+        // 见 ThemeService.CustomBackgroundRefreshRequested / ApplyWindowTransparency 方法体注释：
+        // 只要窗口透明度状态发生变化（保存设置、低性能模式联动等任何入口），就重新计算一次
+        // 已导入背景图片的模糊/不透明度，修复\"改了透明度设置，毛玻璃背景图片看起来却没有
+        // 跟着变化\"的问题。窗口关闭时取消订阅，避免残留的静态事件引用导致这个窗口实例
+        // 泄漏无法被回收。
+        ThemeService.CustomBackgroundRefreshRequested += RefreshCustomBackgroundVisualEffect;
+        Closed += (_, _) => ThemeService.CustomBackgroundRefreshRequested -= RefreshCustomBackgroundVisualEffect;
+
+        // 亮度设置：ThemeService.ApplyBrightness 算好目标颜色/Opacity 后广播，这里订阅并
+        // 套到 BrightnessOverlay 元素上（见该事件/XAML 里 BrightnessOverlay 的注释，
+        // Services 层不直接引用 MainWindow 类型）。启动时先按当前配置应用一次，不然默认
+        // 100 以外的已保存亮度设置要等用户下次去设置页点一次保存才会生效。
+        ThemeService.BrightnessChanged += ApplyBrightnessOverlay;
+        Closed += (_, _) => ThemeService.BrightnessChanged -= ApplyBrightnessOverlay;
+        ThemeService.ApplyBrightness(ConfigService.Config.BrightnessPercent);
+
+        // 主题资源已经在 ConfigService.Load 后、首帧之前同步完毕。禁止在 ContentRendered 后
+        // 再补刷主题；任何“可见以后再改 ButtonBackgroundBrush”的修复都会重新制造颜色闪烁。
+
+        // AI 助手完整配置现在直接持久化在 AppConfig.AiAssistant；旧版悬浮球字段由 ConfigService 负责迁移。
+        AiAssistantConfig = ConfigService.Config.AiAssistant ?? new AiAssistantConfig();
+        ConfigService.Config.AiAssistant = AiAssistantConfig;
+        AiAssistantService.UpdateConfig(AiAssistantConfig);
+        // 同步悬浮球初始显示状态
+        UpdateAiFloatingButtonVisibility();
+
+        // 系统托盘：需求里的"最小化到托盘""关闭默认最小化到托盘""开机自启"都依赖它，
+        // 图标本身在这里就常驻创建好（Show/Hide 只控制是否可见，不重复创建/销毁），
+        // 避免每次"最小化到托盘"都重新 new 一次 NotifyIcon。
+        InitializeTrayIcon();
+        AutoStartService.Apply(ConfigService.Config.AutoStartOnBoot);
+
+        // 标题栏下载列表：绑定 DownloadQueueService 的全局单例集合，任何地方（目前是
+        // DownloadCenterPage 的"游戏版本"下载）调用 DownloadQueueService.Instance.StartNew(...)
+        // 登记的条目都会自动出现在这里，不需要 MainWindow 手动感知每一次具体的下载调用。
+        InitializeDownloadQueueUi();
+
+        // 修复"检测不到以前创建的服务器"：ServerInstanceService.Load() 现在会在主文件损坏时
+        // 尝试从 .bak 备份恢复，但恢复与否用户都应该知情——之前这里完全没有任何提示，
+        // 配置读取失败和"真的没有服务器"在界面上是无法区分的两种状态。
+        if (ServerInstanceService.LastLoadError != null)
+        {
+            var recovered = ServerInstanceService.Instances.Count > 0;
+            MessageBoxDialog.ShowWarning(
+                (recovered
+                    ? "服务器列表配置文件（servers.json）读取失败，已自动从备份文件恢复。\n"
+                    : "服务器列表配置文件（servers.json）读取失败，且没有可用的备份，服务器列表已重置为空。\n" +
+                      "原有服务器的文件本身没有丢失，可以在「服务端管理」页重新创建实例并指向原目录。\n") +
+                $"\n错误详情：{ServerInstanceService.LastLoadError.Message}",
+                "服务器列表读取异常");
+        }
+
+        // 访客模式：如果配置里这个开关已经打开(比如上次关闭启动器前就是开启状态)，
+        // 一进程序就立即生成本次会话的临时账户，让 GetSelectedAccount 从第一次调用起
+        // 就返回这个临时账户，而不是等用户手动去设置页勾一下才生效。
+        RefreshGuestModeState();
+
+        RefreshSidebar();
+        ShowHome();
+
+        // 启动时自动扫描本机的 .minecraft 文件夹（AppData + 每个磁盘 1/2/3 级目录），
+        // 找到新的就自动加入"版本选择"页的文件夹列表，不需要用户手动一个个"添加文件夹"。
+        // 放到窗口真正显示出来之后用后台线程跑：扫描要枚举磁盘目录，慢盘/大量文件的机器上
+        // 可能要几秒甚至更久，不能放在构造函数里同步跑（会让主窗口卡在黑屏/白屏好几秒才
+        // 显示出来）。扫描结果通过 Dispatcher 切回 UI 线程再保存配置 + 弹提示，避免跨线程
+        // 直接改 ConfigService.Config 或者操作 UI 控件。
+        //
+        // 修复"首次打开白屏，要手动拖动/全屏窗口才会渲染出内容"：这里以及下面 Java 扫描/
+        // 新手向导三处，原来都是挂在 Loaded 事件上。Loaded 只代表"可视化树已经连接完毕"，
+        // WPF 并不保证这时候已经真正走完一次 Measure/Arrange/Render 把内容画到屏幕上——
+        // 如果 Loaded 的回调本身还在做事(哪怕只是启动一个 Task.Run、注册几个事件)，
+        // 就会继续占着 UI 线程，把"排队中但还没真正执行"的首帧渲染往后推，表现就是
+        // "看起来是白屏，直到用户做了一次窗口大小变化才强制触发一次布局/渲染"。
+        // 改成挂在 ContentRendered 上：这是 WPF 专门用来表示"第一帧（以及此后每一次
+        // 内容变化触发的重新渲染）已经真正合成绘制完毕"的事件，在它触发之前，
+        // WPF 内部会保证先完整走完一遍 Layout+Render，不会被同一批 Loaded 回调抢占——
+        // 从根上避免"渲染工作还没来得及执行就被其它逻辑挤到后面"这个不确定性，
+        // 不需要再靠 Dispatcher.Invoke(..., Render) 这种猜时序的占位技巧。
+        // 修复"进入主界面很卡"：ContentRendered 不是只触发一次的"首帧"事件，而是每次
+        // 内容重新渲染（切换页面、窗口尺寸变化、主题切换引起的重绘等）都会再触发一次
+        // ——之前这里直接 += 匿名委托、从不反订阅，导致用户在启动器里正常切换页面时，
+        // 每切一次都会在后台再跑一遍"扫描全盘 .minecraft 目录"和"扫描 Java"，磁盘 IO
+        // 和随之而来的 Dispatcher 封送、配置保存都会跟 UI 线程抢时间片，表现就是主界面
+        // 越用越卡。跟下面"首次启动向导"用的是同一个"局部变量 + 触发后立即反订阅"写法，
+        // 保证这两个扫描只在启动后的首帧真正跑一次。
+        if (ConfigService.Config.FirstRunWizardCompleted)
+        {
+            EventHandler? scanFoldersOnce = null;
+            scanFoldersOnce = (_, _) =>
+            {
+                ContentRendered -= scanFoldersOnce;
+                _ = ScanMinecraftFoldersInBackgroundAsync();
+            };
+            ContentRendered += scanFoldersOnce;
+        }
+
+        // 需求："在启动的时候，像检测mc的目录一样检测 Javaw.exe，无需用户手动打开设置，
+        // 就可以生成 java 列表。"——跟上面 MC 文件夹扫描完全同一套模式：主窗口真正显示
+        // 出来之后台线程跑，静默登记，不打断/不阻塞主窗口显示。之前只有打开「设置」页时
+        // 才会触发 AutoDetectJavaOnLoadAsync（见 SettingsPage.xaml.cs），用户不点进设置页
+        // 永远不会自动发现新装的 Java，这里补上真正"程序启动时"这一级的自动探测。
+        // 同样只跑一次，原因见上面 scanFoldersOnce 的注释。
+        EventHandler? scanJavaOnce = null;
+        scanJavaOnce = (_, _) =>
+        {
+            ContentRendered -= scanJavaOnce;
+            _ = ScanJavaInBackgroundAsync();
+        };
+        ContentRendered += scanJavaOnce;
+
+        // 定时清理已退出的进程记录，保持"进程管理"列表/按钮的可用性状态是最新的
+        _pruneTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
+        _pruneTimer.Tick += (_, _) => ProcessManager.PruneExited();
+        _pruneTimer.Start();
+
+        // 「自动循环」深浅色模式：之前是每分钟检查一次。反馈里出现过"到了设定的切换时间，
+        // 界面没有自动变成深色，非要重启启动器一次才生效"的情况——ReevaluateAutoThemeCycle
+        // 本身的判断逻辑没问题（按小时比较+去重的 slot 标识），但1分钟的间隔在一些机器上
+        // （比如系统进入过短暂休眠/UI 线程短暂阻塞导致某次 Tick 被跳过、或者用户就是没那么
+        // 巧等到下一次整分钟 Tick）会让人感觉"过了好一会儿还没切换"，容易被误判成"完全不生效"，
+        // 直到重启走一遍构造函数里那次立即校验（见下面 ReevaluateAutoThemeCycle() 调用）才
+        // 骤然发现变了，看起来就像"必须重启才生效"。
+        // 改成每 1 秒检查一次：DispatcherTimer 本身开销很小（ReevaluateAutoThemeCycle 内部
+        // 大部分时间是"当前 slot 没变，直接 return"的快速路径，真正切换配色的分支一小时最多
+        // 触发一次），一秒级的粒度足够消除上述"感觉卡住不切换"的体验问题，用户不需要再重启。
+        _autoThemeCycleTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
+        _autoThemeCycleTimer.Tick += (_, _) => ReevaluateAutoThemeCycle();
+        _autoThemeCycleTimer.Start();
+        ReevaluateAutoThemeCycle();
+
+        // 「跟随系统深浅色」：靠 Microsoft.Win32.SystemEvents.UserPreferenceChanged 事件
+        // 实时感知系统主题变化（用户在 Windows 设置里切换"应用模式"的瞬间就能收到通知），
+        // 不用像自动循环那样每秒轮询——系统主题变化本来就不是高频事件，事件驱动更省资源、
+        // 也更及时。事件是 Category=General 触发（AppsUseLightTheme 变化没有专门的分类），
+        // 回调不保证在 UI 线程上，Dispatcher 切回来再处理。
+        // Closed 时反订阅：SystemEvents 是进程级静态事件，不反订阅会导致 MainWindow 实例
+        // 泄漏（永远有一个引用挂在 SystemEvents 上）。
+        Microsoft.Win32.SystemEvents.UserPreferenceChanged += OnSystemUserPreferenceChanged;
+        Closed += (_, _) => Microsoft.Win32.SystemEvents.UserPreferenceChanged -= OnSystemUserPreferenceChanged;
+        ReevaluateFollowSystemTheme();
+
+        // 内存溢出预警：每 5 秒检查一次系统可用物理内存，跌破阈值（默认低于 10% 或
+        // 低于 1GB，两者任一满足）就弹出警告窗口，让用户能在系统真正卡死/蓝屏之前
+        // 主动关闭游戏。事件回调可能不在 UI 线程上触发，用 Dispatcher 切回来再弹窗。
+        _memoryWatchdog.LowMemoryDetected += args =>
+        {
+            Dispatcher.Invoke(() => ShowMemoryWarning(args));
+        };
+        _memoryWatchdog.Start();
+
+        Closed += (_, _) => _memoryWatchdog.Dispose();
+
+        // 需求："启动器每次关闭时会自动生成会话日志"。写在访客模式清理**之前**：
+        // 访客模式清理会删掉本次会话新产生的日志文件（见 GuestModeService.CleanupNewLogFiles
+        // 注释——"不留下这次使用的痕迹"是访客模式的既定设计），如果反过来先清理再落盘，
+        // 访客模式下这个文件会残留下来，跟"访客模式不留痕迹"的承诺矛盾。非访客模式下
+        // 顺序无所谓，这里统一放前面简化逻辑。
+        Closed += (_, _) => LauncherLogService.EndSessionAndFlush();
+
+        // 应用关闭时，如果访客模式是开启状态，清理本次会话产生的日志/临时下载文件，
+        // 不留下这次使用的痕迹。放在 Closed 而不是 Closing，避免清理耗时(理论上很快，
+        // 但保险起见)阻塞窗口关闭动画/响应。
+        Closed += (_, _) =>
+        {
+            if (ConfigService.Config.GuestModeEnabled)
+            {
+                try { _guestModeService.CleanupSessionArtifacts(); }
+                catch { /* 清理失败不应该阻止应用退出 */ }
+            }
+        };
+
+        // 首次启动自动弹出「协议页 → 新手引导」，挂在 ContentRendered 而不是 Loaded 上（原因见上面
+        // MC 文件夹/Java 扫描两处的注释——Loaded 不保证首帧已经真正画出来，向导这种
+        // 立刻弹出的模态 Overlay 如果在 Loaded 里弹，很容易跟"主窗口自己的首帧渲染"抢
+        // UI 线程，表现就是主窗口白屏、向导也显示不全）。ContentRendered 在窗口每次
+        // 内容重新渲染完成后都会触发，这里用 EventHandler 局部变量 + 立即反订阅实现
+        // "只在首帧渲染完成后弹一次"，避免后续任何触发 ContentRendered 的操作
+        // （比如窗口尺寸变化、主题切换引起的视觉刷新）意外把流程再弹一次。
+        //
+        // 协议页（AgreementsWindow）三页依次是《用户协议》《隐私协议》《开源协议》：
+        // 前两页强制阅读 5 秒，「同意并继续」按钮才可点击；第三页（开源协议）不强制阅读、
+        // 进入即可继续。三页全部同意后由协议窗口把 AgreementsAccepted 标记为已完成并落盘，
+        // 此后不再自动弹出。按 Esc 关闭（Overlay 的 Esc 关闭走 PreviewKeyDown →
+        // RequestDismissTopByEscape，见上面 Esc 处理）或任何未走到第三页的退出都会被
+        // ShowModal 返回 null，调用方据此判定"未同意"，本次启动不再继续后续流程，
+        // 下次启动会重新展示——法律性文本不允许"跳过即视为同意"。也正因为不允许半路退出，
+        // 这里同样通过 OverlayDialogService.ShowModal 的 dismissOnBackgroundClick: false
+        // （不点调用点兼容层 ShowDialog() 默认值的更详细说明见下方新手引导那段注释）
+        // 显式禁止"点空白处关闭"。
+        //
+        // 新手引导走完/关闭之后才补跑一次 .minecraft 文件夹自动扫描（原因见上面
+        // ScanMinecraftFoldersInBackgroundAsync 调用点的注释：避免扫描结果提示框
+        // 在向导进行到一半时插队压栈，把向导流程打断/挡住）。这里不区分用户是正常走完
+        // 向导还是中途关掉——不管哪种，向导这个 Overlay 已经让出了 OverlayContentHost，
+        // 此时再弹提示不会有任何抢占问题。
+        //
+        // 修复"点弹窗周围的空白处会把新手引导关掉"：wizard.ShowDialog() 走的是
+        // OverlayDialogControl 里给 30 多个弹窗共用的兼容层（见 IOverlayDialog.cs），
+        // 内部固定调用 OverlayDialogService.ShowModal(this)，也就是用
+        // dismissOnBackgroundClick 的默认值 true——这个默认值对"确认框/选择框"这些
+        // 一次性小弹窗是合理的（点旁边空白 = 取消），但新手引导是"必须显式选择/走完
+        // 才算数"的多步骤流程，被误触的空白区域一点就整个关掉、状态直接按当前进度标记
+        // 成\"已完成\"，不应该走这条默认放行的路径。这里不改 OverlayDialogControl 基类
+        // 的默认值（改了会连带影响其余 20 多个弹窗的点击外部关闭行为），而是绕开
+        // ShowDialog() 这层封装，直接调用 OverlayDialogService.ShowModal 并显式传
+        // dismissOnBackgroundClick: false，只让首次启动流程里的弹窗变成"点空白处不生效，
+        // 必须点「同意并继续」/「跳过引导」或走完流程"。
+        // 是否需要重新走一遍协议：不再只看 AgreementsAccepted 这个布尔，而是比较
+        // AcceptedAgreementVersion 与当前 AgreementsText.AgreementsVersion——协议文本
+        // 有实质修改（版本号被加一）时，即使老用户以前已经 AgreementsAccepted=true，
+        // 这里比较结果仍然是"需要重新弹出"，实现"每次协议更新都重新展示"。
+        var needsAgreements = ConfigService.Config.AcceptedAgreementVersion < AgreementsText.AgreementsVersion;
+        if (needsAgreements || !ConfigService.Config.FirstRunWizardCompleted)
+        {
+            EventHandler? showFirstRunOnce = null;
+            showFirstRunOnce = (_, _) =>
+            {
+                ContentRendered -= showFirstRunOnce;
+
+                // 第一次开启先选语言（协议之前）：「简体中文（Microsoft）」这类实验性翻译
+                // 需要用户明确看过再继续，其它语言同理。只在真正的首次启动（还没完成新手引导）
+                // 时弹这一次；老用户升级后只是"重新同意新版协议"（FirstRunWizardCompleted 已为
+                // true）不再重复弹语言选择。选完立即生效并保存（LanguageSelectDialog 内部逻辑），
+                // 后续协议页/新手引导都以所选语言显示。
+                if (!ConfigService.Config.FirstRunWizardCompleted)
+                {
+                    var langDlg = new LanguageSelectDialog(ConfigService);
+                    OverlayDialogService.ShowModal(langDlg, dismissOnBackgroundClick: false);
+                }
+
+                // 先协议后向导：协议未同意（或按 Esc 中途退出）就不往下走，本次启动到此为止，
+                // 下次启动重新展示协议页。dismissOnEsc: false 锁死 Esc——协议是必须显式表态
+                // 的法律流程，不允许"按一下 Esc 就跳过"（修复该 bug 的入口在
+                // OverlayDialogService.RequestDismissTopByEscape）。
+                if (ConfigService.Config.AcceptedAgreementVersion < AgreementsText.AgreementsVersion)
+                {
+                    var agreements = new AgreementsWindow(this);
+                    if (OverlayDialogService.ShowModal(agreements, dismissOnBackgroundClick: false, dismissOnEsc: false) != true)
+                    {
+                        ApplyRestrictedModeGating();
+                        return;
+                    }
+                }
+
+                if (!ConfigService.Config.FirstRunWizardCompleted)
+                {
+                    var wizard = new FirstRunWizardWindow(this);
+                    OverlayDialogService.ShowModal(wizard, dismissOnBackgroundClick: false);
+                }
+                ApplyRestrictedModeGating();
+                _ = ScanMinecraftFoldersInBackgroundAsync();
+            };
+            ContentRendered += showFirstRunOnce;
+        }
+        else
+        {
+            ApplyRestrictedModeGating();
+        }
+    }
+
+    /// <summary>
+    /// 「基本模式」功能门控：RestrictedMode=true 时，除首页(NavHomeButton)和版本选择
+    /// (NavVersionsButton) 外的所有导航按钮 IsEnabled=false（置灰，不隐藏——用户随时能看见
+    /// 还有哪些功能存在，跟 AppConfig.RestrictedMode 的注释一致），并显示右上角常驻的
+    /// 「重新阅读协议并同意」按钮；RestrictedMode=false 时恢复全部功能、隐藏该按钮。
+    ///
+    /// 同时负责基本模式下"每次启动都确认一遍《基本模式协议》"：RestrictedMode=true 且
+    /// 尚未 BasicAgreementAccepted 时，弹出仅含第 4 页的 AgreementsWindow（不阻塞使用，
+    /// 不同意也能继续以受限状态进入主界面）。
+    /// </summary>
+    public void ApplyRestrictedModeGating()
+    {
+        var restricted = ConfigService.Config.RestrictedMode;
+
+        ReReadAgreementsButton.Visibility = restricted ? Visibility.Visible : Visibility.Collapsed;
+
+        var gatedButtons = new[]
+        {
+            NavDownloadButton, NavMultiplayerButton, NavModManagerButton, NavServerManagerButton,
+            NavToolboxButton, NavBedrockButton, NavAboutHelpButton, NavAccountsButton,
+            NavSettingsButton, NavLogsButton, NavExperimentalButton,
+        };
+        foreach (var btn in gatedButtons)
+        {
+            btn.IsEnabled = !restricted;
+        }
+
+        // 基本模式下首页自己右上角那一排（语言/深浅色/自动循环/普通模式/访客模式）胶囊按钮
+        // 也应该跟侧边栏导航按钮一样置灰——基本模式的设计目标是"只能启动游戏、选择游戏
+        // 文件夹，其余功能置灰"，这几个按钮虽然不在侧边栏导航里，但同样属于"其余功能"，
+        // 之前漏掉了。首页是独立 UserControl，只有当前正显示首页时才能拿到它的实例去改。
+        if (MainContent?.Content is HomePage homePage)
+        {
+            homePage.ApplyRestrictedModeGating(restricted);
+        }
+
+        if (restricted && !ConfigService.Config.BasicAgreementAccepted)
+        {
+            var basicAgreement = AgreementsWindow.CreateBasicModeOnly(this);
+            OverlayDialogService.ShowModal(basicAgreement, dismissOnBackgroundClick: false, dismissOnEsc: false);
+        }
+    }
+
+    /// <summary>右上角「重新阅读协议并同意」：重新走一遍完整四步协议流程；用户同意后
+    /// AgreementsWindow 会把 RestrictedMode 写回 false，这里据此刷新一次门控状态。</summary>
+    private void ReReadAgreements_Click(object sender, RoutedEventArgs e)
+    {
+        var agreements = new AgreementsWindow(this);
+        OverlayDialogService.ShowModal(agreements, dismissOnBackgroundClick: false, dismissOnEsc: false);
+        ApplyRestrictedModeGating();
+    }
+
+    /// <summary>
+    /// 把用户自定义背景图放到主窗口内容树的最底层。不要再给 Window.Background 塞 ImageBrush：
+    /// Win11 的 Mica/Acrylic 是 DWM 在窗口背后合成的系统材质，Window.Background 自己又是一层
+    /// WPF 背景，两者叠加时经常出现“开了毛玻璃以后图片反而不见”的效果。独立 Image 层则始终
+    /// 位于标题栏/侧栏/页面卡片下面，配合 ThemeService 的半透明面板就能稳定看到图片。
+    /// BitmapCacheOption.OnLoad 保证文件在读取完成后立即释放，继续避免导入同名图片时的文件锁。
+    /// </summary>
+    public bool SetCustomBackgroundImage(string? path)
+    {
+        if (CustomBackgroundImageLayer == null || CustomBackgroundTintLayer == null) return false;
+
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            CustomBackgroundImageLayer.Source = null;
+            CustomBackgroundImageLayer.Visibility = Visibility.Collapsed;
+            CustomBackgroundImageLayer.Opacity = 0;
+            CustomBackgroundTintLayer.Visibility = Visibility.Collapsed;
+            ThemeService.SetCustomBackgroundActive(false);
+            return true;
+        }
+
+        try
+        {
+            if (!File.Exists(path)) return false;
+            // 这里故意回到旧版已经验证过的 UriSource 解码路径，但保留 OnLoad：
+            // 上一版为了绕过 WPF 图片缓存，组合使用了 IgnoreImageCache + StreamSource。
+            // BitmapImage 在这种组合下 UriSource 为 null，FinalizeCreation() 仍会尝试按 URI
+            // 从 ImagingCache 移除条目，最终把 null 当 Hashtable key，抛出
+            // ArgumentNullException("key")。日志里所谓“图片无法解码”其实就是这个初始化
+            // 参数组合触发的 WPF 内部异常，并不是 PNG/JPG/BMP 文件本身坏了。
+            //
+            // UriSource 是旧实现一直使用、已经验证能正常解码的路径；CacheOption=OnLoad
+            // 则保证 EndInit 返回时像素已经完整读入，WPF 不会继续占用源文件。导入逻辑本身
+            // 又使用唯一文件名，所以无需 IgnoreImageCache，也不存在同路径缓存旧图的问题。
+            var image = new System.Windows.Media.Imaging.BitmapImage();
+            image.BeginInit();
+            image.CacheOption = System.Windows.Media.Imaging.BitmapCacheOption.OnLoad;
+            image.UriSource = new Uri(Path.GetFullPath(path), UriKind.Absolute);
+            image.EndInit();
+            image.Freeze();
+
+            CustomBackgroundImageLayer.Source = image;
+            CustomBackgroundImageLayer.Visibility = Visibility.Visible;
+            CustomBackgroundTintLayer.Visibility = Visibility.Visible;
+            RefreshCustomBackgroundVisualEffect();
+            return true;
+        }
+        catch (Exception ex)
+        {
+            ErrorPresenter.LogTechnicalDetail($"应用自定义背景图片失败：{ex}");
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// 按用户单独设置的“背景磨砂度”刷新自定义背景。25% 接近透明/清晰，100% 为最强磨砂。
+    /// 这个参数已经与“面板透明度”和 Win11 的 Mica/Acrylic 材质彻底解耦：面板透明度只负责
+    /// UI 面板自身，背景磨砂度只负责导入图片的 Blur/蒙层/玻璃覆盖强度，互相不会抢值。
+    /// 低性能模式仍然强制关闭 BlurEffect，避免 GPU/CPU 额外合成开销。
+    /// </summary>
+    /// <summary>ThemeService.BrightnessChanged 的订阅回调，把算好的遮罩颜色/Opacity
+    /// 套到 BrightnessOverlay 上。见 XAML 里 BrightnessOverlay 元素注释。</summary>
+    private void ApplyBrightnessOverlay(Brush brush, double opacity)
+    {
+        BrightnessOverlay.Background = brush;
+        BrightnessOverlay.Opacity = opacity;
+    }
+
+    public void RefreshCustomBackgroundVisualEffect()
+        => ApplyCustomBackgroundFrost(ConfigService.Config.CustomBackgroundFrostPercent);
+
+    /// <summary>设置页拖动磨砂度时的实时预览入口；不写配置，保存逻辑仍由 SettingsPage 统一处理。</summary>
+    public void PreviewCustomBackgroundFrost(int frostPercent)
+        => ApplyCustomBackgroundFrost(frostPercent);
+
+    private void ApplyCustomBackgroundFrost(int frostPercent)
+    {
+        if (CustomBackgroundImageLayer?.Source == null || CustomBackgroundTintLayer == null) return;
+
+        var lowPerformance = ConfigService.Config.LowPerformanceMode;
+        var percent = Math.Clamp(frostPercent, 25, 100);
+        var t = (percent - 25) / 75.0; // 0 = 基本透明，1 = 全磨砂
+
+        // 25%：几乎不糊、图片接近原始亮度、只保留很淡的主题色蒙层。
+        // 100%：明显磨砂、背景被压低并增加主题色蒙层，文字/卡片可读性更稳定。
+        if (CustomBackgroundImageLayer.Effect is System.Windows.Media.Effects.BlurEffect blur)
+            blur.Radius = lowPerformance ? 0 : Lerp(2, 34, t);
+        CustomBackgroundImageLayer.Opacity = Lerp(0.98, 0.76, t);
+        CustomBackgroundTintLayer.Opacity = Lerp(0.04, 0.30, t);
+
+        // 自定义背景存在时始终让上层主题面板具备一定透感。磨砂度越高，面板越“实”，
+        // 从 52% 逐步提高到 82%；25% 时接近通透玻璃，100% 时接近完整磨砂玻璃。
+        var panelCap = (int)Math.Round(Lerp(52, 82, t));
+        ThemeService.SetCustomBackgroundActive(true, panelCap);
+    }
+
+    private static double Lerp(double from, double to, double t) => from + (to - from) * t;
+
+    /// <summary>
+    /// 根据 cfg.GuestModeEnabled 的当前值，同步 ConfigService.GuestAccount：
+    /// 开启时如果还没有本次会话的临时账户，就生成一个；关闭时清空(GetSelectedAccount 会
+    /// 自动回退到真实保存的账户列表)。构造函数里调用一次处理"启动时就是开启状态"，
+    /// SettingsPage 保存设置时状态变化了也会调用一次，两处共享这一份逻辑不重复实现。
+    /// 调用后会自动刷新侧边栏显示，让账户变化立即反映在界面上。
+    /// </summary>
+    public void RefreshGuestModeState()
+    {
+        if (ConfigService.Config.GuestModeEnabled)
+        {
+            ConfigService.GuestAccount ??= _guestModeService.CreateGuestAccount();
+        }
+        else
+        {
+            ConfigService.GuestAccount = null;
+        }
+
+        // 访客模式开关变化本身不再影响配色：配色完全以用户当前的色系(cfg.UiSkin)+
+        // 明暗(cfg.IsDarkMode)选择为准，访客模式只负责临时账户的创建/清空，两者完全解耦。
+        // 这里仍然调一次 ApplyForCurrentState 是为了保证"设置项保存后一秒内必须刷新界面"
+        // 这个约定——访客模式开关本身也是一种设置项变化，调用方（SettingsPage/HomePage）
+        // 保存完 GuestModeEnabled 后立刻调这个方法，顺带把当前配色重新应用一次、
+        // 触发全窗口刷新，不需要用户切页/重启才能看到访客模式开关本身的即时反馈。
+        ThemeService.ApplyForCurrentState(ConfigService.Config.GuestModeEnabled, ConfigService.Config.UiSkin, ConfigService.Config.IsDarkMode, ConfigService.Config.CustomAccentColor);
+
+        RefreshSidebar();
+    }
+
+    /// <summary>
+    /// 弹出内存不足警告窗口。同一时刻只保留一个警告窗口实例（避免多次触发时叠出一堆
+    /// 弹窗把屏幕糊住），如果当前没有正在运行的游戏进程，说明内存紧张的来源不是本启动器
+    /// 拉起的游戏（可能是下载/解压占用，或者纯粹是用户其它程序占用的），此时弹一个"没有
+    /// 可关闭游戏进程"的提示意义不大，直接跳过，避免无谓打扰。
+    /// </summary>
+    private void ShowMemoryWarning(MemoryWatchdogService.LowMemoryEventArgs args)
+    {
+        if (_activeMemoryWarningWindow != null) return;
+        if (ProcessManager.Running.Count == 0) return;
+
+        _activeMemoryWarningWindow = new MemoryWarningWindow(ProcessManager, _memoryWatchdog, args);
+        // MemoryWarningWindow 已迁移成内嵌 Overlay，UserControl 没有 Window.Closed，
+        // 用等价的 IOverlayDialog.RequestClose 复位这个"同一时刻只留一个"的哨兵字段。
+        _activeMemoryWarningWindow.RequestClose += (_, _) => _activeMemoryWarningWindow = null;
+        _activeMemoryWarningWindow.Show();
+    }
+
+    public void RefreshSidebar()
+    {
+        try
+        {
+            var acc = ConfigService.GetSelectedAccount();
+            CurrentAccountText.Text = acc == null ? Loc.T("Str_Launch_NoAccount", "未选择账户") : $"当前账户: {acc.DisplayLabel}";
+            CurrentVersionText.Text = string.IsNullOrEmpty(ConfigService.Config.SelectedVersionId)
+                ? "未选择版本"
+                : $"当前版本: {ConfigService.Config.SelectedVersionId}";
+        }
+        catch
+        {
+            // 配置异常不应阻塞主页显示，回退为默认文案
+            CurrentAccountText.Text = Loc.T("Str_Launch_NoAccount", "未选择账户");
+            CurrentVersionText.Text = Loc.T("Str_Launch_NoVersion", "未选择版本");
+        }
+
+        // 收起态下横向空间极窄，"当前账户: xxx"这种完整文案必然放不下，需要再跑一遍
+        // 收起态专用的缩写逻辑。放在 try/catch 外面：上面已经把 CurrentAccountText/
+        // CurrentVersionText.Text 兜底成了确定的字符串，这里只是在此基础上做展示层的截断，
+        // 不会再抛异常。
+        RefreshAccountVersionSidebarText();
+    }
+
+    /// <summary>
+    /// 收起态下（图2示例："pl..." / "1.0"）把账户名/版本号从完整文案缩写成极简形式：
+    /// - 账户：只取账户名前 2 个字符 + "..."（如"Player"→"pl..."，跟需求截图给的示例一致，
+    ///   用小写是因为图2示例本身就是小写"pl..."）；
+    /// - 版本：只保留版本号数字部分（如"1.0"），去掉"当前版本: "这个前缀。
+    /// 展开态则完全不动，用回 RefreshSidebar() 里已经设置好的完整文案
+    /// （这里不重新赋值 CurrentAccountText.Text 本身，而是在收起时套一层显示层缩写、
+    /// 展开时换回来，避免破坏 RefreshSidebar 里已经算好的完整文案，导致下次直接调用
+    /// RefreshSidebar 时还要重新拼一遍"完整"文案）。
+    /// </summary>
+    private void RefreshAccountVersionSidebarText()
+    {
+        if (!_sidebarCollapsed)
+        {
+            // 展开态：RefreshSidebar 已经把完整文案写进去了，这里不用做任何事。
+            return;
+        }
+
+        try
+        {
+            var acc = ConfigService.GetSelectedAccount();
+            if (acc == null)
+            {
+                CurrentAccountText.Text = "-";
+            }
+            else
+            {
+                var name = acc.DisplayLabel ?? "";
+                CurrentAccountText.Text = name.Length <= 2 ? name : name[..2].ToLowerInvariant() + "...";
+            }
+
+            // 修复截图2里"26.2 服务器"竖着一个字一行的问题：
+            // 这两个 TextBlock 在 XAML 里写了 TextWrapping="Wrap"，收起态列宽只有 ~46px，
+            // 任何超过两三个字的文案都会被逐字换行，把底部区域撑得很高、
+            // 还把启动按钮往下挤。收起态必须同时做两件事：截断 + 关掉换行。
+            var versionId = ConfigService.Config.SelectedVersionId;
+            if (string.IsNullOrEmpty(versionId))
+            {
+                CurrentVersionText.Text = "-";
+            }
+            else
+            {
+                // 只保留能认出来的版本号部分（"26.2服务器" → "26.2"），认不出来就取前 4 个字符。
+                var shortVer = VersionInfoResolver.ExtractAnyVersion(versionId)
+                               ?? (versionId.Length <= 4 ? versionId : versionId[..4] + "…");
+                CurrentVersionText.Text = shortVer;
+            }
+        }
+        catch
+        {
+            CurrentAccountText.Text = "-";
+            CurrentVersionText.Text = "-";
+        }
+
+        // 收起态下这两行也应该居中显示（跟图标居中的导航按钮保持一致的视觉重心），
+        // 而不是继续贴在左边。
+        CurrentAccountText.TextAlignment = TextAlignment.Center;
+        CurrentVersionText.TextAlignment = TextAlignment.Center;
+
+        // 关掉自动换行 + 打开省略号截断，双保险：即使上面的缩写逻辑漏了某种情况，
+        // 也只会显示成"26.2…"，绝不会再出现逐字竖排。
+        CurrentAccountText.TextWrapping = TextWrapping.NoWrap;
+        CurrentVersionText.TextWrapping = TextWrapping.NoWrap;
+        CurrentAccountText.TextTrimming = TextTrimming.CharacterEllipsis;
+        CurrentVersionText.TextTrimming = TextTrimming.CharacterEllipsis;
+    }
+
+    /// <summary>
+    /// 启动时自动扫描 AppData + 各磁盘 1/2/3 级目录下的 .minecraft 文件夹，新发现的自动
+    /// 加进"版本选择"页的文件夹列表。扫描本身（MinecraftFolderScanService.ScanAndRegister）
+    /// 全是同步的文件系统 IO，用 Task.Run 丢到线程池执行，避免枚举磁盘目录时卡住 UI 线程；
+    /// 扫描完成后用 Dispatcher 切回 UI 线程再保存配置、刷新侧边栏、弹提示——
+    /// ConfigService.Config 不是线程安全类型，所有实际修改都必须在 UI 线程上做。
+    /// 扫描/保存过程中出的任何异常都只记日志、不打断启动流程，也不弹错误框打扰用户
+    /// （这本来就是一个"顺手帮你找找看"的辅助功能，找不到、扫失败都不应该造成困扰）。
+    /// </summary>
+    private async Task ScanMinecraftFoldersInBackgroundAsync()
+    {
+        try
+        {
+            var newlyAdded = await Task.Run(() => MinecraftFolderScanService.ScanAndRegister(ConfigService.Config));
+            if (newlyAdded.Count == 0) return;
+
+            ConfigService.Save();
+            RefreshSidebar();
+
+            var names = string.Join("\n", newlyAdded.Select(f => $"• {f.Name}  ({f.Path})"));
+
+            // 修复"关掉检测到 Minecraft 文件夹的提示框，整页按钮全部点不动"：
+            // 根因是这里以前调用的 MessageBoxDialog.ShowInfo → OverlayDialogService.ShowModal
+            // 走的是"手动 PushFrame 局部消息泵、同步阻塞等结果"这条路径，而这个调用点本身
+            // 又是在 await Task.Run(...) 之后的异步延续里执行的——也就是"在一个已经通过
+            // SynchronizationContext 延续机制排队等 UI 线程执行的回调内部，再手动 PushFrame
+            // 一次、并且用同一个 TaskScheduler.FromCurrentSynchronizationContext() 来在
+            // 弹窗关闭时把消息泵跳出来"。两层调度互相嵌套，在某些时序下（尤其是启动阶段
+            // UI 线程本身还比较繁忙、消息队列里排了不少待处理项）会导致"弹窗按钮点击触发
+            // 的 CloseTop → OverlayHideRoot 广播"迟迟排不到、或者跟外层 PushFrame 的退出
+            // 条件产生竞争，表现为 Overlay 遮罩没能正常收起、卡在原地吃掉后续所有点击。
+            // 改成 ShowInfoAsync + await：不再需要手动起第二个消息泵，弹窗关闭只是让
+            // 这里的 await 自然恢复，没有嵌套 PushFrame，从根上避免这类竞争。
+            await MessageBoxDialog.ShowInfoAsync(
+                $"启动时自动发现了 {newlyAdded.Count} 个新的 .minecraft 文件夹，已加入「版本选择」页的文件夹列表：\n\n{names}",
+                "自动发现新文件夹");
+        }
+        catch (Exception ex)
+        {
+            try { File.AppendAllText(Path.Combine(App.DataDir, "logs", "crash.log"),
+                $"[{DateTime.Now}] [自动扫描.minecraft文件夹失败] {ex}\n\n"); }
+            catch { /* 连日志都写不进去就彻底放弃，不影响启动器正常使用 */ }
+        }
+    }
+
+    /// <summary>
+    /// 启动时静默自动探测 Java：跟 ScanMinecraftFoldersInBackgroundAsync 同一套模式——
+    /// Loaded 之后台线程跑，找到的新 Java 直接登记进"Java 列表"（cfg.InstalledJavas），
+    /// 不需要用户手动打开「设置」页去点"刷新（自动探测）"按钮才能发现新装的 Java。
+    ///
+    /// 合并两路来源：
+    /// 1. JavaService.QuickDetectJavaAsync——已知产品固定路径（JAVA_HOME/注册表/PATH/
+    ///    .minecraft/runtime/.hmcl/java 等），秒回。
+    /// 2. JavaService.ScanCommonJavaLocationsAsync——AppData、Program Files、JAVA_HOME
+    ///    上级目录下的有限深度扫描（4 级找疑似 JDK 文件夹，命中后 6 级内找 javaw.exe），
+    ///    覆盖前者没有硬编码到的自定义/小众发行版安装路径。
+    /// 两路结果按 javaw 路径去重后一起登记，找到就静默加入列表刷新状态栏提示（如果当前正显示
+    /// 「设置」页），找不到/扫描失败都完全静默，不弹窗打扰用户——这只是启动时的锦上添花，
+    /// 用户仍然可以在「设置」页手动点"刷新（自动探测）"或"全盘扫描"兜底。
+    /// </summary>
+    private async Task ScanJavaInBackgroundAsync()
+    {
+        try
+        {
+            // 这两个 Java 探测方法虽然返回 Task，但它们在遇到第一个 await 之前会同步枚举
+            // Program Files / AppData / 注册表 / PATH。直接从 ContentRendered 的 UI 回调调用时，
+            // 这段“async 方法的同步前半段”仍然跑在 UI 线程上，目录多的机器就会出现窗口已经
+            // 打开却连续几秒“未响应”的现象。必须把整个探测调用（包括第一个 await 之前的代码）
+            // 一起丢进线程池，而不是只相信方法名里的 Async。
+            var merged = await Task.Run(async () =>
+            {
+                var javaService = new JavaService();
+                var quick = await javaService.QuickDetectJavaAsync().ConfigureAwait(false);
+                var common = await javaService.ScanCommonJavaLocationsAsync().ConfigureAwait(false);
+
+                return quick.Concat(common)
+                    .GroupBy(c => c.JavawPath, StringComparer.OrdinalIgnoreCase)
+                    .Select(g => g.First())
+                    .ToList();
+            });
+            if (merged.Count == 0) return;
+
+            var cfg = ConfigService.Config;
+            var existingPaths = new HashSet<string>(
+                cfg.InstalledJavas.Select(j => j.JavawPath), StringComparer.OrdinalIgnoreCase);
+
+            var added = 0;
+            foreach (var candidate in merged)
+            {
+                if (existingPaths.Contains(candidate.JavawPath)) continue;
+
+                int? major = candidate.Version != null
+                    ? JavaService.ParseJavaMajorVersion($"\"{candidate.Version}\"")
+                    : null;
+                ConfigService.RegisterJava(candidate.JavawPath, major, "Detected");
+                existingPaths.Add(candidate.JavawPath);
+                added++;
+            }
+
+            if (added == 0) return;
+
+            ConfigService.Save();
+
+            // 如果当前正好显示着「设置」页，顺手刷新一下它的 Java 列表框，让用户立刻看到
+            // 新登记的条目，而不用切出去再切回来才发现列表更新了。不是「设置」页时什么都不做——
+            // 静默登记本身已经完成，下次用户打开「设置」页自然会看到最新列表。
+            if (MainContent.Content is SettingsPage settingsPage)
+                settingsPage.RefreshJavaListPublic();
+        }
+        catch (Exception ex)
+        {
+            try { File.AppendAllText(Path.Combine(App.DataDir, "logs", "crash.log"),
+                $"[{DateTime.Now}] [自动扫描Java失败] {ex}\n\n"); }
+            catch { /* 连日志都写不进去就彻底放弃，不影响启动器正常使用 */ }
+        }
+    }
+
+    /// <summary>
+    /// 统一的右侧内容区切换入口：所有导航（左侧栏点击、其他页面/窗口调用的 NavigateToXxx）
+    /// 都应该通过这里赋值，而不是直接写 MainContent.Content = ...，这样淡入过渡动画
+    /// 才能对所有切页场景统一生效。cfg.EnablePageAnimations 关闭时直接退回原来的
+    /// "瞬间替换"，不跑任何动画、不产生任何额外开销。
+    /// </summary>
+    private void SetMainContent(object page)
+    {
+        // 修复"设置页有未保存改动时静默切页"：SettingsPage.HasUnsavedChanges/SaveNow/
+        // DiscardUnsavedChangesWithoutNavigating 这几个成员原本就是专门为这里准备的
+        // （见各自 XML 注释），但从来没有被接到 SetMainContent 里——导致不管有没有
+        // 未保存改动，切页都是直接静默丢弃。这里在真正替换内容之前拦一下：如果当前
+        // 停在设置页且是非自动保存模式下有未保存改动，就先问用户"重新编辑 / 放弃改动 /
+        // 保存设置"，选"重新编辑"则整个切页动作取消、留在设置页上。
+        if (MainContent.Content is SettingsPage leavingSettingsPage
+            && !ReferenceEquals(page, leavingSettingsPage)
+            && leavingSettingsPage.HasUnsavedChanges)
+        {
+            var choice = MessageBoxDialog.ShowThreeChoice(
+                "设置页还有未保存的改动，离开前要怎么处理这些改动？",
+                "有未保存的设置",
+                "重新编辑", "放弃改动", "保存设置");
+            switch (choice)
+            {
+                case XclMessageResult.Cancel: // 重新编辑：取消这次切页，留在设置页
+                    return;
+                case XclMessageResult.No: // 放弃改动
+                    leavingSettingsPage.DiscardUnsavedChangesWithoutNavigating();
+                    break;
+                case XclMessageResult.Yes: // 保存设置
+                    leavingSettingsPage.SaveNow();
+                    break;
+            }
+        }
+
+        // 修复"切换大界面时下载窗口还在"：旧页面（比如下载中心）弹出的 ProgressWindow
+        // 是独立顶层窗口，不会因为 MainContent.Content 被替换而自动关闭。这里在真正
+        // 切换内容之前统一关掉所有当前存活的进度弹窗，视为"打断操作"。
+        Views.ProgressDialog.CloseAll();
+
+        if (!ConfigService.Config.EnablePageAnimations)
+        {
+            // 关闭动画时先清掉可能残留的动画/位移状态，避免"先开着动画切了一次页，
+            // 再去设置页关掉动画"这种场景下，MainContent 卡在半透明或偏移的位置上不动。
+            MainContent.BeginAnimation(OpacityProperty, null);
+            MainContentTransform.BeginAnimation(System.Windows.Media.TranslateTransform.YProperty, null);
+            MainContentScaleTransform.BeginAnimation(System.Windows.Media.ScaleTransform.ScaleXProperty, null);
+            MainContentScaleTransform.BeginAnimation(System.Windows.Media.ScaleTransform.ScaleYProperty, null);
+            MainContent.Opacity = 1;
+            MainContentTransform.Y = 0;
+            MainContentScaleTransform.ScaleX = 1;
+            MainContentScaleTransform.ScaleY = 1;
+            MainContent.Content = page;
+            return;
+        }
+
+        // 新内容先设置好位移起点（往下 14px、透明），赋值 Content 后立即对
+        // Opacity + TranslateTransform.Y 同时做一个缓出动画，制造"从下方淡入归位"的
+        // 过渡感，而不是生硬地瞬间替换。
+        // 先用 BeginAnimation(prop, null) 停掉上一次可能还没播完的动画再重设起始值，
+        // 否则连续快速切页时，新动画会从"上一次动画播放到一半的当前值"起步而不是干净的
+        // 起始状态，肉眼看起来就像"动画没生效、内容直接跳出来"。
+        MainContent.BeginAnimation(OpacityProperty, null);
+        MainContentTransform.BeginAnimation(System.Windows.Media.TranslateTransform.YProperty, null);
+
+        // 高性能模式：跟低性能模式互斥优先级相反的一档——在原来"淡入+上移"基础上叠加
+        // 缩放，并把缓出函数从普通 QuadraticEase 换成 BackEase(轻微回弹)，做出
+        // macOS/游戏 UI 那种"冲过头一点再弹回来"的约束感动画。跟低性能模式同时打开时
+        // 前面已经 return 了，不会走到这里，不需要再判断一次。
+        var highPerf = ConfigService.Config.EnableHighPerformanceMode;
+
+        MainContentTransform.Y = highPerf ? 22 : 14;
+        MainContent.Opacity = 0;
+        MainContentScaleTransform.ScaleX = highPerf ? 0.96 : 1;
+        MainContentScaleTransform.ScaleY = highPerf ? 0.96 : 1;
+        MainContent.Content = page;
+
+        var duration = TimeSpan.FromMilliseconds(highPerf ? 420 : 260);
+        IEasingFunction easeOut = highPerf
+            ? new BackEase { EasingMode = EasingMode.EaseOut, Amplitude = 0.35 }
+            : new QuadraticEase { EasingMode = EasingMode.EaseOut };
+
+        var fadeIn = new DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(highPerf ? 260 : 260)) { EasingFunction = new QuadraticEase { EasingMode = EasingMode.EaseOut } };
+        var slideUp = new DoubleAnimation(highPerf ? 22 : 14, 0, duration) { EasingFunction = easeOut };
+
+        MainContent.BeginAnimation(OpacityProperty, fadeIn);
+        MainContentTransform.BeginAnimation(System.Windows.Media.TranslateTransform.YProperty, slideUp);
+
+        if (highPerf)
+        {
+            MainContentScaleTransform.BeginAnimation(System.Windows.Media.ScaleTransform.ScaleXProperty, null);
+            MainContentScaleTransform.BeginAnimation(System.Windows.Media.ScaleTransform.ScaleYProperty, null);
+            var scaleAnim = new DoubleAnimation(0.96, 1, duration) { EasingFunction = easeOut };
+            MainContentScaleTransform.BeginAnimation(System.Windows.Media.ScaleTransform.ScaleXProperty, scaleAnim);
+            MainContentScaleTransform.BeginAnimation(System.Windows.Media.ScaleTransform.ScaleYProperty, scaleAnim);
+        }
+        else
+        {
+            MainContentScaleTransform.ScaleX = 1;
+            MainContentScaleTransform.ScaleY = 1;
+        }
+    }
+
+    private void ShowHome()
+    {
+        var page = new HomePage(this);
+        SetMainContent(page);
+    }
+
+    /// <summary>
+    /// 「自动循环」核心逻辑：如果 cfg.AutoThemeCycleEnabled 关闭，什么都不做——完全交给
+    /// 用户手动控制。开启时，按当前系统时间判断现在应该是哪个模式(浅色区间 = 从
+    /// AutoThemeLightStartHour 到 AutoThemeDarkStartHour 之前；深色区间 = 从
+    /// AutoThemeDarkStartHour 到次日 AutoThemeLightStartHour 之前，正确处理"深色区间跨过
+    /// 午夜"的情况)，只有这个判断结果对应的"时间段标识"跟上次已经应用过的不一样时才真正
+    /// 切换配置+重新应用配色——这保证了"手动优先"：用户在同一个时间段内手动点了「模式设置」
+    /// 临时覆盖后，这里不会每分钟都把它纠正回去，只有真正跨入下一个新的时间段才会重新接管。
+    ///
+    /// 由三处触发：(1) MainWindow 构造函数里启动时立即校验一次；(2) _autoThemeCycleTimer
+    /// 每分钟 Tick 一次；(3) 用户在首页刚打开「自动循环」开关，或在设置页刚改了两个切换
+    /// 时间点之后，立即调用一次，保证"设置项保存后一秒内必须看到界面刷新"。
+    /// </summary>
+    public void ReevaluateAutoThemeCycle()
+    {
+        var cfg = ConfigService.Config;
+        if (!cfg.AutoThemeCycleEnabled || cfg.FollowSystemTheme) return; // 「跟随系统」开启时由它独占接管，见 ReevaluateFollowSystemTheme
+
+        var lightStart = Math.Clamp(cfg.AutoThemeLightStartHour, 0, 23);
+        var darkStart = Math.Clamp(cfg.AutoThemeDarkStartHour, 0, 23);
+        var nowHour = DateTime.Now.Hour;
+
+        // 判断当前小时落在"浅色区间"还是"深色区间"，同时记录这个区间的标识（用区间自己的
+        // 起始小时当标识即可，浅色区间标识 = lightStart，深色区间标识 = darkStart）。
+        // 区间可能跨越午夜（比如深色 19 点开始、浅色 8 点开始，19~23 和 0~7 都属于深色区间），
+        // 所以不能简单判断 nowHour >= darkStart，要分 lightStart < darkStart（同一天内浅->深）
+        // 和 lightStart >= darkStart（异常配置，两者相等或反过来）两种情况处理。
+        bool isLightNow;
+        if (lightStart == darkStart)
+        {
+            // 两个时间点设成一样：没有意义的配置，兜底为"始终浅色"，不让用户看到自动循环
+            // 在这种边界情况下抛异常或者死循环判断。
+            isLightNow = true;
+        }
+        else if (lightStart < darkStart)
+        {
+            // 正常情况：比如浅色 8 点、深色 19 点，[8,19) 是浅色，其余(含跨午夜)是深色。
+            isLightNow = nowHour >= lightStart && nowHour < darkStart;
+        }
+        else
+        {
+            // 反过来的配置：比如浅色 22 点、深色 6 点，[22,24)+[0,6) 是浅色，[6,22) 是深色。
+            isLightNow = nowHour >= lightStart || nowHour < darkStart;
+        }
+
+        var targetSlotId = isLightNow ? lightStart : -(darkStart + 1); // 用负数区分深色区间标识，避免跟浅色标识撞在同一个数值上（0 点开始的浅色 vs 0 点开始的深色）
+        if (cfg.AutoThemeLastAppliedSlotStartHour == targetSlotId) return; // 同一个时间段内已经应用过，遵守"手动优先"，不重复纠正
+
+        cfg.AutoThemeLastAppliedSlotStartHour = targetSlotId;
+        cfg.IsDarkMode = !isLightNow;
+        ConfigService.Save();
+
+        ThemeService.ApplyForCurrentState(cfg.GuestModeEnabled, cfg.UiSkin, cfg.IsDarkMode, cfg.CustomAccentColor);
+
+        // 首页「模式设置」按钮显示的是缓存在 HomePage 里的旧勾选状态，配色已经变了但按钮
+        // 文案还没跟上，这里如果当前正显示首页就顺手刷新一下，避免出现"背景已经变深，
+        // 按钮却还写着浅色模式"的不一致。
+        if (MainContent?.Content is HomePage homePage)
+        {
+            homePage.RefreshThemeToggles();
+        }
+    }
+
+    /// <summary>Microsoft.Win32.SystemEvents.UserPreferenceChanged 的回调：事件本身不区分
+    /// 具体是哪一类系统偏好变了（背景、强调色、主题模式……都会触发一次 Category=General），
+    /// 直接复用 ReevaluateFollowSystemTheme 内部"跟上次应用的系统深浅色状态比对，没变就
+    /// 快速返回"的判断即可，不需要在这里单独过滤事件类别。回调可能不在 UI 线程上，
+    /// 切回 Dispatcher 再处理，避免跨线程操作 UI 抛异常。</summary>
+    private void OnSystemUserPreferenceChanged(object? sender, Microsoft.Win32.UserPreferenceChangedEventArgs e)
+    {
+        Dispatcher.Invoke(ReevaluateFollowSystemTheme);
+    }
+
+    /// <summary>
+    /// 「跟随系统深浅色」核心逻辑：跟 ReevaluateAutoThemeCycle 是同一套"手动优先、只在真正
+    /// 需要切换时才写配置+重新应用配色"的思路，只是判断依据从"当前系统时间落在哪个区间"
+    /// 换成了"当前 Windows 系统的应用深浅色主题设置"（<see cref="ThemeService.GetSystemIsDarkMode"/>）。
+    /// cfg.FollowSystemTheme 关闭时什么都不做；跟 AutoThemeCycleEnabled 是互斥的两种自动
+    /// 来源（见 AppConfig.FollowSystemTheme 注释），这里不再重复检查——设置页/首页在开启
+    /// 跟随系统时已经保证 AutoThemeCycleEnabled 会被同时关掉。
+    ///
+    /// 由三处触发：(1) MainWindow 构造函数里启动时立即校验一次；(2) SystemEvents.
+    /// UserPreferenceChanged 事件（用户在 Windows 设置里改主题的瞬间）；(3) 用户在设置页/
+    /// 首页刚打开这个开关时，立即调用一次，保证"设置项保存后一秒内必须看到界面刷新"这个
+    /// 项目里一贯的要求。
+    /// </summary>
+    public void ReevaluateFollowSystemTheme()
+    {
+        var cfg = ConfigService.Config;
+        if (!cfg.FollowSystemTheme) return;
+
+        var systemIsDark = ThemeService.GetSystemIsDarkMode();
+        if (cfg.IsDarkMode == systemIsDark) return; // 已经跟系统一致，不重复应用
+
+        cfg.IsDarkMode = systemIsDark;
+        ConfigService.Save();
+
+        ThemeService.ApplyForCurrentState(cfg.GuestModeEnabled, cfg.UiSkin, cfg.IsDarkMode, cfg.CustomAccentColor);
+
+        if (MainContent?.Content is HomePage homePage)
+        {
+            homePage.RefreshThemeToggles();
+        }
+    }
+
+    /// <summary>
+    /// 通用的"懒加载切页"辅助方法：先立刻切一个极轻量的"正在加载…"占位内容，让点击
+    /// 有即时反馈、界面不冻结；真正的目标页面挪到下一帧（Background 优先级）再构造，
+    /// 构造完成后再换上去。如果这段时间内用户已经手动切去了别的页面，就不再把过时的
+    /// 页面插回去。
+    ///
+    /// 之前只有「百宝箱」一个入口这么处理，其余 NavigateToXxx 都是点击的同一帧里同步
+    /// new 一个较重的页面（XAML 控件树 + 构造函数里的业务逻辑），在控件多、样式/资源
+    /// 绑定复杂的页面上会有肉眼可见的卡顿——这正是"首页十分卡，特别是切换页面时"的
+    /// 根因：卡顿其实发生在"构造目标页面"这一步，不是首页本身的问题，只是切走/切回
+    /// 首页时正好会经过这一步而被用户感知成"首页卡"。这里把同一套懒加载模式抽成
+    /// 公共方法，应用到所有会切主内容区的导航点。
+    /// </summary>
+    /// <param name="factory">构造目标页面的工厂方法，会在下一帧的后台优先级里调用。</param>
+    /// <param name="onLoaded">页面真正显示出来之后要做的收尾操作（比如带参数跳转时
+    /// 顺带触发一次搜索），只有页面没有被过时切换打断时才会调用。</param>
+    private UIElement CreateLoadingPlaceholder()
+    {
+        var dots = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            Margin = new Thickness(0, 10, 0, 0)
+        };
+        for (int i = 0; i < 3; i++)
+        {
+            var dot = new System.Windows.Shapes.Ellipse
+            {
+                Width = 7,
+                Height = 7,
+                Margin = new Thickness(i == 0 ? 0 : 6, 0, 0, 0),
+                Fill = (Brush)FindResource("AccentBrush"),
+                Opacity = 0.28
+            };
+            dots.Children.Add(dot);
+            if (!ConfigService.Config.LowPerformanceMode)
+            {
+                var pulse = new DoubleAnimation(0.28, 1.0, TimeSpan.FromMilliseconds(520))
+                {
+                    AutoReverse = true,
+                    RepeatBehavior = RepeatBehavior.Forever,
+                    BeginTime = TimeSpan.FromMilliseconds(i * 150),
+                    EasingFunction = new SineEase { EasingMode = EasingMode.EaseInOut }
+                };
+                dot.BeginAnimation(OpacityProperty, pulse);
+            }
+        }
+
+        var content = new StackPanel
+        {
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        content.Children.Add(new TextBlock
+        {
+            Text = Loc.T("Str_Ui_Loading", "正在加载页面…"),
+            FontSize = 14,
+            FontWeight = FontWeights.SemiBold,
+            Foreground = (Brush)FindResource("TextPrimaryBrush"),
+            HorizontalAlignment = HorizontalAlignment.Center
+        });
+        content.Children.Add(dots);
+        content.Children.Add(new TextBlock
+        {
+            Text = "正在准备界面与数据",
+            FontSize = 10,
+            Margin = new Thickness(0, 9, 0, 0),
+            Foreground = (Brush)FindResource("TextSecondaryBrush"),
+            HorizontalAlignment = HorizontalAlignment.Center
+        });
+
+        return new Border
+        {
+            Background = (Brush)FindResource("PanelBrush"),
+            BorderBrush = (Brush)FindResource("BorderBrush2"),
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(16),
+            Margin = new Thickness(10),
+            Child = content
+        };
+    }
+
+    private void NavigateLazy(Func<UIElement> factory, Action<UIElement>? onLoaded = null)
+    {
+        var placeholder = CreateLoadingPlaceholder();
+        SetMainContent(placeholder);
+
+        Dispatcher.BeginInvoke(new Action(() =>
+        {
+            var page = factory();
+            if (ReferenceEquals(MainContent.Content, placeholder))
+            {
+                SetMainContent(page);
+                onLoaded?.Invoke(page);
+            }
+        }), System.Windows.Threading.DispatcherPriority.Background);
+    }
+
+    private void NavHome_Click(object sender, RoutedEventArgs e) => ShowHome();
+
+    private void NavVersions_Click(object sender, RoutedEventArgs e)
+    {
+        NavigateLazy(() => new VersionSelectPage(this));
+    }
+
+    /// <summary>供其他页面/弹窗调用的公开导航方法，跳转到版本选择页——加载器安装/切换/互换的
+    /// 入口都在这个页面上（每个版本卡片的加载器安装按钮）。之前只有 NavHome_Click 这个私有
+    /// 事件处理方法能跳到这个页面，别的窗口（比如实例设置弹窗的"加载器维护"按钮）没有对应
+    /// 的公开方法可调用，只能退而求其次跳到不相关的设置页——现在补上，跟
+    /// NavigateToDownloadCenter/NavigateToModManager 等方法保持同样的写法。</summary>
+    public void NavigateToVersions() => NavigateLazy(() => new VersionSelectPage(this));
+
+    /// <summary>
+    /// 修复"一锅乱炖"（多加载器合装）装完之后启动器找不到新版本的问题：
+    /// VersionSelectPage 只在自己构造函数里扫描一次 versions/ 目录，装完之后没人告诉它
+    /// "该重新扫一遍了"。这里如果当前主内容区正好显示的就是版本选择页，就直接重新 new
+    /// 一个换上去（VersionSelectPage 的构造函数本身就会做一次干净的目录扫描），
+    /// 新装好的版本文件夹自然就出现在列表里了；如果用户当前在别的页面，
+    /// 则什么都不用做——下次导航到版本选择页时反正会重新 new 一个实例、重新扫描。
+    /// </summary>
+    public void RefreshVersionsPageIfActive()
+    {
+        if (MainContent.Content is VersionSelectPage)
+        {
+            SetMainContent(new VersionSelectPage(this));
+        }
+    }
+
+    private void NavDownload_Click(object sender, RoutedEventArgs e)
+    {
+        NavigateLazy(() => new DownloadCenterPage(this));
+    }
+
+    /// <summary>供其他页面/窗口调用的公开导航方法，跳转到下载中心。</summary>
+    public void NavigateToDownloadCenter() => NavigateLazy(() => new DownloadCenterPage(this));
+
+    private void NavMultiplayer_Click(object sender, RoutedEventArgs e)
+    {
+        NavigateLazy(() => new MultiplayerPage(this));
+    }
+
+    /// <summary>供其他页面调用的公开导航方法，跳转到「联机」页（陶瓦联机/红石联机入口）。</summary>
+    public void NavigateToMultiplayer() => NavigateLazy(() => new MultiplayerPage(this));
+
+    /// <summary>
+    /// 从「联机」页跳转到下载中心并直接按给定关键词搜索 Mod——用于"红石联机"的
+    /// 一键搜索安装入口，复用下载中心现成的 Mod 分类 + Modrinth 综合搜索逻辑，
+    /// 不需要在联机页里重新实现一遍下载/安装流程。
+    /// </summary>
+    public void NavigateToDownloadCenterWithModSearch(string keyword)
+    {
+        NavigateLazy(
+            () => new DownloadCenterPage(this),
+            page => ((DownloadCenterPage)page).SelectModCategoryAndSearch(keyword));
+    }
+
+    private void NavModManager_Click(object sender, RoutedEventArgs e)
+    {
+        NavigateLazy(() => new ModManagerPage(this));
+    }
+
+    /// <summary>供其他页面/窗口调用的公开导航方法，跳转到本地 Mod 管理页。</summary>
+    public void NavigateToModManager() => NavigateLazy(() => new ModManagerPage(this));
+
+    private void NavServerManager_Click(object sender, RoutedEventArgs e)
+    {
+        NavigateLazy(() => new ServerManagerPage(this));
+    }
+
+    /// <summary>供其他页面/窗口调用的公开导航方法，跳转到服务端管理页。</summary>
+    public void NavigateToServerManager() => NavigateLazy(() => new ServerManagerPage(this));
+
+    private void NavAccounts_Click(object sender, RoutedEventArgs e)
+    {
+        NavigateLazy(() => new LoginPage(this));
+    }
+
+    /// <summary>供其他窗口（如首次启动向导）调用的公开导航方法，跳转到账户管理页。</summary>
+    public void NavigateToAccounts() => NavigateLazy(() => new LoginPage(this));
+
+    private void NavSettings_Click(object sender, RoutedEventArgs e)
+    {
+        NavigateLazy(() => new SettingsPage(this));
+    }
+
+    /// <summary>供其他页面/窗口调用的公开导航方法，跳转到设置页。</summary>
+    public void NavigateToSettings() => NavigateLazy(() => new SettingsPage(this));
+
+    private void NavLogs_Click(object sender, RoutedEventArgs e)
+    {
+        NavigateLazy(() => new LogsPage(this));
+    }
+
+    /// <summary>供其他页面/弹窗调用的公开导航方法，跳转到日志页（比如崩溃提示弹窗的"查看日志"按钮）。</summary>
+    public void NavigateToLogs() => NavigateLazy(() => new LogsPage(this));
+
+    private void NavAiAssistant_Click(object sender, RoutedEventArgs e)
+    {
+        NavigateToAiAssistant();
+    }
+
+    /// <summary>创建并完成事件接线的 AI 助手面板。普通导航和日志页“提交给 AI”共用这一处，
+    /// 避免两条入口后续出现设置保存逻辑不一致。</summary>
+    private AiAssistantPanel CreateAiAssistantPanel()
+    {
+        var panel = new AiAssistantPanel();
+        panel.Attach(AiAssistantService, AiAssistantConfig);
+        panel.CloseRequested += (_, _) => ShowHome();
+        panel.SettingsRequested += (_, _) =>
+        {
+            var settingsPanel = new AiAssistantSettingsPanel(AiAssistantConfig);
+            settingsPanel.Saved += (_, config) =>
+            {
+                AiAssistantConfig = config;
+                AiAssistantService.UpdateConfig(AiAssistantConfig);
+                PersistAiAssistantConfig();
+                UpdateAiFloatingButtonVisibility();
+                // 保存设置只刷新配置，不重新 Attach；否则 Attach 会重新选择历史 Session，
+                // 用户正在进行的对话会看起来“消失”。
+                panel.ApplyConfig(AiAssistantConfig);
+            };
+            OverlayDialogService.ShowModal(settingsPanel);
+        };
+        return panel;
+    }
+
+    /// <summary>把 AI 助手完整配置立即落盘。面板里的模式/模型快速切换也调用这里。</summary>
+    public void PersistAiAssistantConfig()
+    {
+        AiAssistantConfig.AutoModelRouting = AiAssistantConfig.RoutingMode == AiRoutingMode.Auto;
+        ConfigService.Config.AiAssistant = AiAssistantConfig;
+        ConfigService.Config.AiAssistantFloatingButton = AiAssistantConfig.ShowFloatingButton;
+        ConfigService.Save();
+    }
+
+    /// <summary>供其他页面/窗口调用的公开导航方法，跳转到 AI 助手面板。</summary>
+    public void NavigateToAiAssistant() => NavigateLazy(() => CreateAiAssistantPanel());
+
+    /// <summary>日志/诊断页面专用：打开 AI 助手后自动把分析任务作为一个全新的会话发送。
+    /// NavigateLazy 的 onLoaded 保证控件真正挂到可视树之后才开始发送，不会抢占页面切换的首帧。</summary>
+    public void NavigateToAiAssistantWithPrompt(string prompt, string sessionTitle = "日志分析", bool isCrashLogContext = false)
+    {
+        NavigateLazy(
+            () => CreateAiAssistantPanel(),
+            page =>
+            {
+                if (page is AiAssistantPanel panel)
+                    _ = panel.SubmitExternalPromptAsync(prompt, sessionTitle, isCrashLogContext);
+            });
+    }
+
+    /// <summary>愚人节小白旗：具体的"恢复+弹说明+落盘"逻辑全部委托给 AprilFoolsUi，
+    /// 这里只是把 Click 事件接进去，保持跟其它按钮一致的接线方式。</summary>
+    private void AprilFoolsFlagButton_Click(object sender, RoutedEventArgs e) => AprilFoolsUi.OnWhiteFlagClicked(this);
+
+    private void AiFloatingButton_Click(object sender, RoutedEventArgs e)
+    {
+        NavigateToAiAssistant();
+    }
+
+    private void NavExperimental_Click(object sender, RoutedEventArgs e)
+    {
+        OpenExperimentalFeatures();
+    }
+
+    private void NavToolbox_Click(object sender, RoutedEventArgs e) => NavigateToToolbox();
+
+    /// <summary>
+    /// 供其他页面/窗口调用的公开导航方法，跳转到「百宝箱」页。
+    ///
+    /// 「百宝箱」页 XAML 一次性铺了 5 个 Tab 的完整控件树（成就图片生成器、皮肤头像、
+    /// 文件/皮肤下载、加载器 Jar 下载、系统工具），首次 InitializeComponent 时这些控件、
+    /// 样式、DynamicResource 绑定要一次性建好，实测首次点开会有一下明显的卡顿——卡在
+    /// "构造 ToolboxPage 本身"这一步，跟某个具体 Tab 的业务逻辑无关（那些已经各自做过
+    /// 异步化，见 ToolboxPage.xaml.cs 里的相关注释）。
+    ///
+    /// 这里把"构造 ToolboxPage"从点击的同一帧里挪开，做成简单的懒加载：先立刻切一个
+    /// 极轻量的"正在加载…"占位内容，让点击有即时反馈、界面不冻结；真正的 ToolboxPage
+    /// 放到下一帧（Background 优先级）再构造，构造完成后再换上去。如果这段时间内用户
+    /// 已经手动切去了别的页面，就不再把过时的 ToolboxPage 插回去。
+    ///
+    /// 只对百宝箱这一个入口做这个处理，其他所有 NavigateToXxx 方法保持原来的同步
+    /// SetMainContent(new XxxPage(this)) 不变，不会因为这个改动变慢或变卡。
+    /// </summary>
+    public void NavigateToToolbox()
+    {
+        NavigateLazy(() => new ToolboxPage(this));
+    }
+
+    private void NavBedrock_Click(object sender, RoutedEventArgs e)
+    {
+        OpenBedrockWithAgreementGate();
+    }
+
+    /// <summary>供其他页面/窗口调用的公开导航方法，跳转到「基岩版启动」页。</summary>
+    public void NavigateToBedrock() => OpenBedrockWithAgreementGate();
+
+    /// <summary>
+    /// 「基岩版启动」统一入口。基岩版客户端/服务端由 Microsoft/Mojang 分发，进入页面
+    /// 前必须先同意《基岩版分发协议》（微软的分发法律协议）：未同意时弹协议确认框，
+    /// 不同意就直接返回当前页面（不进入），之后可以再点进入重新同意；同意后写入配置
+    /// 持久化，然后才进入页面。
+    /// </summary>
+    private void OpenBedrockWithAgreementGate()
+    {
+        if (!ConfigService.Config.BedrockAgreementAccepted)
+        {
+            var agree = MessageBoxDialog.ShowConfirm(
+                "基岩版（Minecraft for Windows 客户端及基岩版专用服务端）由 Microsoft/Mojang 分发，" +
+                "受相关法律协议约束：\n\n" +
+                "1. 基岩版客户端通过 Microsoft Store 分发，需用户本人持有有效的微软账号与 Minecraft 许可证。" +
+                "本启动器只负责检测、唤起、管理已安装的客户端，不参与任何绕过 Store 许可证获取客户端包的行为。\n" +
+                "2. 基岩版专用服务端（BDS）由 Mojang 在官网公开免费发布，按其服务端 EULA 使用。\n" +
+                "3. 使用基岩版相关功能，即表示你已阅读并同意 Microsoft Store 服务条款、" +
+                "Minecraft 最终用户许可协议（EULA）及 Mojang 服务条款（https://www.minecraft.net/terms）。\n\n" +
+                "是否同意以上协议并继续进入「基岩版启动」页面？",
+                "基岩版分发协议");
+            if (!agree) return;   // 不同意就返回，可再点进入重新同意
+
+            ConfigService.Config.BedrockAgreementAccepted = true;
+            ConfigService.Save();
+        }
+        SetMainContent(new BedrockPage(this));
+    }
+
+    private void NavAboutHelp_Click(object sender, RoutedEventArgs e)
+    {
+        OpenAboutHelpWithMicrosoftChineseWarning();
+    }
+
+    /// <summary>供其他页面/窗口调用的公开导航方法，跳转到「鸣谢与帮助」页。</summary>
+    public void NavigateToAboutHelp() => OpenAboutHelpWithMicrosoftChineseWarning();
+
+    /// <summary>
+    /// 「鸣谢与帮助」统一入口。微软中文（zh-microsoft）界面是实验性翻译，
+    /// 现有及将来都不会提供完整维护，所以先用确认弹窗提醒用户、用户确认后才进入；
+    /// 其它语言直接进入。
+    /// </summary>
+    private void OpenAboutHelpWithMicrosoftChineseWarning()
+    {
+        if (LocalizationService.CurrentLanguageCode == "zh-microsoft" &&
+            !MessageBoxDialog.ShowConfirm(
+                "当前界面语言为「简体中文（Microsoft）」。该翻译现在及将来都不会得到完整支持，" +
+                "部分文案可能显示不全或翻译不准确。是否仍要继续打开「鸣谢与帮助」？",
+                "简体中文（Microsoft）提示"))
+        {
+            return;
+        }
+        SetMainContent(new AboutHelpPage(this));
+    }
+
+    /// <summary>侧边栏当前是否处于"收起"状态。</summary>
+    private bool _sidebarCollapsed;
+
+    private const double SidebarExpandedWidthDefault = 180;
+    private const double SidebarExpandedWidthMicrosoftChinese = 220;
+    private const double SidebarCollapsedWidth = 56;
+
+    /// <summary>
+    /// 展开态侧边栏宽度：简体中文等语言 180 足够放下所有导航文案，不用改；
+    /// 只有微软中文（zh-microsoft）的翻译文案普遍更长（180 会省略号截断），才加宽到 220。
+    /// 语言切换后 LanguageChanged 会重新应用一次（见 OnLanguageChanged）。
+    /// </summary>
+    private double SidebarExpandedWidth =>
+        LocalizationService.CurrentLanguageCode == "zh-microsoft"
+            ? SidebarExpandedWidthMicrosoftChinese
+            : SidebarExpandedWidthDefault;
+
+    private void SidebarCollapseToggle_Click(object sender, RoutedEventArgs e)
+    {
+        ApplySidebarCollapsedState(!_sidebarCollapsed);
+    }
+
+    /// <summary>
+    /// 应用"功能隐藏"设置：目前只覆盖主导航栏的下载/设置/工具三个入口（跟设置页
+    /// FeatureVisibilityService.Groups 里"主页面"这一组对应）——子页面/特定功能那些
+    /// 更细粒度的隐藏项，各自的宿主页面（SettingsPage/ToolboxPage 等）在自己
+    /// 加载时各自读取判断，不需要 MainWindow 统一处理。每次进入/离开设置页保存、
+    /// 或按 F12 切换临时显示时都要重新调用一次这个方法，确保导航栏立即反映最新状态。
+    /// </summary>
+    public void ApplyFeatureVisibility()
+    {
+        var cfg = ConfigService.Config;
+        NavDownloadButton.Visibility = FeatureVisibilityService.IsVisible(cfg, FeatureVisibilityService.NavDownload) ? Visibility.Visible : Visibility.Collapsed;
+        NavSettingsButton.Visibility = FeatureVisibilityService.IsVisible(cfg, FeatureVisibilityService.NavSettings) ? Visibility.Visible : Visibility.Collapsed;
+        NavToolboxButton.Visibility = FeatureVisibilityService.IsVisible(cfg, FeatureVisibilityService.NavToolbox) ? Visibility.Visible : Visibility.Collapsed;
+        NavAiAssistantButton.Visibility = FeatureVisibilityService.IsVisible(cfg, FeatureVisibilityService.NavAiAssistant) ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    /// <summary>更新 AI 悬浮球显示状态，由设置页的 FloatingButtonCheck 控制。当 AI 面板打开时隐藏悬浮球。</summary>
+    public void UpdateAiFloatingButtonVisibility(bool? forceShow = null)
+    {
+        if (AiFloatingButton != null)
+        {
+            if (forceShow.HasValue)
+            {
+                AiFloatingButton.Visibility = forceShow.Value && ConfigService.Config.AiAssistantFloatingButton ? Visibility.Visible : Visibility.Collapsed;
+            }
+            else
+            {
+                AiFloatingButton.Visibility = ConfigService.Config.AiAssistantFloatingButton ? Visibility.Visible : Visibility.Collapsed;
+            }
+        }
+    }
+
+    /// <summary>
+    /// 侧边栏收起/展开的统一应用逻辑：宽度、Logo、每个导航按钮的文字部分、
+    /// 底部进程控制按钮组、启动游戏按钮，全部按同一个 collapsed 状态联动切换，
+    /// 避免"点了收起，某几个地方没跟着变"这种不一致。
+    ///
+    /// 收起态设计（对应需求描述）：
+    /// - 三横杠(☰)按钮变成一个点(●)；
+    /// - 导航按钮只剩图标（文字 TextBlock 部分 Collapsed，图标 TextBlock 单独放在同一个
+    ///   StackPanel 里，收起时直接把文字那块 TextBlock 隐藏，图标 TextBlock 不受影响）；
+    /// - 进程控制三按钮只保留"关闭所选"，文案缩成"关"字（用 CloseSelectedBtnCollapsed 这个
+    ///   独立按钮，跟展开态的 UniformGrid 三件套做 Visibility 二选一）；
+    /// - "启动游戏"长条按钮换成一个圆形图标按钮；
+    /// - 账户/版本信息缩短显示（比如账户名太长时省略号截断，版本号只留主版本号）。
+    /// </summary>
+    private void ApplySidebarCollapsedState(bool collapsed)
+    {
+        _sidebarCollapsed = collapsed;
+
+        SidebarColumn.Width = new GridLength(collapsed ? SidebarCollapsedWidth : SidebarExpandedWidth);
+
+        // ===== 修复「收起后图标只剩 1 像素」=====
+        // 旧版只改了列宽，没有同步收掉内边距，于是留给图标的净宽被一路吃到只剩 10px：
+        //     56(列宽) − 24(SidebarPanel.Margin=12 左右) − 20(SideNavButton.Padding=10,10)
+        //     − 2(模板 BorderThickness="2,0,0,0") = 10px
+        // 而图标至少需要 20px（NavIconBox 固定尺寸）。收起态必须把 Margin/Padding 一起收掉，
+        // 否则不管图标换成 emoji 还是矢量，都一样会被裁掉。
+        //     56 − 8(Margin 左右各 4) − 0(Padding 归零) − 2(左描边) = 46px ≥ 20px，宽裕。
+        SidebarPanel.Margin = collapsed ? new Thickness(4, 12, 4, 12) : new Thickness(12);
+
+        // 折叠切换按钮的图标：三横杠 ↔ 一个圆点。现在是 Path 不是 TextBlock，改的是 Data。
+        SidebarToggleIcon.Data = (Geometry)FindResource(collapsed ? "IconDot" : "IconMenu");
+        LogoText.Visibility = collapsed ? Visibility.Collapsed : Visibility.Visible;
+
+        // 导航按钮：文字 TextBlock 隐藏/显示（{DynamicResource Str_Nav_Xxx} 绑定保持不变，
+        // 收起态只是不显示，不是清空文案，展开时立即恢复，不需要手动缓存/还原字符串），
+        // 按钮内容居中对齐（收起时）或靠左对齐（展开时），这样收起态下只剩 emoji 图标会
+        // 自然居中，不会贴在按钮左边显得很怪。
+        foreach (var (button, icon, label) in new (Button, FrameworkElement, TextBlock)[]
+                 {
+                     (NavHomeButton, NavHomeIcon, NavHomeLabel),
+                     (NavVersionsButton, NavVersionsIcon, NavVersionsLabel),
+                     (NavDownloadButton, NavDownloadIcon, NavDownloadLabel),
+                     (NavMultiplayerButton, NavMultiplayerIcon, NavMultiplayerLabel),
+                     (NavModManagerButton, NavModManagerIcon, NavModManagerLabel),
+                     (NavServerManagerButton, NavServerManagerIcon, NavServerManagerLabel),
+                     (NavToolboxButton, NavToolboxIcon, NavToolboxLabel),
+                     (NavBedrockButton, NavBedrockIcon, NavBedrockLabel),
+                     (NavAccountsButton, NavAccountsIcon, NavAccountsLabel),
+                     (NavSettingsButton, NavSettingsIcon, NavSettingsLabel),
+                     (NavLogsButton, NavLogsIcon, NavLogsLabel),
+                     (NavExperimentalButton, NavExperimentalIcon, NavExperimentalLabel),
+                 })
+        {
+            label.Visibility = collapsed ? Visibility.Collapsed : Visibility.Visible;
+            button.HorizontalContentAlignment = collapsed ? HorizontalAlignment.Center : HorizontalAlignment.Left;
+
+            // 图标本身是固定 20×20 的 NavIconBox，Margin 只影响它和文字之间的间距，
+            // 不再影响图标自身尺寸（这正是换成矢量+固定盒子之后最大的好处：
+            // 无论外面怎么调间距，图标都不会被压扁）。
+            icon.Margin = new Thickness(0);
+
+            // 关键：收起态把按钮左右内边距归零，把宽度全部让给图标；
+            // 上下保留 10px 保证点击热区够大。展开态恢复原来的 10,10。
+            button.Padding = collapsed ? new Thickness(0, 10, 0, 10) : new Thickness(10, 10, 10, 10);
+
+            // 按钮之间的垂直间距：收起态只剩一排图标，加大到 10px 免得又挤又密。
+            button.Margin = collapsed ? new Thickness(0, 10, 0, 0) : new Thickness(0, 4, 0, 0);
+        }
+
+        // 进程控制按钮组：收起态只留"关闭所选"缩写成"关"。
+        ProcessControlExpanded.Visibility = collapsed ? Visibility.Collapsed : Visibility.Visible;
+        CloseSelectedBtnCollapsed.Visibility = collapsed ? Visibility.Visible : Visibility.Collapsed;
+
+        // 启动游戏按钮：展开态长条 / 收起态圆形图标二选一。
+        LaunchGameBtn.Visibility = collapsed ? Visibility.Collapsed : Visibility.Visible;
+        LaunchGameBtnCollapsed.Visibility = collapsed ? Visibility.Visible : Visibility.Collapsed;
+
+        // 账户/版本信息：收起态下横向空间只剩图标那么宽，长文字必然放不下，
+        // 索性直接换成极简缩写（如图2示例：账户名只显示前几个字符+省略号，版本号只留数字），
+        // 而不是让 WPF 自动换行把这一小块区域撑得很高、把下面的按钮全部往下挤。
+        if (!collapsed)
+        {
+            // 展开态：换回左对齐 + 完整文案（RefreshSidebar 里已经算好的），
+            // 不依赖 RefreshAccountVersionSidebarText 的 early-return（那里只在 _sidebarCollapsed
+            // 为 true 时才会真正改写文案，为 false 时直接跳过——所以这里展开时要主动重新调用
+            // 一次 RefreshSidebar 让完整文案生效，同时把对齐方式改回左边）。
+            CurrentAccountText.TextAlignment = TextAlignment.Left;
+            CurrentVersionText.TextAlignment = TextAlignment.Left;
+            // 展开态恢复换行（收起时被关掉了，见 RefreshAccountVersionSidebarText），
+            // 否则长账户名展开后也不换行、被直接截断。
+            CurrentAccountText.TextWrapping = TextWrapping.Wrap;
+            CurrentVersionText.TextWrapping = TextWrapping.Wrap;
+            CurrentAccountText.TextTrimming = TextTrimming.None;
+            CurrentVersionText.TextTrimming = TextTrimming.None;
+            RefreshSidebar();
+        }
+        else
+        {
+            RefreshAccountVersionSidebarText();
+        }
+    }
+
+
+
+    /// <summary>
+    /// 语言切换完成后的统一刷新：实验性功能按钮显隐（原 RefreshExperimentalNavVisibility）
+    /// + 侧边栏展开宽度（微软中文文案更长需要加宽，见 SidebarExpandedWidth）。
+    /// 构造函数里订阅一次，运行时切换语言立即生效。
+    /// </summary>
+    private void OnLanguageChanged()
+    {
+        RefreshExperimentalNavVisibility();
+        ApplySidebarCollapsedState(_sidebarCollapsed);
+    }
+
+    /// <summary>
+    /// 根据当前启动器界面语言控制侧边栏"实验性功能"按钮的显隐（见
+    /// LocalizationService.ExperimentalFeaturesLanguageGate 注释：这批功能还没有多语言界面，
+    /// 只在简体中文下展示）。构造函数调用一次做初始同步，LanguageChanged 事件触发时
+    /// 再调一次，保证运行时切换语言立即生效，不需要重启/切页面。
+    /// </summary>
+    private void RefreshExperimentalNavVisibility()
+    {
+        NavExperimentalButton.Visibility =
+            LocalizationService.CurrentLanguageCode == LocalizationService.ExperimentalFeaturesLanguageGate
+                ? Visibility.Visible
+                : Visibility.Collapsed;
+    }
+
+    /// <summary>
+    /// "实验性功能"统一入口：第一次打开（cfg.ExperimentalFeaturesUnlocked 还是 false）先弹
+    /// ExperimentalGateWindow 强制等待 10 秒确认，确认过一次之后这个标记会持久化保存，
+    /// 后续再打开直接展示面板，不需要重复罚站。
+    /// 侧边栏"实验性功能"按钮和「设置」页里原来的入口都调这一个方法，避免同一段
+    /// "先查/写 ExperimentalFeaturesUnlocked，再决定要不要弹网关窗口"的逻辑在两个地方各写一遍、
+    /// 以后改一处忘了改另一处。
+    /// </summary>
+    public void OpenExperimentalFeatures()
+    {
+        var cfg = ConfigService.Config;
+
+        if (!cfg.ExperimentalFeaturesUnlocked)
+        {
+            // 修复编译错误 CS0117："ExperimentalGateWindow 未包含 Owner 的定义"。
+            // ExperimentalGateWindow 已迁移成 Overlay 弹窗（继承 OverlayDialogControl，
+            // 一个 UserControl），本来就没有 Owner 这个属性——居中和层叠关系现在统一由
+            // MainWindow 的 OverlayCard 负责，不再需要每个弹窗各自指定 owner。
+            // 这是上一轮批量清理 Owner 初始化器时的漏网：清理用的正则要求
+            // "new Xxx(...) { Owner = ... }" 带括号的构造调用，而这里是
+            // "new Xxx { Owner = ... }" 省略括号的对象初始化器写法，没被正则命中。
+            var gate = new ExperimentalGateWindow();
+            gate.ShowDialog();
+
+            if (!gate.Confirmed) return; // 用户取消/关闭窗口：不解锁，不打开实验性功能面板
+
+            cfg.ExperimentalFeaturesUnlocked = true;
+            ConfigService.Save();
+        }
+
+        var window = new ExperimentalFeaturesWindow(this);
+        window.ShowDialog();
+
+        // 修复"关闭实验性功能窗口时启动器主窗口会自动最小化"：ExperimentalFeaturesWindow
+        // 内部还会再弹出 MultiLoaderInstallWindow 等子窗口，多层 ShowDialog() 关闭之后，
+        // Windows 有时不会把前台焦点正确交还给 Owner（尤其是子窗口本身也丢了焦点、或者
+        // 用户在等待期间切到了其它程序），观感上就是"关掉这个窗口，主窗口自己缩没了"。
+        // 复用 EnsureVisibleForDialog()：如果这期间被最小化了就恢复到之前的真实状态
+        // (Normal/Maximized) 并 Activate() 抢回前台，不最小化则什么都不做。
+        EnsureVisibleForDialog();
+    }
+
+    /// <summary>
+    /// 启动游戏的入口，原来只被主窗口左下角的"启动游戏"按钮调用，现在首页磁贴的
+    /// "启动游戏"按钮也会调用这个方法（见 HomePage.xaml.cs），改成 public 供跨页面复用，
+    /// 两处共享同一套防手滑冷却状态（_lastLaunchClickAtUtc/LaunchGameBtn），不会出现
+    /// "首页点了启动、左下角按钮的冷却状态却没跟着更新"这种不一致。
+    /// </summary>
+    public void Launch_Click(object sender, RoutedEventArgs e) => Launch_Click(sender, e, skipAccountConfirm: false);
+
+    /// <summary>
+    /// 修复"傻瓜式启动/一键开始游戏完成后，还会再弹一次「选择要用来启动游戏的账户」"：
+    /// QuickStartWizardWindow 步骤 1 已经让用户显式选过/登录过账户（不确认好账户不能进下一步），
+    /// 走到最后一步调用这里启动游戏时，账户早就是用户当场确认过的，没有必要在同一次操作里
+    /// 再弹一遍一模一样的选择框——对用户来说这不是"多一次确认机会"，而是"同一件事问了两遍"，
+    /// 显得启动器没记住自己刚刚做过的选择。skipAccountConfirm=true 时跳过下面的账户确认弹窗，
+    /// 直接使用 ConfigService.GetSelectedAccount()（此时必定是向导里选定的那个账户）。
+    /// 普通入口（左下角"启动游戏"按钮/首页磁贴）不知道用户是否刚确认过账户，继续走原来的
+    /// public 无参重载，默认不跳过。
+    /// </summary>
+    public async void Launch_Click(object sender, RoutedEventArgs e, bool skipAccountConfirm)
+    {
+        // 愚人节彩蛋钩子：RickRoll1/RickRoll2/FakeWin32Error/LauncherRefuses 任意一种生效时，
+        // 这次点击被"劫持"，不执行真正的启动逻辑（对应需求 1/2/4/7 号手段）。
+        if (AprilFoolsUi.TryInterceptLaunchOrDownload(this)) return;
+
+        // 需求："从点击'启动游戏'到等待游戏窗口出现的间隙，按钮变成'取消启动'；
+        // 点击'取消启动'时不再弹出选择账户的界面（也不弹任何其它确认框），直接中止本次启动"。
+        // 这里复用同一个 Click 处理器：当前处于"取消启动"状态时，这次点击是"取消"动作，
+        // 跟下面"启动"分支完全分开处理，不走冷却判断（冷却是为了防止连续点"启动"，
+        // 取消操作本身应该能立刻响应）。
+        if (_isCancelLaunchState)
+        {
+            HandleCancelLaunchClick();
+            return;
+        }
+
+        // 防手滑冷却：必须放在方法最开头、任何 await 之前的同步代码里判断，
+        // 否则连续点击会在第一次点击的 await 还没跑完时就又进来一次，冷却形同虚设。
+        // DateTime.UtcNow 的读取+比较+写回虽然不是原子操作，但 WPF 的事件处理器
+        // 本身就是在 UI 线程单线程排队执行的，同一时刻不可能有两个 Launch_Click
+        // 真正并发运行，不需要额外加锁。
+        var now = DateTime.UtcNow;
+        if (now - _lastLaunchClickAtUtc < LaunchClickCooldown || !LaunchGameBtn.IsEnabled)
+        {
+            // 冷却期内 / 按钮当前就是禁用状态（说明上一次点击触发的流程还没走完，
+            // 比如正在等 Java 下载、正在等账户校验的网络请求）时都直接忽略，
+            // 不弹提示、不做任何事——手滑连点时不应该再多弹出"点太快了"之类的
+            // 提示框，那只会制造更多需要用户点掉的窗口，适得其反。
+            return;
+        }
+        // 状态切换保护：即使冷却已过，也要求距离上一次"启动⇄取消"状态切换至少
+        // LaunchStateSwitchGuard（1.5 秒）才允许再次切换。冷却挡的是"同一个状态下的
+        // 连续误触"，这里挡的是"启动→取消→启动→取消"这种在两个状态之间来回跳的死循环——
+        // 二者场景不同，缺一都可能被绕过（比如冷却时间一到，用户立刻点取消再点启动，
+        // 没有这层保护冷却形同虚设）。
+        if (now - _lastLaunchStateSwitchAtUtc < LaunchStateSwitchGuard)
+            return;
+        _lastLaunchClickAtUtc = now;
+        _lastLaunchStateSwitchAtUtc = now;
+
+        // 立刻把按钮置灰：这是给用户最直观的反馈——"已经收到你的点击了，正在处理，
+        // 不需要再点"。比单纯静默吞掉后续点击更清楚，用户能看到按钮变灰就知道发生了什么，
+        // 不会怀疑是不是自己没点到。finally 里保证无论方法从哪个分支退出都会恢复。
+        // 收起态侧边栏用的是另一个按钮 LaunchGameBtnCollapsed（同一个 Click 处理器），
+        // 之前这里只置灰了展开态的 LaunchGameBtn，收起态按钮视觉上一直是可点状态——
+        // 冷却判断本身读的是 LaunchGameBtn.IsEnabled，点了不会真的触发第二次启动，
+        // 但按钮看起来"没有被禁用"，用户会怀疑点击没生效，跟需求里"窗口出现之前不可以
+        // 重复点击启动游戏"的意图不符（应该是视觉上也能看出正在处理，而不只是点了没反应）。
+        // 两个按钮的 IsEnabled 现在统一置灰/恢复。
+        LaunchGameBtn.IsEnabled = false;
+        LaunchGameBtnCollapsed.IsEnabled = false;
+
+        // 需求修复："点击'取消启动'的时候，游戏界面也会正常弹出来"。
+        //
+        // 根因：这里原来会把按钮持续禁用 LaunchStateSwitchGuard(1.5 秒)，直到下面的
+        // Task.Delay(...).ContinueWith 才恢复 IsEnabled=true。但 WPF 里 Button.IsEnabled=false
+        // 的按钮完全不会触发 Click 事件——如果用户点"启动游戏"之后，恰好在最初这 1.5 秒
+        // 保护期内（账户校验/Java 检测这些前置步骤经常正好卡在这个时间窗口里）就想点
+        // "取消启动"，这次点击的鼠标事件根本到不了 Launch_Click/HandleCancelLaunchClick，
+        // 取消请求从未真正发出，LaunchInternalAsync 完全不知道用户点过取消，流程照常往下走、
+        // 游戏窗口正常弹出——这正是本问题的直接原因。
+        //
+        // 现在改成：按钮只在"启动"这个动作本身处理期间（进入取消态之前的这一小段同步代码）
+        // 短暂置灰防手滑连点；一旦进入"取消启动"状态（下一行 _isCancelLaunchState = true 之后），
+        // 立刻把两个按钮重新启用，让"取消"从它出现的那一刻起就始终可点。不再需要底部
+        // Task.Delay(...).ContinueWith 这段延迟恢复逻辑——HandleCancelLaunchClick 内部
+        // 调用的 CancellationTokenSource.Cancel() 本身是幂等的，重复点"取消"没有任何副作用，
+        // 不需要靠禁用按钮来"防重复点击"。
+        _isCancelLaunchState = true;
+        SetLaunchButtonContent(cancel: true);
+        _launchCts = new CancellationTokenSource();
+        LaunchGameBtn.IsEnabled = true;
+        LaunchGameBtnCollapsed.IsEnabled = true;
+
+
+        try
+        {
+            await LaunchInternalAsync(sender, e, skipAccountConfirm, _launchCts!.Token);
+        }
+        finally
+        {
+            // 流程结束（成功/失败/被取消）：切回"启动游戏"状态。跟进入取消态时一样，
+            // 状态切换本身也要受 LaunchStateSwitchGuard 保护——如果流程几乎瞬间结束
+            // （比如账户校验直接失败 return），"取消启动"文字一闪而过又变回"启动游戏"，
+            // 用户这时候如果正好又点了一下，很容易触发"上一次启动的收尾"和"这一次新的
+            // 启动"前后脚发生的时序问题。用剩余的保护时长兜底，保证"取消启动"这个状态
+            // 至少完整展示 LaunchStateSwitchGuard 那么久，再恢复成可点的"启动游戏"。
+            var elapsed = DateTime.UtcNow - _lastLaunchStateSwitchAtUtc;
+            var remaining = LaunchStateSwitchGuard - elapsed;
+            if (remaining > TimeSpan.Zero)
+                await Task.Delay(remaining);
+
+            _isCancelLaunchState = false;
+            _launchCts = null;
+            SetLaunchButtonContent(cancel: false);
+            _lastLaunchStateSwitchAtUtc = DateTime.UtcNow;
+
+            LaunchGameBtn.IsEnabled = true;
+            LaunchGameBtnCollapsed.IsEnabled = true;
+        }
+    }
+
+    /// <summary>
+    /// 处理"取消启动"按钮的点击：只中止 CancellationTokenSource，让 LaunchInternalAsync
+    /// 内部的等待点自行感知到取消并退出，不弹任何确认框（需求明确要求"点击取消启动
+    /// 不弹出选择账户的界面"——取消本身就是一次明确、无需二次确认的操作）。
+    ///
+    /// ===== 修复"点击取消启动，游戏界面还是会正常弹出来" =====
+    /// 根因：这里之前复用了跟"启动"按钮一样的 LaunchStateSwitchGuard(1.5 秒) 冷却判断——
+    /// `now - _lastLaunchStateSwitchAtUtc < LaunchStateSwitchGuard || !LaunchGameBtn.IsEnabled`
+    /// 一旦命中就直接 return，连 `_launchCts?.Cancel()` 都不会执行。而 Launch_Click 在刚进入
+    /// "取消启动"状态的这 1.5 秒保护期内，恰恰会把 LaunchGameBtn.IsEnabled 保持在 false
+    /// （见 Launch_Click 里 1050/1063-1070 行），这意味着：用户点"启动游戏"之后，如果在
+    /// 最初这 1.5 秒内就手快点了"取消启动"（账户校验/Java 检测这些前置步骤经常正好卡在
+    /// 这个时间窗口里），这次点击会被本方法开头的冷却判断直接吞掉——取消请求从未真正
+    /// 发出，LaunchInternalAsync 完全不知道用户点过取消，流程照常往下走、游戏窗口正常弹出，
+    /// 跟用户"已经点了取消"的直觉完全相反。
+    ///
+    /// 冷却判断本身要挡的是"连续点击很多次取消导致 Cancel() 被重复调用"这种无害但没必要的
+    /// 重复调用，不应该连累"取消"这个动作彻底不生效。这里去掉整段冷却/IsEnabled 检查，
+    /// 只保留一个防御性判断：_launchCts 不为 null 才调用 Cancel()——CancellationTokenSource
+    /// 本身的 Cancel() 是幂等的（重复调用不会抛异常、也没有副作用），不需要额外的时间窗口
+    /// 去防重复点击。
+    /// </summary>
+    private void HandleCancelLaunchClick()
+    {
+        _launchCts?.Cancel();
+    }
+
+    /// <summary>统一设置展开态/收起态两个启动按钮的文字和 ToolTip，在"启动游戏"和"取消启动"之间切换。</summary>
+    private void SetLaunchButtonContent(bool cancel)
+    {
+        var resourceKey = cancel ? "Str_Launch_Cancel" : "Str_Launch_Button";
+        var text = Loc.T(resourceKey, cancel ? "取消启动" : "启动游戏");
+        LaunchGameBtn.Content = text;
+        LaunchGameBtnCollapsed.ToolTip = text;
+    }
+
+    /// <summary>
+    /// 实际执行"下载补全缺失的 library + natives"的动作，从原来内联在
+    /// catch (MissingLibrariesException) 里的那段代码抽出来，供两处复用：
+    ///   1. 原有的被动修复：BuildArguments 真的抛出 MissingLibrariesException 之后再补；
+    ///   2. 新增的主动修复：真正拉起游戏进程之前，先用 LauncherService.CheckMissingLibraries
+    ///      主动扫一遍、提前把"natives 文件夹是空的"这类 BuildArguments 检测不到的问题也
+    ///      纳入进来（见该方法上方注释）。
+    /// 两处场景的下载逻辑完全一样，只是触发时机不同，没必要维护两份几乎相同的代码。
+    /// </summary>
+    private async Task RepairMissingLibrariesAsync(string minecraftDir, string versionId, AppConfig cfg, ProgressDialog repairWin)
+    {
+        var versionDir = Path.Combine(minecraftDir, "versions", versionId);
+        var versionJsonPath = File.Exists(Path.Combine(versionDir, $"{versionId}.json"))
+            ? Path.Combine(versionDir, $"{versionId}.json")
+            : Directory.GetFiles(versionDir, "*.json").FirstOrDefault();
+        if (versionJsonPath == null)
+            throw new InvalidOperationException("找不到该版本的 version json，无法确定需要补全哪些库。");
+
+        var detail = System.Text.Json.JsonSerializer.Deserialize<VersionDetail>(
+            File.ReadAllText(versionJsonPath)) ?? new VersionDetail();
+        detail.Id = versionId;
+
+        using var repairDownloader = DownloadService.CreateFromConfig(cfg);
+        // 有 inheritsFrom 时(Fabric/Forge 等)，缺库也可能来自父版本(原版)的库列表，
+        // 两份都要补，跟 BuildArguments 里 AddLibs 对父子两份 json 都扫描的逻辑一致。
+        if (!string.IsNullOrEmpty(detail.InheritsFrom))
+        {
+            var parentDir = Path.Combine(minecraftDir, "versions", detail.InheritsFrom);
+            var parentJsonPath = File.Exists(Path.Combine(parentDir, $"{detail.InheritsFrom}.json"))
+                ? Path.Combine(parentDir, $"{detail.InheritsFrom}.json")
+                : (Directory.Exists(parentDir) ? Directory.GetFiles(parentDir, "*.json").FirstOrDefault() : null);
+            if (parentJsonPath != null)
+            {
+                var parentDetail = System.Text.Json.JsonSerializer.Deserialize<VersionDetail>(
+                    File.ReadAllText(parentJsonPath)) ?? new VersionDetail();
+                parentDetail.Id = detail.InheritsFrom;
+                await repairDownloader.DownloadLibrariesOnlyAsync(minecraftDir, parentDetail, repairWin.Progress);
+            }
+        }
+        await repairDownloader.DownloadLibrariesOnlyAsync(minecraftDir, detail, repairWin.Progress);
+    }
+
+    /// <summary>
+    /// 启动游戏的实际逻辑，从 Launch_Click 拆出来，专门用于被防手滑冷却的
+    /// try/finally 包裹，避免把冷却相关代码和原有的一大段启动流程混在一起、
+    /// 显得臃肿难读。
+    /// </summary>
+    private async Task LaunchInternalAsync(object sender, RoutedEventArgs e, bool skipAccountConfirm = false, CancellationToken cancelToken = default)
+    {
+        var cfg = ConfigService.Config;
+        var account = ConfigService.GetSelectedAccount();
+        var folder = cfg.Folders.FirstOrDefault(f => f.Path == cfg.SelectedFolderPath);
+
+        // 需求修复："一键开始游戏"（以及左下角"启动游戏"）之前完全静默调用
+        // GetSelectedAccount()，只会自动选中"上次选中/第一个"账户，用户没有机会在这个时间点
+        // 选别的账户，只能先跳去"账户管理"页手动切换、再跳回来点启动，多绕一层。
+        // 现在改为：有多个账户时（且不是访客模式——访客模式下账户始终是本次会话的临时账户，
+        // 不应该被这个选择框打断），弹出账户选择框让用户当场选。
+        //
+        // 触发条件在原来"账户数量 > 1"的基础上再加一种情况：账户数量 == 1 但这个账户从来没有
+        // 被显式选中过（LastSelectedAccountId 为空，即新建/登录账户后不再自动选中——见
+        // LoginPage/FirstRunWizardWindow/QuickStartWizardWindow/AccountPickerDialog 的改动），
+        // 这种情况下也应该让用户在启动这一刻明确确认一下"就用这个账户"，而不是端起来直接静默
+        // 用 FirstOrDefault() 兜底的那个账户启动——那样等于替用户做了选择，且用户完全无感知。
+        // 只有真正"没有任何账户"或"唯一账户已经被显式选过"这两种情况才不弹框，跟其它任何
+        // 导航/切换页面的场景一样，这个选择框现在只在真正点击"启动游戏"这个动作时才会出现。
+        var needsAccountConfirm = !skipAccountConfirm &&
+            (ConfigService.Accounts.Count > 1
+            || (ConfigService.Accounts.Count == 1 && string.IsNullOrEmpty(cfg.LastSelectedAccountId)));
+        if (!cfg.GuestModeEnabled && needsAccountConfirm)
+        {
+            var picker = new AccountPickerDialog(this, ConfigService.Accounts, cfg.LastSelectedAccountId);
+            if (OverlayDialogService.ShowModal(picker) != true)
+            {
+                // Round16 反馈：之前这里直接静默 return，用户点"取消"后界面毫无反应，
+                // 体验上跟"点了没反应/软件卡死"没区别。这里跟同一方法里其它分支
+                // （没账户/没选文件夹）一样用 MessageBox 给一句明确提示。
+                MessageBoxDialog.ShowInfo(Loc.T("Str_Cs_Launch_Cancelled", "已取消启动。"), Loc.T("Str_Status_Tip", "提示"));
+                return;
+            }
+            account = picker.SelectedAccount;
+            if (account != null)
+            {
+                if (picker.RememberChoice)
+                {
+                    // "记住这次选择"：跟账户管理页的切换账户是同一份逻辑(SelectAccount)，
+                    // 之后不勾选记住的启动也会默认选中这一个，直到用户下次又手动切换。
+                    ConfigService.SelectAccount(account.Id);
+                }
+                RefreshSidebar();
+            }
+        }
+
+        // 需求："点击'取消启动'不弹出选择账户的界面"。账户确认框本身已经在上面处理完了
+        // （要么用户确认了账户，要么在弹框里点了取消已经 return），这里检查的是：用户在
+        // 账户确认框弹出**之前**（比如账户框还没来得及显示、或者根本不需要账户确认——
+        // 单账户/访客模式）就已经点了"取消启动"。此时不应该再走下面 Java 检测/下载等
+        // 任何后续流程，也不应该再弹任何提示框——静默退出，跟用户主动点取消的直觉一致。
+        if (cancelToken.IsCancellationRequested)
+            return;
+
+        if (account == null)
+        {
+            MessageBoxDialog.ShowInfo(Loc.T("Str_Cs_Sign_In_Or_Create_An_Offline_Account_On_", "请先在“账户管理”中登录或创建一个离线账户。"), Loc.T("Str_Status_Tip", "提示"));
+            NavAccounts_Click(sender, e);
+            return;
+        }
+        if (folder == null || string.IsNullOrEmpty(cfg.SelectedVersionId))
+        {
+            MessageBoxDialog.ShowInfo(Loc.T("Str_Cs_Choose_A_Minecraft_Folder_And_A_Game_Ver", "请先在“版本选择”中选择 .minecraft 文件夹和游戏版本。"));
+            NavVersions_Click(sender, e);
+            return;
+        }
+
+        try
+        {
+            // 微软账户：若 access token 即将过期，先静默刷新。
+            // 根因修复（"账户管理显示已登录微软账户，进游戏却变成 Demo 试玩"）：
+            // 之前无论刷新成功与否，只要没抛异常就会往下走去启动游戏——刷新失败
+            // （RefreshAsync 返回 null，比如 refresh token 已过期/被吊销/网络问题）
+            // 或者压根没有 MsRefreshToken 时，会原样带着已经过期的旧 access token
+            // 拼进启动参数。Minecraft 收到无效/过期的 accessToken 不会报错，而是
+            // 静默降级成离线试玩(Demo)模式——这正是现象的根源。
+            // 现在改成：刷新失败/无 refresh token 可用时，只要 access token 确实已过期，
+            // 就直接终止启动流程并提示用户重新登录，不再拿失效凭证去启动游戏。
+            if (account.Type == AccountType.Microsoft &&
+                (account.AccessTokenExpiresAtUtc == null || account.AccessTokenExpiresAtUtc < DateTime.UtcNow.AddMinutes(5)))
+            {
+                Account? refreshed = null;
+                var refreshFailureReason = RefreshFailureReason.None;
+                if (!string.IsNullOrEmpty(account.MsRefreshToken))
+                {
+                    var msAuth = new MicrosoftAuthService();
+                    refreshed = await msAuth.RefreshAsync(account.MsRefreshToken);
+                    refreshFailureReason = msAuth.LastRefreshFailureReason;
+                }
+
+                if (refreshed != null)
+                {
+                    refreshed.Id = account.Id;
+                    ConfigService.AddOrUpdateAccount(refreshed);
+                    account = refreshed;
+                }
+                else if (account.AccessTokenExpiresAtUtc == null || account.AccessTokenExpiresAtUtc < DateTime.UtcNow)
+                {
+                    // access token 已经确实过期、且刷新拿不到新的。
+                    //
+                    // 「令牌保留时效」降级：只有在刷新失败原因明确是"服务不可用"（断网/微软服务
+                    // 本身故障/超时，见 RefreshFailureReason.ServiceUnavailable）——而不是
+                    // "refresh token 已被明确拒绝"（TokenInvalid，真正的授权失效）——且账户
+                    // 最近一次成功在线校验距今没有超过 cfg.AccountTokenGracePeriodDays 天时，
+                    // 才允许直接用本地缓存的正版 Uuid/Username 离线启动，不阻塞玩家。
+                    // AccountTokenGracePeriodDays=0 表示用户主动关闭了这个降级，一律直接拦截。
+                    var withinGracePeriod =
+                        refreshFailureReason == RefreshFailureReason.ServiceUnavailable &&
+                        cfg.AccountTokenGracePeriodDays > 0 &&
+                        account.LastVerifiedAtUtc != null &&
+                        account.LastVerifiedAtUtc.Value.AddDays(cfg.AccountTokenGracePeriodDays) >= DateTime.UtcNow;
+
+                    if (!withinGracePeriod)
+                    {
+                        var reasonHint = refreshFailureReason == RefreshFailureReason.TokenInvalid
+                            ? "（登录状态已被微软服务器明确拒绝，需要重新登录，无法离线继续使用。）"
+                            : "（如果直接用过期状态启动，Minecraft 会静默进入离线试玩(Demo)模式而不会报错，" +
+                              "为避免这种情况这里主动拦截。）";
+                        MessageBoxDialog.ShowWarning(
+                            $"账户「{account.Username}」的登录状态已过期，且自动刷新失败，请重新登录微软账户后再启动游戏。\n{reasonHint}",
+                            Loc.T("Str_Cs_Sign_In_Required", "需要重新登录"));
+                        NavAccounts_Click(sender, e);
+                        return;
+                    }
+
+                    // 走令牌保留时效降级：Mojang/微软服务暂时联系不上，但账户最近验证过、
+                    // 且本地缓存了这个账户的正版 Uuid，直接沿用现有 account（其 Uuid/Username
+                    // 就是最后一次成功登录时拿到的正版信息）离线启动，不再纠结 access token
+                    // 本身——LauncherService 拼参数只要求 Uuid+Username+一个非空 accessToken
+                    // 字符串占位，不会二次向 Mojang 校验这个 token，所以过期的旧 token 在这条
+                    // 路径下可以继续沿用，不影响正常进入游戏。
+                }
+                // else: token 还没到硬过期时间（只是进入 5 分钟提前刷新窗口)，刷新虽失败但
+                // 旧 token 短期内应该仍然有效，容许继续启动，避免因为一次偶发的网络抖动
+                // 就完全无法进游戏。
+            }
+
+            // 账户刷新（可能有一次网络请求）之后、Java 检测/下载安装这段可能耗时较久的流程
+            // 开始之前，再检查一次取消状态：用户可能就是在等 token 刷新的这几百毫秒到几秒里
+            // 点的"取消启动"。这里静默 return，不弹任何提示——跟需求"点取消不弹账户选择框"
+            // 是同一个原则的延伸：取消操作本身不需要任何确认/告知。
+            if (cancelToken.IsCancellationRequested)
+                return;
+
+            // 只统计实际使用离线账户的启动。正版和认证服务器账户均不会触发提示。
+            if (account.Type == AccountType.Offline && !account.IsGuest)
+            {
+                OfflineLaunchReminderService.OnOfflineLaunch(cfg);
+                ConfigService.Save();
+            }
+
+            var javaService = new JavaService();
+
+            // 版本隔离设置要提前算出来，因为下面判断"这个版本需要 Java 几"时要扫描正确的
+            // mods 目录(隔离开启时是 versions/<id>/mods，关闭时是 .minecraft 根目录下的 mods)，
+            // 用错目录会导致扫描不到已安装的 mod，从而漏判 Java 版本要求。
+            var isolateVersion = cfg.VersionIsolationOverrides.TryGetValue(cfg.SelectedVersionId, out var isolateOverride)
+                ? isolateOverride
+                : cfg.IsolateVersionsByDefault;
+
+            // 自动匹配 Java，按优先级从高到低：
+            //   1) 用户为这个具体版本单独指定的 Java 版本(VersionJavaOverrides)——最高优先级，
+            //      用于兜底极端情况(比如某个 mod 没有按标准字段声明 Java 要求导致自动探测漏判)，
+            //      用户可以针对单个版本手动指定，不需要牵动全局高级模式设置。
+            //   2) 自动探测：version json 的 javaVersion.majorVersion + mods 目录下所有
+            //      fabric.mod.json 里 depends.java 声明的最低版本，取两者较大值。
+            //      之前的实现只看 version json，装了要求更高 Java 版本的 mod(如本例的
+            //      Fabric API/Voice Chat 要求 25+)时完全探测不到，导致下载/选用了版本本体
+            //      要求的 21，一进游戏 Fabric Loader 直接报 "Incompatible mods found"。
+            //   3) 高级模式下用户设置的全局默认版本(cfg.PreferredJavaMajorVersion)。
+            var requiredJavaMajor = LauncherService.GetRequiredJavaMajorVersion(
+                folder.Path, cfg.SelectedVersionId, isolateVersion);
+
+            int? preferMajor;
+            if (cfg.VersionJavaOverrides.TryGetValue(cfg.SelectedVersionId, out var versionOverride) && versionOverride > 0)
+                preferMajor = versionOverride;
+            else if (requiredJavaMajor is > 0)
+                preferMajor = requiredJavaMajor;
+            else
+                preferMajor = cfg.AdvancedMode ? cfg.PreferredJavaMajorVersion : null;
+
+            // Java 列表优先级最高：如果用户为这个版本明确选了列表里的某一条(VersionJavaIdOverrides)，
+            // 或者虽然没为这个版本单独选、但设了全局默认 Java(SelectedJavaId)，直接用它的路径，
+            // 不再走下面的"按主版本号搜索"逻辑——这是用户明确的选择，不需要再猜。
+            // 记录的文件如果已经被移动/删除(ResolveJavaPath 返回 null)，则安全回退到旧的搜索逻辑。
+            var javaIdOverride = cfg.VersionJavaIdOverrides.TryGetValue(cfg.SelectedVersionId, out var vjid) ? vjid : cfg.SelectedJavaId;
+            var javaPath = ConfigService.ResolveJavaPath(javaIdOverride)
+                ?? javaService.FindJava(cfg.JavaPath, preferMajor, ConfigService);
+            var justDownloaded = false;
+
+            // 启动前 Java 版本匹配检查：javaIdOverride 这条路径(用户在设置里指定了某个具体 Java，
+            // 或为这个版本单独指定了 Java 列表里的某一项)是"用户明确的选择"，之前会直接拿去用，
+            // 完全不检查它跟 preferMajor(这个版本实际需要的 Java 主版本号)是否匹配——
+            // 于是"选了 Java 8 当全局默认，去启动一个要求 Java 21 的版本"这种情况下，
+            // 用户会一直被闷头拿着错误的 Java 启动，直到游戏报 UnsupportedClassVersionError 崩溃，
+            // 且完全不知道原因。现在改为：这种情况下先弹窗告知"建议改用匹配的 Java"，
+            // 用户可以选择"仍然使用当前这个"（尊重用户可能的特殊需求，比如临时测试），
+            // 或者"改用推荐的 Java"（自动切到列表里已登记的匹配项，没有就走下载流程）。
+            // 需求：给每个实例设置加一个"默认使用选择的 Java，不再提示切换"的开关
+            // （InstanceSettingsDialog 里的 SkipJavaMismatchPromptCheckDlg，落盘在
+            // cfg.VersionSkipJavaMismatchPrompt）。开启后跳过整个"版本不匹配"检测+弹窗分支，
+            // 直接照用户为这个实例选定的 Java 启动——用户既然已经明确表态"就是要用这个"，
+            // 就不应该每次启动都被重新问一遍。跟 EnforceJavaVersionMatch（全局强制切换）是
+            // 两码事：那个是"不问、但自动换掉"，这个是"不问、但保留用户选的不换"。
+            var skipMismatchPrompt = cfg.VersionSkipJavaMismatchPrompt.Contains(cfg.SelectedVersionId);
+            if (javaIdOverride != null && javaPath != null && preferMajor is > 0 && !skipMismatchPrompt)
+            {
+                // TryGetJavaMajorVersionSync 内部会起进程等待退出(最多阻塞 5 秒)，用 Task.Run
+                // 丢到线程池执行，避免这几秒内卡住 UI 线程(LaunchInternalAsync 本身是 async 方法)。
+                var actualMajor = await Task.Run(() => JavaService.TryGetJavaMajorVersionSync(javaPath));
+
+                if (actualMajor is > 0 && actualMajor != preferMajor)
+                {
+                    var matchedInList = cfg.InstalledJavas.FirstOrDefault(j => j.MajorVersion == preferMajor);
+                    var suggestion = matchedInList != null
+                        ? $"列表里已经有登记的 Java {preferMajor}（{matchedInList.Name}），可以直接切换使用。"
+                        : $"列表里还没有登记 Java {preferMajor}，选择切换的话会自动下载一个便携版。";
+
+                    bool shouldSwitch;
+                    if (cfg.EnforceJavaVersionMatch)
+                    {
+                        // 强制模式：不给"仍然使用"的选项，弹窗只是告知，点确定就直接切换。
+                        MessageBoxDialog.ShowWarning(
+                            $"你为这个版本手动指定的 Java 是 {actualMajor}，但这个版本自动匹配的应该是 Java {preferMajor}" +
+                            $"（如果不手动指定，启动器本来会自动帮你选到这个版本）。\n\n" +
+                            $"已开启「强制使用匹配 Java」，将自动切换到 Java {preferMajor} 后再启动。\n{suggestion}",
+                            "Java 版本不匹配，已自动切换");
+                        shouldSwitch = true;
+                    }
+                    else
+                    {
+                        var switchResult = MessageBoxDialog.ShowConfirm(
+                            $"你为这个版本手动指定的 Java 是 {actualMajor}，但这个版本自动匹配的应该是 Java {preferMajor}" +
+                            $"（如果不手动指定，启动器本来会自动帮你选到这个版本）。用不匹配的版本启动很可能会崩溃" +
+                            $"（常见报错如 UnsupportedClassVersionError）。\n\n{suggestion}\n\n" +
+                            $"点「是」改用匹配的 Java {preferMajor}；点「否」仍然使用当前这个 Java {actualMajor}（不建议，除非你清楚自己在做什么）。\n\n" +
+                            $"提示：可以在「设置」页开启「强制使用匹配 Java」，开启后遇到这种情况会直接自动切换，不再询问。",
+                            "Java 版本可能不匹配");
+                        shouldSwitch = switchResult;
+                    }
+
+                    if (shouldSwitch)
+                    {
+                        // 改用匹配版本：优先用列表里已登记的匹配项，没有就清空覆盖走回下面的
+                        // 自动探测/下载逻辑（preferMajor 已经算好了，FindJava/下载都会用它）。
+                        javaPath = matchedInList != null ? ConfigService.ResolveJavaPath(matchedInList.Id) : null;
+                        javaPath ??= javaService.FindJava(null, preferMajor, ConfigService);
+                    }
+                    // 非强制模式选"否"：保留原 javaPath 不变，尊重用户的明确选择。
+                }
+            }
+            if (javaPath == null)
+            {
+                var versionHint = preferMajor is > 0
+                    ? $"这个版本需要 Java {preferMajor}，但未找到匹配的 Java（可能没安装，或已安装的版本不对）。"
+                    : "未检测到可用的 Java 环境。";
+                var result = MessageBoxDialog.ShowConfirm($"{versionHint}\n是否自动下载对应的便携版 Java？",
+                    "需要 Java");
+                if (!result) return;
+
+                var progressWin = new ProgressDialog("正在下载 Java 运行时...");
+                // ProgressDialog 迁移成 Overlay 之后已经不是独立 Window，没有 Owner 属性了——
+                // 它现在挂在 MainWindow 自己的 Overlay 层里，天然"属于"当前主窗口，不需要
+                // 也不能再显式赋 Owner（迁移前遗留的这行赋值如果留着会导致编译失败）。
+                progressWin.Show();
+                try
+                {
+                    // 下载时同样优先用上面算出的 preferMajor(单版本覆盖 > 自动探测)；
+                    // 只有连自动探测都没有结果、且不是高级模式时，才退回旧的
+                    // "下载一个通用推荐版本(21)"逻辑。
+                    if (preferMajor is > 0)
+                    {
+                        var arch = cfg.AdvancedMode ? cfg.PreferredJavaArch
+                            : (Environment.Is64BitOperatingSystem ? "x64" : "x86");
+                        var installMode = cfg.AdvancedMode && cfg.PreferredJavaInstallMode == "System"
+                            ? JavaInstallMode.System : JavaInstallMode.Portable;
+                        javaPath = await javaService.DownloadJavaAsync(
+                            new JavaDownloadRequest(preferMajor.Value, arch, installMode),
+                            progressWin.Progress);
+                    }
+                    else
+                    {
+                        javaPath = await javaService.DownloadRecommendedJavaAsync(progressWin.Progress);
+                    }
+                    justDownloaded = true;
+                }
+                finally { progressWin.Close(); }
+            }
+
+            // 只有"手动指定路径为空、这次是靠自动探测/下载补上的"才写回配置里的"便携版已下载"记录；
+            // 绝不覆盖用户在设置里手动填写的 JavaPath——那是明确的手动覆盖，写死一条路径反而会让
+            // 以后启动其他要求不同 Java 版本的版本时，永远被这一条手动路径卡住，起不到自动匹配的作用。
+            if (justDownloaded && string.IsNullOrEmpty(cfg.JavaPath))
+            {
+                cfg.JavaPath = javaPath;
+                ConfigService.Save();
+            }
+
+            // 自定义皮肤/认证服务器(AuthServer)账户都需要"万能皮肤补丁"(authlib-injector)
+            // 才能在客户端里正确显示皮肤、通过对应服务器的会话校验。
+            //
+            // 修复：这里原来只判断"离线账户 + 自定义皮肤"，完全没覆盖 AuthServer 账户——
+            // AuthServer 账户的登录/取 token/启动传参这条主链路本身是完整可用的，
+            // 唯独这里"首次启动自动下载 jar"的条件写漏了 AuthServer 分支。
+            // 后果就是：如果用户电脑上从来没下载过 authlib-injector.jar，第一次用皮肤站
+            // 账户启动时，这个 if 直接不成立 -> EnsureAuthlibInjectorAsync 根本不会被调用
+            // -> jar 依然不存在 -> BuildSkinJvmArgs 内部的 File.Exists 检查失败，
+            // 静默返回空列表，玩家会发现皮肤没生效、也没有任何报错提示，一头雾水。
+            // 现在两种情况统一判断"这个账户是否需要皮肤补丁"，需要就统一走同一套
+            // "jar 不存在则先下载"的流程，跟离线自定义皮肤完全一致的体验。
+            //
+            // 挂在启动前而不是"下载/安装某个版本"时：这样即使用户很早之前就下载好了
+            // 版本、后来才改选自定义皮肤/切换成皮肤站账户，也能在真正启动的这一刻补齐 jar，不会漏掉。
+            List<string>? skinJvmArgs = null;
+            var needsAuthlibInjector =
+                (account.Type == AccountType.Offline && account.SkinType == OfflineSkinType.Custom) ||
+                (account.Type == AccountType.AuthServer && !string.IsNullOrWhiteSpace(account.AuthServerApiRoot));
+
+            if (needsAuthlibInjector)
+            {
+                var skinService = new SkinService();
+                if (!File.Exists(skinService.AuthlibInjectorPath))
+                {
+                    var skinProgressWin = new ProgressDialog("正在下载万能皮肤补丁...");
+                    // 同上：ProgressDialog 现在是 Overlay 弹窗，没有 Owner 属性了。
+                    skinProgressWin.Show();
+                    try
+                    {
+                        await skinService.EnsureAuthlibInjectorAsync(skinProgressWin.Progress);
+                    }
+                    catch (Exception skinEx)
+                    {
+                        var hint = account.Type == AccountType.AuthServer
+                            ? "下载万能皮肤补丁失败，本次将无法通过认证服务器的皮肤/会话校验：\n"
+                            : "下载万能皮肤补丁失败，本次将不会显示自定义皮肤：\n";
+                        MessageBoxDialog.ShowWarning(hint + skinEx.Message, Loc.T("Str_Cs_Failed_To_Download_The_Skin_Patch", "皮肤补丁下载失败"));
+                    }
+                    finally { skinProgressWin.Close(); }
+                }
+                skinJvmArgs = skinService.BuildSkinJvmArgs(account, cfg.SkinApiRoot);
+            }
+
+            // "开启后进入某某某服务器"：按当前选中版本 id 查一次是否配置了自动进服务器地址，
+            // 没配置/配置为空白都传 null，LauncherService 内部会原样跳过 quickPlayMultiplayer
+            // 这个参数，行为等同于这个功能上线前——纯增量开关，不影响没设置过的实例。
+            string? autoJoinServer = null;
+            if (cfg.VersionAutoJoinServer.TryGetValue(cfg.SelectedVersionId, out var configuredServer)
+                && !string.IsNullOrWhiteSpace(configuredServer))
+            {
+                autoJoinServer = configuredServer.Trim();
+            }
+
+            // 「百宝箱」-「内存优化」：开关开启时，启动前用 MemoryOptimizerService 按当前
+            // 系统实际可用内存重新计算一遍 -Xms/-Xmx，覆盖设置页里用户手动填写的固定值。
+            // 计算失败（非 Windows/API 异常等）时静默回退到用户原有配置，不阻断启动流程。
+            var effectiveMinMemoryMb = cfg.MinMemoryMb;
+            var effectiveMaxMemoryMb = cfg.MaxMemoryMb;
+            var instanceSettings = InstanceConfigService.TryLoad(Path.Combine(folder.Path, "versions", cfg.SelectedVersionId));
+            if (instanceSettings?.MinMemoryMb is > 0) effectiveMinMemoryMb = instanceSettings.MinMemoryMb.Value;
+            if (instanceSettings?.MaxMemoryMb is > 0) effectiveMaxMemoryMb = instanceSettings.MaxMemoryMb.Value;
+            if (cfg.EnableMemoryOptimization)
+            {
+                var recommendation = MemoryOptimizerService.Calculate(cfg.MemoryOptimizationReserveMb);
+                if (recommendation != null)
+                {
+                    effectiveMinMemoryMb = recommendation.RecommendedMinMemoryMb;
+                    effectiveMaxMemoryMb = recommendation.RecommendedMaxMemoryMb;
+                }
+            }
+
+            var launcher = new LauncherService();
+            var options = new LauncherService.LaunchOptions
+            {
+                MinecraftDir = folder.Path,
+                VersionId = cfg.SelectedVersionId,
+                JavaPath = javaPath,
+                Account = account,
+                MinMemoryMb = effectiveMinMemoryMb,
+                MaxMemoryMb = effectiveMaxMemoryMb,
+                WindowWidth = cfg.WindowWidth,
+                WindowHeight = cfg.WindowHeight,
+                ShowConsoleWindow = cfg.EnableGameConsoleWindow,
+                IsolateVersion = isolateVersion,
+                GameLanguage = cfg.GameLanguage,
+                VersionTypeLabel = cfg.GameVersionTypeLabel,
+                SkinJvmArgs = skinJvmArgs,
+                // 自定义 JVM 参数仅在高手模式下生效：普通模式下即使配置里残留了历史值，
+                // 也不应该被悄悄应用，避免用户切回普通模式后出现"不知道为什么还生效"的困惑。
+                CustomJvmArgs = instanceSettings?.CustomJvmArgs ?? (cfg.AdvancedMode ? cfg.CustomJvmArgs : null),
+                PreLaunchCommand = cfg.PreLaunchCommand,
+                AutoJoinServerAddress = autoJoinServer
+            };
+
+            // 启动前主动完整性检查（参考 PCL 等主流第三方启动器的"启动前自动修复"设计）：
+            // 与其等真正拉起 Java 进程、BuildArguments 抛出 MissingLibrariesException 才发现
+            // 问题，这里先主动扫一遍——LauncherService.CheckMissingLibraries 除了跟 BuildArguments
+            // 一样检查 library jar 是否存在，还额外检查了"natives 文件夹是不是空的"这种
+            // BuildArguments 检测不到、但确确实实会导致游戏刚起来就崩(找不到 lwjgl.dll 之类)
+            // 的情况，能提前把这类问题挑出来，而不是让用户对着一闪而过的黑框摸不着头脑。
+            //
+            // 只有真正"会影响启动"的缺失才会走到这里弹窗——用户可以选"否"跳过，不强制
+            // 打断任何人；选完之后无论补没补，后面都会照常继续走原有的启动流程。
+            try
+            {
+                var precheckMissing = launcher.CheckMissingLibraries(folder.Path, cfg.SelectedVersionId);
+                if (precheckMissing.Count > 0 && !cancelToken.IsCancellationRequested)
+                {
+                    var doPrecheckRepair = MessageBoxDialog.ShowConfirm(
+                        $"启动前检测到 {precheckMissing.Count} 个可能导致启动失败的文件缺失或不完整：\n\n" +
+                        string.Join("\n", precheckMissing.Take(10)) +
+                        (precheckMissing.Count > 10 ? $"\n...等共 {precheckMissing.Count} 个" : "") +
+                        "\n\n是否现在自动下载补全？（选择「否」将跳过修复，直接尝试启动）",
+                        Loc.T("Str_Cs_Missing_Library", "缺少依赖库"));
+                    if (doPrecheckRepair && !cancelToken.IsCancellationRequested)
+                    {
+                        var precheckRepairWin = new ProgressDialog("正在补全缺失的依赖库...");
+                        precheckRepairWin.Show();
+                        try
+                        {
+                            await RepairMissingLibrariesAsync(folder.Path, cfg.SelectedVersionId, cfg, precheckRepairWin);
+                        }
+                        catch (Exception precheckRepairEx)
+                        {
+                            ErrorPresenter.ShowFriendlyError(
+                                "自动补全依赖库失败，请检查网络连接后重试，或前往「版本选择」页重新安装该版本。" +
+                                "\n（也可以直接继续尝试启动，游戏是否能正常运行不受这里失败的影响。）",
+                                $"[启动前补全依赖库失败] {precheckRepairEx}", "补全失败");
+                        }
+                        finally
+                        {
+                            precheckRepairWin.Close();
+                        }
+                    }
+                }
+            }
+            catch (Exception precheckEx)
+            {
+                // 主动检查本身失败(比如读取版本 json 出错)不应该阻止启动——只是少了一次
+                // "提前发现问题"的机会，下面 Launch() 内部原有的被动检测兜底逻辑仍然会生效。
+                File.AppendAllText(Path.Combine(App.DataDir, "logs", "crash.log"),
+                    $"[{DateTime.Now}] 启动前完整性检查失败(不影响启动，将回退到启动时检测): {precheckEx}\n\n");
+            }
+
+            // 导出启动脚本只是附加功能，不应该在失败时阻止真正的游戏启动
+            // （之前 GBK 编码问题就是在这一步抛异常，导致下面的 Launch 根本没执行到）。
+            // MissingLibrariesException 在这里也可能抛出，但那是"下面 Launch() 也一定会
+            // 遇到的同一个问题"，不属于导出脚本独有的失败，放过它冒泡到下面统一处理。
+            try { launcher.ExportLaunchScript(options); }
+            catch (MissingLibrariesException) { /* 留给下面 Launch() 统一处理 */ }
+            catch (Exception exportEx)
+            {
+                File.AppendAllText(Path.Combine(App.DataDir, "logs", "crash.log"),
+                    $"[{DateTime.Now}] 导出启动脚本失败(不影响启动): {exportEx}\n\n");
+            }
+
+            // 需求修复："点击'取消启动'还会让游戏窗口弹出"。根因：在这之前的 Java 检测/下载、
+            // 皮肤补丁下载、以及上面几个"是否继续"确认框，都可能耗时很久（下载要等网络，
+            // 确认框要等用户交互），期间用户完全可能已经点了"取消启动"——但这些步骤都没有
+            // 检查 cancelToken，导致哪怕已经取消，代码仍然会往下走到 launcher.Launch(options)
+            // 真正拉起游戏进程，用户点"取消"之后过一会儿窗口还是弹出来了，跟点击本身的直觉完全
+            // 相反。这里在真正执行 Launch 之前补上最后一次检查：如果这时候已经被取消，直接
+            // 静默退出，不再启动进程——不弹任何提示框，跟"点取消不弹确认框"的既有原则一致。
+            if (cancelToken.IsCancellationRequested)
+            {
+                ToastService.ShowSuccess(Loc.T("Str_Cs_Launch_Cancelled", "已取消启动。"));
+                return;
+            }
+
+            LauncherLogService.AppendLine($"[启动游戏] 账户={account.DisplayLabel} 版本={cfg.SelectedVersionId}");
+
+            GameProcessInfo processInfo;
+            try
+            {
+                processInfo = launcher.Launch(options);
+
+                // Launch() 本身是同步阻塞调用（拼参数+起进程），中间没有 await 让出线程，
+                // 理论上不会跟"点取消"这个 UI 事件真正并发；但保留这一步兜底检查——万一
+                // 用户点击恰好落在 Launch() 刚返回、还没执行到下面这行代码的极短窗口内，
+                // 也要把已经拉起来的进程立刻结束掉，而不是任由它继续运行、弹出窗口。
+                if (cancelToken.IsCancellationRequested)
+                {
+                    processInfo.ForceKill();
+                    ToastService.ShowSuccess(Loc.T("Str_Cs_Launch_Cancelled", "已取消启动。"));
+                    return;
+                }
+            }
+            catch (MissingLibrariesException mle)
+            {
+                // 远古版本(1.8 及更早)最容易触发这个分支：lwjgl-platform/jinput-platform/
+                // twitch-platform 等 natives 库在早期安装时经常因为老版本 classifier 规则
+                // 没跟上而遗漏。之前只会弹"请重新安装/补全依赖库"的死路提示，用户还得自己
+                // 想办法去哪里"重新安装"——现在提供"自动补全"，复用
+                // DownloadService.DownloadLibrariesOnlyAsync 补齐缺失库后原地重试启动。
+                var repair = MessageBoxDialog.ShowConfirm(
+                    mle.Message + "\n\n是否现在自动下载补全这些缺失的库？",
+                    Loc.T("Str_Cs_Missing_Library", "缺少依赖库"));
+                if (!repair) return;
+
+                var repairWin = new ProgressDialog("正在补全缺失的依赖库...");
+                // 同上：ProgressDialog 现在是 Overlay 弹窗，没有 Owner 属性了。
+                repairWin.Show();
+                try
+                {
+                    await RepairMissingLibrariesAsync(folder.Path, mle.VersionId, cfg, repairWin);
+                }
+                catch (Exception repairEx)
+                {
+                    repairWin.Close();
+                    ErrorPresenter.ShowFriendlyError(
+                        "自动补全依赖库失败，请检查网络连接后重试，或前往「版本选择」页重新安装该版本。",
+                        $"[补全依赖库失败] {repairEx}", "补全失败");
+                    return;
+                }
+                repairWin.Close();
+
+                // 补全依赖库同样是一段可能耗时不短的下载，期间用户也可能点了"取消启动"——
+                // 跟上面主流程一样，重试启动之前必须重新检查一次 cancelToken，否则会重演
+                // 同一个"点了取消，窗口还是弹出来"的问题。
+                if (cancelToken.IsCancellationRequested)
+                {
+                    ToastService.ShowSuccess(Loc.T("Str_Cs_Launch_Cancelled", "已取消启动。"));
+                    return;
+                }
+
+                // 补库之后原地重试一次启动，不需要用户再点一次"启动游戏"按钮。
+                processInfo = launcher.Launch(options);
+
+                if (cancelToken.IsCancellationRequested)
+                {
+                    processInfo.ForceKill();
+                    ToastService.ShowSuccess(Loc.T("Str_Cs_Launch_Cancelled", "已取消启动。"));
+                    return;
+                }
+            }
+            ProcessManager.Register(processInfo);
+            RefreshSidebar();
+
+            // 需求："游戏崩溃的时候，可以选择查看日志和导出完整日志"——这里覆盖的是"游戏已经
+            // 正常运行了一段时间之后才意外退出"的场景（跟下面 exitedEarly 覆盖的"刚启动就
+            // 退出"是两种不同的时机，两处都要接）。判定标准：
+            //   1. 不是用户自己点"关闭游戏"/"关闭未响应的游戏"（UserRequestedClose）；
+            //   2. 退出码不是 0（Minecraft 正常从游戏内菜单退出时退出码是 0）。
+            // 只有同时满足才弹崩溃提示，避免用户正常退出游戏时被无意义地打扰。
+            processInfo.Process.Exited += (_, _) =>
+            {
+                Dispatcher.Invoke(() =>
+                {
+                    if (processInfo.UserRequestedClose) return;
+                    var exitCode = -1;
+                    try { exitCode = processInfo.Process.ExitCode; } catch { /* 忽略 */ }
+                    if (exitCode == 0) return;
+
+                    LauncherLogService.AppendLine($"[游戏崩溃] {processInfo.AccountLabel} - {processInfo.VersionId}，退出码 {exitCode}");
+                    EnsureVisibleForDialog();
+                    CrashReportDialog.Show(this,
+                        $"游戏「{processInfo.VersionId}」意外退出了（退出码 {exitCode}），可能是崩溃了。",
+                        processInfo);
+                });
+            };
+
+            // 独立 CMD 日志窗口：可选功能，弹出后实时镜像游戏控制台输出，方便命令行党直接查看。
+            if (options.ShowConsoleWindow)
+            {
+                try { new GameConsoleWindowService().Attach(processInfo); }
+                catch { /* 弹窗失败不影响游戏本身启动 */ }
+            }
+
+            // 注入检测：游戏启动几秒后（等待游戏进程把自身/mod 的原生库加载完毕），扫描一次模块列表。
+            if (cfg.EnableInjectionScan)
+            {
+                _ = Task.Run(async () =>
+                {
+                    await Task.Delay(TimeSpan.FromSeconds(8));
+                    if (processInfo.HasExited) return;
+                    try
+                    {
+                        var scan = new InjectionScanService().Scan(processInfo.Process);
+                        if (scan.HasSuspiciousModule)
+                        {
+                            var names = string.Join("\n", scan.Modules
+                                .Where(m => m.Risk == ModuleRisk.Suspicious)
+                                .Select(m => $"· {m.FileName}  [{m.MatchedRule}]\n  路径: {m.FullPath}"));
+                            Dispatcher.Invoke(() => MessageBoxDialog.ShowWarning(
+                                "注入检测发现可疑模块，游戏进程中可能存在外挂或密码窃取风险：\n\n" + names +
+                                "\n\n建议：立即考虑关闭游戏并修改微软账户密码，同时检查这些文件的来源。",
+                                Loc.T("Str_Cs_Injection_Scan_Warning", "⚠ 注入检测警告")));
+                        }
+                    }
+                    catch { /* 扫描失败不影响正常游戏 */ }
+                });
+            }
+
+            // 需求："不要在刚开始启动的时候就说游戏启动成功，要在游戏窗口出现之后才说成功"。
+            // 之前这里只是等固定 3 秒观察进程有没有提前退出，进程没退出就直接判定"成功"——
+            // 但"进程还活着"不等于"游戏窗口已经出现"：Forge/NeoForge 这类加载器安装器阶段、
+            // 或者 JVM 正在下载/校验资源文件的这几秒到几十秒里，进程确实还活着，用户却看不到
+            // 任何窗口，此时弹"启动成功"是在撒谎。改成轮询 Process.MainWindowHandle：句柄非零
+            // 就是 Win32 意义上"这个进程已经创建了一个可见主窗口"，用它作为"游戏窗口出现"的
+            // 判定依据，比固定等 3 秒更贴近真实状态。
+            //
+            // 轮询上限放宽到 2 分钟（跟旧的 3 秒相比宽松很多）：Forge/NeoForge 首次启动常见的
+            // "下载/合并 mod 依赖" FML 处理阶段，在网络一般的环境下花十几秒到一两分钟都不算
+            // 罕见，不能照抄原型时的 3 秒观察窗口，否则大量正常启动会被误判成"提前退出"而报错。
+            // 轮询期间同步更新 LaunchStatusText，让用户知道当前处于"等待窗口出现"而不是卡死。
+            ShowLaunchStatus("正在启动游戏进程…");
+            var exitedEarly = false;
+            var windowAppeared = false;
+            var waitCancelled = false;
+            await Task.Run(async () =>
+            {
+                for (var i = 0; i < 1200; i++) // 1200 * 100ms = 2 分钟
+                {
+                    // 需求修复："点击'取消启动'时，游戏窗口仍然会弹出"。根因：这里之前只是
+                    // 中断轮询本身（不再等待/不再判定为"启动成功"），但并没有真正杀掉已经
+                    // 拉起来的 openjdk(java) 进程——进程继续在后台跑，该弹的游戏窗口还是会
+                    // 弹出来，跟用户点"取消"的直觉完全相反。现在改成：一旦检测到取消，
+                    // 立即整棵进程树 Kill 掉，从根上清除掉这个 java 进程，而不只是停止等待/
+                    // 停止刷文案。
+                    if (cancelToken.IsCancellationRequested)
+                    {
+                        processInfo.ForceKill();
+                        waitCancelled = true;
+                        return;
+                    }
+                    if (processInfo.HasExited) { exitedEarly = true; return; }
+                    try
+                    {
+                        processInfo.Process.Refresh();
+                        if (processInfo.Process.MainWindowHandle != IntPtr.Zero)
+                        {
+                            windowAppeared = true;
+                            return;
+                        }
+                    }
+                    catch { /* 进程可能正好在这一瞬间退出，下一轮循环会被上面的 HasExited 捕获到 */ }
+
+                    if (i == 5) // 前 0.5 秒过后再切文案，避免"秒切"看起来像没变化
+                        Dispatcher.Invoke(() => ShowLaunchStatus("等待游戏窗口出现…"));
+                    await Task.Delay(100);
+                }
+            });
+            // 轮询 2 分钟仍未见到窗口、进程也没退出：不判定为失败（有些环境窗口创建确实很慢，
+            // 强行判失败反而会打断真正还在正常加载的游戏），但也不该继续用"等待"文案卡住不动，
+            // 交还给下面 windowAppeared==false 且 exitedEarly==false 的分支处理。
+
+            if (waitCancelled)
+            {
+                // 用户主动取消：跟需求一致，不弹任何提示框（不是"失败"，是用户自己叫停的），
+                // 用 Toast 轻量告知一下就好；对应的 java 进程在上面轮询循环里已经被
+                // Kill(entireProcessTree: true) 彻底清掉了，这里不需要也不应该再留给用户
+                // 去进程列表里手动结束。
+                ToastService.ShowSuccess(Loc.T("Str_Cs_Launch_Cancelled", "已取消启动。"));
+                return;
+            }
+
+            // 修复"启动成功/启动异常弹窗出现时启动器窗口会自动最小化"：上面等待最多 3 秒观察
+            // 游戏进程是否提前退出的这段时间里，刚拉起的 Java/游戏窗口很容易抢到前台焦点，
+            // 之前这里的系统原生 MessageBox.Show 没有显式传 Owner，弹窗触发时启动器主窗口
+            // 已经不是前台窗口，Windows 有时会把这个已经失去前台焦点、又刚好被系统认为
+            // "不活跃"的窗口直接最小化。现在改用进程内 Overlay 弹窗（MessageBoxDialog）后，
+            // 弹窗本身就是挂在 MainWindow 可视化树里的一部分，天然跟随主窗口，不存在"独立
+            // Win32 窗口跟主窗口分离"这个问题了；但主窗口自己被最小化的情况依然可能发生
+            // （见上面的原因），所以这里仍然需要在弹窗前调用 EnsureVisibleForDialog()
+            // 主动把主窗口从 Minimized 恢复。
+            EnsureVisibleForDialog();
+
+            if (exitedEarly)
+            {
+                string output;
+                lock (processInfo.OutputBuffer) output = processInfo.OutputBuffer.ToString();
+                var tail = output.Length > 3000 ? output[^3000..] : output;
+                var exitCode = -1;
+                try { exitCode = processInfo.Process.ExitCode; } catch { /* 忽略 */ }
+
+                LauncherLogService.AppendLine($"[游戏崩溃] {account.DisplayLabel} - {cfg.SelectedVersionId}，退出码 {exitCode}");
+
+                // 需求："游戏崩溃的时候，可以选择查看日志和导出完整日志"。这里用专门的
+                // CrashReportDialog 替代原来只读的 MessageBoxDialog.ShowWarning——多了
+                // "查看日志"（跳转日志页）和"导出完整日志"（合并启动器日志+崩溃前输出+
+                // 游戏日志文件另存为一份文本）两个动作，其余提示文案基本保持不变。
+                CrashReportDialog.Show(this,
+                    $"游戏进程刚启动就退出了（退出码 {exitCode}），大概率没有正常运行起来。\n\n" +
+                    Loc.T("Str_Cs_Recent_Console_Output_N", "最近的控制台输出：\n") + (string.IsNullOrWhiteSpace(tail) ? "(没有捕获到任何输出，可能是 Java 本身启动失败)" : tail),
+                    processInfo);
+            }
+            else
+            {
+                // 「百宝箱」-「查看启动计数」：只在真正判定为启动成功（窗口出现，或至少没有
+                // 提前退出）时计数，累计值持久化进 config.json，跟版本/账户切换无关。
+                cfg.GameLaunchSuccessCount++;
+                ConfigService.Save();
+                ApplyPostGameLaunchAction(cfg.PostGameLaunchAction);
+
+                // 需求："在游戏窗口出现之后才会说启动成功"。windowAppeared==true 是真正观察到
+                // Win32 主窗口句柄出现的情况，文案照常；windowAppeared==false 但进程也没退出，
+                // 属于"轮询 2 分钟仍未见到窗口、但进程还活着"的边界情况（极少数环境下窗口创建
+                // confirm 得比 2 分钟还慢，或者是没有可见窗口的服务端/无头场景），不应该武断地
+                // 说"启动成功"，改用更谨慎的措辞，明确告诉用户"进程仍在运行、窗口还没等到"。
+                if (windowAppeared)
+                {
+                    // 需求："让所有弹窗提示均在窗口内内嵌，不弹出新窗口，就像 PCL 一样"。
+                    // "游戏启动成功"是纯告知性提示，用户不需要做任何决定——做成必须点"确定"的
+                    // 模态框，等于在游戏起来之后还要求用户回来点一下，是纯多余的一步。
+                    // 改成右下角 Toast，几秒后自己消失，不阻塞任何操作（PCL 就是这个体验）。
+                    // 判断标准见 ToastService 类头注释：需要决定的才用模态，只是告知的一律 Toast。
+                    ToastService.ShowSuccess($"游戏已启动：{account.DisplayLabel} - {cfg.SelectedVersionId}");
+                }
+                else
+                {
+                    ToastService.ShowSuccess($"游戏进程仍在运行（尚未检测到窗口）：{account.DisplayLabel} - {cfg.SelectedVersionId}");
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            ErrorPresenter.ShowFriendlyError(Loc.T("Str_Cs_Launch_Failed_Check_That_Java_And_The_Ga", "启动失败，请检查 Java、游戏文件是否完整，或查看「日志」页面获取更多信息。"), $"[启动失败] {ex}", "启动失败");
+        }
+        finally
+        {
+            // 不管走成功/崩溃/异常哪条分支，等待过程结束后都要把状态提示收起来，
+            // 不能让"等待游戏窗口出现…"这行字永久挂在侧边栏上。
+            HideLaunchStatus();
+        }
+    }
+
+    /// <summary>在侧边栏"启动游戏"按钮上方显示一行启动状态提示文字。</summary>
+    private void ShowLaunchStatus(string text)
+    {
+        LaunchStatusText.Text = text;
+        LaunchStatusText.Visibility = Visibility.Visible;
+    }
+
+    /// <summary>收起侧边栏的启动状态提示。</summary>
+    private void HideLaunchStatus()
+    {
+        LaunchStatusText.Visibility = Visibility.Collapsed;
+    }
+
+    /// <summary>一键关闭游戏：结束所有正在运行的游戏进程。</summary>
+    private void CloseAllGames_Click(object sender, RoutedEventArgs e)
+    {
+        if (ProcessManager.Running.Count == 0)
+        {
+            MessageBoxDialog.ShowInfo(Loc.T("Str_Cs_No_Game_Is_Currently_Running", "当前没有正在运行的游戏。"));
+            return;
+        }
+        var confirm = MessageBoxDialog.ShowConfirm($"确定要关闭全部 {ProcessManager.Running.Count} 个正在运行的游戏吗？",
+            "一键关闭游戏");
+        if (confirm)
+        {
+            ProcessManager.CloseAll();
+            RefreshSidebar();
+        }
+    }
+
+    /// <summary>关闭所选的游戏：打开进程列表窗口，用户选中一个后关闭。</summary>
+    private void CloseSelectedGame_Click(object sender, RoutedEventArgs e)
+    {
+        if (ProcessManager.Running.Count == 0)
+        {
+            MessageBoxDialog.ShowInfo(Loc.T("Str_Cs_No_Game_Is_Currently_Running", "当前没有正在运行的游戏。"));
+            return;
+        }
+        var win = new ProcessManagerWindow(ProcessManager, ProcessManagerWindow.Mode.SelectToClose);
+        win.ShowDialog();
+        RefreshSidebar();
+    }
+
+    /// <summary>
+    /// 关闭未响应的游戏：不会自动判断"卡死"，而是打开进程列表让用户勾选确认无响应的游戏，
+    /// 勾选后才允许强制结束，避免误杀正在正常游玩的进程。
+    /// </summary>
+    private void CloseUnresponsiveGame_Click(object sender, RoutedEventArgs e)
+    {
+        if (ProcessManager.Running.Count == 0)
+        {
+            MessageBoxDialog.ShowInfo(Loc.T("Str_Cs_No_Game_Is_Currently_Running", "当前没有正在运行的游戏。"));
+            return;
+        }
+        var win = new ProcessManagerWindow(ProcessManager, ProcessManagerWindow.Mode.MarkUnresponsive);
+        win.ShowDialog();
+        RefreshSidebar();
+    }
+
+    // ===================================================================
+    // ===== Overlay 弹窗宿主实现（配合 OverlayDialogService 使用） =====
+    // 这几个方法是 internal，只给同程序集内的 OverlayDialogService 调用，不对外暴露——
+    // "怎么把一个弹窗塞进/摘出可视化树、怎么播放进出场动画"是纯粹的宿主实现细节，
+    // OverlayDialogService 只需要知道"渲染这个内容"和"收起整个遮罩层"这两个操作，
+    // 不需要关心 MainWindow.xaml 里具体是哪几个命名元素在起作用。
+    // ===================================================================
+
+    /// <summary>把某个弹窗内容渲染到 Overlay 层并显示，播放进场动画。
+    /// animateIn=false 用于"弹窗里弹出的子弹窗关闭后，恢复显示上一层"的场景——那种情况
+    /// 更接近"揭开覆盖层露出原来就在那的内容"，用更快、更轻的过渡即可，不需要完整的
+    /// 进场动画，避免用户以为又打开了一个全新的弹窗。</summary>
+    internal void OverlayRenderEntry(object content, bool animateIn)
+    {
+        OverlayRoot.Visibility = Visibility.Visible;
+        OverlayContentHost.Content = content;
+
+        // 修复"关掉某个提示框/弹窗后，整页所有按钮都点不动"系列问题的根因：
+        // OverlayDismissEntry 淡出时是用 BeginAnimation 在 OverlayScrim/OverlayCard/
+        // OverlayCardScale 这几个属性上挂了动画时钟；WPF 里"动画时钟"的优先级高于
+        // "直接赋值的本地值"——只要那个时钟还挂在属性上没有被显式清除，即使外面
+        // 简单地写 OverlayScrim.Opacity = 1，实际生效的值仍然由那个（可能还没走完，
+        // 或者已经走完但没有被清除）的动画时钟决定，赋值会被静默忽略。
+        // 如果上一次 OverlayDismissEntry 的淡出动画/兜底延时判定跟这一次
+        // "恢复显示上一层"(animateIn=false，比如从一个子弹窗如 MessageBoxDialog
+        // 返回到它上面的 ExperimentalFeaturesWindow) 前后脚发生，遗留的旧时钟就可能
+        // 让 OverlayScrim 视觉上停留在透明（Opacity 实际还是 0）却仍然
+        // Visibility=Visible 且占据命中测试，表现就是"看不见任何弹窗了，但整个界面
+        // 点哪里都没反应"——不是没收起遮罩，而是遮罩收起了"看起来"，命中测试没收起。
+        // 这里在每次重新渲染 Overlay 内容之前，先显式清空这几个属性上可能残留的动画
+        // 时钟（BeginAnimation(prop, null)），保证接下来的赋值/新动画一定是从干净状态
+        // 开始生效，不会被过期的旧时钟顶掉。
+        OverlayScrim.BeginAnimation(OpacityProperty, null);
+        OverlayCard.BeginAnimation(OpacityProperty, null);
+        OverlayCardScale.BeginAnimation(ScaleTransform.ScaleXProperty, null);
+        OverlayCardScale.BeginAnimation(ScaleTransform.ScaleYProperty, null);
+
+        // 每次都重新测量一次内容尺寸：不同弹窗大小不同，OverlayCard 靠
+        // HorizontalAlignment/VerticalAlignment=Center 自动居中，不需要手动算坐标。
+        if (!animateIn)
+        {
+            OverlayScrim.Opacity = 1;
+            OverlayCardScale.ScaleX = 1;
+            OverlayCardScale.ScaleY = 1;
+            OverlayCard.Opacity = 1;
+            return;
+        }
+
+        // 进场动画：遮罩淡入 + 卡片从 96% 缩放到 100% 同时淡入，跟主流弹窗库（比如网页端
+        // Modal）的观感一致，比"瞬间出现"更柔和，也能让用户明确注意到"有新内容出现了"。
+        OverlayScrim.Opacity = 0;
+        OverlayCard.Opacity = 0;
+        OverlayCardScale.ScaleX = 0.96;
+        OverlayCardScale.ScaleY = 0.96;
+
+        var duration = TimeSpan.FromMilliseconds(140);
+        var ease = new QuadraticEase { EasingMode = EasingMode.EaseOut };
+
+        OverlayScrim.BeginAnimation(OpacityProperty, new DoubleAnimation(0, 1, duration) { EasingFunction = ease });
+        OverlayCard.BeginAnimation(OpacityProperty, new DoubleAnimation(0, 1, duration) { EasingFunction = ease });
+        OverlayCardScale.BeginAnimation(ScaleTransform.ScaleXProperty, new DoubleAnimation(0.96, 1, duration) { EasingFunction = ease });
+        OverlayCardScale.BeginAnimation(ScaleTransform.ScaleYProperty, new DoubleAnimation(0.96, 1, duration) { EasingFunction = ease });
+    }
+
+    /// <summary>播放退场动画后调用 onComplete（由 OverlayDialogService 传入，负责把结果
+    /// 回传给等待方、以及恢复上一层弹窗或彻底收起 Overlay）。</summary>
+    internal void OverlayDismissEntry(object content, Action onComplete)
+    {
+        var duration = TimeSpan.FromMilliseconds(110);
+        var ease = new QuadraticEase { EasingMode = EasingMode.EaseIn };
+
+        // 修复："实验性功能"关掉之后整页按钮全部点不动"：根因是这里以前只靠
+        // cardFade.Completed 事件来触发 onComplete()（进而触发 OverlayHideRoot()
+        // 把 OverlayRoot 收起来）。但 OverlayRenderEntry 在恢复上一层弹窗时
+        // （CloseTop 里 _stack.Count > 0 的分支）会立刻对同一个 OverlayCard.Opacity
+        // 再调一次 BeginAnimation——WPF 里对同一个依赖属性重新 BeginAnimation 会
+        // 直接替换掉前一个动画时钟，被替换掉的动画的 Completed 事件不保证触发。
+        // 一旦这次 Completed 没触发，onComplete()/OverlayHideRoot() 就永远不会被
+        // 调用，OverlayRoot 卡在 Visibility=Visible（即便看起来透明），继续占据
+        // 全屏命中测试，导致底下所有按钮的点击全部被这个隐形遮罩吃掉。
+        // 用一个一次性标记 + Dispatcher 兜底延时代替"只信任动画事件"，保证无论
+        // Completed 是否触发，onComplete 都会且只会被调用一次。
+        var completedOnce = false;
+        void RunOnce()
+        {
+            if (completedOnce) return;
+            completedOnce = true;
+            if (ReferenceEquals(OverlayContentHost.Content, content)) OverlayContentHost.Content = null;
+            onComplete();
+        }
+
+        var cardFade = new DoubleAnimation(1, 0, duration) { EasingFunction = ease };
+        cardFade.Completed += (_, _) => RunOnce();
+
+        OverlayCard.BeginAnimation(OpacityProperty, cardFade);
+        OverlayScrim.BeginAnimation(OpacityProperty, new DoubleAnimation(1, 0, duration) { EasingFunction = ease });
+        OverlayCardScale.BeginAnimation(ScaleTransform.ScaleXProperty, new DoubleAnimation(1, 0.96, duration) { EasingFunction = ease });
+        OverlayCardScale.BeginAnimation(ScaleTransform.ScaleYProperty, new DoubleAnimation(1, 0.96, duration) { EasingFunction = ease });
+
+        // 兜底：动画本该在 duration 之后完成，多给 150ms 余量；如果 Completed 因为
+        // 上面说的替换问题没能触发，这里保证 onComplete 依然会被调用一次，
+        // OverlayRoot 不会永久卡住。
+        // 注意：Dispatcher.InvokeAsync 没有直接接受延时的重载（那是 DispatcherTimer 的
+        // 职责，上一版写成 InvokeAsync(..., TimeSpan) 导致编译错误 CS1503），
+        // 这里改用一次性 DispatcherTimer 来做延时兜底。
+        var fallbackTimer = new DispatcherTimer { Interval = duration + TimeSpan.FromMilliseconds(150) };
+        fallbackTimer.Tick += (_, _) =>
+        {
+            fallbackTimer.Stop();
+            RunOnce();
+        };
+        fallbackTimer.Start();
+    }
+
+    /// <summary>整个弹窗栈都关闭完了，彻底收起 OverlayRoot（Visibility=Collapsed，
+    /// 恢复"不占用命中测试"的状态，见 MainWindow.xaml 对 OverlayRoot 的注释）。</summary>
+    internal void OverlayHideRoot()
+    {
+        // 加一层判断：只有当前确实没有内容挂在 OverlayContentHost 上时才收起 OverlayRoot。
+        // 上面 OverlayDismissEntry 的兜底延时回调有极小概率跟"栈里又压入了新弹窗"的时序
+        // 撞在一起，这里避免误把刚显示出来的新弹窗所在的 OverlayRoot 又给 Collapsed 掉。
+        if (OverlayContentHost.Content != null) return;
+        OverlayRoot.Visibility = Visibility.Collapsed;
+    }
+
+    /// <summary>点击遮罩（弹窗卡片以外的半透明黑色区域）。只有事件源就是 OverlayScrim
+    /// 本身时才处理——弹窗卡片内部控件的点击事件会先被卡片内部消费，理论上不会冒泡到
+    /// 这里，这个判断是双重保险，避免未来某个弹窗内容意外把事件冒泡上来时被误判成
+    /// "点了背景"而错误关闭。</summary>
+    private void OverlayScrim_MouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+    {
+        if (!ReferenceEquals(e.OriginalSource, OverlayScrim)) return;
+        OverlayDialogService.RequestDismissTopByBackgroundClick();
+    }
+
+    // ==================== 拖拽安装 ====================
+    // 需求："加入拖动即可导入整合包功能"、"拖入 mod 资源包等会自动安装到所选的这个游戏实例中"。
+    //
+    // 挂在 Window 级别（MainWindow.xaml 里 AllowDrop="True" + 三个事件），而不是挂在某个页面上：
+    // 用户不会记得"要先切到 Mod 管理页才能拖"，在任何页面拖进来都应该接住。
+    // 具体装到哪由 ResolveDropTargetInstanceDir() 统一决定，跟启动游戏用的是同一个实例目录，
+    // 保证"装进去的东西游戏一定读得到"。
+
+    private readonly DragDropInstallService _dragDropService = new();
+
+    // 修复"拖动文件时，只要鼠标晃动，屏幕就会闪烁"：拖拽悬停在窗口上时，DragOver 事件会
+    // 随鼠标每一次移动反复触发（一秒钟能有几十次），而这个事件里原来对拖进来的每个文件都
+    // 调一次 _dragDropService.Classify——这个方法要打开文件（压缩包类型的甚至要读 zip 目录）
+    // 才能判断出"这是 mod / 材质包 / 整合包 / 存档..."，全部同步跑在 UI 线程上。鼠标晃一下
+    // 就触发几十次同步文件 IO，每次都卡住 UI 线程一小段时间，视觉上就是"抖一下、画面闪一下"。
+    // 用这两个字段记住"上一次算过的路径集合"和"算出来的结果"，同一批文件只在真正进入窗口/
+    // 换成另一批文件时才重新分类一次，鼠标在窗口内单纯移动不会重复触发这些 IO。
+    private string[]? _lastDragOverPaths;
+    private List<DragDropInstallService.DropKind>? _lastDragOverKinds;
+
+    /// <summary>拖拽的目标实例目录：当前选中的版本 + 当前的版本隔离设置。
+    /// 跟 LauncherService 启动时算出来的游戏目录口径完全一致——隔离开启时是
+    /// versions/&lt;id&gt;，关闭时是 .minecraft 根目录。口径不一致的话会出现
+    /// "提示装好了但游戏里看不到"这种最难排查的问题。</summary>
+    private string? ResolveDropTargetInstanceDir()
+    {
+        try
+        {
+            var cfg = ConfigService.Config;
+            var versionId = cfg.SelectedVersionId;
+            if (string.IsNullOrEmpty(versionId)) return null;
+
+            // 跟 LaunchInternalAsync 里取当前文件夹的写法保持一致，别自造第二套口径。
+            var folder = cfg.Folders.FirstOrDefault(f => f.Path == cfg.SelectedFolderPath)
+                         ?? cfg.Folders.FirstOrDefault();
+            if (folder == null) return null;
+
+            var isolate = cfg.VersionIsolationOverrides.TryGetValue(versionId, out var ov)
+                ? ov
+                : cfg.IsolateVersionsByDefault;
+
+            return isolate ? Path.Combine(folder.Path, "versions", versionId) : folder.Path;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    // ===== 自绘标题栏：最小化/最大化/关闭三个按钮 =====
+    // 用 SystemCommands 而不是直接改 WindowState/调 Close()，是因为这几个方法本身就是
+    // WPF 给"自绘标题栏"场景准备的标准做法，跟 WindowChrome 配合时行为（比如最大化时
+    // 动画、多显示器下记住还原前尺寸位置）跟系统原生按钮完全一致，不用自己再处理一遍。
+    /// <summary>需求："下载/启动进行中时，点最小化/最大化/关闭这三个按钮中的任何一个，
+    /// 都提示可能是手误，需要手动确认"。这里统一判断"是否处于下载/启动进行中"这个状态：
+    /// _isCancelLaunchState 是"启动游戏"流程本身已有的"正在启动中"标记（按钮变成"取消启动"
+    /// 那段时间），DownloadQueueService.Instance.HasActive 是标题栏下载列表里是否还有
+    /// "下载中/已暂停"的任务（已暂停也算，因为用户很可能马上要点继续）。</summary>
+    private TrayIconService? _trayIcon;
+
+    /// <summary>创建并接线系统托盘图标。图标本身构造好之后先不 Show()——只在真正需要
+    /// "最小化到托盘"时才显示，平时启动器正常显示主窗口时没必要让托盘区多一个图标。</summary>
+    private void InitializeTrayIcon()
+    {
+        _trayIcon = new TrayIconService();
+        _trayIcon.ShowMainRequested += () => Dispatcher.Invoke(RestoreFromTray);
+        _trayIcon.IconActivated += () => Dispatcher.Invoke(RestoreFromTray);
+        _trayIcon.LaunchSelectedRequested += () => Dispatcher.Invoke(() =>
+        {
+            RestoreFromTray();
+            Launch_Click(this, new RoutedEventArgs());
+        });
+        _trayIcon.ExitRequested += () => Dispatcher.Invoke(() =>
+        {
+            // 托盘"退出"是用户明确表达的真正退出意图，不应该再走"下载/启动进行中"
+            // 那套确认逻辑一遍——用户已经在托盘菜单这个动作本身里做过一次选择了。
+            _trayIcon?.Hide();
+            System.Windows.Application.Current.Shutdown();
+        });
+        Closed += (_, _) => _trayIcon?.Dispose();
+    }
+
+    /// <summary>隐藏主窗口、显示托盘图标——"关闭按钮默认最小化到托盘"和四选一提示里的
+    /// "返回任务栏托盘"选项共用这一个方法。</summary>
+    private void MinimizeToTray()
+    {
+        _trayIcon?.Show();
+        Hide();
+    }
+
+    /// <summary>游戏窗口成功出现后，按设置页「游戏启动后」选项处理启动器主窗口——跟
+    /// CloseButtonAction 共用 Minimize/MinimizeToTray/直接关闭这几种已有实现，见
+    /// PostGameLaunchAction 枚举注释。默认 KeepAsIs 什么都不做，直接返回，不产生任何额外开销。
+    /// 只在这个方法里判断一次开关状态，调用方（Launch 成功回调）不需要关心具体行为怎么实现。</summary>
+    private void ApplyPostGameLaunchAction(Models.PostGameLaunchAction action)
+    {
+        switch (action)
+        {
+            case Models.PostGameLaunchAction.Minimize:
+                if (WindowState != WindowState.Minimized) WindowState = WindowState.Minimized;
+                break;
+            case Models.PostGameLaunchAction.MinimizeToTray:
+                MinimizeToTray();
+                break;
+            case Models.PostGameLaunchAction.Close:
+                // 跟托盘"退出"同理：这是用户自己在设置里明确选定的行为，不需要再走
+                // "下载/启动进行中"那套关闭确认——游戏已经启动成功，启动器这边没有正在
+                // 进行、会被打断的任务，直接退出即可；游戏是独立进程，不会被一起关掉。
+                System.Windows.Application.Current.Shutdown();
+                break;
+            case Models.PostGameLaunchAction.KeepAsIs:
+            default:
+                break;
+        }
+    }
+
+    private void RestoreFromTray()
+    {
+        Show();
+        WindowState = _lastNonMinimizedWindowState;
+        Activate();
+        _trayIcon?.Hide();
+    }
+
+    /// <summary>绑定标题栏下载列表的数据源，并在集合变化时刷新角标数字/显示状态。</summary>
+    private void InitializeDownloadQueueUi()
+    {
+        // 把当前 AppConfig 引用交给 DownloadQueueService 单例，供详情行(剩余时间/速度/大小)
+        // 读取 DownloadPopupSizeDisplayMode；同一个 AppConfig 实例会被设置页原地修改，
+        // 不需要每次保存设置后重新赋值。
+        DownloadQueueService.Instance.Config = ConfigService.Config;
+        ApplyDownloadPopupDetailMode();
+        var items = DownloadQueueService.Instance.Items;
+        DownloadQueueItemsControl.ItemsSource = items;
+        items.CollectionChanged += (_, _) => Dispatcher.Invoke(RefreshDownloadQueueBadge);
+        RefreshDownloadQueueBadge();
+    }
+
+    /// <summary>按 AppConfig.DownloadPopupShowDetailStats 切换下载气泡里"详情行"
+    /// (剩余时间/当前速度/大小)的可见性，并把气泡整体高度放大 60% 留出空间——
+    /// 需求原文"下载列表变大60%用于显示这些"，这里按气泡 MaxHeight 整体放大处理
+    /// （不是单条目行高放大60%）。设置页保存后调用本方法即可立即生效，不需要重启。</summary>
+    public void ApplyDownloadPopupDetailMode()
+    {
+        var show = ConfigService.Config.DownloadPopupShowDetailStats;
+        // 气泡整体高度放大 60%（360 -> 576）留出详情行的空间。
+        if (DownloadQueuePopupBorder != null) DownloadQueuePopupBorder.MaxHeight = show ? 576 : 360;
+        // DataTemplate 里的详情 TextBlock 是每个条目模板内的元素，拿不到具体实例，
+        // 改用一个共享的 Visibility 资源，配合 XAML 里的
+        // Visibility="{DynamicResource DownloadQueueDetailVisibility}" 统一控制，
+        // 这里一改所有条目的详情行立即跟着变，不需要重建 ItemsControl。
+        DownloadQueuePopup.Resources["DownloadQueueDetailVisibility"] = show ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    private void RefreshDownloadQueueBadge()
+    {
+        var count = DownloadQueueService.Instance.Items.Count;
+        DownloadQueueBadge.Visibility = count > 0 ? Visibility.Visible : Visibility.Collapsed;
+        DownloadQueueBadgeText.Text = count > 9 ? "9+" : count.ToString();
+        DownloadQueueEmptyHint.Visibility = count == 0 ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    private void DownloadQueueButton_Click(object sender, RoutedEventArgs e)
+    {
+        DownloadQueuePopup.IsOpen = !DownloadQueuePopup.IsOpen;
+    }
+
+    /// <summary>下载列表气泡拖边框调整大小的三个 Thumb 处理器。之前这三个方法完全没有定义
+    /// （XAML 里的 DragDelta="..." 引用的方法在 code-behind 里根本不存在，属于编译期就会报
+    /// CS1061 的遗留 bug，不是这次改动引入的），补全后逻辑很直接：
+    /// 直接改 DownloadQueuePopupBorder 的 Width/Height，WPF 会自动按 Border 上已经声明的
+    /// MinWidth/MinHeight/MaxWidth/MaxHeight 夹住范围，这里不需要重复夹一遍。</summary>
+    private void DownloadQueueResizeRightThumb_DragDelta(object sender, DragDeltaEventArgs e)
+    {
+        double newWidth = DownloadQueuePopupBorder.ActualWidth + e.HorizontalChange;
+        DownloadQueuePopupBorder.Width = Math.Clamp(newWidth,
+            DownloadQueuePopupBorder.MinWidth, DownloadQueuePopupBorder.MaxWidth);
+    }
+
+    private void DownloadQueueResizeBottomThumb_DragDelta(object sender, DragDeltaEventArgs e)
+    {
+        double newHeight = DownloadQueuePopupBorder.ActualHeight + e.VerticalChange;
+        DownloadQueuePopupBorder.Height = Math.Clamp(newHeight,
+            DownloadQueuePopupBorder.MinHeight, DownloadQueuePopupBorder.MaxHeight);
+    }
+
+    private void DownloadQueueResizeCornerThumb_DragDelta(object sender, DragDeltaEventArgs e)
+    {
+        DownloadQueueResizeRightThumb_DragDelta(sender, e);
+        DownloadQueueResizeBottomThumb_DragDelta(sender, e);
+    }
+
+    private void DownloadItemPauseResume_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { Tag: DownloadQueueItem item }) return;
+        if (item.CanPause) DownloadQueueService.Instance.Pause(item);
+        else if (item.CanResume) DownloadQueueService.Instance.Resume(item);
+    }
+
+    private void DownloadItemCancel_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { Tag: DownloadQueueItem item }) return;
+        DownloadQueueService.Instance.Cancel(item);
+    }
+
+    private static bool IsDownloadOrLaunchBusy(MainWindow window) =>
+        window._isCancelLaunchState || DownloadQueueService.Instance.HasActive;
+
+    /// <summary>修复"下载游戏的时候，最大化/还原、最小化/还原被下载状态干扰"：
+    /// 下载/启动是纯后台任务，跟窗口是最大化、最小化还是还原没有任何关系，不会因为
+    /// 用户调整窗口状态就中断或受影响——之前这里对最小化/最大化按钮也套用了「关闭」
+    /// 按钮那一套"检测到忙碌就弹确认框拦一下"的逻辑，等于是把跟关闭窗口相关的安全提示
+    /// 错误地也搬到了这两个完全无害的操作上，导致下载进行中每点一次最小化/最大化都要
+    /// 先手动确认一次，体验上像是"卡住了"。这里去掉忙碌检测，最小化/最大化永远只是
+    /// 单纯地切换窗口状态，不再关心下载/启动是否正在进行——只有真正会中断下载/启动的
+    /// 「关闭」按钮才需要保留确认提示（见 CloseButton_Click）。</summary>
+    private void MinimizeButton_Click(object sender, RoutedEventArgs e)
+    {
+        SystemCommands.MinimizeWindow(this);
+    }
+
+    private void MaximizeRestoreButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (WindowState == WindowState.Maximized) SystemCommands.RestoreWindow(this);
+        else SystemCommands.MaximizeWindow(this);
+    }
+
+    /// <summary>关闭按钮：
+    /// 1) 下载/启动进行中时，不管设置页配的是什么默认行为，一律弹出专门的四选一提示
+    ///    （取消 / 关闭 / 最小化 / 返回任务栏托盘），明确告知关闭会导致下载/启动失败，
+    ///    需要用户在知情的情况下手动选，不能被默认行为悄悄决定——AskEachTime 的弹窗
+    ///    内容跟这个几乎一样，忙碌状态下这一个提示已经涵盖了"让用户自己选"的诉求，
+    ///    不需要再叠加弹第二个窗。
+    /// 2) 不在忙碌状态时，按设置页「点击叉号时的默认操作」执行：直接关闭 / 最小化到托盘 /
+    ///    单纯最小化 / 每次都弹窗询问（AskEachTime，弹出跟上面同一个四选一窗口，只是措辞
+    ///    换成不带"下载/启动会失败"这句警告，因为这时候并不一定真的在忙）。</summary>
+    private void CloseButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (IsDownloadOrLaunchBusy(this))
+        {
+            var choice = MessageBoxDialog.ShowFourChoice(
+                "当前正在运行下载/启动工作，是否关闭启动器？关闭后会造成下载失败、启动失败。",
+                "确认关闭",
+                cancelText: "取消",
+                closeText: "关闭",
+                minimizeText: "最小化",
+                trayText: "返回任务栏托盘");
+            ApplyFourChoiceResult(choice);
+            return;
+        }
+
+        switch (ConfigService.Config.DefaultCloseAction)
+        {
+            case CloseButtonAction.MinimizeToTray:
+                MinimizeToTray();
+                break;
+            case CloseButtonAction.Minimize:
+                SystemCommands.MinimizeWindow(this);
+                break;
+            case CloseButtonAction.AskEachTime:
+                var choice = MessageBoxDialog.ShowFourChoice(
+                    "确定要关闭启动器吗？也可以选择最小化或返回任务栏托盘继续在后台运行。",
+                    "关闭启动器",
+                    cancelText: "取消",
+                    closeText: "关闭",
+                    minimizeText: "最小化",
+                    trayText: "返回任务栏托盘");
+                ApplyFourChoiceResult(choice);
+                break;
+            default: // DirectClose
+                SystemCommands.CloseWindow(this);
+                break;
+        }
+    }
+
+    /// <summary>ShowFourChoice 弹窗结果的统一处理，供"忙碌时强制弹窗"和"AskEachTime 每次
+    /// 弹窗"两处复用，避免同一套 switch 抄两遍。</summary>
+    private void ApplyFourChoiceResult(XclFourChoiceResult choice)
+    {
+        switch (choice)
+        {
+            case XclFourChoiceResult.Close:
+                SystemCommands.CloseWindow(this);
+                break;
+            case XclFourChoiceResult.Minimize:
+                SystemCommands.MinimizeWindow(this);
+                break;
+            case XclFourChoiceResult.Tray:
+                MinimizeToTray();
+                break;
+            // Cancel：什么都不做。
+        }
+    }
+
+    /// <summary>主窗口关闭前的检查：还有便签钉在桌面上的话，弹三选一询问用户——
+    /// "一起关闭"直接把所有便签窗口也 Close() 掉（便签内容已经是自动保存的，不会丢）；
+    /// "仅关闭启动器"保持现状，便签继续留在桌面，XCL2 进程也会因此继续在后台运行
+    /// （这是"贴在桌面"这个功能本身的代价，明确告知用户，不是意外行为）；
+    /// "取消"则拦下这次关闭，两边都不动。没有任何便签在开时直接放行，不打扰。</summary>
+    private async void MainWindow_Closing(object? sender, System.ComponentModel.CancelEventArgs e)
+    {
+        // 第一次关闭时仍保留原来的桌面便签三选一；关闭备份完成后第二次 Close() 不重复打扰。
+        if (!_stickyNoteCloseDecisionHandled && Views.StickyNoteWindow.OpenWindows.Count > 0)
+        {
+            var count = Views.StickyNoteWindow.OpenWindows.Count;
+            var choice = MessageBoxDialog.ShowThreeChoice(
+                $"还有 {count} 个桌面便签处于置顶状态。\n\n" +
+                "便签窗口不属于启动器主界面，关闭启动器不会自动带走它——如果只关闭启动器，" +
+                "便签会继续显示在桌面上，XCL2 也会因此继续在后台运行。",
+                "关闭启动器",
+                "取消",
+                "仅关闭启动器（便签继续置顶）",
+                "一起关闭");
+
+            if (choice == XclMessageResult.Cancel)
+            {
+                e.Cancel = true;
+                return;
+            }
+
+            _stickyNoteCloseDecisionHandled = true;
+            if (choice == XclMessageResult.Yes)
+            {
+                foreach (var note in Views.StickyNoteWindow.OpenWindows.ToArray())
+                    note.Close();
+            }
+        }
+
+        if (!ConfigService.Config.BackupInstanceOnClose || _closeLifecycleBackupCompleted)
+            return;
+
+        // 真正退出前必须等备份结束；第一次 Closing 先取消，后台 zip 完成后再主动 Close 一次。
+        e.Cancel = true;
+        if (_closeLifecycleBackupRunning) return;
+        _closeLifecycleBackupRunning = true;
+        try
+        {
+            await RunLifecycleBackupAsync("关闭时备份", showToast: true);
+        }
+        finally
+        {
+            _closeLifecycleBackupRunning = false;
+            _closeLifecycleBackupCompleted = true;
+            _ = Dispatcher.BeginInvoke(new Action(Close), DispatcherPriority.Background);
+        }
+    }
+
+    private async Task RunLifecycleBackupAsync(string reason, bool showToast)
+    {
+        try
+        {
+            if (showToast) ToastService.ShowInfo("正在备份实例，完成后自动关闭…");
+            var count = await LifecycleInstanceBackupService.CreateBackupsAsync(ConfigService.Config, reason);
+            LauncherLogService.AppendLine($"[{reason}] 完成，成功备份 {count} 个实例。");
+            if (showToast && count > 0) ToastService.ShowSuccess($"已备份 {count} 个实例");
+        }
+        catch (Exception ex)
+        {
+            ErrorPresenter.LogFallback(reason + "失败", ex);
+            LauncherLogService.AppendLine($"[{reason}] 失败：{ex.Message}");
+            if (showToast) ToastService.ShowWarning("实例备份失败，将继续关闭启动器。\n" + ex.Message);
+        }
+    }
+
+    /// <summary>标题栏图标区域：单击弹出系统菜单（右键菜单里"移动/大小/最小化/最大化/
+    /// 关闭"那一套），双击关闭窗口——都是 Windows 原生标题栏图标的通行交互，用户
+    /// 换成自绘标题栏后不应该发现这两个手势消失了。</summary>
+    private void TitleBarIcon_MouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+    {
+        if (e.ClickCount >= 2)
+        {
+            SystemCommands.CloseWindow(this);
+            return;
+        }
+        var screenPos = TitleBarIconImage.PointToScreen(new Point(0, TitleBarIconImage.ActualHeight));
+        SystemCommands.ShowSystemMenu(this, screenPos);
+    }
+
+    /// <summary>窗口最大化⇄还原后，标题栏按钮的图标（□ ⇄ 两个重叠的方块）要跟着切换，
+    /// 否则用户点了最大化，按钮图标却还停在"最大化"那个样子，看起来像没生效。</summary>
+    private void MainWindow_StateChanged(object? sender, EventArgs e) => UpdateMaximizeRestoreIcon();
+
+    /// <summary>
+    /// 兼容旧版/补丁叠加后的 MainWindow.xaml：部分版本仍然绑定 SizeChanged="MainWindow_SizeChanged"。
+    /// 这里只同步标题栏最大化/还原图标，不再根据窗口宽度修改三个系统按钮的 Margin、Visibility，
+    /// 从根源避免按钮被拆开或在 854×480 窄窗口下消失。
+    /// </summary>
+    private void MainWindow_SizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        UpdateMaximizeRestoreIcon();
+    }
+
+    private void UpdateMaximizeRestoreIcon()
+    {
+        if (MaximizeRestoreIcon == null) return; // 构造函数里 InitializeComponent 之前可能还没生成
+        MaximizeRestoreIcon.Data = WindowState == WindowState.Maximized
+            ? (Geometry)FindResource("IconWinRestore")
+            : (Geometry)FindResource("IconWinMaximize");
+    }
+
+    private void MainWindow_DragOver(object sender, DragEventArgs e)
+    {
+        if (!e.Data.GetDataPresent(DataFormats.FileDrop))
+        {
+            e.Effects = DragDropEffects.None;
+            e.Handled = true;
+            return;
+        }
+
+        var paths = (string[])e.Data.GetData(DataFormats.FileDrop)!;
+        e.Effects = DragDropEffects.Copy;
+        e.Handled = true;
+
+        // 只有当这次拖进来的文件集合跟上次算过的不一样时，才重新分类（涉及文件 IO）；
+        // 同一批文件在窗口内来回晃动鼠标，这里直接复用上一次的结果，不再反复触发 IO。
+        List<DragDropInstallService.DropKind> kinds;
+        if (_lastDragOverPaths != null && _lastDragOverKinds != null && _lastDragOverPaths.SequenceEqual(paths))
+        {
+            kinds = _lastDragOverKinds;
+        }
+        else
+        {
+            kinds = paths.Select(_dragDropService.Classify).ToList();
+            _lastDragOverPaths = paths;
+            _lastDragOverKinds = kinds;
+        }
+
+        // 悬停时就把"会发生什么"说清楚，而不是等松手才知道装到哪去了。
+        var target = ResolveDropTargetInstanceDir();
+        if (target == null)
+        {
+            DragHintTitle.Text = Loc.T("Str_Cs_No_Game_Instance_Selected", "还没有选择游戏实例");
+            DragHintDetail.Text = "请先在「版本选择」里选一个版本，再把文件拖进来。";
+        }
+        else
+        {
+            DragHintTitle.Text = Loc.T("Str_Drop_Title", "松手即可安装");
+            DragHintDetail.Text = $"{DescribeKinds(kinds)}\n将安装到：{Path.GetFileName(target.TrimEnd(Path.DirectorySeparatorChar))}";
+        }
+
+        if (DragHintLayer.Visibility != Visibility.Visible)
+            DragHintLayer.Visibility = Visibility.Visible;
+    }
+
+    private static string DescribeKinds(List<DragDropInstallService.DropKind> kinds)
+    {
+        var names = new List<string>();
+        void Add(DragDropInstallService.DropKind k, string label)
+        {
+            var n = kinds.Count(x => x == k);
+            if (n > 0) names.Add($"{n} 个{label}");
+        }
+        Add(DragDropInstallService.DropKind.Mod, "Mod");
+        Add(DragDropInstallService.DropKind.ResourcePack, "材质包");
+        Add(DragDropInstallService.DropKind.ShaderPack, "光影包");
+        Add(DragDropInstallService.DropKind.DataPack, "数据包");
+        Add(DragDropInstallService.DropKind.World, "存档");
+        Add(DragDropInstallService.DropKind.Modpack, "整合包");
+        Add(DragDropInstallService.DropKind.BedrockContent, "基岩版内容");
+        Add(DragDropInstallService.DropKind.Unknown, "无法识别的文件");
+        return names.Count == 0 ? "没有可安装的内容" : string.Join("、", names);
+    }
+
+    /// <summary>
+    /// 拖进来的整合包。
+    ///
+    /// 需求原文："拖入 modrinth 和 XCL 的整合包时从 0 下载一个版本实例去安装
+    /// （允许用户自定义新的实例名称），而不是只在当前文件夹里面覆盖安装"。
+    ///
+    /// 所以默认走 ModpackInstallService.InstallToNewInstanceAsync：
+    ///   读清单拿到 MC 版本 + 加载器 → 用用户起的名字新建实例目录 →
+    ///   下载原版本体 → 装加载器 → 最后才解整合包内容。
+    ///
+    /// 这跟旧行为有本质区别：旧的只是把 mods/config 解压覆盖进某个已有实例，
+    /// 整合包要 Fabric 1.20.1 而你当前实例是原版 1.21 的话，装完必崩且看不出原因。
+    ///
+    /// 想装进已有实例仍然可以——设置里把「拖入整合包时新建实例」关掉，
+    /// 就会退回原来的 ModpackTargetVersionDialog 让你选目标目录。
+    /// </summary>
+    private async Task ImportDroppedModpackAsync(string modpackPath)
+    {
+        var cfg = ConfigService.Config;
+        var folder = cfg.Folders.FirstOrDefault(f => f.Path == cfg.SelectedFolderPath)
+                     ?? cfg.Folders.FirstOrDefault();
+        if (folder == null)
+        {
+            ToastService.ShowWarning(Loc.T("Str_Cs_No_Minecraft_Folder_Is_Configured_So_The", "还没有配置 .minecraft 文件夹，无法导入整合包。"));
+            return;
+        }
+
+        var installer = new ModpackInstallService(cfg);
+        var req = installer.ReadRequirements(modpackPath);
+
+        // ---------- 走"从零新建实例"这条路 ----------
+        if (cfg.ModpackDropCreatesNewInstance)
+        {
+            var suggested = ModpackInstallService.MakeUniqueInstanceName(
+                folder.Path,
+                string.IsNullOrWhiteSpace(req.Name) ? Path.GetFileNameWithoutExtension(modpackPath) : req.Name!);
+
+            var nameDialog = new NewInstanceNameDialog(suggested, req.McVersion, req.Loader, req.LoaderVersion);
+            if (OverlayDialogService.ShowModal(nameDialog) != true) return;
+
+            var instanceName = nameDialog.InstanceName;
+
+            // Forge/NeoForge 的安装器必须用本地 Java 跑；Fabric/Quilt 不需要。
+            // 这里提前解析一次，解析不到就传 null，由 InstallToNewInstanceAsync 在
+            // 真正需要时抛一句人话出来（而不是跑到一半才失败）。
+            string? javaExe = null;
+            try { javaExe = new JavaService().FindJava(cfg.JavaPath, configService: ConfigService); }
+            catch { }
+
+            var progressDialog = new ProgressDialog($"正在从零安装整合包「{instanceName}」...");
+            progressDialog.Show();
+            try
+            {
+                var result = await installer.InstallToNewInstanceAsync(
+                    modpackPath, folder.Path, instanceName, javaExe, progressDialog.Progress);
+
+                // 装完直接把新实例设为当前选中，用户点启动就能玩，不用自己再去版本列表找一遍。
+                cfg.SelectedVersionId = result.InstanceId;
+                try { ConfigService.Save(); } catch { }
+                RefreshSidebar();
+
+                if (result.FailedFiles.Count > 0)
+                {
+                    // 有 mod 没下下来必须明说：静默失败会让用户拿到一个缺 mod 的实例，
+                    // 进游戏才崩，最难排查。这属于"必须让用户读完"，用模态框而不是 Toast。
+                    MessageBoxDialog.ShowInfo(
+                        $"整合包已装成新实例「{result.InstanceId}」（{result.McVersion} {result.Loader}），" +
+                        $"但有 {result.FailedFiles.Count} 个文件没能下载成功，需要手动补齐：\n\n" +
+                        string.Join("\n", result.FailedFiles.Take(10)),
+                        Loc.T("Str_Cs_Some_Modpack_Files_Failed_To_Download", "整合包部分文件未下载成功"));
+                }
+                else
+                {
+                    ToastService.ShowSuccess(
+                        $"已装成新实例「{result.InstanceId}」（{result.McVersion}{(string.IsNullOrEmpty(result.Loader) ? "" : " " + result.Loader)}），已切换为当前版本");
+                }
+            }
+            catch (Exception ex)
+            {
+                ErrorPresenter.ShowFriendlyError(
+                    ex is InvalidOperationException ? ex.Message : "从零安装整合包失败，可能是网络问题或磁盘空间不足。",
+                    ex.ToString(), Loc.T("Str_Cs_Modpack_Installation_Failed", "安装整合包失败"));
+            }
+            finally
+            {
+                progressDialog.Close();
+            }
+            return;
+        }
+
+        // ---------- 退回旧行为：装进用户选的已有/新建目录（不下载本体和加载器）----------
+        var folderService = new FolderService();
+        List<GameVersion> existing;
+        try { existing = folderService.ScanVersions(folder.Path); }
+        catch { existing = new List<GameVersion>(); }
+
+        var suggestedLegacy = Path.GetFileNameWithoutExtension(modpackPath);
+        var dialog = new ModpackTargetVersionDialog(suggestedLegacy, existing);
+        if (OverlayDialogService.ShowModal(dialog) != true) return;
+
+        var targetDir = Path.Combine(folder.Path, "versions", dialog.TargetVersionId);
+
+        var pd = new ProgressDialog($"正在导入整合包 {Path.GetFileName(modpackPath)} ...");
+        pd.Show();
+        try
+        {
+            var service = new ModpackService();
+            if (ModpackService.IsMrpack(modpackPath))
+            {
+                var r = await service.ImportMrpackAsync(modpackPath, targetDir,
+                    new Progress<string>(msg => pd.Progress.Report(new ProgressInfo(msg, 0, 1, ""))));
+
+                if (r.FailedFiles.Count > 0)
+                {
+                    MessageBoxDialog.ShowInfo(
+                        $"整合包已导入到「{dialog.TargetVersionId}」，但有 {r.FailedFiles.Count} 个文件下载失败，" +
+                        $"需要手动补齐：\n\n{string.Join("\n", r.FailedFiles.Take(10))}",
+                        "整合包部分文件未下载成功");
+                }
+                else
+                {
+                    ToastService.ShowSuccess($"整合包已导入到「{dialog.TargetVersionId}」");
+                }
+            }
+            else
+            {
+                await Task.Run(() => service.Import(modpackPath, targetDir));
+                ToastService.ShowSuccess($"整合包已导入到「{dialog.TargetVersionId}」");
+            }
+
+            RefreshSidebar();
+        }
+        catch (Exception ex)
+        {
+            ErrorPresenter.ShowFriendlyError(Loc.T("Str_Cs_Importing_The_Modpack_Failed_The_File_Ma", "导入整合包失败，可能是文件损坏或磁盘空间不足。"),
+                ex.ToString(), Loc.T("Str_Cs_Modpack_Import_Failed", "导入整合包失败"));
+        }
+        finally
+        {
+            pd.Close();
+        }
+    }
+
+    private void MainWindow_DragLeave(object sender, DragEventArgs e)
+    {
+        DragHintLayer.Visibility = Visibility.Collapsed;
+        _lastDragOverPaths = null;
+        _lastDragOverKinds = null;
+    }
+
+    /// <summary>
+    /// 当前显示的是哪个页面。拖拽的默认行为跟页面走（需求原文：
+    /// "在服务器管理页面拖入 jar 文件，默认会给服务器安装；在主页版本选择其他界面拖动进入，
+    /// 默认给当前选中实例安装模组"）。
+    /// </summary>
+    private bool IsOnServerManagerPage => MainContent.Content is ServerManagerPage;
+
+    /// <summary>
+    /// 按"当前页面 + 设置项"决定每个拖入文件的去向，必要时弹内嵌选择框问用户。
+    /// 返回 null 表示用户取消了整个操作。
+    /// </summary>
+    private async Task<Dictionary<string, DragDropInstallService.DropKind>?> ResolveDropKindsAsync(string[] paths)
+    {
+        var cfg = ConfigService.Config;
+        var overrides = new Dictionary<string, DragDropInstallService.DropKind>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var path in paths)
+        {
+            var ext = Path.GetExtension(path).ToLowerInvariant();
+
+            // ---------- .jar：按页面决定装给客户端还是服务端 ----------
+            if (ext == ".jar")
+            {
+                var target = IsOnServerManagerPage ? cfg.ServerPageJarDropTarget : cfg.DefaultJarDropTarget;
+
+                if (target == DropJarTarget.Ask)
+                {
+                    var dlg = new DropJarTargetDialog(path, IsOnServerManagerPage);
+                    if (OverlayDialogService.ShowModal(dlg) != true) return null;
+                    target = dlg.SelectedTarget;
+                    if (dlg.Remember)
+                    {
+                        if (IsOnServerManagerPage) cfg.ServerPageJarDropTarget = target;
+                        else cfg.DefaultJarDropTarget = target;
+                        try { ConfigService.Save(); } catch { }
+                    }
+                }
+
+                overrides[path] = target == DropJarTarget.Server
+                    ? DragDropInstallService.DropKind.ServerJar
+                    : DragDropInstallService.DropKind.Mod;
+                continue;
+            }
+
+            // ---------- .zip 且内容认不出来：按设置决定问不问 ----------
+            if (_dragDropService.IsAmbiguousZip(path))
+            {
+                var def = cfg.ZipDropDefault;
+                if (def == DropZipDefault.Ask)
+                {
+                    var preselect = DragDropInstallService.DropKind.Modpack;
+                    var dlg = new DropTypeChoiceDialog(path, preselect);
+                    if (OverlayDialogService.ShowModal(dlg) != true) return null;
+
+                    overrides[path] = dlg.SelectedKind;
+                    if (dlg.Remember)
+                    {
+                        cfg.ZipDropDefault = dlg.SelectedKind switch
+                        {
+                            DragDropInstallService.DropKind.ResourcePack => DropZipDefault.ResourcePack,
+                            DragDropInstallService.DropKind.Modpack => DropZipDefault.Modpack,
+                            _ => DropZipDefault.Ask,
+                        };
+                        try { ConfigService.Save(); } catch { }
+                    }
+                }
+                else
+                {
+                    overrides[path] = def == DropZipDefault.ResourcePack
+                        ? DragDropInstallService.DropKind.ResourcePack
+                        : DragDropInstallService.DropKind.Modpack;
+                }
+            }
+        }
+
+        await Task.CompletedTask;
+        return overrides;
+    }
+
+    private async void MainWindow_Drop(object sender, DragEventArgs e)
+    {
+        DragHintLayer.Visibility = Visibility.Collapsed;
+        _lastDragOverPaths = null;
+        _lastDragOverKinds = null;
+        if (!e.Data.GetDataPresent(DataFormats.FileDrop)) return;
+
+        var paths = (string[])e.Data.GetData(DataFormats.FileDrop)!;
+        if (paths.Length == 0) return;
+
+        // 先把"每个文件该怎么处理"定下来（可能会弹选择框），再动手装。
+        var overrides = await ResolveDropKindsAsync(paths);
+        if (overrides == null) return;  // 用户取消
+
+        // 服务端 jar 单独走服务端安装路径，不需要客户端实例目录。
+        var serverJars = overrides.Where(kv => kv.Value == DragDropInstallService.DropKind.ServerJar)
+                                  .Select(kv => kv.Key).ToList();
+        if (serverJars.Count > 0)
+        {
+            InstallJarsToSelectedServer(serverJars);
+            foreach (var j in serverJars) overrides.Remove(j);
+            if (overrides.Count == 0 && paths.Length == serverJars.Count) return;
+        }
+
+        var target = ResolveDropTargetInstanceDir();
+        if (target == null)
+        {
+            ToastService.ShowWarning(Loc.T("Str_Drop_NoInstance", "请先在「版本选择」里选一个游戏版本，再拖入文件。"));
+            return;
+        }
+
+        var remaining = paths.Where(p => !serverJars.Contains(p)).ToArray();
+        if (remaining.Length == 0) return;
+
+        DragDropInstallService.DropResult result;
+        try
+        {
+            result = await Task.Run(() => _dragDropService.InstallMany(remaining, target, null, overrides));
+        }
+        catch (Exception ex)
+        {
+            ErrorPresenter.ShowFriendlyError(Loc.T("Str_Cs_Drag_And_Drop_Install_Failed_The_Target_", "拖拽安装失败，可能是目标目录没有写入权限。"),
+                ex.ToString(), Loc.T("Str_Cs_Drag_And_Drop_Install_Failed", "拖拽安装失败"));
+            return;
+        }
+
+        // 整合包：按设置决定"从零建新实例"还是"装进已有实例"。
+        foreach (var modpack in result.Modpacks)
+            await ImportDroppedModpackAsync(modpack);
+
+        // 基岩版内容（.mcworld/.mcpack/.mcaddon/.mctemplate）直接就地导入，
+        // 不再只是提示用户自己去别处操作。基岩版没装时 ImportMany 会抛出带说明的异常。
+        if (result.BedrockItems.Count > 0)
+            await ImportDroppedBedrockAsync(result.BedrockItems);
+
+        if (result.Installed.Count > 0)
+        {
+            ToastService.ShowSuccess(result.Installed.Count == 1
+                ? $"已安装：{result.Installed[0]}"
+                : $"已安装 {result.Installed.Count} 个文件到当前实例");
+        }
+
+        if (result.Skipped.Count > 0)
+            ToastService.ShowWarning($"有 {result.Skipped.Count} 个文件没有安装：{string.Join("；", result.Skipped.Take(3))}");
+
+        if (!result.AnythingHappened && result.Skipped.Count == 0)
+            ToastService.ShowInfo(Loc.T("Str_Cs_Nothing_Installable_Was_Found_In_What_Yo", "拖进来的文件里没有可安装的内容。"));
+    }
+
+    /// <summary>
+    /// 拖进来的基岩版内容：世界 / 资源包 / 行为包 / 附加包 / 世界模板。
+    /// 全部是解压到 com.mojang 下对应子目录的纯本地操作，不涉及任何 Store 许可证。
+    /// 见 BedrockContentService 类头注释里对"基岩版能做什么、不能做什么"的说明。
+    /// </summary>
+    private async Task ImportDroppedBedrockAsync(List<string> paths)
+    {
+        var service = new BedrockContentService();
+
+        if (!BedrockContentService.IsBedrockDataPresent)
+        {
+            // 这属于"必须让用户读完并且要去做一件事"的情况，用模态框而不是 Toast。
+            MessageBoxDialog.ShowInfo(
+                "这台电脑上还没有安装 Minecraft for Windows（基岩版），无法导入基岩版内容。\n\n" +
+                "请先从 Microsoft Store 安装基岩版，并**至少启动一次**（首次启动才会创建数据目录），再来导入。",
+                Loc.T("Str_Cs_Bedrock_Edition_Isn_T_Installed", "还没有安装基岩版"));
+            return;
+        }
+
+        var pd = new ProgressDialog("正在导入基岩版内容 ...");
+        pd.Show();
+        try
+        {
+            var r = await Task.Run(() => service.ImportMany(paths,
+                new Progress<string>(msg => pd.Progress.Report(new ProgressInfo(msg, 0, 1, "")))));
+
+            if (r.Installed.Count > 0)
+            {
+                ToastService.ShowSuccess(r.Installed.Count == 1
+                    ? $"已导入基岩版内容：{r.Installed[0]}"
+                    : $"已导入 {r.Installed.Count} 个基岩版内容，重启基岩版后生效");
+            }
+            if (r.Failed.Count > 0)
+                ToastService.ShowWarning($"有 {r.Failed.Count} 个没导入成功：{string.Join("；", r.Failed.Take(3))}");
+        }
+        catch (Exception ex)
+        {
+            ErrorPresenter.ShowFriendlyError(
+                ex is InvalidOperationException ? ex.Message : Loc.T("Str_Cs_Couldn_T_Import_The_Bedrock_Content", "导入基岩版内容失败。"),
+                ex.ToString(), Loc.T("Str_Cs_Bedrock_Import_Failed", "导入基岩版内容失败"));
+        }
+        finally
+        {
+            pd.Close();
+        }
+    }
+
+    /// <summary>
+    /// 把 jar 装进当前选中的服务器实例的 mods/ 目录。
+    /// 在「服务端管理」页拖 jar 时走这条路（需求："在服务器管理页面拖入 jar 文件，
+    /// 默认会给服务器安装"）。没有选中服务器时提示用户先选一个，而不是默默装到客户端去。
+    /// </summary>
+    private void InstallJarsToSelectedServer(List<string> jarPaths)
+    {
+        // ServerInstance 上标了 IsDefault 的优先，没有就取第一个。
+        // （服务端实例没有像客户端 SelectedVersionId 那样的"当前选中"配置项，
+        //  IsDefault 是这个模型里已有的、语义最接近的字段。）
+        var instance = ServerInstanceService.Instances.FirstOrDefault(i => i.IsDefault)
+                       ?? ServerInstanceService.Instances.FirstOrDefault();
+
+        if (instance == null || string.IsNullOrEmpty(instance.Directory))
+        {
+            ToastService.ShowWarning(Loc.T("Str_Cs_No_Server_Exists_Yet_So_Server_Mods_Can_", "还没有创建服务器实例，无法安装服务端 Mod。请先到「服务端管理」新建一个。"));
+            return;
+        }
+
+        var modsDir = Path.Combine(instance.Directory, "mods");
+        var ok = 0;
+        var failed = new List<string>();
+        try
+        {
+            Directory.CreateDirectory(modsDir);
+            foreach (var jar in jarPaths)
+            {
+                try
+                {
+                    var dest = Path.Combine(modsDir, Path.GetFileName(jar));
+                    var baseName = Path.GetFileNameWithoutExtension(dest);
+                    var i = 2;
+                    while (File.Exists(dest))
+                    {
+                        dest = Path.Combine(modsDir, $"{baseName} ({i}).jar");
+                        i++;
+                    }
+                    File.Copy(jar, dest);
+                    ok++;
+                }
+                catch (Exception ex) { failed.Add($"{Path.GetFileName(jar)}（{ex.Message}）"); }
+            }
+        }
+        catch (Exception ex)
+        {
+            ErrorPresenter.ShowFriendlyError(Loc.T("Str_Cs_Couldn_T_Install_The_Server_Mod_The_Serv", "安装服务端 Mod 失败，可能是服务器目录没有写入权限。"),
+                ex.ToString(), Loc.T("Str_Cs_Server_Mod_Installation_Failed", "安装服务端 Mod 失败"));
+            return;
+        }
+
+        if (ok > 0) ToastService.ShowSuccess($"已给服务器「{instance.DisplayName}」安装 {ok} 个 Mod");
+        if (failed.Count > 0) ToastService.ShowWarning($"有 {failed.Count} 个没装上：{string.Join("；", failed.Take(3))}");
+    }
+
+}

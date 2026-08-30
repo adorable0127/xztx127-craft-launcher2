@@ -1,0 +1,58 @@
+<local:OverlayDialogControl x:Class="XCL2.App.Views.ProcessManagerWindow"
+                            xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                            xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                            xmlns:local="clr-namespace:XCL2.App.Views"
+                            MinWidth="560"
+                            MaxWidth="560"
+                            MinHeight="420"
+                            MaxHeight="420">
+                            <!-- MinHeight 必须给：这个弹窗的布局里有 RowDefinition Height="*"。
+                                 原来是 Window 且有固定 Height 时，"*"行能拿到剩余高度；
+                                 改成挂在自适应 OverlayCard 里的 UserControl 之后，
+                                 测量高度是无穷大，"*"行会塌陷成内容的期望高度——
+                                 列表为空/WebView2 这种没有期望尺寸的控件会直接塌成 0，
+                                 表现就是弹窗里一片空白。MinHeight 用回原来的设计高度即可。 -->
+    <!-- 由独立 Window 迁移为进程内 Overlay 弹窗（见 IOverlayDialog.cs /
+         OverlayDialogService.cs 顶部注释）。Title/WindowStartupLocation/ResizeMode/
+         Background 这些"窗口级"属性已全部移除——居中、圆角卡片背景、阴影都由
+         MainWindow.xaml 里的 OverlayCard 统一提供，弹窗自己只关心内部布局。
+         原来的 Width/Height 转成了 MinWidth/MaxWidth/MaxHeight：Overlay 是按内容
+         自适应的，写死 Height 会把内容截断。 -->
+    <Grid Margin="16">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <TextBlock x:Name="TitleText" Grid.Row="0" FontSize="16" FontWeight="Bold"
+                   Foreground="{DynamicResource TextPrimaryBrush}" Margin="0,0,0,4"/>
+        <TextBlock x:Name="HintText" Grid.Row="0" FontSize="12" Margin="0,26,0,0"
+                   Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap"/>
+
+        <!-- MinHeight：列表为空时 ListBox 的期望高度是 0，而这一行是 RowDefinition Height="*"。
+             在 Window 里有固定 Height 撑着看不出问题，改成 Overlay 之后空列表会让整块塌陷。 -->
+        <ListBox x:Name="ProcessListBox" Grid.Row="1" Margin="0,12,0,12" MinHeight="240"
+                 BorderThickness="1" BorderBrush="{DynamicResource DividerBrush}">
+            <ListBox.ItemTemplate>
+                <DataTemplate>
+                    <StackPanel Orientation="Horizontal" Margin="4">
+                        <CheckBox x:Name="MarkCheck" VerticalAlignment="Center" Margin="0,0,10,0"
+                                  Visibility="{Binding MarkVisibility}"
+                                  IsChecked="{Binding Info.ManuallyMarkedUnresponsive, Mode=TwoWay}"/>
+                        <StackPanel>
+                            <TextBlock Text="{Binding TitleLine}" FontWeight="Bold" FontSize="13"/>
+                            <TextBlock Text="{Binding SubLine}" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}"/>
+                        </StackPanel>
+                    </StackPanel>
+                </DataTemplate>
+            </ListBox.ItemTemplate>
+        </ListBox>
+
+        <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right">
+            <Button x:Name="ActionButton" Content="{DynamicResource Str_Launch_CloseSelected}" Style="{StaticResource PrimaryButton}"
+                    Padding="16,8" Margin="0,0,8,0" Click="ActionButton_Click"/>
+            <Button Content="{DynamicResource Str_Common_Cancel}" Style="{StaticResource SideNavButton}" Padding="16,8" Click="Cancel_Click"/>
+        </StackPanel>
+    </Grid>
+</local:OverlayDialogControl>

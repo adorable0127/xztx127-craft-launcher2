@@ -1,0 +1,47 @@
+<local:OverlayDialogControl x:Class="XCL2.App.Views.ModUpdateSelectionDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="clr-namespace:XCL2.App.Views"
+        Width="480">
+    <!-- 需求：一键批量升级模组时加入"选择要升级的模组"功能，而不是只能全部升级或全部放弃。
+         BatchUpdateService.UpdateCandidate 本来就有 Selected 字段、ApplyAsync 也已经只处理
+         Selected=true 的项，之前只是 ModManagerPage 的调用点图省事用了一个纯 Yes/No 的
+         MessageBoxDialog.ShowConfirm，把这个"可以按项勾选"的能力浪费掉了。这个弹窗把
+         Selected 暴露成真正可勾选的checklist，默认全部勾选（维持"一键全部升级"这个最常见场景
+         的操作习惯：不选就是全选、点确定即可），需要跳过某几个的时候再自己取消勾选。 -->
+    <StackPanel Margin="20">
+        <TextBlock x:Name="TitleText" Text="发现可升级的模组" FontSize="16" FontWeight="SemiBold" Margin="0,0,0,4"/>
+        <TextBlock Text="默认已全部勾选，取消勾选可以跳过某个模组不升级。" FontSize="11"
+                   Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,10"/>
+
+        <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+            <Button x:Name="SelectAllBtn" Content="全选" Padding="10,4" Margin="0,0,8,0" Click="SelectAll_Click"/>
+            <Button x:Name="SelectNoneBtn" Content="全不选" Padding="10,4" Click="SelectNone_Click"/>
+        </StackPanel>
+
+        <ScrollViewer MaxHeight="340" VerticalScrollBarVisibility="Auto">
+            <ItemsControl x:Name="CandidateListControl">
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate>
+                        <Border BorderBrush="{DynamicResource DividerBrush}" BorderThickness="0,0,0,1" Padding="0,8">
+                            <StackPanel>
+                                <CheckBox Content="{Binding DisplayName}" IsChecked="{Binding IsSelected}"
+                                          FontWeight="SemiBold" FontSize="13"/>
+                                <TextBlock Text="{Binding VersionChangeText}" FontSize="11"
+                                           Foreground="{DynamicResource TextSecondaryBrush}"
+                                           Margin="24,2,0,0" TextWrapping="Wrap"/>
+                            </StackPanel>
+                        </Border>
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
+        </ScrollViewer>
+
+        <TextBlock x:Name="SummaryText" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,10,0,0"/>
+
+        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,16,0,0">
+            <Button x:Name="CancelBtn" Content="{DynamicResource Str_Common_Cancel}" Width="80" Margin="0,0,8,0" Click="Cancel_Click"/>
+            <Button x:Name="OkBtn" Content="升级选中项" Width="110" Style="{DynamicResource PrimaryButton}" Click="Ok_Click"/>
+        </StackPanel>
+    </StackPanel>
+</local:OverlayDialogControl>

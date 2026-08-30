@@ -1,0 +1,158 @@
+<UserControl x:Class="XCL2.App.Views.VersionSelectPage"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:services="clr-namespace:XCL2.App.Services">
+    <Grid>
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="220"/>
+            <ColumnDefinition Width="*"/>
+        </Grid.ColumnDefinitions>
+
+        <!-- 文件夹列表（类似 PCL 左侧） -->
+        <Border Grid.Column="0" Background="{DynamicResource PanelBrush}" CornerRadius="10" Margin="0,0,10,0" Padding="16">
+            <!-- 同上：加 ScrollViewer 防止窗口矮的时候"添加已有文件夹"按钮被裁到看不见、点不到。 -->
+            <ScrollViewer VerticalScrollBarVisibility="Auto" services:ScrollWheelBehavior.EnableFastWheel="True">
+                <StackPanel>
+                    <TextBlock Text="{DynamicResource Str_Ui_Folders}" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="13" Margin="0,0,0,8"/>
+                    <ListBox x:Name="FolderListBox" BorderThickness="0" Background="Transparent"
+                             SelectionChanged="FolderListBox_SelectionChanged" MaxHeight="260">
+                        <ListBox.ItemTemplate>
+                            <DataTemplate>
+                                <Grid Margin="0,4">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel Grid.Column="0">
+                                        <StackPanel Orientation="Horizontal">
+                                            <TextBlock Text="{Binding Name}" FontSize="15" Foreground="{DynamicResource AccentBrush}"/>
+                                            <TextBlock Text="（默认）" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}"
+                                                       Margin="6,0,0,0" VerticalAlignment="Center" Visibility="Collapsed">
+                                                <TextBlock.Style>
+                                                    <Style TargetType="TextBlock">
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding IsDefault}" Value="True">
+                                                                <Setter Property="Visibility" Value="Visible"/>
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </TextBlock.Style>
+                                            </TextBlock>
+                                        </StackPanel>
+                                        <TextBlock Text="{Binding Path}" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" TextTrimming="CharacterEllipsis"/>
+                                    </StackPanel>
+
+                                    <!-- 每个文件夹右侧的设置按钮：点击弹出二级菜单（打开/重命名/设为默认/删除）。
+                                         Tag="{Binding}" 把当前行绑定的 GameFolder 传给菜单项，点击时从 Tag 取回。 -->
+                                    <Button Grid.Column="1" Content="⚙️" Padding="6,2" VerticalAlignment="Center" Margin="8,0,0,0"
+                                            Tag="{Binding}" Click="FolderSettingsMenu_Click">
+                                        <Button.ContextMenu>
+                                            <ContextMenu>
+                                                <MenuItem Header="打开文件夹" Tag="{Binding}" Click="OpenFolder_Click"/>
+                                                <MenuItem Header="重命名文件夹..." Tag="{Binding}" Click="RenameFolder_Click"/>
+                                                <MenuItem Header="设为默认文件夹" Tag="{Binding}" Click="SetDefaultFolder_Click"/>
+                                                <Separator/>
+                                                <MenuItem Header="删除文件夹（从列表中移除）" Tag="{Binding}" Click="RemoveFolder_Click"/>
+                                                <MenuItem Header="直接删除文件夹（从电脑中删除）" Tag="{Binding}" Click="DeleteFolderFromDisk_Click"/>
+                                            </ContextMenu>
+                                        </Button.ContextMenu>
+                                    </Button>
+                                </Grid>
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
+
+                    <TextBlock Text="{DynamicResource Str_Ui_Add_Or_Import}" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="13" Margin="0,20,0,8"/>
+                    <Button Content="{DynamicResource Str_Ui_Add_Existing_Folder}" Style="{StaticResource SideNavButton}" Click="AddFolder_Click"/>
+
+                    <!-- "从列表中删除"的实例入口：当前文件夹下如果有被隐藏的实例，这里显示
+                         一个按钮打开恢复列表，跟主列表分开放，避免大多数用户（没有任何隐藏实例）
+                         平时也要看到这一块。 -->
+                    <Button x:Name="ShowHiddenInstancesBtn" Content="已隐藏的实例..." Style="{StaticResource SideNavButton}"
+                            Margin="0,8,0,0" Visibility="Collapsed" Click="ShowHiddenInstances_Click"/>
+
+                    <!-- 未安装完成(缺 jar/继承链不完整)的版本入口，跟上面 ShowHiddenInstancesBtn
+                         同一套"默认收起、有内容才出现"的模式，见 VersionSelectPage.xaml.cs
+                         RefreshIncompleteVersionsButtonVisibility 注释。 -->
+                    <Button x:Name="IncompleteVersionsBtn" Content="未完成的安装..." Style="{StaticResource SideNavButton}"
+                            Margin="0,8,0,0" Visibility="Collapsed" Click="IncompleteVersions_Click"/>
+                </StackPanel>
+            </ScrollViewer>
+        </Border>
+
+        <!-- 版本列表 -->
+        <Border Grid.Column="1" Background="{DynamicResource PanelBrush}" CornerRadius="10" Padding="20">
+            <!-- 版本列表。原来页面下方还有一个"单个版本设置区域"(PerVersionSettingsPanel，
+                 选中/右键实例时会占去整页 3/7 变成一整个设置面板)。已去掉：版本设置统一从
+                 每个实例右侧的 ⚙️ 按钮二级菜单进入，不占页面空间。 -->
+            <Grid>
+
+                <DockPanel>
+                    <Grid DockPanel.Dock="Top" Margin="0,0,0,12">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="{DynamicResource Str_Ui_Installed_Versions}" FontSize="18" FontWeight="Bold" VerticalAlignment="Center" Foreground="{DynamicResource TextPrimaryBrush}"/>
+                        <Button Grid.Column="1" Content="{DynamicResource Str_Ui_Install_New_Version}" Style="{StaticResource PrimaryButton}"
+                                Padding="12,6" Click="InstallNewVersion_Click"/>
+                    </Grid>
+
+                    <TextBlock DockPanel.Dock="Top" Text="{DynamicResource Str_Ui_Installed_On_This_Pc}" FontWeight="Bold" Margin="0,0,0,6" Foreground="{DynamicResource TextPrimaryBrush}"/>
+
+                    <!-- ListBox 撑满剩余空间，内容比这一行还高时用自己的 ScrollViewer（ListBox 默认自带）单独滚动。 -->
+                    <ListBox x:Name="InstalledListBox" BorderThickness="0,0,0,1" BorderBrush="{DynamicResource DividerBrush}"
+                             SelectionChanged="InstalledListBox_SelectionChanged">
+                        <ListBox.ItemTemplate>
+                            <DataTemplate>
+                                <Grid Margin="4">
+                                    <Grid.ContextMenu>
+                                        <!-- 右键菜单：查看 Wiki / 重命名 / 删除。
+                                             Tag="{Binding}" 把当前行绑定的 GameVersion 传给菜单项，
+                                             点击时从 Tag 里取回对应实例，见 .xaml.cs 里对应处理方法。 -->
+                                        <ContextMenu>
+                                            <MenuItem Header="{DynamicResource Str_Ui_Open_On_The_Chinese_Minecraft_Wiki}"
+                                                      Tag="{Binding}" Click="ViewOnWiki_Click"/>
+                                            <Separator/>
+                                            <MenuItem Header="重命名..." Tag="{Binding}" Click="RenameInstance_Click"/>
+                                            <MenuItem Header="删除..." Tag="{Binding}" Click="DeleteInstance_Click"/>
+                                        </ContextMenu>
+                                    </Grid.ContextMenu>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+
+                                    <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
+                                        <TextBlock Text="🧊" FontSize="18" Margin="0,0,10,0"/>
+                                        <StackPanel>
+                                            <TextBlock Text="{Binding Id}" FontSize="15" Foreground="{DynamicResource TextPrimaryBrush}"/>
+                                            <TextBlock Text="{Binding SubTitle}" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}"/>
+                                        </StackPanel>
+                                    </StackPanel>
+
+                                    <!-- 每个实例条目右侧的单独设置入口：点击弹出二级菜单（版本设置/重命名/删除），
+                                        不再直接进入设置——版本设置统一从菜单进。
+                                        Tag="{Binding}" 把这一行对应的 GameVersion 传给菜单项，
+                                        点击时从 Tag 取回对应实例，见 .xaml.cs 里对应处理方法。 -->
+                                    <Button Grid.Column="1" Content="⚙️" ToolTip="{DynamicResource Str_Ui_Instance_Settings}"
+                                            Padding="8,4" VerticalAlignment="Center" Margin="8,0,0,0"
+                                            Tag="{Binding}" Click="OpenInstanceSettingsMenu_Click">
+                                        <Button.ContextMenu>
+                                            <ContextMenu>
+                                                <MenuItem Header="{DynamicResource Str_Ui_Instance_Settings}" Tag="{Binding}" Click="OpenInstanceSettings_Click"/>
+                                                <Separator/>
+                                                <MenuItem Header="重命名..." Tag="{Binding}" Click="RenameInstance_Click"/>
+                                                <MenuItem Header="删除..." Tag="{Binding}" Click="DeleteInstance_Click"/>
+                                            </ContextMenu>
+                                        </Button.ContextMenu>
+                                    </Button>
+                                </Grid>
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
+                </DockPanel>
+            </Grid>
+        </Border>
+    </Grid>
+</UserControl>

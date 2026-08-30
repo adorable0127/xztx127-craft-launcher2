@@ -1,0 +1,27 @@
+<local:OverlayDialogControl x:Class="XCL2.App.Views.MessageBoxDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="clr-namespace:XCL2.App.Views"
+        MinWidth="360" MaxWidth="520">
+    <!-- 通用消息提示弹窗：替代原来散落在 24 处以上代码里的系统原生 MessageBox.Show()。
+         系统 MessageBox 是 Win32 原生对话框，跟启动器自己的配色/圆角/皮肤完全无关——
+         切换到粉色皮肤时，启动器主界面全是粉色，弹出的却是一个 Windows 经典灰白配色的
+         系统对话框，观感上非常割裂，"一体化"体验被这类原生弹窗打破。这个 Overlay 版本
+         用跟弹窗内容区完全一致的 DynamicResource 画刷，天然跟随当前皮肤（原理见
+         OverlayDialogService.cs 顶部注释"为什么弹窗会自动跟随皮肤"一节）。
+
+         图标（ℹ/⚠/✖/✔）用纯文本 Emoji 而不是系统 SystemIcons，同样是为了不引入
+         跟当前配色不搭的系统原生图标资源。 -->
+    <StackPanel Margin="24" MaxWidth="480">
+        <StackPanel Orientation="Horizontal" Margin="0,0,0,14">
+            <TextBlock x:Name="IconText" FontSize="26" FontFamily="Segoe UI Emoji" VerticalAlignment="Top" Margin="0,0,12,0"/>
+            <TextBlock x:Name="TitleText" FontSize="16" FontWeight="Bold" VerticalAlignment="Center" TextWrapping="Wrap"/>
+        </StackPanel>
+
+        <ScrollViewer MaxHeight="360" VerticalScrollBarVisibility="Auto">
+            <TextBlock x:Name="MessageText" FontSize="13" TextWrapping="Wrap" LineHeight="20"/>
+        </ScrollViewer>
+
+        <StackPanel x:Name="ButtonPanel" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,20,0,0"/>
+    </StackPanel>
+</local:OverlayDialogControl>
