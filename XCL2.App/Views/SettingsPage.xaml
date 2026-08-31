@@ -344,6 +344,30 @@
             <TextBlock Text="选中的字体如果本机没有安装，会自动回退到系统默认中西文字体，不会显示成方块字。"
                        FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap" Margin="0,0,0,12"/>
 
+            <!-- 字体分层/分块设置：在上面"界面字体"（全局、几个固定预置候选）之外，
+                 额外允许标题栏 / 侧边导航栏 / 右侧内容区 三个区块分别单独指定一款
+                 本机已安装的系统字体（不限于预置候选），只影响对应区块，不影响其它区块，
+                 也不影响上面的全局设置——三个区块留空即"跟随全局"。
+                 见 Services/FontService.cs 顶部注释了解具体实现原理。 -->
+            <TextBlock x:Name="SettingsSectionFontLayers" Text="字体分层设置" FontSize="14" FontWeight="Bold" Margin="0,0,0,4"/>
+            <TextBlock Text="可按区块单独指定一款本机已安装的字体，覆盖上面的&quot;界面字体&quot;；选择&quot;跟随全局&quot;即取消覆盖。选好之后点下面的&quot;保存设置&quot;生效。"
+                       FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap" Margin="0,0,0,8"/>
+            <StackPanel Orientation="Horizontal" Margin="0,0,0,4">
+                <TextBlock Text="标题栏字体" VerticalAlignment="Center" Width="200"/>
+                <ComboBox x:Name="TitleBarFontCombo" Style="{StaticResource TallPopupComboBox}" Width="260"
+                          ToolTip="只影响自绘标题栏（图标/标题文字/下载列表按钮等），不影响侧边栏和内容区。"/>
+            </StackPanel>
+            <StackPanel Orientation="Horizontal" Margin="0,0,0,4">
+                <TextBlock Text="侧边栏字体" VerticalAlignment="Center" Width="200"/>
+                <ComboBox x:Name="SidebarFontCombo" Style="{StaticResource TallPopupComboBox}" Width="260"
+                          ToolTip="只影响左侧导航栏（Logo/导航按钮/账户版本信息/启动按钮等），不影响标题栏和内容区。"/>
+            </StackPanel>
+            <StackPanel Orientation="Horizontal" Margin="0,0,0,12">
+                <TextBlock Text="内容区字体" VerticalAlignment="Center" Width="200"/>
+                <ComboBox x:Name="ContentFontCombo" Style="{StaticResource TallPopupComboBox}" Width="260"
+                          ToolTip="只影响右侧内容区（首页/设置/下载中心等各个页面），不影响标题栏和侧边栏。"/>
+            </StackPanel>
+
             <!-- 亮度：0~200，100 为默认（不调整）。不是真的调整显示器亮度，是在界面上盖一层
                  半透明黑/白遮罩模拟"变暗/变亮"的视觉效果，见 ThemeService.ApplyBrightness 注释。 -->
             <StackPanel Orientation="Horizontal" Margin="0,0,0,8"

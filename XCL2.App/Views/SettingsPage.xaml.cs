@@ -91,6 +91,12 @@ public partial class SettingsPage : UserControl
         WinUi3DesignCheck.IsChecked = cfg.EnableWinUi3Design;
         SelectComboByTag(AppFontCombo, cfg.AppFontFamily);
         if (AppFontCombo.SelectedItem == null) AppFontCombo.SelectedIndex = 0; // 兜底：旧配置没有这一项时默认选中"跟随系统"
+
+        // 字体分层设置：三个下拉框的候选项是"跟随全局"+本机全部已安装系统字体，运行时才能
+        // 知道具体有哪些字体，所以在这里现填 Items（不是写死在 XAML 里），并按当前配置选中。
+        PopulateScopedFontCombo(TitleBarFontCombo, cfg.AppFontFamily_TitleBar);
+        PopulateScopedFontCombo(SidebarFontCombo, cfg.AppFontFamily_Sidebar);
+        PopulateScopedFontCombo(ContentFontCombo, cfg.AppFontFamily_Content);
         BrightnessSlider.Value = Math.Clamp(cfg.BrightnessPercent, 0, 200);
         BrightnessValueText.Text = $"{(int)BrightnessSlider.Value}%";
         SelectComboByTag(BackdropMaterialCombo, cfg.Win11BackdropMaterial);
@@ -482,6 +488,7 @@ public partial class SettingsPage : UserControl
         Win11EffectsService.SetEnabled(cfg.EnableWin11VisualEffects, material);
         Win11EffectsService.SetWinUi3Enabled(cfg.EnableWinUi3Design);
         ThemeService.ApplyFontFamily(cfg.AppFontFamily, cfg.EnableWinUi3Design);
+        FontService.ApplyScopedFonts(_owner, cfg);
         ThemeService.ApplyBrightness(cfg.BrightnessPercent);
     }
 
@@ -600,6 +607,28 @@ public partial class SettingsPage : UserControl
             }
         }
         if (combo.Items.Count > 0) combo.SelectedIndex = 0;
+    }
+
+    /// <summary>
+    /// 字体分层设置三个下拉框（标题栏/侧边栏/内容区）共用的填充逻辑：第一项固定是
+    /// "跟随全局"（Tag=null，对应 AppConfig 里对应字段留空=不覆盖），后面依次是
+    /// FontService.GetInstalledFontFamilyNames() 返回的本机全部已安装字体，
+    /// 每一项的 Tag 就是字体名字符串本身（保存时直接读 Tag 写回配置，不用额外映射表）。
+    /// </summary>
+    private void PopulateScopedFontCombo(ComboBox combo, string? currentValue)
+    {
+        combo.Items.Clear();
+        combo.Items.Add(new ComboBoxItem { Content = "跟随全局", Tag = null });
+        foreach (var fontName in FontService.GetInstalledFontFamilyNames())
+        {
+            combo.Items.Add(new ComboBoxItem { Content = fontName, Tag = fontName });
+        }
+
+        if (!string.IsNullOrWhiteSpace(currentValue))
+        {
+            SelectComboByTag(combo, currentValue!);
+        }
+        if (combo.SelectedItem == null) combo.SelectedIndex = 0;
     }
 
     /// <summary>
@@ -1182,6 +1211,9 @@ public partial class SettingsPage : UserControl
         cfg.EnableWin11VisualEffects = Win11EffectsCheck.IsChecked == true;
         cfg.EnableWinUi3Design = WinUi3DesignCheck.IsChecked == true;
         cfg.AppFontFamily = (AppFontCombo.SelectedItem as ComboBoxItem)?.Tag as string ?? "";
+        cfg.AppFontFamily_TitleBar = (TitleBarFontCombo.SelectedItem as ComboBoxItem)?.Tag as string;
+        cfg.AppFontFamily_Sidebar = (SidebarFontCombo.SelectedItem as ComboBoxItem)?.Tag as string;
+        cfg.AppFontFamily_Content = (ContentFontCombo.SelectedItem as ComboBoxItem)?.Tag as string;
         cfg.BrightnessPercent = (int)BrightnessSlider.Value;
         var newCustomAccentColor = string.IsNullOrWhiteSpace(CustomAccentColorBox.Text) ? null : CustomAccentColorBox.Text.Trim();
         var customAccentChanged = !string.Equals(cfg.CustomAccentColor, newCustomAccentColor, StringComparison.OrdinalIgnoreCase);
@@ -1209,6 +1241,7 @@ public partial class SettingsPage : UserControl
         // 配置文件，从没有代码真正应用过，勾了也看不出任何变化。
         Win11EffectsService.SetWinUi3Enabled(cfg.EnableWinUi3Design);
         ThemeService.ApplyFontFamily(cfg.AppFontFamily, cfg.EnableWinUi3Design);
+        FontService.ApplyScopedFonts(_owner, cfg);
         ThemeService.ApplyBrightness(cfg.BrightnessPercent);
         if (!string.IsNullOrWhiteSpace(cfg.CustomBackgroundImagePath) && File.Exists(cfg.CustomBackgroundImagePath))
             _owner.SetCustomBackgroundImage(cfg.CustomBackgroundImagePath);

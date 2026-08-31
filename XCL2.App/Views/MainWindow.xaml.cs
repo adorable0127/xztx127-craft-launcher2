@@ -1,5 +1,6 @@
 ﻿using System;
 using System.IO;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
@@ -53,6 +54,10 @@ public partial class MainWindow : Window
     private bool _closeLifecycleBackupRunning;
     private bool _closeLifecycleBackupCompleted;
     private bool _stickyNoteCloseDecisionHandled;
+    /// <summary>MainWindow 是否已经被真正 Close() 掉（"仅关闭启动器"场景：进程可能还在
+    /// 后台跑，但这个窗口对象本身已经关闭，不能再对它调用 Show()/Activate()）。
+    /// 供 <see cref="TryActivateFromAnotherInstance"/> 判断此刻是否还有窗口可以拉起。</summary>
+    private bool _isWindowClosed;
 
     /// <summary>
     /// 系统内存监视：全程后台运行（不局限于"有游戏在跑"才监控），因为下载/安装模组、
@@ -300,6 +305,10 @@ public partial class MainWindow : Window
             loadedCfg.GuestModeEnabled, loadedCfg.UiSkin, loadedCfg.IsDarkMode, loadedCfg.CustomAccentColor);
         ThemeService.ApplyWindowTransparency(loadedCfg.EnableWindowTransparency, loadedCfg.WindowOpacityPercent);
         ThemeService.ApplyGlobalWindowTransparency(loadedCfg.EnableGlobalWindowTransparency, loadedCfg.GlobalWindowOpacityPercent);
+        // 字体分层设置：以前只有打开过一次「设置」页才会应用界面字体/分区字体覆盖，
+        // 直接启动到首页看不出效果。这里在窗口首帧出现前补一次，跟主题一样从启动就生效。
+        ThemeService.ApplyFontFamily(loadedCfg.AppFontFamily, loadedCfg.EnableWinUi3Design);
+        FontService.ApplyScopedFonts(this, loadedCfg);
         var loadedMaterial = Enum.TryParse<Win11EffectsService.BackdropMaterial>(loadedCfg.Win11BackdropMaterial, out var lm)
             ? lm : Win11EffectsService.BackdropMaterial.Mica;
         Win11EffectsService.SetEnabled(loadedCfg.EnableWin11VisualEffects, loadedMaterial);
@@ -467,6 +476,11 @@ public partial class MainWindow : Window
         _memoryWatchdog.Start();
 
         Closed += (_, _) => _memoryWatchdog.Dispose();
+
+        // 标记窗口已真正关闭：见 _isWindowClosed 字段注释。放在最前面几个 Closed 处理器
+        // 里执行顺序不重要（多个 Closed 处理器本身没有先后依赖），只要确保"只要 Closed
+        // 事件触发过，这个标记就一定会被置位"即可。
+        Closed += (_, _) => _isWindowClosed = true;
 
         // 需求："启动器每次关闭时会自动生成会话日志"。写在访客模式清理**之前**：
         // 访客模式清理会删掉本次会话新产生的日志文件（见 GuestModeService.CleanupNewLogFiles
@@ -1295,6 +1309,44 @@ public partial class MainWindow : Window
 
     private void NavHome_Click(object sender, RoutedEventArgs e) => ShowHome();
 
+    /// <summary>供其他页面/搜索框调用的公开导航方法，跳转到首页。</summary>
+    public void NavigateToHome() => ShowHome();
+
+    /// <summary>
+    /// 首页顶部搜索框的索引来源：每一项对应左侧导航栏一个入口，Title 是搜索结果里显示的
+    /// 名字，Keywords 是额外可以匹配到的关键词（不在结果里显示，只参与筛选，比如给
+    /// "服务端管理"加上"开服"这种口语化说法），Navigate 复用各个页面早就有的公开
+    /// NavigateToXxx() 方法——没有为了搜索另起一套跳转逻辑，跟侧边栏按钮点击走的是
+    /// 完全同一条路径，不会出现"搜索跳过去的页面状态跟直接点导航栏不一样"的不一致。
+    /// 「实验性功能」是弹窗不是页面，Navigate 直接弹窗；这个搜索框本身只服务于
+    /// "导航到应用内的所有页面"，弹窗类入口顺带收进来方便一起搜，不强制要求它是页面。
+    /// </summary>
+    public IReadOnlyList<(string Title, string Keywords)> GetHomeSearchEntries() => HomeSearchIndex.Select(e => (e.Title, e.Keywords)).ToList();
+
+    public void NavigateByHomeSearchTitle(string title)
+    {
+        var entry = HomeSearchIndex.FirstOrDefault(e => e.Title == title);
+        entry.Navigate?.Invoke();
+    }
+
+    private (string Title, string Keywords, Action Navigate)[] HomeSearchIndex => new (string, string, Action)[]
+    {
+        ("首页", "主页 磁贴 总控台", NavigateToHome),
+        ("版本管理", "版本选择 加载器 Forge Fabric NeoForge Quilt", NavigateToVersions),
+        ("下载中心", "下载 Mod 资源包 光影 整合包", NavigateToDownloadCenter),
+        ("联机", "多人游戏 陶瓦联机 红石联机 局域网", NavigateToMultiplayer),
+        ("Mod 管理", "本地 Mod 管理", NavigateToModManager),
+        ("服务端管理", "开服 服务器", NavigateToServerManager),
+        ("账户", "登录 正版 离线", NavigateToAccounts),
+        ("设置", "配置 选项", NavigateToSettings),
+        ("日志", "崩溃日志 报错", NavigateToLogs),
+        ("AI 助手", "智能助手 聊天", NavigateToAiAssistant),
+        ("百宝箱", "工具箱 计算器 数据包转换 结构查询 便签", NavigateToToolbox),
+        ("基岩版启动", "Bedrock 基岩版", NavigateToBedrock),
+        ("鸣谢与帮助", "关于 帮助 赞助 开源仓库", NavigateToAboutHelp),
+        ("实验性功能", "实验室 测试功能", OpenExperimentalFeatures),
+    };
+
     private void NavVersions_Click(object sender, RoutedEventArgs e)
     {
         NavigateLazy(() => new VersionSelectPage(this));
@@ -1430,13 +1482,35 @@ public partial class MainWindow : Window
         ConfigService.Save();
     }
 
+    /// <summary>打开 AI 助手前确保用户已经同意过当前版本的使用条款；没同意过就先弹条款，
+    /// 同意了才放行并把结果落盘，不同意就不进入 AI 助手页面（也不算已读过，下次还会再问）。
+    /// 所有打开 AI 助手的入口（侧边栏导航、悬浮按钮、日志页"提交给 AI"）都要经过这里，
+    /// 不能有绕过这道确认的路径。</summary>
+    private bool EnsureAiTermsAccepted()
+    {
+        if (AiAssistantConfig.AcceptedTermsVersion >= AiTermsDialog.CurrentVersion) return true;
+
+        var dialog = new AiTermsDialog();
+        var agreed = OverlayDialogService.ShowModal(dialog);
+        if (agreed != true) return false;
+
+        AiAssistantConfig.AcceptedTermsVersion = AiTermsDialog.CurrentVersion;
+        PersistAiAssistantConfig();
+        return true;
+    }
+
     /// <summary>供其他页面/窗口调用的公开导航方法，跳转到 AI 助手面板。</summary>
-    public void NavigateToAiAssistant() => NavigateLazy(() => CreateAiAssistantPanel());
+    public void NavigateToAiAssistant()
+    {
+        if (!EnsureAiTermsAccepted()) return;
+        NavigateLazy(() => CreateAiAssistantPanel());
+    }
 
     /// <summary>日志/诊断页面专用：打开 AI 助手后自动把分析任务作为一个全新的会话发送。
     /// NavigateLazy 的 onLoaded 保证控件真正挂到可视树之后才开始发送，不会抢占页面切换的首帧。</summary>
     public void NavigateToAiAssistantWithPrompt(string prompt, string sessionTitle = "日志分析", bool isCrashLogContext = false)
     {
+        if (!EnsureAiTermsAccepted()) return;
         NavigateLazy(
             () => CreateAiAssistantPanel(),
             page =>
@@ -2970,10 +3044,99 @@ public partial class MainWindow : Window
         {
             // 托盘"退出"是用户明确表达的真正退出意图，不应该再走"下载/启动进行中"
             // 那套确认逻辑一遍——用户已经在托盘菜单这个动作本身里做过一次选择了。
-            _trayIcon?.Hide();
-            System.Windows.Application.Current.Shutdown();
+            // 需求："结束的时候，如果用户选择真的要关闭，那就彻底结束 XCL 的所有进程"——
+            // 托盘退出同样属于用户明确选择的"真的要关闭"，所以也要走彻底退出，
+            // 不能只是简单 Shutdown() 留下还在跑的游戏/服务器子进程。
+            PerformFullExit();
         });
         Closed += (_, _) => _trayIcon?.Dispose();
+    }
+
+    /// <summary>
+    /// 供 SingleInstanceService 在收到别的（新打开的）实例发来的 "ACTIVATE" 指令时调用，
+    /// 尝试把本实例的窗口拉到前台。
+    ///
+    /// 需求修复："没有打开启动器窗口的时候，打开新的启动器窗口还是会提示已经打开了一个"：
+    /// 根因是"仅关闭启动器（便签继续置顶）"场景下 MainWindow 会被真正 Close() 掉（不是
+    /// Hide()），此时它已经是一个"已关闭"的 WPF 窗口对象，对它调用 Show()/Activate() 会
+    /// 直接抛 InvalidOperationException——旧代码没有做这个判断，异常被 SingleInstanceService
+    /// 的 try/catch 吞掉后表现为"什么反应都没有，但新实例已经因为探测到旧实例而退出/弹窗"，
+    /// 让用户觉得"明明没看到窗口，却说已经打开了一个"。
+    /// 这里显式检查 _isWindowClosed，窗口已关闭时直接返回 false，让 SingleInstanceService
+    /// 判定为"真的拉不起来"，从而在新实例那边正确地弹出四选一，而不是静默失败。
+    /// </summary>
+    /// <returns>true：窗口确实存在且已经被拉到前台；false：当前没有可拉起的窗口
+    /// （仅剩托盘/便签在后台常驻）。</returns>
+    public bool TryActivateFromAnotherInstance()
+    {
+        if (_isWindowClosed) return false;
+
+        try
+        {
+            if (WindowState == WindowState.Minimized)
+                WindowState = _lastNonMinimizedWindowState;
+
+            // 窗口可能处于 MinimizeToTray() 之后的 Hide() 状态（还没被 Close()，只是不可见），
+            // 这种情况下 Show() 能正常把它拿回来，跟"仅关闭启动器"那种已 Close() 的情况不同。
+            Show();
+            Activate();
+            // Windows 的"前台窗口锁定"机制下，后台进程调用 Activate() 不一定总能真的把窗口
+            // 切到最前——假开关一下 Topmost 是社区常见的绕过写法，能覆盖绝大多数场景。
+            Topmost = true;
+            Topmost = false;
+
+            _trayIcon?.Hide();
+            return true;
+        }
+        catch
+        {
+            // Show()/Activate() 在窗口已关闭等极端情况下可能抛异常：稳妥起见按"拉不起来"
+            // 处理，交给 SingleInstanceService 退回到询问用户，而不是让异常泄漏到后台线程。
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// 彻底退出：结束本进程名下所有正在运行的游戏进程和服务器进程，再关闭窗口/退出应用。
+    /// 供托盘"退出"菜单、以及被另一个新实例通过 SingleInstanceService 的 "FORCE_EXIT"
+    /// 指令要求关闭时共用——两种场景本质都是"用户已经明确选择了要真的关闭"，不需要
+    /// 再走"下载/启动进行中"那套二次确认，但都必须先清理干净子进程，不能留孤儿进程。
+    /// </summary>
+    public void PerformFullExit()
+    {
+        void KillAllChildProcesses()
+        {
+            // 游戏进程：先尝试 CloseAll()（优雅关闭：CloseMainWindow 超时后才 Kill），
+            // 跟"一键关闭游戏"按钮走的是同一套实现，见 GameProcessManager.CloseAll 注释。
+            try { ProcessManager.CloseAll(); } catch { /* 单个进程关闭失败不影响整体退出 */ }
+
+            // 服务器进程没有窗口，CloseAll 语义上更接近"强制"，这里直接对每个仍在运行的
+            // 服务器实例调用 ForceKill——真正退出启动器时不适合再等"发 stop 命令、等它
+            // 优雅保存世界"这种可能耗时数秒到数十秒的流程，用户此刻的意图是"立刻结束"。
+            try
+            {
+                foreach (var p in ServerProcessManager.Processes.ToArray())
+                {
+                    try { if (!p.HasExited) p.ForceKill(); }
+                    catch { /* 忽略单个失败，继续处理其它进程 */ }
+                }
+            }
+            catch { /* 忽略：不能因为清理服务器进程失败而卡住退出流程 */ }
+        }
+
+        try
+        {
+            KillAllChildProcesses();
+        }
+        finally
+        {
+            _trayIcon?.Hide();
+            // 不再需要多开检测把这个进程当成"仍然存活的旧实例"，Shutdown() 会自然触发
+            // MainWindow.Closed（如果窗口还没关的话），SingleInstanceService 的管道服务端
+            // 线程是后台线程（IsBackground=true），进程退出时会被系统直接终止，不需要
+            // 额外手动停止。
+            System.Windows.Application.Current.Shutdown();
+        }
     }
 
     /// <summary>隐藏主窗口、显示托盘图标——"关闭按钮默认最小化到托盘"和四选一提示里的
@@ -3220,6 +3383,31 @@ public partial class MainWindow : Window
                 foreach (var note in Views.StickyNoteWindow.OpenWindows.ToArray())
                     note.Close();
             }
+            else if (choice == XclMessageResult.No)
+            {
+                // 修复"有时 XCL 的窗口已经关闭，但下次打开时提示还有一个实例正在运行"：
+                // 选"仅关闭启动器（便签继续置顶）"时，MainWindow 关掉了，但便签窗口还开着，
+                // ShutdownMode 默认是 OnLastWindowClose，进程其实并没有真正退出——
+                // SingleInstanceService 的管道服务端线程也还在后台常驻监听。问题是这时候
+                // 既没有主窗口也没有托盘图标，用户从视觉上完全看不出 XCL2 还在跑，
+                // 会误以为"窗口关了 = 程序退出了"；等下次双击图标重新打开，
+                // 探测到这个"看不见"的旧实例，弹出的多开确认框在用户看来就很莫名其妙。
+                // 这里补上托盘图标，让"便签保留、程序其实还在后台"这件事变得可见、可操作
+                // （可以从托盘点回主界面，也可以从托盘菜单真正退出），而不是一个隐形的幽灵进程。
+                _trayIcon?.Show();
+            }
+        }
+
+        // 通用兜底（不止便签一种场景）：只要 MainWindow 关闭后应用里还留着别的窗口
+        // （服务器控制台 ServerConsoleWindow、进程管理器 ProcessManagerWindow 等任何独立存在
+        // 的窗口），ShutdownMode=OnLastWindowClose 就不会让进程真正退出，SingleInstanceService
+        // 的管道服务端线程也还在后台监听——跟上面便签场景是完全同一类问题，只是触发条件不同。
+        // 这里不需要知道具体是哪个窗口，只要"关掉 MainWindow 之后 Application.Current.Windows
+        // 里还有除 MainWindow 自己以外的窗口"，就用同样的办法：把托盘图标亮出来，让用户能看见
+        // "程序还在后台"、能从托盘点回来或者真正退出，而不是变成一个用户毫无感知的幽灵进程。
+        if (Application.Current.Windows.Cast<Window>().Any(w => !ReferenceEquals(w, this)))
+        {
+            _trayIcon?.Show();
         }
 
         if (!ConfigService.Config.BackupInstanceOnClose || _closeLifecycleBackupCompleted)

@@ -31,18 +31,68 @@ public class AiAssistantService
     private readonly string _storageDir;
     private AiAssistantConfig _config;
 
-    // 是否是"技术性/需要深入分析"的问题 —— 命中任一关键词就走 ComplexModel。
-    // 简单启发式，不是 NLP 分类，但对这个场景（入口问答 vs 崩溃分析）区分度已经够用。
-    private static readonly string[] ComplexTriggers = new[]
+    // Auto 路由复杂度判定。原来是"命中任一关键词就走专家档"的粗暴规则，问题是：
+    // 1) "日志"、"分析"、"排查"这类词日常问法里也很常见（比如"日志在哪"），单独命中就跳专家档，
+    //    结果简单问题被分去复杂模型；
+    // 2) 反过来，真正复杂的问题（比如贴了一大段没提关键词的报错文本）命中不到词，又被分去简单模型。
+    // 改成打分制：强信号（明显是堆栈/异常/贴日志）单独命中即可判专家档；普通关键词只算弱/中权重，
+    // 需要和别的信号叠加到阈值才判专家档；再叠加"消息长度"和"疑似粘贴的多行日志"这两个结构信号，
+    // 弥补关键词覆盖不到的情况。仍然是启发式，不是真正的语义分类，但比单关键词命中准得多。
+
+    // 强信号：只要出现就足以直接判专家档（这些词/模式基本只出现在真正的错误场景里）。
+    private static readonly string[] StrongComplexTriggers = new[]
+    {
+        "UnsupportedClassVersion", "OutOfMemory", "stacktrace", "堆栈", "NullReferenceException",
+        "NoClassDefFoundError", "at java.", "at net.minecraft", "Exception in thread"
+    };
+
+    // 中权重：明确指向"出问题了"，但本身不代表内容复杂。
+    private const int MediumWeight = 2;
+    private static readonly string[] MediumComplexTriggers = new[]
     {
         "崩溃", "crash", "报错", "异常", "闪退", "白屏", "卡死", "无响应",
-        "日志", "log", "分析", "排查", "冲突", "依赖", "堆栈", "stacktrace",
-        "内存不足", "OutOfMemory", "UnsupportedClassVersion", "连不上", "联机失败",
-        "下载失败", "安装失败", "打不开", "损坏"
+        "冲突", "依赖", "连不上", "联机失败", "下载失败", "安装失败", "打不开", "损坏"
     };
+
+    // 弱权重：日常问法（"日志在哪"）和真正排障（贴一段日志分析）都会用到这些词，
+    // 单独出现不足以判专家档，需要和别的信号叠加。
+    private const int WeakWeight = 1;
+    private static readonly string[] WeakComplexTriggers = new[]
+    {
+        "日志", "log", "分析", "排查"
+    };
+
+    private const int ExpertScoreThreshold = 3;
+
+    /// <summary>给一段用户输入打"复杂度分"，>= ExpertScoreThreshold 时 Auto 模式判专家档。</summary>
+    private static int EstimateComplexityScore(string userText)
+    {
+        if (string.IsNullOrWhiteSpace(userText)) return 0;
+
+        if (StrongComplexTriggers.Any(k => userText.Contains(k, StringComparison.OrdinalIgnoreCase)))
+            return ExpertScoreThreshold;
+
+        int score = 0;
+        score += MediumComplexTriggers.Count(k => userText.Contains(k, StringComparison.OrdinalIgnoreCase)) * MediumWeight;
+        score += WeakComplexTriggers.Count(k => userText.Contains(k, StringComparison.OrdinalIgnoreCase)) * WeakWeight;
+
+        // 结构信号：疑似粘贴了一段日志/报错（多行、偏长），哪怕一个关键词都没命中也该判复杂。
+        var lineCount = userText.Count(c => c == '\n') + 1;
+        if (lineCount >= 4) score += 2;
+        if (userText.Length >= 150) score += 1;
+
+        return score;
+    }
 
     /// <summary>不对用户显示的系统提示词。内容即 XCL2 助手的角色设定、功能知识库和能力边界。</summary>
     public string SystemPrompt { get; set; } = DefaultSystemPrompt.Text;
+
+    /// <summary>
+    /// UI 层（AiAssistantPanel）注入的确认框回调：AI 请求读取日志/查看或修改配置时，
+    /// 弹出对应确认框并返回用户的选择。不赋值时视为"没有可以问用户的界面"，一律当作拒绝，
+    /// 绝不允许在没有用户确认的情况下静默执行——这条不能因为回调没接好就被绕过。
+    /// </summary>
+    public AiFileAccessService.ConfirmCallback? ConfirmAccessRequest { get; set; }
 
     public AiAssistantService(AiAssistantConfig config, string xcl2DataDir)
     {
@@ -153,8 +203,36 @@ public class AiAssistantService
         };
         session.Messages.Add(userMsg);
 
-        // 会话总量估算，超阈值先压缩再发请求
-        if (EstimateSessionTokens(session) > _config.CompressionTokenThreshold)
+        // 省 Token 模式：命中本地问答表就直接答，不请求 API。
+        if (_config.EffectiveTokenSaverMode && !isCrashLogContext)
+        {
+            var quickAnswer = AiQuickAnswers.TryAnswer(userText);
+            if (quickAnswer != null)
+            {
+                var quickMsg = new AiChatMessage
+                {
+                    Role = AiMessageRole.Assistant,
+                    Content = quickAnswer,
+                    ModelUsed = null,
+                    ModelDisplayName = "本地直答 · 省 Token",
+                    RouteUsed = AiRoutingMode.SpecificModel,
+                    WasAutoRouted = false,
+                    EstimatedTokens = 0
+                };
+                session.Messages.Add(quickMsg);
+                if (session.Title == "新对话" && session.Messages.Count <= 3)
+                    session.Title = userText.Length > 16 ? userText[..16] + "…" : userText;
+                SaveSession(session);
+                return quickMsg;
+            }
+        }
+
+        // 会话总量估算，超阈值先压缩再发请求。省 Token 模式下阈值打对折、保留的原始消息更少，
+        // 压缩更激进——见 CompressSessionAsync 里 keepRecent 的注释。
+        var effectiveThreshold = _config.EffectiveTokenSaverMode
+            ? Math.Max(2000, _config.CompressionTokenThreshold / 2)
+            : _config.CompressionTokenThreshold;
+        if (EstimateSessionTokens(session) > effectiveThreshold)
         {
             await CompressSessionAsync(session, ct);
         }
@@ -162,7 +240,29 @@ public class AiAssistantService
         var route = ChooseModel(userText, isCrashLogContext, forcedModel);
         var payloadMessages = BuildContextMessages(session);
 
-        var replyText = await CallChatCompletionAsync(baseUrl, apiKey, route.ModelId, payloadMessages, deepThinking, webSearch, ct);
+        var rawReply = await CallChatCompletionAsync(baseUrl, apiKey, route.ModelId, payloadMessages, deepThinking, webSearch, ct);
+
+        // D 需求：AI 可能在回复末尾附带一个"访问请求标记"（见 AiFileAccessService），
+        // 需要弹确认框、按用户选择执行或拒绝，再把结果喂回去让模型给出最终回复。
+        // ConfirmAccessRequest 由 UI 层（AiAssistantPanel）赋值；没赋值时（比如预热请求）
+        // 默认一律拒绝，不能在没有界面可以问用户的情况下静默执行任何操作。
+        var (displayText, followUp) = AiFileAccessService.ProcessReply(
+            rawReply, ConfirmAccessRequest ?? ((_, _) => false));
+
+        string replyText;
+        if (followUp == null)
+        {
+            replyText = displayText;
+        }
+        else
+        {
+            var secondRoundMessages = payloadMessages.ToList();
+            secondRoundMessages.Add(("assistant", displayText));
+            secondRoundMessages.Add(("user", followUp));
+            var secondReply = await CallChatCompletionAsync(baseUrl, apiKey, route.ModelId, secondRoundMessages,
+                deepThinking, webSearch, ct);
+            replyText = string.IsNullOrWhiteSpace(displayText) ? secondReply : $"{displayText}\n\n{secondReply}";
+        }
 
         var assistantMsg = new AiChatMessage
         {
@@ -181,6 +281,35 @@ public class AiAssistantService
 
         SaveSession(session);
         return assistantMsg;
+    }
+
+    /// <summary>
+    /// 设置里"打开 AI 助手时预热系统提示词"开关对应的实现：只发一次"系统提示词 + 极简用户
+    /// 消息"的请求，刻意不落盘到任何会话文件、也不把回复内容返回给调用方展示——目的只是
+    /// 提前把这次连接建立、鉴权、路由选择这些前置开销花掉，让用户真正开始聊天时的第一条
+    /// 消息不用再等这些东西，观感上"回复变快了"。
+    /// 任何失败（没配置 Key、网络不通、接口报错……）都静默吞掉：这是锦上添花的体验优化，
+    /// 不能因为它失败就在用户还没开始聊天之前弹出一个莫名其妙的错误提示。</summary>
+    public async Task WarmUpAsync(CancellationToken ct = default)
+    {
+        try
+        {
+            var (baseUrl, apiKey) = AiCredentialResolver.Resolve(_config);
+            if (string.IsNullOrWhiteSpace(apiKey)) return;
+
+            var route = ChooseModel(userText: "", forceComplex: false, forcedModel: null);
+            var messages = new List<(string role, string content)>
+            {
+                ("system", SystemPrompt),
+                ("user", "(预热请求，无需回复正文，收到即可)")
+            };
+            await CallChatCompletionAsync(baseUrl, apiKey, route.ModelId, messages,
+                deepThinking: false, webSearch: false, ct: ct);
+        }
+        catch
+        {
+            // 预热本来就是"能省则省"的优化，不应该以任何形式打断或影响正常聊天流程。
+        }
     }
 
     /// <summary>
@@ -206,7 +335,7 @@ public class AiAssistantService
         if (mode == AiRoutingMode.Expert)
             return (ResolveConfiguredModel(_config.ExpertModelId, AiModelIds.MimoV25), AiRoutingMode.Expert, false);
 
-        var expert = forceComplex || ComplexTriggers.Any(k => userText.Contains(k, StringComparison.OrdinalIgnoreCase));
+        var expert = forceComplex || EstimateComplexityScore(userText) >= ExpertScoreThreshold;
         return expert
             ? (ResolveConfiguredModel(_config.ExpertModelId, AiModelIds.MimoV25), AiRoutingMode.Expert, true)
             : (ResolveConfiguredModel(_config.NormalModelId, AiModelIds.Nemotron35Lightning), AiRoutingMode.Normal, true);
@@ -269,13 +398,17 @@ public class AiAssistantService
     }
 
     /// <summary>
-    /// 上下文压缩：把 [0, Messages.Count-1) 里还没被摘要覆盖、且不含最近 6 条的部分
-    /// 丢给模型总结成一段简短摘要，写入 SummaryOfOlderMessages，最近 6 条原样保留，
-    /// 从而把下一次请求的上下文体积打下来。
+    /// 上下文压缩：把 [0, Messages.Count-1) 里还没被摘要覆盖、且不含最近几条的部分
+    /// 丢给模型总结成一段简短摘要，写入 SummaryOfOlderMessages，最近几条原样保留，
+    /// 从而把下一次请求的上下文体积打下来。省 Token 模式下保留的原始消息更少（4 条而不是 6 条）、
+    /// 摘要要求更短（100 字而不是 200 字），压得更狠一些。
     /// </summary>
     private async Task CompressSessionAsync(AiChatSession session, CancellationToken ct)
     {
-        const int keepRecent = 6;
+        var tokenSaver = _config.EffectiveTokenSaverMode;
+        var keepRecent = tokenSaver ? 4 : 6;
+        var summaryWordLimit = tokenSaver ? 100 : 200;
+
         int start = session.SummarizedUpToIndex + 1;
         int end = Math.Max(start, session.Messages.Count - keepRecent); // 不含 end
         if (end <= start) return; // 没有足够旧消息可压
@@ -292,7 +425,7 @@ public class AiAssistantService
 
         var summarizeRequest = new List<(string role, string content)>
         {
-            ("system", "你是一个对话压缩器。把用户给的对话记录压缩成不超过 200 字的中文摘要，" +
+            ("system", $"你是一个对话压缩器。把用户给的对话记录压缩成不超过 {summaryWordLimit} 字的中文摘要，" +
                        "只保留跟用户问题/结论相关的关键信息，不要用第一人称，不要评论，不要加任何前后缀说明。"),
             ("user", sb.ToString())
         };

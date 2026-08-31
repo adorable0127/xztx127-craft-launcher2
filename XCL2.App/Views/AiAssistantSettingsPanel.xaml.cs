@@ -17,6 +17,10 @@ public partial class AiAssistantSettingsPanel : UserControl, IOverlayDialog
     private readonly AiAssistantConfig _currentConfig;
     private readonly ObservableCollection<AiModelDefinition> _customModels = new();
     private bool _loading;
+    private bool _guardingModelSelection;
+    private string? _lastNormalId;
+    private string? _lastExpertId;
+    private string? _lastManualId;
 
     public AiAssistantSettingsPanel(AiAssistantConfig currentConfig)
     {
@@ -56,11 +60,14 @@ public partial class AiAssistantSettingsPanel : UserControl, IOverlayDialog
             ThresholdBox.Text = config.CompressionTokenThreshold.ToString();
             AllowCrashLogCheck.IsChecked = config.AllowCrashLogReading;
             ClearGuestHistoryCheck.IsChecked = config.ClearHistoryOnGuestSessionEnd;
+            PrewarmOnOpenCheck.IsChecked = config.PrewarmSystemPromptOnOpen;
             EnableDeepThinkingCheck.IsChecked = config.EnableDeepThinking;
             EnableWebSearchCheck.IsChecked = config.EnableWebSearch;
+            TokenSaverCheck.IsChecked = config.TokenSaverMode;
 
             UpdateCustomApiUi();
             RefreshModelCombos(config.NormalModelId, config.ExpertModelId, config.SelectedModel);
+            RefreshTokenSaverAvailability();
         }
         finally
         {
@@ -97,6 +104,32 @@ public partial class AiAssistantSettingsPanel : UserControl, IOverlayDialog
         var manual = ManualModelCombo.SelectedValue as string;
         UpdateCustomApiUi();
         RefreshModelCombos(normal, expert, manual);
+        RefreshTokenSaverAvailability();
+    }
+
+    private void DefaultModeCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_loading) return;
+        RefreshTokenSaverAvailability();
+    }
+
+    private void TokenSaverCheck_CheckedChanged(object sender, RoutedEventArgs e)
+    {
+        // 只负责响应用户点击；实际是否生效仍以 RefreshTokenSaverAvailability 里算出的
+        // "允许打开" 状态为准（勾选框在不允许时本身就是禁用的，点不到）。
+    }
+
+    /// <summary>省 Token 模式只在"使用自定义 API key"或"路由模式=自动"时能打开，
+    /// 见 AiAssistantConfig.TokenSaverModeAllowed 的注释。这里同步一份到设置页 UI：
+    /// 条件不满足时勾选框直接禁用，并把提示文案换成"为什么现在不能开"。</summary>
+    private void RefreshTokenSaverAvailability()
+    {
+        bool allowed = UseCustomKeyCheck.IsChecked == true || GetRoutingMode() == AiRoutingMode.Auto;
+        TokenSaverCheck.IsEnabled = allowed;
+        TokenSaverHintText.Text = allowed
+            ? "上下文压缩更激进，遇到官网/百科/下载地址这类固定问答直接本地回答、不请求 API。"
+            : "只在“使用自定义 API key”或“默认路由模式=自动”时可以开启（跟省 token 这个目标同一个方向）；" +
+              "手动指定模型/普通档/专家档下不提供这个开关。";
     }
 
     private void UpdateCustomApiUi()
@@ -112,7 +145,16 @@ public partial class AiAssistantSettingsPanel : UserControl, IOverlayDialog
     {
         if (UseCustomKeyCheck.IsChecked == true)
             return _customModels.Select(m => m.Clone()).ToList();
-        return AiModelIds.BuiltIn.Select(m => m.Clone()).ToList();
+
+        // 全部内置模型都展示出来（而不是只展示 3 个可用的），这样用户能看到有哪些模型存在；
+        // 暂不可用的在显示名上标出来，选中时由 ModelCombo_SelectionChanged 拦截并提示原因。
+        return AiModelIds.BuiltIn.Select(m =>
+        {
+            var clone = m.Clone();
+            if (!AiModelIds.IsAvailableByDefault(clone.Id))
+                clone.DisplayName += "（暂不可用）";
+            return clone;
+        }).ToList();
     }
 
     private void RefreshModelCombos(string? normalId = null, string? expertId = null, string? manualId = null)
@@ -134,6 +176,39 @@ public partial class AiAssistantSettingsPanel : UserControl, IOverlayDialog
         NormalModelCombo.SelectedValue = Pick(normalId, AiModelIds.Nemotron35Lightning);
         ExpertModelCombo.SelectedValue = Pick(expertId, AiModelIds.MimoV25);
         ManualModelCombo.SelectedValue = Pick(manualId, AiModelIds.Nemotron35Lightning);
+
+        _lastNormalId = NormalModelCombo.SelectedValue as string;
+        _lastExpertId = ExpertModelCombo.SelectedValue as string;
+        _lastManualId = ManualModelCombo.SelectedValue as string;
+    }
+
+    /// <summary>默认 API key 下，Hy3 Free / Muse Spark 1.2 Free 暂时不可用（见 AiModelIds.
+    /// DefaultAvailable 注释）。下拉框仍展示全部内置模型，方便用户知道有哪些模型，但选中
+    /// 不可用的模型时要提示原因并把选择还原，不允许真的保存一个不可用模型。</summary>
+    private void ModelCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_loading || _guardingModelSelection) return;
+        if (sender is not ComboBox combo) return;
+
+        string? lastId = combo == NormalModelCombo ? _lastNormalId
+            : combo == ExpertModelCombo ? _lastExpertId
+            : _lastManualId;
+
+        var selectedId = combo.SelectedValue as string;
+
+        if (UseCustomKeyCheck.IsChecked != true && !AiModelIds.IsAvailableByDefault(selectedId))
+        {
+            _guardingModelSelection = true;
+            try { combo.SelectedValue = lastId; }
+            finally { _guardingModelSelection = false; }
+
+            MessageBoxDialog.ShowWarning(AiModelIds.UnavailableModelMessage, "模型暂时不可用");
+            return;
+        }
+
+        if (combo == NormalModelCombo) _lastNormalId = selectedId;
+        else if (combo == ExpertModelCombo) _lastExpertId = selectedId;
+        else if (combo == ManualModelCombo) _lastManualId = selectedId;
     }
 
     private void AddCustomModel_Click(object sender, RoutedEventArgs e)
@@ -253,6 +328,7 @@ public partial class AiAssistantSettingsPanel : UserControl, IOverlayDialog
             ShowFloatingButton = false,
             AllowCrashLogReading = false,
             ClearHistoryOnGuestSessionEnd = true,
+            PrewarmSystemPromptOnOpen = true,
             EnableDeepThinking = false,
             EnableWebSearch = false,
             PanelWidth = _currentConfig.PanelWidth,
@@ -327,8 +403,11 @@ public partial class AiAssistantSettingsPanel : UserControl, IOverlayDialog
             ShowFloatingButton = FloatingButtonCheck.IsChecked == true,
             AllowCrashLogReading = AllowCrashLogCheck.IsChecked == true,
             ClearHistoryOnGuestSessionEnd = ClearGuestHistoryCheck.IsChecked == true,
+            PrewarmSystemPromptOnOpen = PrewarmOnOpenCheck.IsChecked == true,
             EnableDeepThinking = EnableDeepThinkingCheck.IsChecked == true,
             EnableWebSearch = EnableWebSearchCheck.IsChecked == true,
+            TokenSaverMode = TokenSaverCheck.IsEnabled && TokenSaverCheck.IsChecked == true,
+            AcceptedTermsVersion = _currentConfig.AcceptedTermsVersion,
             PanelWidth = _currentConfig.PanelWidth,
             PanelWasOpen = _currentConfig.PanelWasOpen,
             LastSessionId = _currentConfig.LastSessionId

@@ -251,6 +251,51 @@ public static class ThemeService
         ("PingFang", "苹方", "PingFang SC"),
     };
 
+    /// <summary>
+    /// 需求排查："有时修改字体不成功"：根因是 WPF 隐式样式（Implicit Style）按"控件的
+    /// 精确类型"匹配，不会顺着继承链往上找、更不会跟基类样式合并——App.xaml 里除了
+    /// Control/TextBlock 这两个基类样式外，还给 Button/TextBox/ComboBox/CheckBox/
+    /// RadioButton/ListBox/... 等十几个具体类型各自定义了一份不带 x:Key 的隐式样式
+    /// （用来统一配色/圆角，见各自 Style 上面的注释）。只要某个类型自己有一份精确匹配的
+    /// 隐式样式，WPF 就只会用这一份、完全不会再去找 Control 这个基类样式，之前只往
+    /// resources[typeof(Control)] 塞 FontFamily 的写法对这些类型根本不生效——按钮、
+    /// 输入框、下拉框这些恰恰是界面里最常见的控件，所以表现出来就是"设置里选了新字体，
+    /// 但按钮/输入框上的文字看起来完全没变，只有少数'裸' Control（没有专属隐式样式的
+    /// 类型）跟着变了"，很容易被误以为是"有时候不生效"（其实是稳定地对这批类型不生效）。
+    ///
+    /// 解决方式：不再是"新建一份只含 FontFamily 的样式、整份覆盖掉原有隐式样式"（那样会
+    /// 连带丢掉原来该类型样式里已有的 Background/圆角/Trigger 等 Setter），而是把
+    /// "当前已经生效的那份样式"存下来当 BasedOn 基类，只追加一条 FontFamily 的
+    /// DynamicResource Setter 上去——原有的所有 Setter/Trigger/ControlTemplate 都还在，
+    /// 只是多了一条会跟着 AppFontFamily 资源联动的字体规则。覆盖面从原来的 2 个类型
+    /// 扩到了 App.xaml 里实际定义过隐式（不带 x:Key）样式的全部类型，保证"选哪个控件
+    /// 都能跟着换字体"，不再有遗漏。
+    /// </summary>
+    private static readonly Type[] FontAwareImplicitStyleTypes =
+    {
+        typeof(System.Windows.Controls.Control),
+        typeof(System.Windows.Controls.TextBlock),
+        typeof(System.Windows.Controls.Label),
+        typeof(System.Windows.Controls.Button),
+        typeof(System.Windows.Controls.TextBox),
+        typeof(System.Windows.Controls.PasswordBox),
+        typeof(System.Windows.Controls.ComboBox),
+        typeof(System.Windows.Controls.ComboBoxItem),
+        typeof(System.Windows.Controls.ListBox),
+        typeof(System.Windows.Controls.ListBoxItem),
+        typeof(System.Windows.Controls.ProgressBar),
+        typeof(System.Windows.Controls.TabItem),
+        typeof(System.Windows.Controls.TabControl),
+        typeof(System.Windows.Controls.CheckBox),
+        typeof(System.Windows.Controls.RadioButton),
+        typeof(System.Windows.Controls.Expander),
+        typeof(System.Windows.Controls.GridViewColumnHeader),
+        typeof(System.Windows.Controls.ContextMenu),
+        typeof(System.Windows.Controls.MenuItem),
+        typeof(System.Windows.Controls.ToolTip),
+        typeof(Window),
+    };
+
     private static void ApplyComposedFontFamily()
     {
         var selected = FontFamilyOptions.FirstOrDefault(o => o.Tag == _currentAppFontFamily);
@@ -266,20 +311,24 @@ public static class ThemeService
         var resources = Application.Current.Resources;
         resources[WinUi3FontResourceKey] = new FontFamily(string.Join(", ", parts));
 
-        if (!_winUi3FontStyleInstalled)
+        // 只需要"装一次"：字体规则是 DynamicResource，后续切换字体只用改上面那行
+        // WinUi3FontResourceKey 对应的值，所有已装好的样式会自动跟着联动，不需要重新
+        // 生成/重新挂载样式对象。
+        if (_winUi3FontStyleInstalled) return;
+
+        foreach (var type in FontAwareImplicitStyleTypes)
         {
-            var controlStyle = new Style(typeof(System.Windows.Controls.Control));
-            controlStyle.Setters.Add(new Setter(System.Windows.Controls.Control.FontFamilyProperty,
+            // 保留该类型原来已经存在的隐式样式（App.xaml 里定义的配色/模板等）当 BasedOn 基类，
+            // 只追加字体 Setter；该类型原来没有专属隐式样式时（BasedOn 为 null）则新建一份，
+            // 效果等价于"从这个类型开始跟随 AppFontFamily"。
+            var existing = resources.Contains(type) ? resources[type] as Style : null;
+            var fontStyle = new Style(type, existing);
+            fontStyle.Setters.Add(new Setter(System.Windows.Controls.Control.FontFamilyProperty,
                 new DynamicResourceExtension(WinUi3FontResourceKey)));
-            resources[typeof(System.Windows.Controls.Control)] = controlStyle;
-
-            var textStyle = new Style(typeof(System.Windows.Controls.TextBlock));
-            textStyle.Setters.Add(new Setter(System.Windows.Controls.TextBlock.FontFamilyProperty,
-                new DynamicResourceExtension(WinUi3FontResourceKey)));
-            resources[typeof(System.Windows.Controls.TextBlock)] = textStyle;
-
-            _winUi3FontStyleInstalled = true;
+            resources[type] = fontStyle;
         }
+
+        _winUi3FontStyleInstalled = true;
     }
 
     /// <summary>参与"窗口透明度"效果的面板类画刷 key：只挑背景大面积色块（侧栏、主面板、

@@ -1,5 +1,8 @@
+using System;
+using System.Linq;
 using System.Windows.Controls;
 using System.Windows;
+using System.Windows.Input;
 using XCL2.App.Services;
 
 namespace XCL2.App.Views;
@@ -44,6 +47,86 @@ public partial class HomePage : UserControl
         // 愚人节彩蛋 3 号（鼠标靠近就乱窜）+ 8 号（磁贴乱跳）：平时（非 4 月 1 日）这个调用
         // 内部全部是空操作，见 AprilFoolsUi 类注释。
         AprilFoolsUi.AttachHomeTileEffects(TileGrid, LaunchTile, QuickStartTile);
+
+        HomeSearchResultsPopup.Closed += (_, _) => HomeSearchResultsList.SelectedIndex = -1;
+    }
+
+    // ===== 首页顶部搜索框：导航到应用内所有页面 =====
+    // 索引来自 _owner.GetHomeSearchEntries()（定义在 MainWindow 里，跟侧边栏导航按钮共用
+    // 同一套 NavigateToXxx() 跳转方法），这里只负责按输入文本筛选、展示结果列表、
+    // 处理点击/回车/上下键选中后调用 _owner.NavigateByHomeSearchTitle(title) 完成跳转。
+
+    private void HomeSearchBox_TextChanged(object sender, TextChangedEventArgs e)
+    {
+        var keyword = HomeSearchBox.Text?.Trim() ?? "";
+        HomeSearchPlaceholder.Visibility = keyword.Length == 0 ? Visibility.Visible : Visibility.Collapsed;
+
+        if (keyword.Length == 0)
+        {
+            HomeSearchResultsPopup.IsOpen = false;
+            return;
+        }
+
+        var matches = _owner.GetHomeSearchEntries()
+            .Where(entry => entry.Title.Contains(keyword, StringComparison.OrdinalIgnoreCase)
+                             || entry.Keywords.Contains(keyword, StringComparison.OrdinalIgnoreCase))
+            .Select(entry => entry.Title)
+            .ToList();
+
+        HomeSearchResultsList.ItemsSource = matches;
+        HomeSearchResultsPopup.IsOpen = matches.Count > 0;
+    }
+
+    private void HomeSearchBox_GotFocus(object sender, RoutedEventArgs e) => HomeSearchPlaceholder.Visibility = string.IsNullOrEmpty(HomeSearchBox.Text) ? Visibility.Visible : Visibility.Collapsed;
+
+    private void HomeSearchBox_LostFocus(object sender, RoutedEventArgs e)
+    {
+        // 延迟关闭：直接在这里关 Popup 会先于 ListBox 的点击事件触发，导致点结果永远点不到。
+        // Popup 自带的 StaysOpen="False" 已经会在点击外部区域时自动关闭，这里不用额外处理。
+    }
+
+    private void HomeSearchBox_KeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key == Key.Down && HomeSearchResultsList.Items.Count > 0)
+        {
+            HomeSearchResultsList.Focus();
+            HomeSearchResultsList.SelectedIndex = 0;
+            e.Handled = true;
+        }
+        else if (e.Key == Key.Enter && HomeSearchResultsList.Items.Count > 0)
+        {
+            NavigateToHomeSearchResult(HomeSearchResultsList.Items[0] as string);
+            e.Handled = true;
+        }
+        else if (e.Key == Key.Escape)
+        {
+            HomeSearchResultsPopup.IsOpen = false;
+        }
+    }
+
+    private void HomeSearchResultsList_KeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key == Key.Enter && HomeSearchResultsList.SelectedItem is string title)
+        {
+            NavigateToHomeSearchResult(title);
+            e.Handled = true;
+        }
+    }
+
+    private void HomeSearchResultsList_MouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+    {
+        if (HomeSearchResultsList.SelectedItem is string title)
+        {
+            NavigateToHomeSearchResult(title);
+        }
+    }
+
+    private void NavigateToHomeSearchResult(string? title)
+    {
+        if (string.IsNullOrEmpty(title)) return;
+        HomeSearchResultsPopup.IsOpen = false;
+        HomeSearchBox.Text = "";
+        _owner.NavigateByHomeSearchTitle(title);
     }
 
     /// <summary>语言胶囊文字：Str_Lang_EntryButton 里的「*」通配符替换为当前语言的本地名，

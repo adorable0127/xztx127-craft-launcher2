@@ -1,0 +1,37 @@
+﻿<UserControl x:Class="XCL2.App.Views.AiTermsDialog"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             Background="{DynamicResource SideBrush}"
+             MaxWidth="560">
+    <StackPanel Margin="16">
+        <TextBlock Text="AI 助手使用条款" FontSize="20" FontWeight="SemiBold"/>
+        <TextBlock Text="第一次使用需要先看一下，之后不会再弹（除非条款有实质性更新）。"
+                   Margin="0,3,0,14" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}"/>
+
+        <ScrollViewer VerticalScrollBarVisibility="Auto" MaxHeight="420">
+            <StackPanel>
+                <Border Padding="12" CornerRadius="10" Background="{DynamicResource PanelBrush}"
+                        BorderBrush="{DynamicResource BorderBrush2}" BorderThickness="1" Margin="0,0,0,10">
+                    <StackPanel>
+                        <TextBlock Text="条款正文" FontSize="14" FontWeight="SemiBold" Margin="0,0,0,8"/>
+                        <TextBlock x:Name="LegalText" TextWrapping="Wrap" FontSize="12" LineHeight="20"/>
+                    </StackPanel>
+                </Border>
+
+                <Border Padding="12" CornerRadius="10" Background="{DynamicResource PanelBrush}"
+                        BorderBrush="{DynamicResource BorderBrush2}" BorderThickness="1">
+                    <StackPanel>
+                        <TextBlock Text="说人话版" FontSize="14" FontWeight="SemiBold" Margin="0,0,0,8"/>
+                        <TextBlock x:Name="PlainText" TextWrapping="Wrap" FontSize="12" LineHeight="20"
+                                   Foreground="{DynamicResource TextSecondaryBrush}"/>
+                    </StackPanel>
+                </Border>
+            </StackPanel>
+        </ScrollViewer>
+
+        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,14,0,0">
+            <Button Content="不同意，暂不使用" Width="120" Margin="0,0,8,0" Click="Decline_Click" Style="{StaticResource SecondaryButton}"/>
+            <Button Content="同意，我知道了" Width="120" Click="Agree_Click" IsDefault="True"/>
+        </StackPanel>
+    </StackPanel>
+</UserControl>

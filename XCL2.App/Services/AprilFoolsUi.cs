@@ -125,6 +125,20 @@ public static class AprilFoolsUi
             case AprilFoolsService.Effect.LauncherRefuses:
                 MessageBoxDialog.ShowInfo(AprilFoolsService.RandomRefusalText(), "提示");
                 break;
+            // 修复：3/8/5 号效果原本只在"鼠标碰到按钮/磁贴"这个交互路径里表现（躲避、
+            // 乱跳），从来没处理过"点击本身被劫持"这一步——只要这次点击是从不经过鼠标
+            // 交互的入口（典型如托盘菜单"启动游戏"）打进来的，之前会直接放过去正常启动。
+            // 这里补上对应的提示文案，跟 AprilFoolsService.Catalog 里的效果描述保持
+            // 语气一致，同时也保证调用方 return 后确实没有执行真正的启动逻辑。
+            case AprilFoolsService.Effect.DodgeLaunchButton:
+                MessageBoxDialog.ShowInfo("按钮好像又躲开了，你好像没点到「启动游戏」。", "提示");
+                break;
+            case AprilFoolsService.Effect.TileChaos:
+                MessageBoxDialog.ShowInfo("磁贴今天不开心，很不高兴为你启动游戏。", "提示");
+                break;
+            case AprilFoolsService.Effect.WindowChaos:
+                MessageBoxDialog.ShowInfo("窗口今天坐不住，先别急着启动游戏。", "提示");
+                break;
         }
         return true;
     }
@@ -164,15 +178,68 @@ public static class AprilFoolsUi
         EnsureTransform(launchTile);
         EnsureTransform(quickStartTile);
 
-        // 3 号：鼠标进入按钮范围就随机挪开，模拟"永远点不到"。用 RenderTransform 平移，
-        // 不改变 Grid/UniformGrid 里的实际占位，恢复时把偏移量清 0 即可，不用记录原始状态。
-        launchTile.MouseEnter += (_, _) =>
+        // 3 号：鼠标靠近按钮就持续躲避，模拟"永远点不到"。
+        //
+        // ===== 修复：原来只在 MouseEnter 那一瞬间跳一次 =====
+        // 问题在于 MouseEnter 只会在鼠标"从外面移进按钮范围"这个边界穿越的瞬间触发一次；
+        // 跳开之后鼠标继续朝新位置移动，只要中途没有真的先离开再进入（而是直接划过去、
+        // 或者本来移动速度就快到一步到位），下一次 MouseEnter 根本不会触发，按钮会安安静静
+        // 待在原地任由用户点——这就是"移速并不快，并非宣传中的'点不到'"的根本原因：
+        // 不是跳得慢，是压根没有持续跟踪鼠标、只跳了那一下。
+        //
+        // 现在改成一个 16ms 一次的高频 Timer（接近一帧的量级），持续算"鼠标当前位置"到
+        // "按钮当前（含偏移后）中心点"的距离——只要进入警戒半径，立刻往鼠标反方向跳开一大段
+        // 距离，且每次跳的角度带一点随机扰动，避免被"预判跳跃方向"套路化。这样不管鼠标怎么
+        // 移动、多快移动，按钮都会在用户手指按下去之前的每一帧持续重新判定并躲开，
+        // 真正做到"点不到"。
+        var launchOriginalCenter = (Point?)null;
+        launchTile.Loaded += (_, _) =>
         {
-            if (!AprilFoolsService.Has(AprilFoolsService.Effect.DodgeLaunchButton)) return;
             var transform = (TranslateTransform)launchTile.RenderTransform;
-            transform.X = (Rng.NextDouble() - 0.5) * 160;
-            transform.Y = (Rng.NextDouble() - 0.5) * 80;
+            var savedX = transform.X;
+            var savedY = transform.Y;
+            transform.X = 0;
+            transform.Y = 0;
+            var topLeft = launchTile.TranslatePoint(new Point(0, 0), tileGrid);
+            launchOriginalCenter = new Point(topLeft.X + launchTile.ActualWidth / 2, topLeft.Y + launchTile.ActualHeight / 2);
+            transform.X = savedX;
+            transform.Y = savedY;
         };
+
+        var dodgeTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(16) };
+        dodgeTimer.Tick += (_, _) =>
+        {
+            var transform = (TranslateTransform)launchTile.RenderTransform;
+            if (!AprilFoolsService.Has(AprilFoolsService.Effect.DodgeLaunchButton))
+            {
+                transform.X = 0;
+                transform.Y = 0;
+                return;
+            }
+            if (launchOriginalCenter == null) return;
+
+            var mouse = Mouse.GetPosition(tileGrid);
+            var currentCenter = new Point(launchOriginalCenter.Value.X + transform.X, launchOriginalCenter.Value.Y + transform.Y);
+            var dx = currentCenter.X - mouse.X;
+            var dy = currentCenter.Y - mouse.Y;
+            const double DangerRadius = 90; // 鼠标进入这个半径就判定为"要点到了"，必须立刻跳开
+            if (dx * dx + dy * dy > DangerRadius * DangerRadius) return;
+
+            // 往远离鼠标的方向跳开一大步，角度加一点随机扰动，防止被"卡在角落等它跳"这种
+            // 固定套路破解；跳跃距离本身也比警戒半径大出不少，保证跳完之后立刻脱离危险区。
+            var angle = Math.Atan2(dy, dx) + (Rng.NextDouble() - 0.5) * 0.6;
+            const double JumpDistance = 150;
+            var newX = transform.X + Math.Cos(angle) * JumpDistance;
+            var newY = transform.Y + Math.Sin(angle) * JumpDistance;
+
+            // 限制偏移范围，别把按钮跳到 tileGrid 可见区域外面去，那样反而找不到它，
+            // 也失去了"看得见点不到"的整蛊效果。
+            var maxOffsetX = Math.Max(40, tileGrid.ActualWidth / 2 - launchTile.ActualWidth / 2);
+            var maxOffsetY = Math.Max(40, tileGrid.ActualHeight / 2 - launchTile.ActualHeight / 2);
+            transform.X = Math.Clamp(newX, -maxOffsetX, maxOffsetX);
+            transform.Y = Math.Clamp(newY, -maxOffsetY, maxOffsetY);
+        };
+        dodgeTimer.Start();
 
         // 8 号：磁贴乱跳，用一个定时器随机给磁贴总控台里的每个磁贴一个小幅度随机偏移；
         // 点击"启动游戏"磁贴时不再走正常启动，改成弹一句台词。

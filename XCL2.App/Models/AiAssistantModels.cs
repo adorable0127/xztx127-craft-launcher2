@@ -48,10 +48,26 @@ public static class AiModelIds
     // 保留旧代码兼容入口。
     public static readonly string[] Available = BuiltIn.Select(m => m.Id).ToArray();
 
+    /// <summary>当前默认 API key 下实际可用的模型。原因：供应商侧的 API 问题，Hy3 Free 和
+    /// Muse Spark 1.2 Free 暂时无法访问，只有这 3 个稳定可用。这个限制只影响"未使用自定义
+    /// API key"的场景；自定义 API key 的模型表不受影响。恢复可用后，把对应模型 ID 加回本列表即可。</summary>
+    public static readonly IReadOnlyList<string> DefaultAvailable = new[]
+    {
+        MimoV25, Nemotron3Ultra, Nemotron35Lightning
+    };
+
+    public static bool IsAvailableByDefault(string? modelId) =>
+        !string.IsNullOrWhiteSpace(modelId) &&
+        DefaultAvailable.Any(id => string.Equals(id, modelId.Trim(), StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>因供应商 API 问题暂不可用的模型被选中时，展示给用户的提示原话（注意措辞，勿改）。</summary>
+    public const string UnavailableModelMessage =
+        "当前因模型提供商的 API 问题，这些模型暂时无法访问，请谅解，如果可以使用会第一时间通知您";
+
     public static List<AiModelDefinition> GetCatalog(AiAssistantConfig config)
     {
         if (!config.UseCustomApiKey)
-            return BuiltIn.Select(m => m.Clone()).ToList();
+            return BuiltIn.Where(m => IsAvailableByDefault(m.Id)).Select(m => m.Clone()).ToList();
 
         return (config.CustomModels ?? new List<AiModelDefinition>())
             .Where(m => m != null && !string.IsNullOrWhiteSpace(m.Id))
@@ -122,6 +138,28 @@ public class AiAssistantConfig
     public bool EnableDeepThinking { get; set; } = false;
     public bool EnableWebSearch { get; set; } = false;
     public int CompressionTokenThreshold { get; set; } = 18000;
+
+    /// <summary>"省 Token 模式"。只在"用自己的 API key"或"自动路由"下能打开——自定义 key 是因为
+    /// 用户自己承担调用成本，省 token 直接省钱；自动路由是因为它本来就会按问题复杂度换模型，
+    /// 跟"少花 token"这个目标同一个方向，开着也不冲突。手动指定模型/普通/专家档这几个固定档位
+    /// 模式跟"省不省 token"没什么关系，不提供这个开关（设置页会把勾选框禁用掉）。
+    /// 效果两块：1) 上下文压缩更激进（阈值更低、摘要更短、保留的原始消息更少）；
+    /// 2) 遇到 AiQuickAnswers 里能直接答的极简单问题（"MC 官网是什么"这类）不请求 API，
+    /// 本地直接回答。</summary>
+    public bool TokenSaverMode { get; set; } = false;
+
+    /// <summary>省 Token 模式的开关是否允许打开（见 TokenSaverMode 注释里的条件）；
+    /// UI 和 Service 两边都要判断这个条件，抽成方法避免两处写重复逻辑。</summary>
+    public bool TokenSaverModeAllowed => UseCustomApiKey || RoutingMode == AiRoutingMode.Auto;
+
+    /// <summary>实际生效的省 Token 模式：开关开着，但如果当前不满足条件（比如从自动切回指定模型），
+    /// 也不生效——不需要额外弹提示，只是安静地不生效，等条件满足了自动又生效。</summary>
+    public bool EffectiveTokenSaverMode => TokenSaverMode && TokenSaverModeAllowed;
+
+    /// <summary>用户已同意的《AI 助手使用条款》版本号。小于 AiTermsDialog.CurrentVersion 时，
+    /// 打开 AI 助手页面要先弹条款让用户同意，同意后写回这个字段。条款内容以后如果有实质性修改，
+    /// 把 CurrentVersion 加 1，老用户会被要求重新确认一次；纯措辞调整不需要动版本号。</summary>
+    public int AcceptedTermsVersion { get; set; } = 0;
     public double PanelWidth { get; set; } = 380;
     public bool ClearHistoryOnGuestSessionEnd { get; set; } = true;
     public bool ShowFloatingButton { get; set; } = false;
@@ -134,6 +172,13 @@ public class AiAssistantConfig
 
     /// <summary>最后一次打开的会话 ID，用于重启/重新进入 AI 页面后继续原对话。</summary>
     public string? LastSessionId { get; set; }
+
+    /// <summary>打开 AI 助手页面时，先在后台悄悄发一次"系统提示词预热请求"（不落盘到任何
+    /// 会话、也不把回复展示给用户），提前把鉴权/路由/连接这些开销花掉，让用户真正发第一条
+    /// 消息时能更快拿到回复。默认打开——这是纯粹的体验优化，失败了也静默忽略，不影响正常
+    /// 使用；只有明确不想产生这次多余请求（比如按量计费的自定义 API）的用户才需要去设置里
+    /// 关掉。</summary>
+    public bool PrewarmSystemPromptOnOpen { get; set; } = true;
 }
 
 public enum AiMessageRole

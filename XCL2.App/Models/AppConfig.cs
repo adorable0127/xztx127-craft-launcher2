@@ -580,6 +580,20 @@ public class AppConfig
     /// 安装环境下系统隐式回退选中的字体行高跟界面预留空间对不上，中文字符底部被裁掉一点。</summary>
     public string AppFontFamily { get; set; } = "";
 
+    /// <summary>
+    /// 字体"分层/分块"设置：在全局界面字体（<see cref="AppFontFamily"/>）之上，允许对
+    /// 标题栏 / 侧边导航栏 / 右侧内容区 三个视觉分区分别指定一款系统已安装字体覆盖，
+    /// 不影响其它分区（仍然用全局字体）。留空字符串或 null 表示该分区"跟随全局"，
+    /// 不做任何覆盖。取值是 System.Windows.Media.Fonts.SystemFontFamilies 里的字体
+    /// 家族名字符串（如 "Cascadia Code"、"华文楷体"），由 SettingsPage 的三个下拉框
+    /// 直接列出本机已安装字体供选择，而不是像 <see cref="AppFontFamily"/> 那样固定几个
+    /// 预置候选。见 Services/FontService.cs 的应用逻辑与 MainWindow.xaml 里三个分区
+    /// 容器（CustomTitleBar / SidebarAreaBorder / ContentAreaBorder）。
+    /// </summary>
+    public string? AppFontFamily_TitleBar { get; set; }
+    public string? AppFontFamily_Sidebar { get; set; }
+    public string? AppFontFamily_Content { get; set; }
+
     /// <summary>界面整体亮度，0~200，100 为不调整（原样显示）。低于 100 整体调暗，
     /// 高于 100 整体调亮，见 ThemeService.ApplyBrightness 注释——WPF 没有系统级"亮度"概念，
     /// 这里用一层盖在最上面的全局遮罩（黑色/白色，随数值调整不透明度）模拟效果，

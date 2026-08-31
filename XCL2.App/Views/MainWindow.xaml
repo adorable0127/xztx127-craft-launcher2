@@ -248,8 +248,14 @@
             <ColumnDefinition Width="*"/>
         </Grid.ColumnDefinitions>
 
-        <!-- 左侧导航栏 -->
-        <Border Grid.Column="0" Background="{DynamicResource SideBrush}" BorderBrush="{DynamicResource DividerBrush}" BorderThickness="0,0,1,0">
+        <!-- 左侧导航栏
+             x:Name="SidebarAreaBorder"：字体分层设置的挂载点之一——FontService.ApplyScopedFonts
+             会在这个 Border 的 Resources 里按需覆盖 "AppFontFamily" 这个资源键（跟全局用的
+             是同一个 key，只是定义在更内层的 Resources 里，DynamicResource 查找会优先找到
+             这里的覆盖值），从而只影响侧边栏内部所有 Control/TextBlock 的字体，不影响
+             标题栏和右侧内容区。不设置覆盖时这里没有该资源键，正常向上找到全局的
+             Application.Resources["AppFontFamily"]，行为跟以前完全一样。 -->
+        <Border x:Name="SidebarAreaBorder" Grid.Column="0" Background="{DynamicResource SideBrush}" BorderBrush="{DynamicResource DividerBrush}" BorderThickness="0,0,1,0">
             <DockPanel x:Name="SidebarPanel" Margin="12">
 
                 <!-- 顶部：Logo + 收起/展开切换按钮。收起后 Logo 隐藏，只留三横杠/圆点按钮，
@@ -498,8 +504,9 @@
             </DockPanel>
         </Border>
 
-        <!-- 右侧内容区 -->
-        <Border Grid.Column="1" Margin="16">
+        <!-- 右侧内容区。x:Name="ContentAreaBorder"：字体分层设置的第二个挂载点，
+             见上面 SidebarAreaBorder 的注释，原理相同，只影响右侧内容区（各个 Page）。 -->
+        <Border x:Name="ContentAreaBorder" Grid.Column="1" Margin="16">
             <Grid>
                 <ContentControl x:Name="MainContent" RenderTransformOrigin="0.5,0.5">
                     <ContentControl.RenderTransform>
@@ -655,7 +662,11 @@
                 Click="AprilFoolsFlagButton_Click"
                 ToolTip="点击小白旗就不会受到折磨了"
                 Visibility="Collapsed" Panel.ZIndex="999">
-            <TextBlock Text="🏳" FontSize="24" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+            <!-- 修复：这个 TextBlock 之前没写 FontFamily，默认字体不含彩色 Emoji 字形，
+                 4 月 1 日当天这面小白旗实际上渲染成空白（按钮区域存在、可点，但视觉上
+                 什么都看不见），跟项目里其它 Emoji TextBlock（见 DownloadCenterPage 等）
+                 统一补上 "Segoe UI Emoji"，保证真的画得出来。 -->
+            <TextBlock Text="🏳" FontFamily="Segoe UI Emoji" FontSize="24" HorizontalAlignment="Center" VerticalAlignment="Center"/>
         </Button>
 
         <Button x:Name="AiFloatingButton" Grid.Column="0" Grid.ColumnSpan="2"

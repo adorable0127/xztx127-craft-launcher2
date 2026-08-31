@@ -235,10 +235,60 @@ public partial class App : Application
 
         base.OnStartup(e);
 
+        // 修复"启动时偶发 NullReferenceException @ ThemeService.Apply / Application.Current.Resources"：
+        // ShutdownMode 默认是 OnLastWindowClose。而这里、以及下面 SingleInstanceService.HandleStartup
+        // 冲突分支里，都会在 MainWindow 创建之前先弹出并关闭一个"过渡窗口"（InstanceConflictDialog）。
+        // 如果这个对话框关闭时恰好是当前唯一打开的窗口，WPF 会把它当成"最后一个窗口关闭"，
+        // 自动触发一次隐式的应用退出流程——即使代码逻辑上马上还要继续创建 splash/MainWindow。
+        // 应用一旦进入这个隐式退出流程，稍后 RunStartupSequence 里 ThemeService.Apply() 访问
+        // Application.Current.Resources 就会踩到空引用（Resources 在退出过程中被回收）。
+        // 这里显式接管 ShutdownMode，把它推迟到 MainWindow 真正 Show() 出来之后再恢复默认值
+        // （对应位置见下面 RunStartupSequence 里 mainWindow.Show() 之后），保证 InstanceConflictDialog/
+        // splash 这些过渡窗口无论以什么顺序关闭，都不会被误判成"最后一个窗口"从而提前触发退出。
+        // 不影响 MainWindow.Closed 之后依赖 OnLastWindowClose 的托盘图标/便签置顶逻辑，
+        // 因为等到那时 ShutdownMode 早已恢复成默认值。
+        ShutdownMode = ShutdownMode.OnExplicitShutdown;
+
         // 全局未处理异常兜底（AppDomain.CurrentDomain.UnhandledException /
         // TaskScheduler.UnobservedTaskException）已经挪到本类的静态构造函数里注册，
         // 时机比这里早得多（覆盖到 App.xaml InitializeComponent 阶段，见 static App()
         // 的类头注释），这里不再重复注册，避免同一次异常被写两遍 crash.log。
+
+        // 需求排查："根本没打开过 XCL2 时，打开 XCL2 还是会提示已有实例在运行"。
+        //
+        // 之前的调用顺序是：先在这里创建/Show 出启动提示窗（StartupSplashWindow），
+        // 再走进 RunStartupSequence 内部才做多开探测（SingleInstanceService.HandleStartup）。
+        // 这个顺序本身会带来一类不容易复现、但确实存在的假阳性：
+        //   1) 启动提示窗一旦 Show() 出来，WPF 就已经有了一个真实存在的 Window——如果这个
+        //      窗口的创建/首帧渲染过程比较慢（低速磁盘、杀毒软件扫描、远程桌面等环境），
+        //      而用户在这个空档期又手快地再双击了一次图标（或者上一次双击图标产生的进程
+        //      因为系统调度延迟，事实上还没跑到 HandleStartup 那一步），两个进程几乎同时
+        //      "都还没来得及注册管道服务端"，谁也探测不到谁，最终各自都当成了第一个实例，
+        //      表现为"看起来同时开出了两个启动器"（对应用户截图 1：任务栏出现两个 XCL2）。
+        //   2) 反过来，一旦有一个实例先一步把管道服务端注册好、但用户此时主观上并没有
+        //      "主动打开过" XCL2（比如它是上一次以"仅关闭启动器"方式退出、其实还在后台
+        //      常驻的旧实例，见 MainWindow_Closing 里的说明），新进程这边不管有没有先弹
+        //      启动提示窗，探测到的都是这个真实存在、但用户看不见的旧实例——这种情况下
+        //      "提示窗要不要先弹出来"本身并不是根因，但把探测尽量提到最前面，能让用户在
+        //      看到任何界面反馈之前就先看到多开选择框，观感上更直接对应"点开图标 = 立刻
+        //      问我"，而不是"先看到一个'正在启动'的提示窗，紧接着又跳出一个多开提示"，
+        //      两个弹窗前后脚出现容易让人误以为是探测逻辑本身有问题。
+        //
+        // 解决办法：把探测挪到全部代码最前面——比创建 StartupSplashWindow 还要早，
+        // 确保"探测、以及探测到冲突时弹出的 InstanceConflictDialog"是本进程创建的
+        // 第一个、也是当前唯一的窗口，不会跟启动提示窗的创建时机产生竞争。探测通过
+        // （没有冲突，或者用户选择让本实例继续）之后，才创建启动提示窗，走原来的
+        // RunStartupSequence 流程；RunStartupSequence 内部不再重复做这一步。
+        if (!SingleInstanceService.HandleStartup(() =>
+        {
+            var dialog = new Views.InstanceConflictDialog();
+            dialog.ShowDialog();
+            return dialog.Result;
+        }))
+        {
+            Shutdown();
+            return;
+        }
 
         if (!IsRunningOnNet8Desktop())
         {
@@ -330,24 +380,11 @@ public partial class App : Application
         ThemeService.ApplyForCurrentState(earlyConfig.Config.GuestModeEnabled, earlyConfig.Config.UiSkin, earlyConfig.Config.IsDarkMode, earlyConfig.Config.CustomAccentColor);
         LocalizationService.ApplyForCurrentState(earlyConfig.Config.LauncherLanguage);
 
-        // 多开检测：见 SingleInstanceService 类头注释。放在主题/语言应用之后，是为了让
-        // 检测到冲突时弹出的 InstanceConflictDialog 也能吃到正确的皮肤颜色，不会因为
-        // 检测时机太早而显示成一套硬编码的默认配色。
-        // 必须放在"创建数据目录/开始日志 session/创建 MainWindow"之前：如果用户选择的是
-        // "关闭此实例"这类会让本实例立刻退出的分支，不应该再为这个用完即扔的实例多做任何
-        // 无意义的初始化工作。
-        splash.SetStatus("正在检查是否已有实例在运行…");
-        if (!SingleInstanceService.HandleStartup(() =>
-        {
-            var dialog = new Views.InstanceConflictDialog();
-            dialog.ShowDialog();
-            return dialog.Result;
-        }))
-        {
-            try { splash.Close(); } catch { /* 已经关闭或窗口本身出问题时忽略 */ }
-            Shutdown();
-            return;
-        }
+        // 多开检测（SingleInstanceService.HandleStartup）已经挪到 OnStartup 最前面、
+        // 早于本方法、也早于启动提示窗创建之前执行，见 OnStartup 里对应的注释。这里不再
+        // 重复检测——冲突时弹出的 InstanceConflictDialog 会用当时（尚未应用主题前）的
+        // 默认配色，这是为了让"多开检测"这件事本身尽可能不依赖任何还没初始化好的状态、
+        // 尽早给用户反馈，代价是这个弹窗暂时用不上用户自定义的皮肤颜色，可接受。
 
         // 窗口透明度 + Win11 新视觉效果：均默认关闭，这里只是把启动时读到的配置状态记下来
         // （ThemeService/Win11EffectsService 各自的静态字段），真正应用到具体窗口的时机分两处：
@@ -484,6 +521,25 @@ public partial class App : Application
         mainWindow.FirstFrameRendered += closeSplashAfterFirstFrame;
         splash.SetStatus("正在渲染主界面…");
         mainWindow.Show();
+
+        // 接线 SingleInstanceService 的两个钩子：
+        // - TryActivateMainWindow：新实例静默探测"能不能把我拉到前台"时调用，具体判断
+        //   "窗口是否已被 Close() 掉、只是缩在托盘/便签模式后台"的逻辑都在 MainWindow 内部
+        //   （它最清楚自己当前的可见性状态），这里只是把入口接上。
+        // - PerformFullExit：收到别的实例发来的"确认要关闭我"指令时调用，负责结束所有
+        //   游戏/服务器子进程后再退出，同样把实现放在 MainWindow（它持有 ProcessManager/
+        //   ServerProcessManager 引用）。
+        // 两个委托都指向同一个 mainWindow 实例，注册一次即可长期有效——本进程存活期间
+        // 只会有这一个 MainWindow。
+        SingleInstanceService.TryActivateMainWindow = mainWindow.TryActivateFromAnotherInstance;
+        SingleInstanceService.PerformFullExit = mainWindow.PerformFullExit;
+
+        // MainWindow 已经真正 Show() 出来，"过渡窗口可能被误判成最后一个窗口"的风险窗口期
+        // 已经结束，这里把 ShutdownMode 恢复成 WPF 默认的 OnLastWindowClose——对应上面
+        // OnStartup 里 ShutdownMode = ShutdownMode.OnExplicitShutdown 那处注释。恢复之后，
+        // MainWindow.xaml.cs 里原有的"关闭 MainWindow 后如果还有其它窗口/便签就亮出托盘图标"
+        // 那套逻辑（依赖 OnLastWindowClose 触发时机）行为跟修复前完全一致，不受影响。
+        ShutdownMode = ShutdownMode.OnLastWindowClose;
 
         // 自动更新检查：整个过程在后台线程进行（内部延迟几秒，不跟首帧渲染抢时间），
         // 有新版本才会弹提示，见 UpdateCheckService 类注释。

@@ -82,7 +82,7 @@
                 <StackPanel>
                     <TextBlock Text="模型路由" FontSize="14" FontWeight="SemiBold" Margin="0,0,0,8"/>
                     <TextBlock Text="默认回答模式" FontSize="11"/>
-                    <ComboBox x:Name="DefaultModeCombo" Margin="0,4,0,9">
+                    <ComboBox x:Name="DefaultModeCombo" Margin="0,4,0,9" SelectionChanged="DefaultModeCombo_SelectionChanged">
                         <ComboBoxItem Content="自动 · 普通问题/专家问题自动切换" Tag="Auto"/>
                         <ComboBoxItem Content="普通 · 始终使用普通模型" Tag="Normal"/>
                         <ComboBoxItem Content="专家 · 始终使用专家模型" Tag="Expert"/>
@@ -90,13 +90,13 @@
                     </ComboBox>
 
                     <TextBlock Text="普通模型（功能入口、使用说明、常规问题）" FontSize="11"/>
-                    <ComboBox x:Name="NormalModelCombo" Margin="0,4,0,9" DisplayMemberPath="DisplayName" SelectedValuePath="Id"/>
+                    <ComboBox x:Name="NormalModelCombo" Margin="0,4,0,9" DisplayMemberPath="DisplayName" SelectedValuePath="Id" SelectionChanged="ModelCombo_SelectionChanged"/>
 
                     <TextBlock Text="专家模型（日志/崩溃/注入/复杂排障）" FontSize="11"/>
-                    <ComboBox x:Name="ExpertModelCombo" Margin="0,4,0,9" DisplayMemberPath="DisplayName" SelectedValuePath="Id"/>
+                    <ComboBox x:Name="ExpertModelCombo" Margin="0,4,0,9" DisplayMemberPath="DisplayName" SelectedValuePath="Id" SelectionChanged="ModelCombo_SelectionChanged"/>
 
                     <TextBlock Text="指定模型模式的默认模型" FontSize="11"/>
-                    <ComboBox x:Name="ManualModelCombo" Margin="0,4,0,0" DisplayMemberPath="DisplayName" SelectedValuePath="Id"/>
+                    <ComboBox x:Name="ManualModelCombo" Margin="0,4,0,0" DisplayMemberPath="DisplayName" SelectedValuePath="Id" SelectionChanged="ModelCombo_SelectionChanged"/>
                 </StackPanel>
             </Border>
 
@@ -109,7 +109,13 @@
                     <TextBlock Text="上下文压缩阈值（估算 token）" FontSize="11"/>
                     <TextBox x:Name="ThresholdBox" Margin="0,4,0,9"/>
                     <CheckBox x:Name="AllowCrashLogCheck" Content="允许把用户主动提交的崩溃/日志内容发给 AI 分析" Margin="0,0,0,6"/>
-                    <CheckBox x:Name="ClearGuestHistoryCheck" Content="访客会话结束时清空访客 AI 历史"/>
+                    <CheckBox x:Name="ClearGuestHistoryCheck" Content="访客会话结束时清空访客 AI 历史" Margin="0,0,0,6"/>
+                    <CheckBox x:Name="PrewarmOnOpenCheck"
+                              Content="打开 AI 助手页面时预热系统提示词（不展示回复，可加快首次回答速度）"
+                              Margin="0,0,0,6"/>
+                    <CheckBox x:Name="TokenSaverCheck" Content="省 Token 模式" Checked="TokenSaverCheck_CheckedChanged" Unchecked="TokenSaverCheck_CheckedChanged"/>
+                    <TextBlock x:Name="TokenSaverHintText" TextWrapping="Wrap" FontSize="11"
+                               Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,4,0,0"/>
                 </StackPanel>
             </Border>
 

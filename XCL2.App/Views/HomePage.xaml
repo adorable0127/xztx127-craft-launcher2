@@ -134,6 +134,34 @@
                  换到第二行，而不是挤压/裁切；Grid.Row="0" 是 Auto 高度，换行后行高自动
                  增大，不会跟下面 Row="1" 的欢迎文案重叠。每个按钮统一补上 10px 下边距，
                  换行后两行之间也留出同样的间隙。 -->
+            <!-- 首页顶部搜索框：放在 Row="0" 左上角，跟右上角那一排语言/深浅色等胶囊按钮
+                 (下面的 WrapPanel，HorizontalAlignment="Right") 分开摆放不会互相遮挡。
+                 搜索结果能导航到应用内所有页面，索引来自 MainWindow.GetHomeSearchEntries()，
+                 跟侧边栏导航按钮共用同一套 NavigateToXxx() 跳转方法，见该属性上的注释。 -->
+            <Grid Grid.Row="0" HorizontalAlignment="Left" VerticalAlignment="Top" Width="280" Margin="0,0,0,10">
+                <!-- 用 WPF 自带的 TextBox Tag + 触发器做占位符文字更容易出错，这里索性用
+                     x:Name="HomeSearchPlaceholder"，在代码里用 TextChanged 手动控制显隐，
+                     跟很多控件库"假 Placeholder"的常见做法一致，不依赖额外转换器。 -->
+                <TextBox x:Name="HomeSearchBox" Padding="10,7" FontSize="13"
+                         TextChanged="HomeSearchBox_TextChanged" KeyDown="HomeSearchBox_KeyDown"
+                         GotFocus="HomeSearchBox_GotFocus" LostFocus="HomeSearchBox_LostFocus"/>
+                <TextBlock x:Name="HomeSearchPlaceholder" Text="搜索页面…" FontSize="13"
+                           Foreground="{DynamicResource TextSecondaryBrush}"
+                           Margin="12,0,0,0" VerticalAlignment="Center" IsHitTestVisible="False"/>
+                <Popup x:Name="HomeSearchResultsPopup" PlacementTarget="{Binding ElementName=HomeSearchBox}"
+                       Placement="Bottom" StaysOpen="False" AllowsTransparency="True" Width="280">
+                    <Border Background="{DynamicResource PanelBrush}" BorderBrush="{DynamicResource BorderBrush2}"
+                            BorderThickness="1" CornerRadius="6" MaxHeight="260">
+                        <ScrollViewer VerticalScrollBarVisibility="Auto">
+                            <ListBox x:Name="HomeSearchResultsList" BorderThickness="0" Background="Transparent"
+                                     Foreground="{DynamicResource TextPrimaryBrush}" Padding="4"
+                                     MouseLeftButtonUp="HomeSearchResultsList_MouseLeftButtonUp"
+                                     KeyDown="HomeSearchResultsList_KeyDown"/>
+                        </ScrollViewer>
+                    </Border>
+                </Popup>
+            </Grid>
+
             <WrapPanel Grid.Row="0" HorizontalAlignment="Right" VerticalAlignment="Top">
                 <!-- 「语言」按钮：放在整条按钮带最左边（其余按钮都是"深/浅色、自动循环、
                      专家/访客模式"这类跟当前会话相关的临时性开关，语言是更底层、更少切换

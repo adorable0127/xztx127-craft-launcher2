@@ -229,25 +229,41 @@ public static class AprilFoolsService
         }
     }
 
-    /// <summary>「启动游戏」「下载」类按钮统一调用的钩子：如果当前有 RickRoll1/RickRoll2/
-    /// FakeWin32Error/LauncherRefuses 里的任意一种在生效，就在这里"劫持"掉这次点击
+    /// <summary>「启动游戏」「下载」类按钮统一调用的钩子：只要今天 <see cref="IsActive"/>
+    /// （4 月 1 日、没被 noyrj 关掉、今天还没点白旗），这次点击就必须被"劫持"掉
     /// （调用方应在返回 true 时直接 return，不再执行原本的启动/下载逻辑）。
-    /// 具体怎么打开链接/怎么弹窗由调用方（MainWindow/HomePage）决定，这里只回答
-    /// "该不该劫持、劫持成哪一种"，保持本服务不依赖任何 WPF 窗口/控件类型。</summary>
+    ///
+    /// ===== 修复：之前这里只覆盖 RickRoll1/RickRoll2/FakeWin32Error/LauncherRefuses
+    /// 四种"点击类"劫持，DodgeLaunchButton（3 号，鼠标躲避）和 TileChaos（8 号，磁贴乱跳）
+    /// 只在"启动游戏"按钮/磁贴自己的 MouseEnter/PreviewMouseLeftButtonDown 里处理，
+    /// 完全没有接到这个统一钩子上。这就导致只要绕开鼠标交互——比如托盘菜单里的
+    /// "启动游戏"（直接调用 Launch_Click，不经过任何按钮的鼠标事件）——3/8 号生效时
+    /// 照样能正常启动游戏，跟"愚人节当天用户以各种形式都无法启动游戏"的需求不符。
+    /// 现在把 DodgeLaunchButton/TileChaos/WindowChaos 也纳入候选池：只要 IsActive 为真
+    /// （意味着今天确实抽中了某种效果），这个方法永远返回 true，保证托盘图标、首页磁贴、
+    /// 主界面按钮等任何入口都逃不掉——具体表现成哪一种由 AprilFoolsUi 那边的 switch 决定，
+    /// 如果抽中的效果里没有任何"自带专属文案"的类型，兜底用 LauncherRefuses 的随机拒绝
+    /// 文案顶上，确保调用方一定能拿到一个可展示的效果。</summary>
     public static bool TryGetLaunchOrDownloadInterception(out Effect which)
     {
         which = Effect.None;
         if (!IsActive) return false;
 
-        // 同一次点击如果好几种"劫持类"效果同时生效，随机选一种表现出来，避免弹出一堆东西。
+        // 同一次点击如果好几种效果同时生效，随机选一种表现出来，避免弹出一堆东西。
         var candidates = new List<Effect>();
         if (Has(Effect.RickRoll1)) candidates.Add(Effect.RickRoll1);
         if (Has(Effect.RickRoll2)) candidates.Add(Effect.RickRoll2);
         if (Has(Effect.FakeWin32Error)) candidates.Add(Effect.FakeWin32Error);
         if (Has(Effect.LauncherRefuses)) candidates.Add(Effect.LauncherRefuses);
-        if (candidates.Count == 0) return false;
+        if (Has(Effect.DodgeLaunchButton)) candidates.Add(Effect.DodgeLaunchButton);
+        if (Has(Effect.TileChaos)) candidates.Add(Effect.TileChaos);
+        if (Has(Effect.WindowChaos)) candidates.Add(Effect.WindowChaos);
 
-        which = candidates[Rng.Next(candidates.Count)];
+        // 兜底：IsActive 已经保证 _state.Effects != None，理论上 candidates 不会为空
+        // （上面 7 个分支覆盖了 Catalog 里全部枚举值），但即使将来加了新效果类型没有
+        // 及时补充到这个列表，也不能因此放行一次真正的启动——用 LauncherRefuses 的
+        // 拒绝文案兜底，保证"今天有效果生效 = 这次点击一定被拦下"这条底线不被打破。
+        which = candidates.Count > 0 ? candidates[Rng.Next(candidates.Count)] : Effect.LauncherRefuses;
         return true;
     }
 

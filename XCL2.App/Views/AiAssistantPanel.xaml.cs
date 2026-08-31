@@ -53,6 +53,7 @@ public partial class AiAssistantPanel : UserControl
     public void Attach(AiAssistantService service, AiAssistantConfig config)
     {
         _service = service;
+        _service.ConfirmAccessRequest = (title, msg) => MessageBoxDialog.ShowConfirm(msg, title);
         ApplyConfig(config);
 
         AiChatSession? saved = null;
@@ -62,6 +63,13 @@ public partial class AiAssistantPanel : UserControl
         _config.LastSessionId = _session.Id;
         RebuildBubbles();
         RefreshHistory();
+
+        // 设置里的"打开 AI 助手时预热系统提示词"开关：每次真正打开这个页面（Attach 只在
+        // 页面被导航/创建时调用一次，不含设置保存后的 ApplyConfig 热更新）就在后台悄悄发
+        // 一次预热请求，不等待、不展示、不影响页面其它初始化。fire-and-forget 用 _ = 忽略
+        // 返回的 Task——WarmUpAsync 内部已经吞掉了所有异常，这里不需要再 catch 一次。
+        if (_config.PrewarmSystemPromptOnOpen)
+            _ = _service.WarmUpAsync();
     }
 
     /// <summary>热更新设置，不重建/切换当前 Session。</summary>
