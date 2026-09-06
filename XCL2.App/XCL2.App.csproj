@@ -22,11 +22,11 @@
     <AssemblyName>XCL2</AssemblyName>
     <RootNamespace>XCL2.App</RootNamespace>
     <!-- 自动更新功能（Services/UpdateCheckService.cs）依赖这里的版本号跟 GitHub Release
-         的 tag 做比较。当前正式版保持 2.2.9；下一次正式更新改为 2.2.10，并发布同号
-         GitHub Release/tag 后，2.2.9 客户端会自动弹出新版本提示。 -->
-    <Version>2.2.9</Version>
-    <AssemblyVersion>2.2.9.0</AssemblyVersion>
-    <FileVersion>2.2.9.0</FileVersion>
+         的 tag 做比较。当前正式版为 2.2.10；下一次正式更新改为更高版本号，并发布同号
+         GitHub Release/tag 后，2.2.10 客户端会自动弹出新版本提示。 -->
+    <Version>2.2.10</Version>
+    <AssemblyVersion>2.2.10.0</AssemblyVersion>
+    <FileVersion>2.2.10.0</FileVersion>
     <Platforms>AnyCPU</Platforms>
     <LangVersion>latest</LangVersion>
     <!-- Services/BedrockDecode（基岩版 MSIXVC/XVD 解码，移植自 BedrockLauncher.Core，MIT）

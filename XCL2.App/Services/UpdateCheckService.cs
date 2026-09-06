@@ -28,19 +28,24 @@ namespace XCL2.App.Services;
 /// 1) 启动几秒后（不卡启动流程）后台请求 GitHub Releases「latest」接口，跟当前程序集版本
 ///    比较大小。
 /// 2) 有新版本 → 弹一个确认框（带更新日志），用户选"现在更新"才会继续下载，选"稍后"
-///    本次直接结束，不写任何"已忽略/跳过"的标记。当前版本为 2.2.9；下次 GitHub 发布
-///    2.2.10（或更高版本）时仍会正常提示，不会被"之前拒绝过"影响。
+///    本次直接结束，不写任何"已忽略/跳过"的标记。当前版本为 2.2.10；下次 GitHub 发布
+///    2.2.11（或更高版本）时仍会正常提示，不会被"之前拒绝过"影响。
 /// 3) 根据当前系统是 32 位还是 64 位，从 Release 附件里挑出对应架构的 exe 下载到临时目录，
 ///    在 xcl2/up-log/ 下写一条以时间戳命名的日志。
 /// 4) 生成一个 .bat：等主程序进程真正退出 → 把当前正在跑的这个 exe 备份一份（"新旧互换"
-///    里"旧"的那一半）→ 把刚下载的新 exe 复制过去、覆盖掉旧文件（保留原来的文件名，
-///    这样桌面快捷方式/任务栏固定项都不会失效）→ 重新拉起程序 → 继续把过程追加写回
-///    同一份 up-log。
-/// 5) 主程序侧只负责启动这个 bat（隐藏窗口）然后自己退出，真正的文件替换动作完全在
-///    主程序退出之后发生，避免"进程覆盖自己正在运行的 exe"这个 Windows 下办不到的操作。
+///    里"旧"的那一半）→ 把刚下载的新 exe 复制过去、覆盖掉旧文件 → 按当前系统架构把文件
+///    统一改名为标准发布名（x64:"xztx127 craft launcher2 x64 不含运行时.exe"；
+///    x86:"xztx127 craft launcher2 x86(32位特供） 不含运行时.exe"）——注意这一步跟旧版本
+///    行为不同：旧版本是"保留原文件名，不管用户之前叫它什么"，现在改成"更新完统一纠正
+///    成标准命名"，即使用户之前把 exe 随手改了名字，更新一次之后也会变回标准名字
+///    （代价是如果用户给这个 exe 建过桌面快捷方式/任务栏固定项，指向的还是旧文件名，
+///    更新后会失效，需要重新固定一次——这是本次改动特意接受的取舍，不是遗漏）→
+///    重新拉起程序（用改名后的新路径）→ 继续把过程追加写回同一份 up-log。
+/// 5) 主程序侧只负责启动这个 bat（隐藏窗口）然后自己退出，真正的文件替换/改名动作完全
+///    在主程序退出之后发生，避免"进程覆盖自己正在运行的 exe"这个 Windows 下办不到的操作。
 ///
 /// ===== 为什么不做"跳过此版本" =====
-/// 当前正式版是 2.2.9；下一次 GitHub Release 为 2.2.10（或更高版本）时要继续提示。
+/// 当前正式版是 2.2.10；下一次 GitHub Release 为 2.2.11（或更高版本）时要继续提示。
 /// 只要不持久化任何"已拒绝/已忽略"的版本号，每次检查都是"当前版本 vs 服务端最新版本"
 /// 的即时比较，这个需求就是默认行为，不需要额外写状态。
 /// </summary>
@@ -162,8 +167,8 @@ public static class UpdateCheckService
         return Version.TryParse(m.Value, out var v) ? v : null;
     }
 
-    /// <summary>程序集版本通常是 2.2.9.0，而 Release tag 是 2.2.10。提示里去掉末尾无意义的 .0，
-    /// 让当前版本稳定显示为 2.2.9、下一版稳定显示为 2.2.10。</summary>
+    /// <summary>程序集版本通常是 2.2.10.0，而 Release tag 是 2.2.11。提示里去掉末尾无意义的 .0，
+    /// 让当前版本稳定显示为 2.2.10、下一版稳定显示为 2.2.11。</summary>
     private static string FormatVersion(Version version)
     {
         if (version.Revision > 0) return version.ToString(4);
@@ -188,6 +193,16 @@ public static class UpdateCheckService
         return exes.FirstOrDefault(a => a.Name.Contains(want, StringComparison.OrdinalIgnoreCase));
     }
 
+    /// <summary>
+    /// 更新完成后，无论更新前 exe 叫什么名字，统一按当前系统架构改成固定的标准文件名——
+    /// 这样即使用户之前把文件改过名、或者装的是很久以前发布时用的旧命名规则，更新一次
+    /// 之后就能统一到当前发布规范的命名上。两个文件名的括号故意是"半角(+全角）"混用，
+    /// 跟仓库 Release 里实际发布的文件名保持字符级一致，不要"修正"成好看的全角/半角配对。
+    /// </summary>
+    private static string GetStandardExeName(bool wantX64) => wantX64
+        ? "xztx127 craft launcher2 x64 不含运行时.exe"
+        : "xztx127 craft launcher2 x86(32位特供） 不含运行时.exe";
+
     private static async Task DownloadAndApplyUpdateAsync(Version remoteVersion, Version localVersion, GithubAsset asset, string changelog)
     {
         var timestamp = DateTime.Now.ToString("yyyyMMdd-HHmmss");
@@ -205,9 +220,16 @@ public static class UpdateCheckService
         var currentExePath = Process.GetCurrentProcess().MainModule?.FileName
             ?? Path.Combine(AppContext.BaseDirectory, "XCL2.exe");
 
-        Log($"检测到新版本：v{FormatVersion(localVersion)} -> v{FormatVersion(remoteVersion)}（{(Environment.Is64BitOperatingSystem ? "x64" : "x86")}）");
+        var wantX64 = Environment.Is64BitOperatingSystem;
+        var standardExeName = GetStandardExeName(wantX64);
+        var targetExePath = Path.Combine(
+            Path.GetDirectoryName(currentExePath) ?? AppContext.BaseDirectory,
+            standardExeName);
+
+        Log($"检测到新版本：v{FormatVersion(localVersion)} -> v{FormatVersion(remoteVersion)}（{(wantX64 ? "x64" : "x86")}）");
         Log($"更新包：{asset.Name}");
         Log($"当前程序文件：{currentExePath}");
+        Log($"更新后将统一改名为：{targetExePath}");
         Log($"更新日志：\n{changelog}");
 
         var tempRoot = Path.Combine(App.DataDir, "_update_temp", FormatVersion(remoteVersion));
@@ -236,10 +258,10 @@ public static class UpdateCheckService
                 $"{Path.GetFileNameWithoutExtension(currentExePath)}_v{FormatVersion(localVersion)}_{timestamp}.exe");
 
             var batPath = Path.Combine(Path.GetTempPath(), $"xcl2_update_{timestamp}.bat");
-            WriteUpdateBat(batPath, newExePath, currentExePath, backupPath, logPath, tempRoot, Environment.ProcessId);
+            WriteUpdateBat(batPath, newExePath, currentExePath, targetExePath, backupPath, logPath, tempRoot, Environment.ProcessId);
             Log($"更新脚本已生成：{batPath}");
             Log($"旧版本备份到：{backupPath}");
-            Log("即将关闭程序并交由脚本完成替换与重启……");
+            Log("即将关闭程序并交由脚本完成替换、改名与重启……");
 
             Process.Start(new ProcessStartInfo
             {
@@ -268,13 +290,19 @@ public static class UpdateCheckService
     }
 
     /// <summary>
-    /// 生成负责"等主程序退出 → 备份旧 exe → 用新 exe 覆盖 → 重启"的 bat。
-    /// 只动 currentExePath 这一个文件，不碰程序目录下的其它内容（.minecraft、下载缓存、
-    /// xcl2 配置等用户数据完全不受影响）。
+    /// 生成负责"等主程序退出 → 备份旧 exe → 用新 exe 覆盖 → 按架构统一改名 → 重启"的 bat。
+    /// 只动 currentExePath 这一个文件（改名后变成 targetExePath），不碰程序目录下的
+    /// 其它内容（.minecraft、下载缓存、xcl2 配置等用户数据完全不受影响）。
+    /// 如果 targetExePath 跟 currentExePath 其实是同一个路径（用户本来就没改过文件名），
+    /// 就不需要额外改名这一步，直接跳过。
     /// </summary>
-    private static void WriteUpdateBat(string batPath, string newExePath, string currentExePath,
+    private static void WriteUpdateBat(string batPath, string newExePath, string currentExePath, string targetExePath,
         string backupPath, string logPath, string tempRoot, int pid)
     {
+        var needRename = !string.Equals(
+            Path.GetFullPath(currentExePath), Path.GetFullPath(targetExePath),
+            StringComparison.OrdinalIgnoreCase);
+
         var sb = new StringBuilder();
         sb.AppendLine("@echo off");
         sb.AppendLine("chcp 65001 >nul");
@@ -282,6 +310,7 @@ public static class UpdateCheckService
         sb.AppendLine($"set \"PID={pid}\"");
         sb.AppendLine($"set \"NEWEXE={newExePath}\"");
         sb.AppendLine($"set \"CUREXE={currentExePath}\"");
+        sb.AppendLine($"set \"TARGETEXE={targetExePath}\"");
         sb.AppendLine($"set \"BACKUP={backupPath}\"");
         sb.AppendLine("for %%D in (\"%BACKUP%\") do set \"BACKUPDIR=%%~dpD\"");
         sb.AppendLine($"set \"LOG={logPath}\"");
@@ -311,14 +340,37 @@ public static class UpdateCheckService
         sb.AppendLine("if errorlevel 1 (");
         sb.AppendLine("  >>\"%LOG%\" echo [%date% %time%] 覆盖失败，尝试从备份还原...");
         sb.AppendLine("  copy /y \"%BACKUP%\" \"%CUREXE%\" >nul 2>nul");
-        sb.AppendLine(") else (");
-        sb.AppendLine("  >>\"%LOG%\" echo [%date% %time%] 文件替换完成。");
-        sb.AppendLine("  >>\"%LOG%\" echo [%date% %time%] 清理 _backup 中的旧临时文件，只保留本次更新前版本...");
-        sb.AppendLine("  for %%F in (\"%BACKUPDIR%*\") do if /I not \"%%~fF\"==\"%BACKUP%\" del /f /q \"%%~fF\" >nul 2>nul");
+        sb.AppendLine("  start \"\" \"%CUREXE%\"");
+        sb.AppendLine("  rmdir /s /q \"%TEMPROOT%\" >nul 2>nul");
+        sb.AppendLine("  (goto) 2>nul & del \"%~f0\"");
+        sb.AppendLine("  exit /b 1");
         sb.AppendLine(")");
+        sb.AppendLine(">>\"%LOG%\" echo [%date% %time%] 文件替换完成。");
+        sb.AppendLine(">>\"%LOG%\" echo [%date% %time%] 清理 _backup 中的旧临时文件，只保留本次更新前版本...");
+        sb.AppendLine("for %%F in (\"%BACKUPDIR%*\") do if /I not \"%%~fF\"==\"%BACKUP%\" del /f /q \"%%~fF\" >nul 2>nul");
         sb.AppendLine();
+
+        if (needRename)
+        {
+            // 按架构统一改名：如果目标名字已经被别的文件占用（极少见，比如用户手动放了
+            // 一个同名文件在旁边），先挪开备份，不直接覆盖，避免误删用户自己的文件。
+            sb.AppendLine(">>\"%LOG%\" echo [%date% %time%] 按当前系统架构统一改名为标准文件名...");
+            sb.AppendLine("if exist \"%TARGETEXE%\" if /I not \"%TARGETEXE%\"==\"%CUREXE%\" (");
+            sb.AppendLine("  >>\"%LOG%\" echo [%date% %time%] 目标文件名已存在同名文件，先备份挪开...");
+            sb.AppendLine("  move /y \"%TARGETEXE%\" \"%TARGETEXE%.old\" >nul 2>nul");
+            sb.AppendLine(")");
+            sb.AppendLine("move /y \"%CUREXE%\" \"%TARGETEXE%\" >nul 2>nul");
+            sb.AppendLine("if errorlevel 1 (");
+            sb.AppendLine("  >>\"%LOG%\" echo [%date% %time%] 改名失败，继续使用原文件名启动。");
+            sb.AppendLine("  set \"TARGETEXE=%CUREXE%\"");
+            sb.AppendLine(") else (");
+            sb.AppendLine("  >>\"%LOG%\" echo [%date% %time%] 改名完成：%TARGETEXE%");
+            sb.AppendLine(")");
+            sb.AppendLine();
+        }
+
         sb.AppendLine(">>\"%LOG%\" echo [%date% %time%] 重新启动程序...");
-        sb.AppendLine("start \"\" \"%CUREXE%\"");
+        sb.AppendLine("start \"\" \"%TARGETEXE%\"");
         sb.AppendLine("rmdir /s /q \"%TEMPROOT%\" >nul 2>nul");
         sb.AppendLine(">>\"%LOG%\" echo [%date% %time%] 更新流程结束。");
         sb.AppendLine("(goto) 2>nul & del \"%~f0\"");
