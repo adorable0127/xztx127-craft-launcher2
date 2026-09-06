@@ -43,6 +43,7 @@ public static class LocalizationService
         new("zh-microsoft", "简体中文（Microsoft）"),
         new("zh-Hant", "繁體中文"),
         new("yue-Hant", "粵語（繁體）"),
+        new("bo-CN", "བོད་ཡིག"),
         new("zh-wy", "中文（文言）"),
         new("en-US", "English (United States)"),
         new("en-GB", "English (United Kingdom)"),

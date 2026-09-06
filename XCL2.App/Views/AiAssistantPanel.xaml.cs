@@ -45,7 +45,9 @@ public partial class AiAssistantPanel : UserControl
 
     private void UserControl_Unloaded(object sender, RoutedEventArgs e)
     {
-        _sendCts?.Cancel();
+        // 页面被切走只代表这个控件暂时离开可视树，不代表用户要求停止生成。
+        // 取消仍由面板里的“停止”按钮负责；否则发送消息后切到设置/日志等页面，
+        // Unloaded 会直接 Cancel 当前请求，表现成 AI 自动停止回复。
         _owner?.UpdateAiFloatingButtonVisibility(true);
     }
 

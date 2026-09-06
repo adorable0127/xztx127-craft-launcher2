@@ -1,4 +1,4 @@
-using System.Security.Principal;
+﻿using System.Security.Principal;
 using Microsoft.Win32;
 
 namespace XCL2.App.Services;
@@ -118,6 +118,28 @@ public static class RegistryConfigService
 
     public static bool SetBool(string name, bool value, bool useLocalMachine) =>
         SetInt(name, value ? 1 : 0, useLocalMachine);
+
+    /// <summary>
+    /// 把 AppData 主配置文件路径写到 HKCU\SOFTWARE\XCL2 的 32 位注册表视图，值名固定 appd。
+    /// “路径”本质是字符串，因此值类型是 REG_SZ；这里的“32 位”指 RegistryView.Registry32，
+    /// 而不是 REG_DWORD（DWORD 无法保存一个文件路径）。
+    /// </summary>
+    public static bool SetAppDataConfigPath(string configPath)
+    {
+        try
+        {
+            using var root = RegistryKey.OpenBaseKey(Microsoft.Win32.RegistryHive.CurrentUser, RegistryView.Registry32);
+            using var key = root.CreateSubKey(SubKeyPath, writable: true);
+            if (key == null) return false;
+            key.SetValue("appd", configPath, RegistryValueKind.String);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            ErrorPresenter.LogFallback("写入 32 位注册表 appd 配置路径失败", ex);
+            return false;
+        }
+    }
 
     private static bool TrySetValue(RegistryKey root, string name, object value, RegistryValueKind kind)
     {

@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Linq;
 using System.Windows.Controls;
 using System.Windows;
@@ -387,7 +387,22 @@ public partial class HomePage : UserControl
     private void GuestModeToggle_Changed(object sender, RoutedEventArgs e)
     {
         if (_guestToggleInitializing) return;
-        _owner.ConfigService.Config.GuestModeEnabled = GuestModeToggle.IsChecked == true;
+
+        if (GuestModeToggle.IsChecked == true && !_owner.ConfigService.Config.GuestModeEnabled)
+        {
+            // 开启访客模式一定通过一次重启进入，当前进程不做半途切换。
+            if (!_owner.RequestGuestModeRestart())
+            {
+                _guestToggleInitializing = true;
+                GuestModeToggle.IsChecked = false;
+                _guestToggleInitializing = false;
+                UpdateGuestModeToggleText();
+            }
+            return;
+        }
+
+        // 访客会话中手动关闭可立即恢复正常账户；磁盘本来也始终保存 false。
+        _owner.ConfigService.Config.GuestModeEnabled = false;
         _owner.ConfigService.Save();
         _owner.RefreshGuestModeState();
         UpdateGuestModeToggleText();

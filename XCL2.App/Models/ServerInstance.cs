@@ -1,12 +1,12 @@
-namespace XCL2.App.Models;
+﻿namespace XCL2.App.Models;
 
 /// <summary>
 /// 一个已创建的服务器实例的持久化配置。对应清单里"一键开服"的各项可选项：
 /// 安装位置(Directory) / 加载器(CoreType) / Java 版本(JavaMajorVersion) /
 /// 内存上限(MaxMemoryMb) / CPU 上限(CpuLimitPercent) / 磁盘上限(DiskLimitMb)。
 ///
-/// 存放位置：xcl2/servers.json，是一个 ServerInstance 列表，风格上和 AppConfig.Folders
-/// 保持一致(那是"客户端多.minecraft目录"列表，这个是"多服务器实例"列表)。
+/// 主存放位置：%APPDATA%\XCL2\servers.json，并镜像到启动器目录 json/servers.json；
+/// 是一个 ServerInstance 列表，风格上和 AppConfig.Folders 保持一致。
 /// </summary>
 public class ServerInstance
 {

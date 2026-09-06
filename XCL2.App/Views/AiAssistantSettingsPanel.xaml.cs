@@ -2,6 +2,7 @@
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Linq;
+using System.IO;
 using System.Windows;
 using System.Windows.Controls;
 using XCL2.App.Models;
@@ -40,6 +41,7 @@ public partial class AiAssistantSettingsPanel : UserControl, IOverlayDialog
             UseCustomKeyCheck.IsChecked = config.UseCustomApiKey;
             BaseUrlBox.Text = config.BaseUrl;
             ApiKeyBox.Password = config.ApiKey;
+            WorkingDirectoryBox.Text = config.WorkingDirectory ?? "";
 
             _customModels.Clear();
             foreach (var item in (config.CustomModels ?? new List<AiModelDefinition>())
@@ -311,6 +313,21 @@ public partial class AiAssistantSettingsPanel : UserControl, IOverlayDialog
         RefreshModelCombos(normal, expert, manual);
     }
 
+    private void BrowseWorkingDirectory_Click(object sender, RoutedEventArgs e)
+    {
+        var dialog = new Microsoft.Win32.OpenFolderDialog
+        {
+            Title = "选择 AI 助手工作目录"
+        };
+        if (Directory.Exists(WorkingDirectoryBox.Text))
+            dialog.InitialDirectory = WorkingDirectoryBox.Text;
+        if (dialog.ShowDialog() == true)
+            WorkingDirectoryBox.Text = dialog.FolderName;
+    }
+
+    private void ClearWorkingDirectory_Click(object sender, RoutedEventArgs e)
+        => WorkingDirectoryBox.Clear();
+
     private void ResetDefaults_Click(object sender, RoutedEventArgs e)
     {
         var defaults = new AiAssistantConfig
@@ -319,6 +336,7 @@ public partial class AiAssistantSettingsPanel : UserControl, IOverlayDialog
             UseCustomApiKey = false,
             BaseUrl = "https://opencode.ai/zen/v1",
             ApiKey = "",
+            WorkingDirectory = null,
             RoutingMode = AiRoutingMode.Auto,
             AutoModelRouting = true,
             NormalModelId = AiModelIds.Nemotron35Lightning,
@@ -386,6 +404,22 @@ public partial class AiAssistantSettingsPanel : UserControl, IOverlayDialog
             return catalog.FirstOrDefault(m => m.Id == fallback)?.Id ?? catalog[0].Id;
         }
 
+        var workingDirectory = WorkingDirectoryBox.Text.Trim();
+        if (workingDirectory.Length > 0)
+        {
+            try { workingDirectory = Path.GetFullPath(workingDirectory); }
+            catch
+            {
+                MessageBoxDialog.ShowWarning("工作目录路径无效，请重新选择。", "AI 设置");
+                return;
+            }
+            if (!Directory.Exists(workingDirectory))
+            {
+                MessageBoxDialog.ShowWarning("工作目录不存在。请先创建目录，或点击“选择目录”选择一个现有目录。", "AI 设置");
+                return;
+            }
+        }
+
         var mode = GetRoutingMode();
         var result = new AiAssistantConfig
         {
@@ -393,6 +427,7 @@ public partial class AiAssistantSettingsPanel : UserControl, IOverlayDialog
             UseCustomApiKey = custom,
             BaseUrl = BaseUrlBox.Text.Trim(),
             ApiKey = ApiKeyBox.Password,
+            WorkingDirectory = workingDirectory.Length == 0 ? null : workingDirectory,
             RoutingMode = mode,
             AutoModelRouting = mode == AiRoutingMode.Auto,
             NormalModelId = EnsureSelected(NormalModelCombo, AiModelIds.Nemotron35Lightning),

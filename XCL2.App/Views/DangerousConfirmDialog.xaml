@@ -13,7 +13,7 @@
                    Foreground="{DynamicResource WarningTextBrush}"/>
         <TextBlock x:Name="MessageText" TextWrapping="Wrap" Margin="0,0,0,14"
                    Foreground="{DynamicResource TextSecondaryBrush}"/>
-        <TextBlock Text="请输入确认码 xztx127 以继续：" Margin="0,0,0,6"/>
+        <TextBlock x:Name="ConfirmCodeHintText" Text="请输入确认码 xztx127 以继续：" Margin="0,0,0,6"/>
         <TextBox x:Name="ConfirmCodeBox" Height="30" VerticalContentAlignment="Center"/>
         <TextBlock x:Name="ErrorText" Foreground="IndianRed" FontSize="12" Margin="0,6,0,0" Visibility="Collapsed"/>
         <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,18,0,0">

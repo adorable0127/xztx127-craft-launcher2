@@ -1,4 +1,4 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Text;
@@ -62,6 +62,13 @@ public class LauncherService
         /// 为空/null 时不写入、不干预，保留玩家在游戏内自己选过的语言。
         /// </summary>
         public string? GameLanguage { get; set; }
+
+        /// <summary>
+        /// 实例级“游戏内图形 API”偏好：game=游戏自主设置，opengl=强制 OpenGL，vulkan=强制 Vulkan。
+        /// UI 仅对 Minecraft 26.1+ 暴露；该值只作用于 Minecraft 游戏进程自己的
+        /// options.txt / 启动参数，不会改变启动器 WPF 界面的渲染后端。
+        /// </summary>
+        public string? GraphicsApiPreference { get; set; }
 
         /// <summary>
         /// 用户自定义 JVM 启动参数（原始字符串，未切分），仅高手模式下由 UI 传入非空值。
@@ -744,6 +751,17 @@ public class LauncherService
             catch { /* options.txt 写入失败不应该阻止游戏启动，语言只是体验问题不是功能性问题 */ }
         }
 
+        if (!string.IsNullOrWhiteSpace(opts.GraphicsApiPreference))
+        {
+            try { ApplyGraphicsApiPreference(gameDir, opts.GraphicsApiPreference!); }
+            catch (Exception ex)
+            {
+                // 图形 API 是可选覆盖项。options.txt 因权限/占用写不进去时记录日志，但不应该
+                // 因为一项显示后端偏好而阻止整个游戏启动。
+                ErrorPresenter.LogFallback($"写入实例图形 API 设置失败：{gameDir}", ex);
+            }
+        }
+
         // 版本文件夹允许被用户改名(不少第三方启动器都支持这么整理)；改名只影响"文件夹"这一层，
         // 文件夹里面的 .json 文件名本身不会跟着变，所以这里做改名容错查找。
         var versionJsonPath = ResolveVersionFile(versionDir, opts.VersionId, "json");
@@ -1220,6 +1238,16 @@ public class LauncherService
             args.Add(opts.AutoJoinServerAddress!.Trim());
         }
 
+        // “强制使用”是 Minecraft 游戏进程本身的图形 API 强制项，不是启动器 UI 的渲染模式。
+        // 26.2+ 已支持 --graphicsBackend，因此在写入游戏 options.txt 之外再追加启动期覆盖；
+        // 26.1 不强塞未知参数，只保留上面的游戏 options.txt 设置。
+        var graphicsPreference = NormalizeGraphicsApiPreference(opts.GraphicsApiPreference);
+        if (graphicsPreference is InstanceConfigService.GraphicsApiOpenGl or InstanceConfigService.GraphicsApiVulkan &&
+            SupportsForcedGraphicsBackendArgument(opts.VersionId, detail.Id, parent?.Id))
+        {
+            SetOrAppendArgument(args, "--graphicsBackend", graphicsPreference);
+        }
+
         // --lang 只在很老的版本(约 1.12 以前)里被读取，新版本已不认这个参数，
         // 但加上也无害，作为老版本的兼容兜底一起传。真正生效的是上面写的 options.txt。
         if (!string.IsNullOrWhiteSpace(opts.GameLanguage))
@@ -1344,6 +1372,106 @@ public class LauncherService
         foreach (var kv in variables)
             input = input.Replace("${" + kv.Key + "}", kv.Value);
         return input;
+    }
+
+    private static string NormalizeGraphicsApiPreference(string? preference)
+    {
+        var normalized = preference?.Trim().ToLowerInvariant();
+        return normalized is InstanceConfigService.GraphicsApiOpenGl or InstanceConfigService.GraphicsApiVulkan
+            ? normalized
+            : InstanceConfigService.GraphicsApiGame;
+    }
+
+    /// <summary>
+    /// 把实例级“游戏内图形 API”选择写入实际 gameDir 的 options.txt。Minecraft 自己使用
+    /// preferredGraphicsBackend，合法值是 "default" / "opengl" / "vulkan"。这里不碰任何
+    /// 启动器窗口渲染设置；每次启动对应实例前只同步这一条游戏选项，其余 options.txt 内容原样保留。
+    /// </summary>
+    private static void ApplyGraphicsApiPreference(string gameDir, string preference)
+    {
+        var normalized = NormalizeGraphicsApiPreference(preference);
+        var gameValue = normalized == InstanceConfigService.GraphicsApiGame ? "default" : normalized;
+        var optionsPath = Path.Combine(gameDir, "options.txt");
+        var replacement = $"preferredGraphicsBackend:\"{gameValue}\"";
+
+        if (!File.Exists(optionsPath))
+        {
+            var initialLines = new List<string>(SkipFirstRunLines) { replacement };
+            File.WriteAllText(optionsPath, string.Join("\n", initialLines) + "\n", Utf8NoBom);
+            return;
+        }
+
+        var lines = File.ReadAllLines(optionsPath, Encoding.UTF8).ToList();
+        var output = new List<string>(lines.Count + 1);
+        var replaced = false;
+
+        foreach (var line in lines)
+        {
+            if (!line.StartsWith("preferredGraphicsBackend:", StringComparison.OrdinalIgnoreCase))
+            {
+                output.Add(line);
+                continue;
+            }
+
+            // 只保留一个官方字段；旧文件若因为历史版本重复写入过同名行，也在这里顺手去重。
+            if (!replaced)
+            {
+                output.Add(replacement);
+                replaced = true;
+            }
+        }
+
+        if (!replaced) output.Add(replacement);
+        File.WriteAllLines(optionsPath, output, Utf8NoBom);
+    }
+
+    private static bool SupportsForcedGraphicsBackendArgument(params string?[] candidates)
+    {
+        foreach (var candidate in candidates)
+        {
+            var extracted = VersionInfoResolver.ExtractAnyVersion(candidate);
+            if (string.IsNullOrWhiteSpace(extracted)) continue;
+
+            var numeric = extracted.Split('-', 2)[0];
+            var parts = numeric.Split('.');
+            if (parts.Length < 2 || !int.TryParse(parts[0], out var major) || !int.TryParse(parts[1], out var minor))
+                continue;
+            var patch = parts.Length > 2 && int.TryParse(parts[2], out var parsedPatch) ? parsedPatch : 0;
+
+            if (major == 1)
+            {
+                if (minor > 26 || (minor == 26 && patch >= 2)) return true;
+            }
+            else if (major > 26 || (major == 26 && minor >= 2))
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static void SetOrAppendArgument(List<string> args, string key, string value)
+    {
+        for (var i = 0; i < args.Count; i++)
+        {
+            if (string.Equals(args[i], key, StringComparison.OrdinalIgnoreCase))
+            {
+                if (i + 1 < args.Count)
+                    args[i + 1] = value;
+                else
+                    args.Add(value);
+                return;
+            }
+
+            if (args[i].StartsWith(key + "=", StringComparison.OrdinalIgnoreCase))
+            {
+                args[i] = key + "=" + value;
+                return;
+            }
+        }
+
+        args.Add(key);
+        args.Add(value);
     }
 
     /// <summary>

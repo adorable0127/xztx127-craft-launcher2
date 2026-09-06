@@ -8,6 +8,7 @@
             <Grid.RowDefinitions>
                 <RowDefinition Height="Auto"/>
                 <RowDefinition Height="*"/>
+                <RowDefinition Height="Auto"/>
             </Grid.RowDefinitions>
 
             <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="0,0,0,12">
@@ -16,7 +17,7 @@
                            Foreground="{DynamicResource TextSecondaryBrush}" VerticalAlignment="Center"/>
             </StackPanel>
 
-            <TabControl Grid.Row="1">
+            <TabControl x:Name="ToolboxTabControl" Grid.Row="1" SelectionChanged="ToolboxTabControl_SelectionChanged">
 
                 <!-- ===== Tab 1：成就图片生成器 ===== -->
                 <TabItem Header="{DynamicResource Str_Ui_Advancement_Image}">
@@ -255,7 +256,7 @@
                 </TabItem>
 
                 <!-- ===== Tab 7：桌面便签 ===== -->
-                <TabItem Header="桌面便签">
+                <TabItem x:Name="StickyNoteTabItem" Header="桌面便签">
                     <ScrollViewer VerticalScrollBarVisibility="Auto" services:ScrollWheelBehavior.EnableFastWheel="True">
                         <StackPanel Margin="4,12,4,4">
                             <TextBlock Text="本地便签：自动保存到启动器数据目录，可新建、删除、切换样式，并把任意便签作为置顶桌面便签打开。" FontSize="12"
@@ -944,6 +945,13 @@
                     </ScrollViewer>
                 </TabItem>
 
+                <!-- ===== Tab 34：Web2（内嵌浏览器） ===== -->
+                <TabItem Header="Web2">
+                    <ScrollViewer VerticalScrollBarVisibility="Auto" services:ScrollWheelBehavior.EnableFastWheel="True">
+                        <tools:Web2BrowserTool Margin="4,12,4,4"/>
+                    </ScrollViewer>
+                </TabItem>
+
                 <!-- 「基岩版」原来在这里的 Tab（内容管理/服务端下载）已经和「实验性功能」弹窗
                      里的"启动基岩版"按钮一起，整合搬到左侧导航栏的独立入口「基岩版启动」
                      （BedrockPage.xaml），不再放在百宝箱里——见 MainWindow.xaml 里
@@ -951,6 +959,12 @@
                      两个地方、显示口径可能不一致。 -->
 
             </TabControl>
+
+            <!-- 百宝箱页右下角的隐藏彩蛋入口。点击后只先展示风险确认框；
+                 真正的跳转行为由 ToolboxPage.xaml.cs 按用户选中的三个“确定”处理。 -->
+            <Button Grid.Row="2" Content="千万别点" HorizontalAlignment="Right"
+                    Margin="0,12,0,0" Padding="14,7" Click="DoNotClickButton_Click"
+                    Background="#D32F2F" BorderBrush="#D32F2F" Foreground="White"/>
         </Grid>
     </Border>
 </UserControl>

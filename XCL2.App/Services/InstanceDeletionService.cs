@@ -115,8 +115,34 @@ public static class InstanceDeletionService
             Directory.Delete(versionDir, recursive: true);
         }
 
-        // 目录删除成功后再清理配置里跟这个版本相关的所有残留条目，避免文件都没了、
-        // 配置里还留着一堆指向不存在版本的 Java 覆盖/隔离覆盖等死数据。
+        CleanupConfigReferences(config, folderPath, versionId);
+    }
+
+    /// <summary>
+    /// 从电脑中删除，但送进回收站而不是直接抹掉——用户点错了还能从回收站救回来。
+    /// 用 Microsoft.VisualBasic.FileIO.FileSystem.DeleteDirectory 而不是自己拼 Shell API，
+    /// 这是 .NET 里做"删到回收站"最简单可靠的方式（UseWindowsForms 已经为真，这个程序集
+    /// 不需要额外加 NuGet 包，直接能用）。因为可撤销，调用方不需要像永久删除那样强制
+    /// xztx127 二次确认。
+    /// </summary>
+    public static void DeleteToRecycleBin(AppConfig config, string folderPath, string versionId)
+    {
+        var versionDir = Path.Combine(folderPath, "versions", versionId);
+        if (Directory.Exists(versionDir))
+        {
+            Microsoft.VisualBasic.FileIO.FileSystem.DeleteDirectory(
+                versionDir,
+                Microsoft.VisualBasic.FileIO.UIOption.OnlyErrorDialogs,
+                Microsoft.VisualBasic.FileIO.RecycleOption.SendToRecycleBin);
+        }
+
+        CleanupConfigReferences(config, folderPath, versionId);
+    }
+
+    /// <summary>两种"从电脑中删除"模式共用的配置清理逻辑，从原来的 DeletePermanently 里
+    /// 抽出来，避免 DeleteToRecycleBin 复制一遍同样的字典清理代码。</summary>
+    private static void CleanupConfigReferences(AppConfig config, string folderPath, string versionId)
+    {
         config.VersionIsolationOverrides.Remove(versionId);
         config.VersionResourcePackIsolationOverrides.Remove(versionId);
         config.VersionJavaOverrides.Remove(versionId);
@@ -126,8 +152,6 @@ public static class InstanceDeletionService
         config.FavoriteItems.RemoveAll(f => f.Type == FavoriteItemType.Version
             && string.Equals(f.SourceId, versionId, StringComparison.OrdinalIgnoreCase));
 
-        // 如果这个版本本来就在隐藏黑名单里（比如用户先隐藏、后来又想彻底删掉），
-        // 顺手把黑名单条目也清掉，不留死引用。
         UnhideFromList(config, folderPath, versionId);
 
         if (string.Equals(config.SelectedVersionId, versionId, StringComparison.OrdinalIgnoreCase))

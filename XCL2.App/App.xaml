@@ -716,7 +716,18 @@
             <!-- 分类/来源筛选下拉框：同样统一成圆角卡片风格，去掉系统默认灰色外观。
                  不加 x:Key，作为 ComboBox 的默认样式，让全应用所有下拉框（包括"下载源选择"这类
                  之前完全没套样式、直接用系统默认灰色外观的控件）统一变成现代化的圆角卡片风格，
-                 不需要每个 XAML 逐个手动加 Style="{StaticResource FilterComboBox}"。 -->
+                 不需要每个 XAML 逐个手动加 Style="{StaticResource FilterComboBox}"。
+                 修复："设置"页里改动任意下拉框（比如"点击标题栏叉号时"）后，左下角始终不弹出
+                 "设置已修改，是否保存？"/"设置已自动保存，回退"的操作卡片。根因：下面弹层用的
+                 Popup 之前叫 x:Name="popup"，但 ComboBox 内部代码在 OnApplyTemplate 时是按
+                 固定的模板部件名 "PART_Popup" 去找这个 Popup、并订阅它的 Closed 事件来触发
+                 DropDownClosed 路由事件的——名字对不上，ComboBox 找不到这个部件，
+                 DropDownOpened/DropDownClosed 就永远不会触发。SettingsPage.HookDirtyTracking
+                 恰恰是靠 combo.DropDownClosed 去调用 OnSettingsEdited() 走"改动检测→提示保存"
+                 这条链路的，事件不触发，后面的比对/弹卡片逻辑自然也就跟着不会执行——文本框、
+                 复选框、滑块用的是各自独立的路由事件，不受这个部件命名影响，所以只有下拉框
+                 表现出"改了但不弹提示"。改成 "PART_Popup" 后，DropDownClosed 恢复正常触发，
+                 修改下拉框选项也能跟其它控件一样正确弹出保存/回退提示。 -->
             <Style TargetType="ComboBox">
                 <Setter Property="Background" Value="{DynamicResource SideBrush}"/>
                 <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}"/>
@@ -754,7 +765,7 @@
                                                    ContentTemplate="{TemplateBinding SelectionBoxItemTemplate}"
                                                    ContentTemplateSelector="{TemplateBinding ItemTemplateSelector}"
                                                    ContentStringFormat="{TemplateBinding SelectionBoxItemStringFormat}"/>
-                                <Popup x:Name="popup" IsOpen="{TemplateBinding IsDropDownOpen}" Placement="Bottom"
+                                <Popup x:Name="PART_Popup" IsOpen="{TemplateBinding IsDropDownOpen}" Placement="Bottom"
                                        AllowsTransparency="True" Focusable="False" PopupAnimation="Fade">
                                     <Border Background="{DynamicResource PanelBrush}" BorderBrush="{DynamicResource BorderBrush2}" BorderThickness="1"
                                             CornerRadius="4" MinWidth="{TemplateBinding ActualWidth}" MaxHeight="260">
@@ -825,7 +836,9 @@
                                                    ContentTemplate="{TemplateBinding SelectionBoxItemTemplate}"
                                                    ContentTemplateSelector="{TemplateBinding ItemTemplateSelector}"
                                                    ContentStringFormat="{TemplateBinding SelectionBoxItemStringFormat}"/>
-                                <Popup x:Name="popup" IsOpen="{TemplateBinding IsDropDownOpen}" Placement="Bottom"
+                                <!-- 同上面默认 ComboBox 样式：这个 Popup 必须叫 "PART_Popup"，
+                                     ComboBox 才能在 OnApplyTemplate 里找到它并挂上 DropDownClosed 等事件。 -->
+                                <Popup x:Name="PART_Popup" IsOpen="{TemplateBinding IsDropDownOpen}" Placement="Bottom"
                                        AllowsTransparency="True" Focusable="False" PopupAnimation="Fade">
                                     <!-- 关键改动：MaxHeight 从固定的 260 换成屏幕高度的 0.55 倍，
                                          其余（背景/圆角/滚动条）跟默认 ComboBox 模板保持一致。 -->

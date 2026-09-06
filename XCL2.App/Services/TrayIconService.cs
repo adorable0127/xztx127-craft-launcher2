@@ -1,4 +1,4 @@
-using System.Drawing;
+﻿using System.Drawing;
 using System.Windows;
 using WinForms = System.Windows.Forms;
 // 注意：这个文件里所有裸写的 Color 都特意指 System.Drawing.Color（WinForms 托盘图标/
@@ -29,6 +29,11 @@ public sealed class TrayIconService : IDisposable
     private readonly WinForms.ContextMenuStrip _menu;
     private readonly WinForms.ToolStripMenuItem _showItem;
     private readonly WinForms.ToolStripMenuItem _launchItem;
+    private readonly WinForms.ToolStripMenuItem _settingsItem;
+    private readonly WinForms.ToolStripMenuItem _downloadsItem;
+    private readonly WinForms.ToolStripMenuItem _toolboxItem;
+    private readonly WinForms.ToolStripMenuItem _processItem;
+    private readonly WinForms.ToolStripMenuItem _closeAllGamesItem;
     private readonly WinForms.ToolStripMenuItem _exitItem;
 
     /// <summary>右键菜单「显示主界面」被点击。</summary>
@@ -36,6 +41,12 @@ public sealed class TrayIconService : IDisposable
 
     /// <summary>右键菜单「启动正在选定的游戏 / 登录」被点击。</summary>
     public event Action? LaunchSelectedRequested;
+
+    public event Action? OpenSettingsRequested;
+    public event Action? OpenDownloadsRequested;
+    public event Action? OpenToolboxRequested;
+    public event Action? OpenProcessManagerRequested;
+    public event Action? CloseAllGamesRequested;
 
     /// <summary>右键菜单「退出」被点击，或双击图标以外的真正退出请求。</summary>
     public event Action? ExitRequested;
@@ -54,16 +65,32 @@ public sealed class TrayIconService : IDisposable
 
         _showItem = new WinForms.ToolStripMenuItem("显示主界面");
         _launchItem = new WinForms.ToolStripMenuItem(launchItemText);
-        var separator = new WinForms.ToolStripSeparator();
+        _settingsItem = new WinForms.ToolStripMenuItem("设置");
+        _downloadsItem = new WinForms.ToolStripMenuItem("下载中心");
+        _toolboxItem = new WinForms.ToolStripMenuItem("百宝箱");
+        _processItem = new WinForms.ToolStripMenuItem("游戏进程管理");
+        _closeAllGamesItem = new WinForms.ToolStripMenuItem("一键关闭全部游戏");
         _exitItem = new WinForms.ToolStripMenuItem("退出");
 
         _showItem.Click += (_, _) => ShowMainRequested?.Invoke();
         _launchItem.Click += (_, _) => LaunchSelectedRequested?.Invoke();
+        _settingsItem.Click += (_, _) => OpenSettingsRequested?.Invoke();
+        _downloadsItem.Click += (_, _) => OpenDownloadsRequested?.Invoke();
+        _toolboxItem.Click += (_, _) => OpenToolboxRequested?.Invoke();
+        _processItem.Click += (_, _) => OpenProcessManagerRequested?.Invoke();
+        _closeAllGamesItem.Click += (_, _) => CloseAllGamesRequested?.Invoke();
         _exitItem.Click += (_, _) => ExitRequested?.Invoke();
 
         _menu.Items.Add(_showItem);
         _menu.Items.Add(_launchItem);
-        _menu.Items.Add(separator);
+        _menu.Items.Add(new WinForms.ToolStripSeparator());
+        _menu.Items.Add(_settingsItem);
+        _menu.Items.Add(_downloadsItem);
+        _menu.Items.Add(_toolboxItem);
+        _menu.Items.Add(new WinForms.ToolStripSeparator());
+        _menu.Items.Add(_processItem);
+        _menu.Items.Add(_closeAllGamesItem);
+        _menu.Items.Add(new WinForms.ToolStripSeparator());
         _menu.Items.Add(_exitItem);
 
         ApplyTheme();

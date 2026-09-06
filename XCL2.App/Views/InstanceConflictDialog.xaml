@@ -26,6 +26,16 @@
                        Foreground="{DynamicResource TextSecondaryBrush}"
                        Text="当前电脑上已经有一个 XCL2 启动器在运行，你想怎么处理这次新打开的实例？"/>
 
+            <!-- 需求：便签开着的时候弹这个多开提示，容易让人以为随便选一个跟"关闭"沾边的选项
+                 都只是多余的重复弹窗，没意识到原有实例可能只是靠便签/托盘挂着——真正会把
+                 便签一起关掉的只有最下面"打开此实例，并关闭原有实例"这个按钮（发送 FORCE_EXIT，
+                 旧实例走 PerformFullExit，会连带 Shutdown 掉它名下所有便签窗口）。这里加一句
+                 提醒，不做成条件判断（新实例这边拿不到"原实例具体是主窗口还是仅便签在跑"这种
+                 细节，与其猜错不如始终提示），下面按钮的选择逻辑完全不受影响。 -->
+            <TextBlock Margin="0,0,0,18" TextWrapping="Wrap" FontSize="12"
+                       Foreground="{DynamicResource TextSecondaryBrush}" FontStyle="Italic"
+                       Text="如果你正在使用桌面便签功能，选择下面的「打开此实例，并关闭原有实例」会一并关掉便签——想两边都保留，请选「保留此实例」。"/>
+
             <Button Content="保留此实例（两个实例都继续运行）" Style="{StaticResource SecondaryButton}"
                     HorizontalContentAlignment="Left" Margin="0,0,0,8" Click="KeepBothRunning_Click"/>
             <Button Content="关闭此实例（保留原有实例不变）" Style="{StaticResource SecondaryButton}"

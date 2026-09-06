@@ -52,6 +52,15 @@ public enum XclFourChoiceResult
     Tray,
 }
 
+/// <summary>“千万别点那按钮”专用四选一结果：取消 + 三个同名“确定”。</summary>
+public enum XclDangerFourChoiceResult
+{
+    Cancel,
+    Confirm1,
+    Confirm2,
+    Confirm3,
+}
+
 /// <summary>
 /// 通用消息提示弹窗 —— 进程内 Overlay 版本的 MessageBox.Show()替代品。
 ///
@@ -93,6 +102,9 @@ public partial class MessageBoxDialog : OverlayDialogControl
     /// <summary>四选一场景专用结果（目前只有关闭按钮的"下载/启动进行中"提示用到），
     /// 用法跟 Result3 一样：只有走 ShowFourChoice 弹出时才会被设置。</summary>
     public XclFourChoiceResult Result4 { get; private set; } = XclFourChoiceResult.Cancel;
+
+    /// <summary>“千万别点那按钮”专用结果。</summary>
+    public XclDangerFourChoiceResult DangerResult4 { get; private set; } = XclDangerFourChoiceResult.Cancel;
 
     private MessageBoxDialog(string message, string title, XclMessageKind kind, XclMessageButtons buttons)
     {
@@ -258,6 +270,23 @@ public partial class MessageBoxDialog : OverlayDialogControl
         return dlg.Result3;
     }
 
+    /// <summary>
+    /// 两按钮自定义文案确认弹窗——ShowConfirm 的按钮文案固定是"否/是"，不满足需要
+    /// 明确动作描述（比如"进入/返回"）的场景。rightIsPrimary 控制哪一侧使用高亮的
+    /// PrimaryButton 样式并作为默认按钮（Enter 触发）；对于"不建议进入"这类场景，
+    /// 调用方应该把更安全的那个按钮（一般是"返回"）设为 primary，避免用户误按 Enter
+    /// 就真的进入了有问题的功能。返回 true 表示点了右侧（rightText）按钮。
+    /// </summary>
+    public static bool ShowCustomYesNo(string message, string title, string leftText, string rightText,
+        bool rightIsPrimary = true, XclMessageKind kind = XclMessageKind.Warning)
+    {
+        var dlg = new MessageBoxDialog(message, title, kind, XclMessageButtons.OK);
+        dlg.ButtonPanel.Children.Clear();
+        dlg.ButtonPanel.Children.Add(dlg.MakeButton(leftText, true, isPrimary: !rightIsPrimary, isDefault: !rightIsPrimary));
+        dlg.ButtonPanel.Children.Add(dlg.MakeButton(rightText, false, isPrimary: rightIsPrimary, isDefault: rightIsPrimary));
+        return OverlayDialogService.ShowModal(dlg) == true;
+    }
+
     /// <summary>四选一专用按钮工厂，用法同 MakeButton3。</summary>
     private Button MakeButton4(string content, XclFourChoiceResult result, bool isPrimary, bool isDefault)
     {
@@ -290,6 +319,49 @@ public partial class MessageBoxDialog : OverlayDialogControl
         dlg.ButtonPanel.Children.Add(dlg.MakeButton4(closeText, XclFourChoiceResult.Close, isPrimary: true, isDefault: true));
         OverlayDialogService.ShowModal(dlg);
         return dlg.Result4;
+    }
+
+    /// <summary>“千万别点那按钮”专用四选一风险提示。前三个按钮（取消、确定、确定）
+    /// 使用普通次要按钮样式，最后一个“确定”使用危险红色；提示正文也使用危险红色。
+    /// 四个按钮都不设默认按钮，避免用户只按 Enter 就误触。
+    /// </summary>
+    public static XclDangerFourChoiceResult ShowDangerFourChoice(string message, string title,
+        string cancelText = "取消", string confirm1Text = "确定", string confirm2Text = "确定", string confirm3Text = "确定")
+    {
+        var dlg = new MessageBoxDialog(message, title, XclMessageKind.Error, XclMessageButtons.OK);
+        dlg.MessageText.Foreground = (System.Windows.Media.Brush)dlg.FindResource("DangerBrush");
+        dlg.ButtonPanel.Children.Clear();
+        dlg.ButtonPanel.Children.Add(dlg.MakeDangerChoiceButton(cancelText, XclDangerFourChoiceResult.Cancel, isDanger: false));
+        dlg.ButtonPanel.Children.Add(dlg.MakeDangerChoiceButton(confirm1Text, XclDangerFourChoiceResult.Confirm1, isDanger: false));
+        dlg.ButtonPanel.Children.Add(dlg.MakeDangerChoiceButton(confirm2Text, XclDangerFourChoiceResult.Confirm2, isDanger: false));
+        dlg.ButtonPanel.Children.Add(dlg.MakeDangerChoiceButton(confirm3Text, XclDangerFourChoiceResult.Confirm3, isDanger: true));
+        OverlayDialogService.ShowModal(dlg);
+        return dlg.DangerResult4;
+    }
+
+    private Button MakeDangerChoiceButton(string content, XclDangerFourChoiceResult result, bool isDanger)
+    {
+        var btn = new Button
+        {
+            Content = content,
+            Padding = new Thickness(16, 8, 16, 8),
+            Margin = new Thickness(6, 0, 0, 0),
+            IsDefault = false,
+            Style = (Style)FindResource(isDanger ? "PrimaryButton" : "SecondaryButton"),
+        };
+        if (isDanger)
+        {
+            var danger = (System.Windows.Media.Brush)FindResource("DangerBrush");
+            btn.Background = danger;
+            btn.BorderBrush = danger;
+            btn.Foreground = System.Windows.Media.Brushes.White;
+        }
+        btn.Click += (_, _) =>
+        {
+            DangerResult4 = result;
+            CloseWith(null);
+        };
+        return btn;
     }
 
     /// <summary>最通用的入口，其它 ShowXxx 静态方法都是对这个的语义化包装。</summary>

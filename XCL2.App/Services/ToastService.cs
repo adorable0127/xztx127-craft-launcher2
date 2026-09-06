@@ -1,4 +1,4 @@
-using System.Windows;
+﻿using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
@@ -185,10 +185,9 @@ public static class ToastService
                 new DoubleAnimation(-24, 0, TimeSpan.FromMilliseconds(160))
                 { EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut } });
 
-            // 设置保存气泡（"设置已保存，是否回退"/"设置已修改，是否保存"）需要 2 秒后
-            // 自动消失而不是一直挂着等用户点，autoDismissSeconds 传了值时挂一个计时器，
-            // 到点后跟点了按钮一样走 DismissActionCard 淡出移除；不传（null，其余原有调用点）
-            // 保持"必须用户点按钮才消失"的原行为不变。
+            // 操作卡片默认不会自动消失；只有某个调用点明确传入 autoDismissSeconds 时才挂计时器。
+            // 设置页的“自动保存 / 回退”和“未保存 / 保存 / 撤销”都不传该参数，因此会一直保留
+            // 到用户主动操作，避免回退入口在用户来得及点击前消失。
             if (autoDismissSeconds is > 0)
             {
                 var timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(autoDismissSeconds.Value) };
@@ -200,9 +199,31 @@ public static class ToastService
                 timer.Start();
             }
         }
-        catch
+        catch (Exception ex)
         {
-            // 提示层出任何问题都不该影响主流程。
+            // 提示层出任何问题都不该影响主流程，但绝不能悄无声息地吞掉——之前这里是空 catch，
+            // "设置已修改"卡片如果因为某个资源/绑定问题在 BuildActionCard 阶段抛异常，
+            // 用户会看到的现象就是"改了设置但什么提示都没弹"，且日志里完全没有痕迹，
+            // 排查起来无从下手。改成记日志，方便定位类似问题。
+            LauncherLogService.AppendLine($"[ToastService] ShowActionPrompt(key={key ?? "null"}) 失败：{ex}");
+        }
+    }
+
+    /// <summary>按 key 主动移除一张操作类提示。用于设置页通过底部按钮、离页确认等
+    /// “不是点击提示卡自身按钮”的路径保存/放弃后，清掉已经过期的 settings-dirty 卡片。</summary>
+    public static void DismissActionPrompt(string key)
+    {
+        if (string.IsNullOrWhiteSpace(key) || _host?.ActionToastHost == null) return;
+        if (!_host.Dispatcher.CheckAccess())
+        {
+            _host.Dispatcher.Invoke(() => DismissActionPrompt(key));
+            return;
+        }
+
+        for (int i = _host.ActionToastHost.Items.Count - 1; i >= 0; i--)
+        {
+            if (_host.ActionToastHost.Items[i] is Border b && Equals(b.Tag, key))
+                DismissActionCard(b);
         }
     }
 

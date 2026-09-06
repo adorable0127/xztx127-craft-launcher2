@@ -6,9 +6,6 @@
         <ScrollViewer VerticalScrollBarVisibility="Auto" services:ScrollWheelBehavior.EnableFastWheel="True">
             <StackPanel MaxWidth="720" HorizontalAlignment="Left">
                 <TextBlock Text="{DynamicResource Str_Nav_Multiplayer}" FontSize="20" FontWeight="Bold" Margin="0,0,0,4"/>
-                <TextBlock Text="{DynamicResource Str_Ui_The_Two_Most_Common_Minecraft_Lan_Play_S}"
-                           FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,20" TextWrapping="Wrap"/>
-
                 <!-- ===== 陶瓦联机(Terracotta) ===== -->
                 <Border Background="{DynamicResource SideBrush}" BorderBrush="{DynamicResource BorderBrush2}"
                         BorderThickness="1" CornerRadius="8" Padding="16" Margin="0,0,0,16">
@@ -36,23 +33,6 @@
                     </StackPanel>
                 </Border>
 
-                <!-- ===== 红石联机 ===== -->
-                <Border Background="{DynamicResource SideBrush}" BorderBrush="{DynamicResource BorderBrush2}"
-                        BorderThickness="1" CornerRadius="8" Padding="16">
-                    <StackPanel>
-                        <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
-                            <TextBlock Text="🔴" FontFamily="Segoe UI Emoji" FontSize="18" VerticalAlignment="Center"/>
-                            <TextBlock Text="{DynamicResource Str_Ui_Redstone_Lan}" FontSize="16" FontWeight="Bold" Margin="8,0,0,0" VerticalAlignment="Center"/>
-                        </StackPanel>
-                        <TextBlock TextWrapping="Wrap" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,10">
-                            以游戏内 Fabric/NeoForge 模组形式提供联机能力：装上模组后，在游戏里开局域网，
-                            联机地址会自动复制到剪贴板发给好友，全程不需要离开游戏。这里提供一键搜索安装入口，
-                            搜索结果来自 Modrinth，装完之后照常启动游戏即可在游戏内使用。
-                        </TextBlock>
-                        <Button Content="{DynamicResource Str_Ui_Find_And_Install_The_Redstone_Lan_Mod}" Style="{StaticResource PrimaryButton}"
-                                Padding="16,8" HorizontalAlignment="Left" Click="SearchRedstoneMod_Click"/>
-                    </StackPanel>
-                </Border>
             </StackPanel>
         </ScrollViewer>
     </Border>

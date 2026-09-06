@@ -1,8 +1,10 @@
 ﻿<UserControl x:Class="XCL2.App.Views.AiAssistantSettingsPanel"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:services="clr-namespace:XCL2.App.Services"
              Background="{DynamicResource SideBrush}">
-    <ScrollViewer VerticalScrollBarVisibility="Auto" MaxHeight="700">
+    <ScrollViewer VerticalScrollBarVisibility="Auto" MaxHeight="700"
+                  services:ScrollWheelBehavior.ContainWheel="True">
         <StackPanel Margin="16">
             <TextBlock Text="AI 助手设置" FontSize="20" FontWeight="SemiBold"/>
             <TextBlock Text="普通/专家是路由档位；下面的模型才是真正提交给 API 的 model ID。"
@@ -74,6 +76,21 @@
                             </ListBox.ItemTemplate>
                         </ListBox>
                     </StackPanel>
+                </StackPanel>
+            </Border>
+
+            <Border Padding="12" CornerRadius="10" Background="{DynamicResource PanelBrush}"
+                    BorderBrush="{DynamicResource BorderBrush2}" BorderThickness="1" Margin="0,0,0,10">
+                <StackPanel>
+                    <TextBlock Text="工作目录与轻量编程" FontSize="14" FontWeight="SemiBold" Margin="0,0,0,6"/>
+                    <TextBlock Text="设置后，AI 可在你逐次确认的前提下列出、读取和写入这个目录里的文本文件，也可继续使用白名单设置工具调整 XCL2。留空即完全关闭文件访问。"
+                               TextWrapping="Wrap" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,8"/>
+                    <Grid>
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                        <TextBox x:Name="WorkingDirectoryBox" Padding="7" ToolTip="AI 只能访问此目录及子目录，不能越过这个边界。"/>
+                        <Button Grid.Column="1" Content="选择目录" Margin="8,0,0,0" Padding="10,5" Click="BrowseWorkingDirectory_Click"/>
+                        <Button Grid.Column="2" Content="清空" Margin="8,0,0,0" Padding="10,5" Click="ClearWorkingDirectory_Click"/>
+                    </Grid>
                 </StackPanel>
             </Border>
 

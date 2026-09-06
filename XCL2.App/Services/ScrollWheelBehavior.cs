@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
@@ -25,10 +25,29 @@ namespace XCL2.App.Services;
 /// </summary>
 public static class ScrollWheelBehavior
 {
-    /// <summary>单次滚轮"咔哒"一格对应的滚动像素距离。默认系统行为大约只有 45~60px
-    /// 左右（3 行 × 约 15~20px 行高），这里直接给到 180px，大约是原来的 3~4 倍，
-    /// 明显感觉"划一下就能走一大截"，但也没有大到"划一下直接冲到底"那么夸张。</summary>
-    public static double WheelStepPixels { get; set; } = 180;
+    /// <summary>100% 灵敏度时单次滚轮"咔哒"一格对应的基准滚动像素距离。
+    /// 旧版本固定使用 180px；现在默认灵敏度为 90%，实际默认步长约 162px，
+    /// 仍明显快于 WPF 原生滚动，但比旧版稍微收敛一点。</summary>
+    public const double BaseWheelStepPixels = 180;
+
+    public const int MinSensitivityPercent = 50;
+    public const int MaxSensitivityPercent = 200;
+    public const int DefaultSensitivityPercent = 90;
+
+    private static int _sensitivityPercent = DefaultSensitivityPercent;
+
+    /// <summary>当前全局滚轮灵敏度百分比。</summary>
+    public static int SensitivityPercent => _sensitivityPercent;
+
+    /// <summary>当前实际使用的单格像素步长。</summary>
+    public static double WheelStepPixels => BaseWheelStepPixels * _sensitivityPercent / 100.0;
+
+    public static int ClampSensitivityPercent(int percent) =>
+        Math.Clamp(percent, MinSensitivityPercent, MaxSensitivityPercent);
+
+    /// <summary>设置全局滚轮灵敏度。设置页拖动滑块时可直接调用做实时预览。</summary>
+    public static void SetSensitivityPercent(int percent) =>
+        _sensitivityPercent = ClampSensitivityPercent(percent);
 
     public static readonly DependencyProperty EnableFastWheelProperty =
         DependencyProperty.RegisterAttached(
@@ -42,6 +61,39 @@ public static class ScrollWheelBehavior
 
     public static bool GetEnableFastWheel(DependencyObject element) =>
         (bool)element.GetValue(EnableFastWheelProperty);
+
+    public static readonly DependencyProperty ContainWheelProperty =
+        DependencyProperty.RegisterAttached(
+            "ContainWheel",
+            typeof(bool),
+            typeof(ScrollWheelBehavior),
+            new PropertyMetadata(false, OnContainWheelChanged));
+
+    public static void SetContainWheel(DependencyObject element, bool value) =>
+        element.SetValue(ContainWheelProperty, value);
+
+    public static bool GetContainWheel(DependencyObject element) =>
+        (bool)element.GetValue(ContainWheelProperty);
+
+    /// <summary>
+    /// 抽屉/展开式设置区域可以把 ContainWheel 设为 true：鼠标位于该区域时，滚轮事件只留在
+    /// 这个局部交互区，不再向外层长页面继续传递。这样用户还在抽屉里选颜色/调参数时，
+    /// 不会因为滚轮把整个设置页一起带走。外层 PreviewMouseWheel 会先识别这个边界并放行，
+    /// 到冒泡阶段再由边界把事件截住，因此内部真正需要滚动的子控件仍有机会先处理事件。
+    /// </summary>
+    private static void OnContainWheelChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
+    {
+        if (d is not UIElement element) return;
+        if ((bool)e.NewValue)
+            element.MouseWheel += ContainedElement_MouseWheel;
+        else
+            element.MouseWheel -= ContainedElement_MouseWheel;
+    }
+
+    private static void ContainedElement_MouseWheel(object sender, MouseWheelEventArgs e)
+    {
+        e.Handled = true;
+    }
 
     private static void OnEnableFastWheelChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
     {
@@ -68,6 +120,15 @@ public static class ScrollWheelBehavior
     private static void ScrollViewer_PreviewMouseWheel(object sender, MouseWheelEventArgs e)
     {
         if (sender is not ScrollViewer sv) return;
+
+        // 抽屉/展开式局部区域声明了 ContainWheel 时，外层 ScrollViewer 不允许抢这次滚轮。
+        // 这里只 return、不设 Handled，给区域内部控件先处理；若内部没有处理，冒泡到该区域本身
+        // 时 ContainedElement_MouseWheel 会截断，确保事件不会继续滚动整个外层页面。
+        if (e.OriginalSource is DependencyObject containedSource &&
+            IsInsideContainWheelBoundary(containedSource, sv))
+        {
+            return;
+        }
 
         // 修复"下拉框展开时滚动页面，弹出的选项列表跟丢在原地、跟真正的下拉框错位分开"：
         // 根因见下面 DoubleAnimation 那段——ComboBox 的下拉 Popup 是独立的顶层窗口，靠监听
@@ -151,6 +212,21 @@ public static class ScrollWheelBehavior
             }
             CloseAnyOpenComboBoxDropdown(child);
         }
+    }
+
+    private static bool IsInsideContainWheelBoundary(DependencyObject source, ScrollViewer outer)
+    {
+        var current = source;
+        while (current != null && !ReferenceEquals(current, outer))
+        {
+            if (GetContainWheel(current))
+                return true;
+
+            current = current is Visual || current is System.Windows.Media.Media3D.Visual3D
+                ? VisualTreeHelper.GetParent(current)
+                : LogicalTreeHelper.GetParent(current);
+        }
+        return false;
     }
 
     /// <summary>从事件真正的来源(originalSource)往上找，直到碰到外层这个 ScrollViewer(outer)为止——

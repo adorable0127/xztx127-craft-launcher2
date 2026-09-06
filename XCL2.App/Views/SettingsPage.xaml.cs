@@ -32,8 +32,23 @@ public partial class SettingsPage : UserControl
     private DispatcherTimer? _editDebounceTimer;
     private string? _preAutoSaveSnapshotJson;
     private bool _suppressAccentPickerSync;
+    // 选择“自定义”本身只表示展开调色抽屉；在用户真正选定/应用颜色前，不应被视为一次设置修改。
+    private bool _customThemeSelectionPending;
     private string _lastSavedUiFingerprint = "";
     private bool _uiFingerprintReady;
+    // 兜底轮询：ComboBox 的 DropDownClosed/SelectionChanged 事件在部分环境下排查下来
+    // 死活不触发（具体原因还没查清楚），导致"改了设置、留在页面上"这条路径完全没有任何
+    // 信号能触发保存提示，只有等到用户真的切页/关闭时才会被动地重新计算一次。这里加一个
+    // 500ms 的轮询定时器，不依赖任何控件事件，直接定期比较"当前界面值"跟"上次检查时的值"，
+    // 有变化就照常走 OnSettingsEdited 的防抖流程——相当于给事件通知上了一道不依赖 WPF
+    // 路由事件是否正常工作的保险，哪怕以后查清了事件不触发的根因，这个兜底留着也无害。
+    private DispatcherTimer? _dirtyPollTimer;
+    private string? _lastPolledFingerprint;
+    private bool _settingsOpenBackupCreated;
+    private bool _transparencyReadabilityWarningShown;
+    // 功能隐藏的编辑副本：用户勾选时只改这里，不提前碰 ConfigService.Config。
+    // 这样手动保存模式下不会被其它即时动作的 ConfigService.Save() 顺带持久化。
+    private HashSet<string> _pendingHiddenFeatureKeys = new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>供 MainWindow.SetMainContent 在切页前查询："当前设置页是否有未保存的改动"。
     /// 只有非自动保存模式下才会变成 true——自动保存模式下每次改动都会立即落盘，
@@ -45,6 +60,7 @@ public partial class SettingsPage : UserControl
         _owner = owner; // 统一先于 InitializeComponent 赋值，避免控件初始化时触发的事件访问到未赋值字段
         InitializeComponent();
         var cfg = _owner.ConfigService.Config;
+        _pendingHiddenFeatureKeys = new HashSet<string>(cfg.HiddenFeatureKeys, StringComparer.OrdinalIgnoreCase);
 
         // 不在设置页构造/Loaded 阶段重复 ApplyForCurrentState。MainWindow 在首帧前已经把全局
         // 主题资源同步到最终配置；这里再刷一次会重建全窗口样式，反而制造“切到设置页时按钮
@@ -53,6 +69,25 @@ public partial class SettingsPage : UserControl
         // 防抖预览定时器属于本页；切走设置页后必须停止，否则用户刚输入颜色就切页时，
         // 300ms 后旧页面的计时器仍会突然改全局主题，看起来像“切页后按钮自己变色”。
         Unloaded += (_, _) => _accentApplyDebounceTimer?.Stop();
+        Loaded += (_, _) =>
+        {
+            if (_settingsOpenBackupCreated) return;
+            _settingsOpenBackupCreated = true;
+            try
+            {
+                var backup = _owner.ConfigService.CreateSettingsOpenBackup();
+                if (_owner.ConfigService.RecordSettingsPageOpenAndShouldShowRestoreTip())
+                {
+                    Dispatcher.BeginInvoke(new Action(() => MessageBoxDialog.ShowInfo(
+                        $"你知道吗？如果你修改错误设置，可以在下面的文件夹里找到自动备份的 config，复制一份并替换 config 就可以还原了！\n\n{Path.GetDirectoryName(backup)}",
+                        "设置备份提示")), DispatcherPriority.ContextIdle);
+                }
+            }
+            catch (Exception ex)
+            {
+                LauncherLogService.AppendLine($"[设置备份] 创建失败：{ex.Message}");
+            }
+        };
 
         MinMemBox.Text = cfg.MinMemoryMb.ToString();
         MaxMemBox.Text = cfg.MaxMemoryMb.ToString();
@@ -71,6 +106,9 @@ public partial class SettingsPage : UserControl
         UiZoomLevelPanel.IsEnabled = cfg.EnableUiZoomShortcut;
         UiZoomSlider.Value = UiZoomService.CurrentPercent;
         UiZoomPercentText.Text = $"{UiZoomService.CurrentPercent}%";
+        MouseWheelSensitivitySlider.Value = ScrollWheelBehavior.ClampSensitivityPercent(cfg.MouseWheelSensitivityPercent);
+        MouseWheelSensitivityValueText.Text = $"{(int)MouseWheelSensitivitySlider.Value}%";
+        ScrollWheelBehavior.SetSensitivityPercent((int)MouseWheelSensitivitySlider.Value);
         ScheduledBackupCheck.IsChecked = cfg.ScheduledInstanceBackupEnabled;
         ScheduledBackupIntervalBox.Text = cfg.ScheduledInstanceBackupIntervalHours.ToString();
         ScheduledBackupRetentionBox.Text = cfg.ScheduledInstanceBackupRetentionCount.ToString();
@@ -114,6 +152,8 @@ public partial class SettingsPage : UserControl
         GlobalWindowOpacitySlider.Value = cfg.GlobalWindowOpacityPercent;
         GlobalWindowOpacityValueText.Text = $"{cfg.GlobalWindowOpacityPercent}%";
         GlobalWindowOpacitySlider.IsEnabled = cfg.EnableGlobalWindowTransparency;
+        TextOpacitySlider.Value = Math.Clamp(cfg.TextOpacityPercent, 50, 100);
+        TextOpacityValueText.Text = $"{(int)TextOpacitySlider.Value}%";
 
         // 弹窗/抽屉独立外观：见 AppConfig.Popup*/Drawer* 字段注释，默认都关闭（跟随主界面）。
         PopupCustomAppearanceCheck.IsChecked = cfg.PopupUseCustomAppearance;
@@ -186,6 +226,13 @@ public partial class SettingsPage : UserControl
             _ => 0
         };
         AutoStartOnBootCheck.IsChecked = cfg.AutoStartOnBoot;
+        AutoStartLaunchBehaviorCombo.SelectedIndex = cfg.AutoStartBehavior switch
+        {
+            AutoStartLaunchBehavior.Minimize => 1,
+            AutoStartLaunchBehavior.MinimizeToTray => 2,
+            _ => 0
+        };
+        AutoStartLaunchBehaviorCombo.IsEnabled = cfg.AutoStartOnBoot;
         PostGameLaunchActionCombo.SelectedIndex = cfg.PostGameLaunchAction switch
         {
             Models.PostGameLaunchAction.Minimize => 1,
@@ -215,6 +262,7 @@ public partial class SettingsPage : UserControl
 
         SelectComboByTag(UiSkinCombo, cfg.UiSkin);
         if (UiSkinCombo.SelectedItem == null) UiSkinCombo.SelectedIndex = 0; // 兜底：配置文件里存了非法值时退回第一项(白色)
+        _customThemeSelectionPending = false;
         UpdateCustomThemePanelVisibility();
 
         // Win11 高级特效开启时锁定为"水"主题（见 ThemeService.SkinAquatic 类注释）：
@@ -261,7 +309,9 @@ public partial class SettingsPage : UserControl
 
         // 所有加载初始值的代码到这里结束，之后任何控件值变化都应该视为"用户真的动了一下"，
         // 从这里开始挂编辑追踪、并放开 _suppressDirtyTracking。
+        LauncherLogService.AppendLine("[设置未保存诊断] 构造函数：即将调用 HookDirtyTracking()。");
         HookDirtyTracking();
+        LauncherLogService.AppendLine("[设置未保存诊断] 构造函数：HookDirtyTracking() 已返回，即将放开 _suppressDirtyTracking。");
         _suppressDirtyTracking = false;
 
         // 等动态 ItemsControl/ComboBox 容器真正生成以后再记录一次“已保存界面快照”。
@@ -270,9 +320,35 @@ public partial class SettingsPage : UserControl
         Loaded += (_, _) => Dispatcher.BeginInvoke(new Action(() =>
         {
             _lastSavedUiFingerprint = BuildSettingsUiFingerprint();
+            _lastPolledFingerprint = _lastSavedUiFingerprint;
             _uiFingerprintReady = true;
             _hasUnsavedChanges = false;
         }), DispatcherPriority.ContextIdle);
+
+        // 见字段注释：不依赖任何控件事件的兜底轮询。只在页面还挂在可视化树上时跑，
+        // Unloaded 时停掉，避免页面被替换/回收之后定时器还在后台空转。
+        _dirtyPollTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(500) };
+        _dirtyPollTimer.Tick += (_, _) =>
+        {
+            if (_suppressDirtyTracking || !_uiFingerprintReady) return;
+            string current;
+            try { current = BuildSettingsUiFingerprint(); }
+            catch (Exception ex)
+            {
+                LauncherLogService.AppendLine($"[设置未保存诊断] 轮询计算指纹时抛出异常：{ex}");
+                return;
+            }
+            // 跟"上一次轮询检查时"的值比，不是跟"已保存"的值比：已经进入 dirty 状态、
+            // 提示卡片已经弹出来之后，只要用户没有再继续动，就不用每 500ms 重新弹一次
+            // 同一张卡片（ShowActionPrompt 本身按 key 去重，但重复调用还是会重新播放一次
+            // 淡入动画，闪一下很难看）。真的又有新变化时这两个值才会不一样。
+            if (current == _lastPolledFingerprint) return;
+            _lastPolledFingerprint = current;
+            LauncherLogService.AppendLine("[设置未保存诊断] 轮询发现界面值跟上一次检查时不一样，走 OnSettingsEdited。");
+            OnSettingsEdited();
+        };
+        _dirtyPollTimer.Start();
+        Unloaded += (_, _) => _dirtyPollTimer?.Stop();
     }
 
     /// <summary>
@@ -284,8 +360,63 @@ public partial class SettingsPage : UserControl
     /// </summary>
     private void HookDirtyTracking()
     {
+        // 诊断日志：不再猜测"事件触不触发"，直接打印这个方法本身有没有执行、
+        // FindVisualChildren<ComboBox> 到底找到了哪些下拉框、有没有在中途因为异常提前退出。
+        // 如果日志里连这行"开始"都没有，说明 HookDirtyTracking() 根本没被调用到；
+        // 如果"开始"出现了但列表里没有 CloseActionCombo，说明 FindVisualChildren 没找到它；
+        // 如果 try 块里抛了异常，会打印出具体异常信息，而不是像之前那样可能被悄悄吞掉。
+        LauncherLogService.AppendLine("[设置未保存诊断] HookDirtyTracking 开始执行。");
+        try
+        {
+            var comboNames = new System.Collections.Generic.List<string>();
+            foreach (var c in FindVisualChildren<ComboBox>(this))
+                comboNames.Add(string.IsNullOrEmpty(c.Name) ? "(无名字)" : c.Name);
+            LauncherLogService.AppendLine($"[设置未保存诊断] FindVisualChildren<ComboBox> 共找到 {comboNames.Count} 个：{string.Join(", ", comboNames)}");
+        }
+        catch (Exception ex)
+        {
+            LauncherLogService.AppendLine($"[设置未保存诊断] 枚举 ComboBox 时抛出异常：{ex}");
+        }
+
+        // ComboBox 展开时用户还处在“浏览候选项/尚未确认”的阶段。SelectionChanged 在某些模板、
+        // 键盘导航和主题重套过程中会在下拉尚未关闭时触发；如果此时立刻进入自动保存，就会
+        // 弹出“已自动保存/回退”气泡打断正在进行的选择。统一等 DropDownClosed 后再比对指纹，
+        // 没真的换选项时指纹相同，自然什么都不会发生。
+        try
+        {
+            foreach (var combo in FindVisualChildren<ComboBox>(this))
+            {
+                var comboRef = combo;
+                combo.DropDownClosed += (_, _) =>
+                {
+                    LauncherLogService.AppendLine($"[设置未保存诊断] ComboBox '{comboRef.Name}' 触发 DropDownClosed，suppressDirtyTracking={_suppressDirtyTracking}");
+                    if (!_suppressDirtyTracking) OnSettingsEdited();
+                };
+
+                // 补充兜底：DropDownClosed 在自定义 ComboBox 模板下是否稳定触发，
+                // 排查下来并不可靠（哪怕模板里 Popup 命名正确）。SelectionChanged 是
+                // Selector 的核心事件，只要 SelectedItem/SelectedIndex 真的变了就一定
+                // 会触发，不依赖任何模板部件命名，用它做主要检测手段更稳妥。
+                // 即使下拉还开着、用户正用键盘上下浏览也没关系——防抖 + 后面的指纹比较
+                // 本来就是按"400ms 内没有再变化"才最终判定，不会因为提前触发就误报。
+                combo.AddHandler(Selector.SelectionChangedEvent, new SelectionChangedEventHandler((_, _) =>
+                {
+                    LauncherLogService.AppendLine($"[设置未保存诊断] ComboBox '{comboRef.Name}' 触发 SelectionChanged(AddHandler,handledEventsToo)，suppressDirtyTracking={_suppressDirtyTracking}，当前选中={comboRef.SelectedItem}");
+                    if (!_suppressDirtyTracking) OnSettingsEdited();
+                }), handledEventsToo: true);
+            }
+        }
+        catch (Exception ex)
+        {
+            LauncherLogService.AppendLine($"[设置未保存诊断] 挂 ComboBox 事件时抛出异常：{ex}");
+        }
+
         AddHandler(TextBoxBase.TextChangedEvent, new TextChangedEventHandler((_, e) =>
         {
+            // 搜索框只是页面内的筛选/定位工具，不是设置项。用户在这里输入关键字时绝不能
+            // 触发“设置已修改”、自动保存或离开页面时的未保存确认。
+            if (ReferenceEquals(e.OriginalSource, SettingsSearchBox)) return;
+
             // 只把用户正在编辑的文本框算作“修改”。后台 Java 刷新、Loaded 初始化、
             // 导入操作给只读框回填路径等程序赋值，不应该凭空弹“设置已修改”。
             if (e.OriginalSource is TextBox tb && !tb.IsKeyboardFocusWithin) return;
@@ -293,9 +424,15 @@ public partial class SettingsPage : UserControl
         }));
         AddHandler(Selector.SelectionChangedEvent, new SelectionChangedEventHandler((_, e) =>
         {
-            // ComboBox/ListBox 的程序性刷新会触发 SelectionChanged；只有控件当前处于
-            // 键盘焦点链或下拉框正在打开时，才视为用户主动选择。
-            if (e.OriginalSource is ComboBox combo && !combo.IsKeyboardFocusWithin && !combo.IsDropDownOpen) return;
+            if (e.OriginalSource is ComboBox combo)
+            {
+                // 下拉还开着时先不保存，等 DropDownClosed 再统一判断。
+                if (combo.IsDropDownOpen) return;
+                if (!combo.IsKeyboardFocusWithin) return;
+
+                // “自定义”仅展开调色区域，真正选颜色之前不是已提交的主题选择。
+                if (ReferenceEquals(combo, UiSkinCombo) && _customThemeSelectionPending) return;
+            }
             if (e.OriginalSource is ListBox list && !list.IsKeyboardFocusWithin) return;
             OnSettingsEdited();
         }));
@@ -314,7 +451,13 @@ public partial class SettingsPage : UserControl
         AddHandler(RangeBase.ValueChangedEvent, new RoutedPropertyChangedEventHandler<double>((_, e) =>
         {
             if (e.OriginalSource is System.Windows.Controls.Primitives.ScrollBar) return;
-            if (e.OriginalSource is Slider slider && !slider.IsKeyboardFocusWithin && !slider.IsMouseCaptureWithin) return;
+            if (e.OriginalSource is Slider slider)
+            {
+                // RGB 三根滑块只是“取色器内部的临时值”，用户点“使用 RGB 颜色”前不算设置变更。
+                if (ReferenceEquals(slider, AccentRSlider) || ReferenceEquals(slider, AccentGSlider) || ReferenceEquals(slider, AccentBSlider))
+                    return;
+                if (!slider.IsKeyboardFocusWithin && !slider.IsMouseCaptureWithin) return;
+            }
             OnSettingsEdited();
         }));
     }
@@ -328,6 +471,7 @@ public partial class SettingsPage : UserControl
     private void OnSettingsEdited()
     {
         if (_suppressDirtyTracking) return;
+        LauncherLogService.AppendLine("[设置未保存诊断] OnSettingsEdited：重启 400ms 防抖计时器。");
 
         _editDebounceTimer?.Stop();
         _editDebounceTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(400) };
@@ -349,14 +493,30 @@ public partial class SettingsPage : UserControl
         }), DispatcherPriority.ContextIdle);
     }
 
-    private void HandleDebouncedEdit()
+    private void HandleDebouncedEdit() => ProcessCurrentUiEdit(showManualPrompt: true, showAutoSavePrompt: true);
+
+    /// <summary>
+    /// 真正执行一次“界面值 vs 最近保存值”的比较。两个 show*Prompt 参数分别控制手动保存卡和
+    /// 自动保存后的“回退”卡；切页/关闭前可以只同步 dirty 状态而不制造重复提示。
+    /// 这时必须先把 400ms 防抖里尚未处理的最后一次改动同步算进去，否则用户刚改完一个抽屉选项
+    /// 就立刻点叉号，会因为计时器还没到点而被误判成“没有未保存设置”。
+    /// </summary>
+    private void ProcessCurrentUiEdit(bool showManualPrompt, bool showAutoSavePrompt)
     {
+        // 诊断日志：目前有反馈说"改了设置抽屉里的控件，左下角始终不弹保存/回退提示"，
+        // 但从代码走查看不出哪一步在正常安装环境下会失败。先把这条链路每一步的判断结果
+        // 落到启动器日志里，下次复现问题时直接看日志就能知道是卡在了哪一步
+        // （没进这个方法 / 指纹判断成"没变" / 判断成"变了"但 Toast 没弹出来），
+        // 而不用继续凭代码推测。定位到具体问题后应移除或降级这些日志。
+        LauncherLogService.AppendLine($"[设置未保存诊断] ProcessCurrentUiEdit 被调用，showManualPrompt={showManualPrompt} showAutoSavePrompt={showAutoSavePrompt} uiFingerprintReady={_uiFingerprintReady}");
+
         // 路由事件会被 WPF 的模板重建、后台刷新等程序动作触发。只有“可保存控件的实际值”
         // 跟上一次保存后的快照不同，才算真正修改；这样在什么都没改时不会莫名弹保存提示。
         if (!_uiFingerprintReady)
         {
             _lastSavedUiFingerprint = BuildSettingsUiFingerprint();
             _uiFingerprintReady = true;
+            LauncherLogService.AppendLine("[设置未保存诊断] 指纹尚未就绪，本次只记录基线，不判断改动。");
             return;
         }
 
@@ -364,33 +524,70 @@ public partial class SettingsPage : UserControl
         if (string.Equals(currentFingerprint, _lastSavedUiFingerprint, StringComparison.Ordinal))
         {
             _hasUnsavedChanges = false;
+            LauncherLogService.AppendLine("[设置未保存诊断] 界面指纹跟上次保存时一致，判定为没有真实改动，不弹提示。");
             return;
         }
+        LauncherLogService.AppendLine("[设置未保存诊断] 界面指纹跟上次保存时不一致，判定为真实改动，准备弹提示。");
 
         var cfg = _owner.ConfigService.Config;
 
         if (cfg.SettingsAutoSaveWithoutConfirm)
         {
             // 自动保存分支：先把保存前的完整配置快照下来（供"回退"按钮用），
-            // 再走跟点击"保存设置"按钮完全相同的落盘逻辑，最后弹气泡告知结果。
+            // 再走跟点击"保存设置"按钮完全相同的落盘逻辑。正常编辑时显示“回退”操作卡；
+            // 关闭/切页前的同步 flush 不再额外闪一张卡片，避免模态确认与操作卡叠在一起。
             _preAutoSaveSnapshotJson = System.Text.Json.JsonSerializer.Serialize(cfg);
             PerformSave();
             _hasUnsavedChanges = false;
 
-            ToastService.ShowActionPrompt(
-                "设置已保存", "回退", RollbackAutoSave,
-                hint: "点击回退可撤销这一次自动保存",
-                autoDismissSeconds: 2, key: "settings-autosave");
+            LauncherLogService.AppendLine($"[设置未保存诊断] 自动保存分支：PerformSave 已执行，showAutoSavePrompt={showAutoSavePrompt}");
+            if (showAutoSavePrompt)
+            {
+                ToastService.ShowActionPrompt(
+                    "设置已自动保存", "回退", RollbackAutoSave,
+                    hint: "点击回退可撤销最近一次自动保存",
+                    key: "settings-autosave");
+            }
         }
         else
         {
             _hasUnsavedChanges = true;
 
-            ToastService.ShowActionPrompt(
-                "设置已修改，是否保存？", "保存", () => PerformSave(),
-                "撤销", DiscardChanges,
-                autoDismissSeconds: 2, key: "settings-dirty");
+            // 手动保存模式下，设置一有真实变化就保留操作卡，直到用户明确保存/撤销。
+            // 即将关闭/切页时由调用方弹模态三选一，所以这里可以只更新 dirty 状态而不重复弹卡片。
+            LauncherLogService.AppendLine($"[设置未保存诊断] 手动保存分支：showManualPrompt={showManualPrompt}，即将调用 ToastService.ShowActionPrompt。");
+            if (showManualPrompt)
+            {
+                ToastService.ShowActionPrompt(
+                    "设置已修改，是否保存？", "保存", () => PerformSave(),
+                    "撤销", DiscardChanges,
+                    key: "settings-dirty");
+            }
         }
+    }
+
+    /// <summary>
+    /// 供 MainWindow 在切页/真正关闭窗口之前调用。立即结算还卡在 400ms 防抖中的最后一次编辑：
+    /// 自动保存模式会先完成保存；手动保存模式只把 HasUnsavedChanges 更新为准确值，
+    /// 再由 MainWindow 的三选一确认决定保存、放弃还是取消。
+    /// </summary>
+    public void FlushPendingEditsForLeave(bool preserveAutoSaveRollbackPrompt = false)
+    {
+        if (_suppressDirtyTracking) return;
+        _editDebounceTimer?.Stop();
+        // 离页时如果自动保存已开启，仍保留“回退”卡片供用户在其它页面撤销；
+        // 真正关闭窗口时则没有显示它的意义，调用方传 false 即可。手动保存分支不在这里
+        // 额外弹操作卡，因为 MainWindow 紧接着会给出保存/放弃/取消的模态选择。
+        ProcessCurrentUiEdit(showManualPrompt: false, showAutoSavePrompt: preserveAutoSaveRollbackPrompt);
+    }
+
+    /// <summary>用户在“未保存设置”确认框里选择取消关闭/重新编辑后，重新保证操作卡可见。
+    /// 这主要覆盖“修改后不足 400ms 就点关闭/导航”的边界情况：同步 Flush 已经识别出 dirty，
+    /// 但为了避免跟模态框重叠，Flush 本身没有显示手动保存卡；用户决定留下后再补回来。</summary>
+    public void ShowPendingEditPromptIfNeeded()
+    {
+        if (_suppressDirtyTracking) return;
+        ProcessCurrentUiEdit(showManualPrompt: true, showAutoSavePrompt: true);
     }
 
     /// <summary>把设置页中真正可编辑、会参与保存的常用控件压成稳定字符串，用来判断“值到底有没有变”。</summary>
@@ -409,7 +606,8 @@ public partial class SettingsPage : UserControl
 
         foreach (var tb in FindVisualChildren<TextBox>(this))
         {
-            if (tb.IsReadOnly) continue;
+            // 搜索框不属于配置内容；否则只输入搜索关键字也会改变指纹，被误判成设置修改。
+            if (tb.IsReadOnly || ReferenceEquals(tb, SettingsSearchBox)) continue;
             parts.Add($"T|{Key(tb, "TextBox")}|{tb.Text}");
         }
         foreach (var cb in FindVisualChildren<CheckBox>(this))
@@ -418,16 +616,29 @@ public partial class SettingsPage : UserControl
             parts.Add($"R|{Key(rb, "RadioButton")}|{rb.IsChecked}");
         foreach (var combo in FindVisualChildren<ComboBox>(this))
         {
-            string value = combo.SelectedItem switch
+            string value;
+            if (ReferenceEquals(combo, UiSkinCombo) && _customThemeSelectionPending)
             {
-                JavaListItem java => java.Entry?.Id ?? "",
-                ComboBoxItem item => item.Tag?.ToString() ?? item.Content?.ToString() ?? "",
-                _ => combo.SelectedValue?.ToString() ?? combo.SelectedItem?.ToString() ?? ""
-            };
+                // 只展开“自定义”调色抽屉时，指纹仍按当前已保存主题计算。
+                value = _owner.ConfigService.Config.UiSkin;
+            }
+            else
+            {
+                value = combo.SelectedItem switch
+                {
+                    JavaListItem java => java.Entry?.Id ?? "",
+                    ComboBoxItem item => item.Tag?.ToString() ?? item.Content?.ToString() ?? "",
+                    _ => combo.SelectedValue?.ToString() ?? combo.SelectedItem?.ToString() ?? ""
+                };
+            }
             parts.Add($"S|{Key(combo, "ComboBox")}|{value}");
         }
         foreach (var slider in FindVisualChildren<Slider>(this))
+        {
+            if (ReferenceEquals(slider, AccentRSlider) || ReferenceEquals(slider, AccentGSlider) || ReferenceEquals(slider, AccentBSlider))
+                continue;
             parts.Add($"V|{Key(slider, "Slider")}|{Math.Round(slider.Value, 3)}");
+        }
 
         // 自定义窗口背景现在由“导入/清除”按钮立即应用并立即持久化，
         // 因此只读路径框不属于批量保存内容，也不参与未保存设置指纹。
@@ -448,7 +659,20 @@ public partial class SettingsPage : UserControl
 
         _owner.ConfigService.ReplaceConfigFieldsFrom(snapshot);
         _owner.ConfigService.Save();
+
+        // 回退不能只改 config.json：自动保存时已经同步过的系统/运行时副作用也必须一起恢复，
+        // 否则会出现“文件回退了，但开机启动/缩放/功能隐藏/访客模式仍保持新状态”的半回退。
+        var cfg = _owner.ConfigService.Config;
+        AutoStartService.Apply(cfg.AutoStartOnBoot);
         ApplyAllVisualEffectsFromConfig();
+        _owner.ApplyDownloadPopupDetailMode();
+        FrameRateMonitorService.SetEnabled(cfg.EnableHighPerformanceMode);
+        _owner.RefreshGuestModeState();
+        _owner.ReevaluateAutoThemeCycle();
+        _owner.RefreshSidebar();
+        _owner.ApplyFeatureVisibility();
+
+        _preAutoSaveSnapshotJson = null;
         _owner.NavigateToSettings();
         ToastService.ShowInfo("已回退到上一次自动保存之前的设置。");
     }
@@ -459,6 +683,7 @@ public partial class SettingsPage : UserControl
     private void DiscardChanges()
     {
         _hasUnsavedChanges = false;
+        ToastService.DismissActionPrompt("settings-dirty");
         ApplyAllVisualEffectsFromConfig();
         _owner.NavigateToSettings();
     }
@@ -466,7 +691,13 @@ public partial class SettingsPage : UserControl
     /// <summary>供 MainWindow 在"切换页面时有未保存改动"的三选一确认里选了"放弃"时调用：
     /// 只清掉未保存标记，不像 DiscardChanges 那样重新导航回设置页——调用方接下来
     /// 就会把主内容区切换成用户真正想去的那个页面，这里没必要多跳一次设置页。</summary>
-    public void DiscardUnsavedChangesWithoutNavigating() => _hasUnsavedChanges = false;
+    public void DiscardUnsavedChangesWithoutNavigating()
+    {
+        _hasUnsavedChanges = false;
+        ToastService.DismissActionPrompt("settings-dirty");
+        // 设置页支持若干“只预览、不落盘”的视觉项；选择放弃后切走页面时要恢复已保存状态。
+        ApplyAllVisualEffectsFromConfig();
+    }
 
     /// <summary>回退自动保存之后，跟 Save_Click 结尾同样需要重新应用一遍视觉相关的效果
     /// （配色/透明度/Win11 特效），避免"配置文件已经回退了，但当前已打开窗口的画面
@@ -477,6 +708,7 @@ public partial class SettingsPage : UserControl
         ThemeService.ApplyForCurrentState(cfg.GuestModeEnabled, cfg.UiSkin, cfg.IsDarkMode, cfg.CustomAccentColor);
         ThemeService.ApplyWindowTransparency(cfg.EnableWindowTransparency, cfg.WindowOpacityPercent);
         ThemeService.ApplyGlobalWindowTransparency(cfg.EnableGlobalWindowTransparency, cfg.GlobalWindowOpacityPercent);
+        ThemeService.ApplyTextOpacity(cfg.TextOpacityPercent);
         _owner.Topmost = cfg.AlwaysOnTop;
         if (!string.IsNullOrWhiteSpace(cfg.CustomBackgroundImagePath) && File.Exists(cfg.CustomBackgroundImagePath))
             ApplyBackgroundImage(cfg.CustomBackgroundImagePath);
@@ -490,6 +722,8 @@ public partial class SettingsPage : UserControl
         ThemeService.ApplyFontFamily(cfg.AppFontFamily, cfg.EnableWinUi3Design);
         FontService.ApplyScopedFonts(_owner, cfg);
         ThemeService.ApplyBrightness(cfg.BrightnessPercent);
+        ScrollWheelBehavior.SetSensitivityPercent(cfg.MouseWheelSensitivityPercent);
+        UiZoomService.PreviewPercent(cfg.UiZoomPercent);
     }
 
     /// <summary>
@@ -645,16 +879,15 @@ public partial class SettingsPage : UserControl
         }
     }
 
-    /// <summary>功能隐藏面板里任意一个 CheckBox 勾选状态变化时，同步写回配置的
-    /// HiddenFeatureKeys 列表。不在这里立即保存到磁盘——跟页面其它设置一样，
-    /// 统一等用户点"保存设置"（Save_Click）才落盘，避免每点一下就触发一次 IO。</summary>
+    /// <summary>功能隐藏面板的勾选只先留在 UI 中；真正写回 HiddenFeatureKeys 统一放在
+    /// PerformSave。这样关闭自动保存时不会在点击“保存设置”之前改动内存配置，也不会因为
+    /// 随后某个无关操作恰好触发 ConfigService.Save() 而把未确认的勾选一起写进磁盘。</summary>
     private void FeatureHideCheck_Changed(object sender, RoutedEventArgs e)
     {
-        if (sender is not CheckBox { Tag: string key } checkBox) return;
-        var cfg = _owner.ConfigService.Config;
-        var isHidden = checkBox.IsChecked == true;
-        if (isHidden && !cfg.HiddenFeatureKeys.Contains(key)) cfg.HiddenFeatureKeys.Add(key);
-        else if (!isHidden) cfg.HiddenFeatureKeys.Remove(key);
+        if (_suppressDirtyTracking || sender is not CheckBox { Tag: string key } checkBox) return;
+        if (checkBox.IsChecked == true) _pendingHiddenFeatureKeys.Add(key);
+        else _pendingHiddenFeatureKeys.Remove(key);
+        // DirtyTracking 的根级 Checked/Unchecked 路由事件会负责标记修改。
     }
 
     private static System.Collections.Generic.IEnumerable<T> FindVisualChildren<T>(DependencyObject root) where T : DependencyObject
@@ -687,18 +920,13 @@ public partial class SettingsPage : UserControl
     }
 
     /// <summary>
-    /// 勾选/取消勾选立即写回 cfg.AdvancedMode 并保存——这是现在全局唯一的模式切换入口
-    /// （原来首页也有一份单独的开关，写回逻辑重复了一份，现在合并到这一处，首页改成纯展示磁贴，
-    /// 不再持有任何模式状态）。构造函数里第一次设置 AdvancedModeCheck.IsChecked（用来回填
-    /// 已有配置）也会触发这个事件——这里直接把"当前 checkbox 状态"写回配置本身是幂等操作，
-    /// 构造阶段触发一次不会产生任何实际变化，不需要额外加抑制标志位。
+    /// 高手模式在设置页内可以立即预览对应控件的显隐，但配置本身仍遵循统一保存行为：
+    /// 自动保存关闭时必须点“保存设置”，自动保存开启时由 DirtyTracking 防抖后调用 PerformSave。
     /// </summary>
     private void AdvancedModeCheck_Changed(object sender, RoutedEventArgs e)
     {
-        _owner.ConfigService.Config.AdvancedMode = AdvancedModeCheck.IsChecked == true;
-        _owner.ConfigService.Save();
+        if (_suppressDirtyTracking) return;
         UpdateAdvancedVisibility();
-        MarkCurrentUiAsSaved();
     }
 
     /// <summary>见字段声明处注释：挡住初始化赋值触发的事件，避免多余的一次保存。</summary>
@@ -707,41 +935,21 @@ public partial class SettingsPage : UserControl
     private void CloseActionCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (_isInitializingCloseTraySettings) return;
-        _owner.ConfigService.Config.DefaultCloseAction = CloseActionCombo.SelectedIndex switch
-        {
-            1 => CloseButtonAction.MinimizeToTray,
-            2 => CloseButtonAction.Minimize,
-            3 => CloseButtonAction.AskEachTime,
-            _ => CloseButtonAction.DirectClose
-        };
-        _owner.ConfigService.Save();
-        MarkCurrentUiAsSaved();
+        // 只保留 UI 选择；DirtyTracking 负责提示/自动保存，真正写 cfg 在 PerformSave。
     }
 
-    /// <summary>「游戏启动成功后启动器窗口」下拉框——立即生效型设置，跟 CloseActionCombo
-    /// 同一套接线方式，不用等「保存设置」按钮。</summary>
+    /// <summary>「游戏启动成功后启动器窗口」同样遵循设置页统一保存策略。</summary>
     private void PostGameLaunchActionCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (_isInitializingCloseTraySettings) return;
-        _owner.ConfigService.Config.PostGameLaunchAction = PostGameLaunchActionCombo.SelectedIndex switch
-        {
-            1 => Models.PostGameLaunchAction.Minimize,
-            2 => Models.PostGameLaunchAction.MinimizeToTray,
-            3 => Models.PostGameLaunchAction.Close,
-            _ => Models.PostGameLaunchAction.KeepAsIs
-        };
-        _owner.ConfigService.Save();
-        MarkCurrentUiAsSaved();
     }
 
     private void AutoStartOnBootCheck_Changed(object sender, RoutedEventArgs e)
     {
+        if (AutoStartLaunchBehaviorCombo != null)
+            AutoStartLaunchBehaviorCombo.IsEnabled = AutoStartOnBootCheck.IsChecked == true;
         if (_isInitializingCloseTraySettings) return;
-        var enabled = AutoStartOnBootCheck.IsChecked == true;
-        _owner.ConfigService.Config.AutoStartOnBoot = enabled;
-        _owner.ConfigService.Save();
-        AutoStartService.Apply(enabled);
-        MarkCurrentUiAsSaved();
+        // 开机自启动涉及系统启动项，只有 PerformSave 真正保存后才调用 AutoStartService.Apply。
     }
 
     /// <summary>并发线程数输入框只在"启用多线程下载"勾选时才有意义显示——关闭多线程下载时
@@ -1140,6 +1348,9 @@ public partial class SettingsPage : UserControl
         cfg.EnableWin11VisualEffects = false;
         cfg.EnableWindowTransparency = false;
         cfg.EnableGlobalWindowTransparency = false;
+        cfg.TextOpacityPercent = 100;
+        cfg.AutoStartOnBoot = false;
+        cfg.AutoStartBehavior = AutoStartLaunchBehavior.ShowWindow;
         cfg.CustomBackgroundFrostPercent = 65;
         cfg.CustomAccentColor = null;
         cfg.PopupUseCustomAppearance = false;
@@ -1150,6 +1361,7 @@ public partial class SettingsPage : UserControl
         cfg.DrawerOpacityPercent = 92;
         cfg.DrawerFrostPercent = 40;
         cfg.DrawerTextOpacityPercent = 100;
+        cfg.MouseWheelSensitivityPercent = ScrollWheelBehavior.DefaultSensitivityPercent;
         cfg.MaxDownloadThreads = 8;
         cfg.DownloadSpeedLimitKBps = 0;
         cfg.SmartBandwidthThrottle = false;
@@ -1170,6 +1382,117 @@ public partial class SettingsPage : UserControl
 
     /// <summary>实际的保存逻辑，从原来的 Save_Click 里抽出来，供"保存设置"按钮点击、
     /// 以及编辑追踪的自动保存/气泡"保存"按钮共用同一套逻辑，不用维护两份。</summary>
+    #region 设置搜索
+
+    private DispatcherTimer? _searchDebounceTimer;
+
+    /// <summary>
+    /// 设置搜索：每敲一个字符防抖 300ms，然后在 SettingsRootPanel 整棵可视化树里查找
+    /// TextBlock/CheckBox/Button/RadioButton 的文字内容，命中就给它套一层高亮边框
+    /// （不改变原有布局，只是叠加一个 Border 提示），并把第一个匹配项滚动到可视区域。
+    /// 不做"隐藏不匹配项"——这个页面控件之间有大量联动（比如高手模式开关影响下面几个
+    /// 控件的显隐），贸然按搜索结果隐藏容易跟这些既有的显隐逻辑打架，只做"帮你找到在哪"
+    /// 已经能大幅减少手动上下滚动查找的成本。
+    /// </summary>
+    private void SettingsSearchBox_TextChanged(object sender, TextChangedEventArgs e)
+    {
+        SettingsSearchPlaceholder.Visibility = string.IsNullOrEmpty(SettingsSearchBox.Text)
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+
+        _searchDebounceTimer?.Stop();
+        _searchDebounceTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(300) };
+        _searchDebounceTimer.Tick += (_, _) =>
+        {
+            _searchDebounceTimer!.Stop();
+            RunSettingsSearch(SettingsSearchBox.Text?.Trim() ?? "");
+        };
+        _searchDebounceTimer.Start();
+    }
+
+    private void RunSettingsSearch(string keyword)
+    {
+        ClearSettingsSearchHighlight();
+
+        if (string.IsNullOrEmpty(keyword))
+        {
+            SettingsSearchResultText.Text = "";
+            return;
+        }
+
+        var matches = new System.Collections.Generic.List<FrameworkElement>();
+        CollectSettingsSearchMatches(SettingsRootPanel, keyword, matches);
+
+        if (matches.Count == 0)
+        {
+            SettingsSearchResultText.Text = "没有找到匹配的设置项";
+            return;
+        }
+
+        SettingsSearchResultText.Text = $"找到 {matches.Count} 项";
+        foreach (var match in matches)
+        {
+            HighlightSettingsSearchMatch(match);
+        }
+
+        matches[0].BringIntoView();
+    }
+
+    /// <summary>递归遍历可视化树，收集文字内容包含关键字（不区分大小写）的元素。</summary>
+    private static void CollectSettingsSearchMatches(DependencyObject root, string keyword, System.Collections.Generic.List<FrameworkElement> result)
+    {
+        var count = System.Windows.Media.VisualTreeHelper.GetChildrenCount(root);
+        for (var i = 0; i < count; i++)
+        {
+            var child = System.Windows.Media.VisualTreeHelper.GetChild(root, i);
+
+            var text = child switch
+            {
+                TextBlock tb => tb.Text,
+                CheckBox cb => cb.Content as string,
+                RadioButton rb => rb.Content as string,
+                Button btn => btn.Content as string,
+                _ => null
+            };
+
+            if (!string.IsNullOrEmpty(text) && text.Contains(keyword, StringComparison.OrdinalIgnoreCase)
+                && child is FrameworkElement fe)
+            {
+                result.Add(fe);
+            }
+
+            CollectSettingsSearchMatches(child, keyword, result);
+        }
+    }
+
+    /// <summary>用一层半透明强调色 Border 包住命中的元素外面，达到"高亮"效果；
+    /// 不直接改元素自身 Background，避免跟控件自带的模板样式互相覆盖。</summary>
+    private void HighlightSettingsSearchMatch(FrameworkElement element)
+    {
+        // 简化实现：直接给元素叠加一个短暂的黄色描边效果，通过 Tag 记录以便后续清除。
+        // WPF 里给任意元素"套外框"最稳妥的方式是找它的直接可视化父级里能接受
+        // BorderBrush 的容器；这里图简单，改成直接调它自身的 Effect（DropShadowEffect
+        // 模拟高亮描边），对 TextBlock/CheckBox/Button 都适用，不需要关心具体是什么控件。
+        element.Effect = new System.Windows.Media.Effects.DropShadowEffect
+        {
+            Color = System.Windows.Media.Colors.Gold,
+            ShadowDepth = 0,
+            BlurRadius = 12,
+            Opacity = 0.9
+        };
+        _searchHighlightedElements.Add(element);
+    }
+
+    private readonly System.Collections.Generic.List<FrameworkElement> _searchHighlightedElements = new();
+
+    private void ClearSettingsSearchHighlight()
+    {
+        foreach (var el in _searchHighlightedElements) el.Effect = null;
+        _searchHighlightedElements.Clear();
+    }
+
+    #endregion
+
     private void PerformSave()
     {
         // 注意：cfg.JavaPath 这个字段本身没有删除（仍然被 FindJava 当兜底路径使用，
@@ -1178,6 +1501,39 @@ public partial class SettingsPage : UserControl
         // 一个不存在的控件去覆盖它——保存设置不应该把这个字段清空或改动，交给别处的
         // 自动探测/下载逻辑维护即可。
         var cfg = _owner.ConfigService.Config;
+
+        // “窗口与托盘 / 界面缩放”等项目过去在 Changed 事件里直接 Save，绕过了页面底部的
+        // 保存按钮。现在统一在这里落盘，确保自动保存关闭时所有普通设置都遵循同一套语义。
+        cfg.DefaultCloseAction = CloseActionCombo.SelectedIndex switch
+        {
+            1 => CloseButtonAction.MinimizeToTray,
+            2 => CloseButtonAction.Minimize,
+            3 => CloseButtonAction.AskEachTime,
+            _ => CloseButtonAction.DirectClose
+        };
+        cfg.PostGameLaunchAction = PostGameLaunchActionCombo.SelectedIndex switch
+        {
+            1 => Models.PostGameLaunchAction.Minimize,
+            2 => Models.PostGameLaunchAction.MinimizeToTray,
+            3 => Models.PostGameLaunchAction.Close,
+            _ => Models.PostGameLaunchAction.KeepAsIs
+        };
+        cfg.AutoStartOnBoot = AutoStartOnBootCheck.IsChecked == true;
+        cfg.AutoStartBehavior = AutoStartLaunchBehaviorCombo.SelectedIndex switch
+        {
+            1 => AutoStartLaunchBehavior.Minimize,
+            2 => AutoStartLaunchBehavior.MinimizeToTray,
+            _ => AutoStartLaunchBehavior.ShowWindow
+        };
+
+        cfg.EnableUiZoomShortcut = UiZoomEnabledCheck.IsChecked == true;
+        var zoomBindings = new List<string>();
+        if (UiZoomWheelCheck.IsChecked == true) zoomBindings.Add(UiZoomShortcutMode.CtrlWheel);
+        if (UiZoomArrowCheck.IsChecked == true) zoomBindings.Add(UiZoomShortcutMode.CtrlArrow);
+        cfg.UiZoomShortcutBindings = zoomBindings;
+        cfg.UiZoomPercent = Math.Clamp((int)Math.Round(UiZoomSlider.Value), UiZoomService.MinPercent, UiZoomService.MaxPercent);
+        cfg.MouseWheelSensitivityPercent = ScrollWheelBehavior.ClampSensitivityPercent((int)Math.Round(MouseWheelSensitivitySlider.Value));
+
         cfg.MinMemoryMb = int.TryParse(MinMemBox.Text, out var min) ? min : cfg.MinMemoryMb;
         cfg.MaxMemoryMb = int.TryParse(MaxMemBox.Text, out var max) ? max : cfg.MaxMemoryMb;
         cfg.WindowWidth = int.TryParse(WidthBox.Text, out var w) ? w : cfg.WindowWidth;
@@ -1228,6 +1584,7 @@ public partial class SettingsPage : UserControl
         // 与 Win11EffectsService.SetEnabled 类注释。
         cfg.EnableGlobalWindowTransparency = GlobalWindowTransparencyCheck.IsChecked == true;
         cfg.GlobalWindowOpacityPercent = (int)GlobalWindowOpacitySlider.Value;
+        cfg.TextOpacityPercent = Math.Clamp((int)Math.Round(TextOpacitySlider.Value), 50, 100);
 
         ThemeService.ApplyWindowTransparency(cfg.EnableWindowTransparency, cfg.WindowOpacityPercent);
         var material = Enum.TryParse<Win11EffectsService.BackdropMaterial>(cfg.Win11BackdropMaterial, out var m)
@@ -1248,6 +1605,17 @@ public partial class SettingsPage : UserControl
         else
             _owner.SetCustomBackgroundImage(null);
         ThemeService.ApplyGlobalWindowTransparency(cfg.EnableGlobalWindowTransparency, cfg.GlobalWindowOpacityPercent);
+        ThemeService.ApplyTextOpacity(cfg.TextOpacityPercent);
+
+        if (!_transparencyReadabilityWarningShown &&
+            ((cfg.EnableWindowTransparency && cfg.WindowOpacityPercent <= 45) ||
+             (cfg.EnableGlobalWindowTransparency && cfg.GlobalWindowOpacityPercent <= 65)))
+        {
+            _transparencyReadabilityWarningShown = true;
+            Dispatcher.BeginInvoke(new Action(() => MessageBoxDialog.ShowInfo(
+                $"当前配置：面板透明度 {cfg.WindowOpacityPercent}%，整窗透明度 {cfg.GlobalWindowOpacityPercent}%，文字透明度 {cfg.TextOpacityPercent}%。\n\n如果造成有些文字看不清楚，可以在设置里找到“文字透明度设置”进行单独设置。",
+                "透明度可读性提示")), DispatcherPriority.Background);
+        }
 
         cfg.PopupUseCustomAppearance = PopupCustomAppearanceCheck.IsChecked == true;
         cfg.PopupOpacityPercent = (int)PopupOpacitySlider.Value;
@@ -1285,19 +1653,26 @@ public partial class SettingsPage : UserControl
 
         cfg.SelectedJavaId = (DefaultJavaCombo.SelectedItem as JavaListItem)?.Entry?.Id;
 
-        // 访客模式：勾选状态直接写回配置。实际"用临时账户替换真实账户"的逻辑在 MainWindow 里
-        // （见 MainWindow.RefreshGuestModeState），这里只负责持久化这个开关本身，跟其它设置项
-        // 一样要点"保存设置"才生效——避免访客模式这种影响账户行为的开关也搞成"勾选就立即生效"，
-        // 那样用户在这个页面里勾选的瞬间还没保存，SidebarText 却已经变了，容易造成"状态不一致"的困惑。
-        var guestModeChanged = cfg.GuestModeEnabled != (GuestModeCheck.IsChecked == true);
-        cfg.GuestModeEnabled = GuestModeCheck.IsChecked == true;
+        // 访客模式：这里把勾选状态写回本轮会话的 Config。真正切换临时账户由
+        // MainWindow.RefreshGuestModeState 完成；ConfigService.Save 会特意把 GuestModeEnabled
+        // 以 false 写入磁盘，所以这个开关只对当前进程有效、重启后始终恢复普通模式。
+        // 设置页仍保持“点保存才生效”的交互，避免仅勾选但尚未保存时侧边栏提前切换账户。
+        var requestedGuestMode = GuestModeCheck.IsChecked == true;
+        var enableGuestModeByRestart = !cfg.GuestModeEnabled && requestedGuestMode;
+        var guestModeChanged = cfg.GuestModeEnabled != requestedGuestMode;
+        // 开启访客模式时当前进程绝不直接切换；配置仍保持 false，保存完成后重启到一次性的
+        // --guest-session。关闭访客模式则可以直接清掉当前会话态。
+        if (!enableGuestModeByRestart) cfg.GuestModeEnabled = requestedGuestMode;
 
         // 配色皮肤：同样只是先写回配置，实际应用画刷的动作跟访客模式共用下面
         // RefreshGuestModeState/ThemeService.ApplyForCurrentState 那一次调用，
         // 不需要在这里单独再调一次 ThemeService，避免访客模式和皮肤同时变化时重复刷新两次。
-        var uiSkinChanged = cfg.UiSkin != ((UiSkinCombo.SelectedItem as ComboBoxItem)?.Tag as string ?? cfg.UiSkin);
-        if ((UiSkinCombo.SelectedItem as ComboBoxItem)?.Tag is string selectedSkin)
-            cfg.UiSkin = selectedSkin;
+        var selectedSkinFromUi = (UiSkinCombo.SelectedItem as ComboBoxItem)?.Tag as string;
+        // 如果“自定义”只是被打开、用户还没真正选定颜色，就保持原主题不变；这时即使因为
+        // 其它设置点击了“保存”，也不能顺手把 Custom 当成已经确认的选择写进配置。
+        var skinToSave = _customThemeSelectionPending ? cfg.UiSkin : (selectedSkinFromUi ?? cfg.UiSkin);
+        var uiSkinChanged = !string.Equals(cfg.UiSkin, skinToSave, StringComparison.Ordinal);
+        cfg.UiSkin = skinToSave;
 
         var skinApiRoot = SkinApiRootBox.Text?.Trim();
         cfg.SkinApiRoot = string.IsNullOrEmpty(skinApiRoot) ? SkinService.DefaultSkinApiRoot : skinApiRoot;
@@ -1336,7 +1711,14 @@ public partial class SettingsPage : UserControl
         cfg.DownloadPopupSizeDisplayMode = DownloadPopupSizeModeCombo.SelectedIndex;
         cfg.EnableHighPerformanceMode = HighPerformanceModeCheck.IsChecked == true;
 
+        // 功能隐藏从页面内的编辑副本写回，不依赖 ItemsControl 当前是否已生成全部可视容器。
+        cfg.HiddenFeatureKeys = _pendingHiddenFeatureKeys.ToList();
+
         _owner.ConfigService.Save();
+        AutoStartService.Apply(cfg.AutoStartOnBoot);
+        ScrollWheelBehavior.SetSensitivityPercent(cfg.MouseWheelSensitivityPercent);
+        UiZoomService.PreviewPercent(cfg.UiZoomPercent);
+
         // 下载气泡详情行的显隐/放大是"保存后立即生效"类设置，跟窗口透明度那两项同理，
         // 不需要用户重启或切页才能看到变化。
         _owner.ApplyDownloadPopupDetailMode();
@@ -1348,7 +1730,10 @@ public partial class SettingsPage : UserControl
         // 访客模式、皮肤选择，或“自定义”主题颜色任一变化都要重新应用当前主题。
         // 特别是 UiSkin 已经是 Custom 时，仅修改十六进制/RGB 颜色也必须立即刷新，
         // 不能因为 uiSkinChanged=false 就把新颜色只写进 config.json 而界面仍停在旧颜色。
-        if (guestModeChanged || uiSkinChanged || customAccentChanged) _owner.RefreshGuestModeState();
+        // 关闭访客模式、或单纯改主题时可在当前进程刷新；开启访客模式必须走下面的进程重启，
+        // 不能再在这里临时切账户，否则会违背“一开启访客就重启”的会话隔离约定。
+        if ((!enableGuestModeByRestart && guestModeChanged) || uiSkinChanged || customAccentChanged)
+            _owner.RefreshGuestModeState();
         // 自动循环的时间点可能刚被改过（上面已经清空了 AutoThemeLastAppliedSlotStartHour），
         // 这里立即按新计划重新校验一次，保证"保存后一秒内看到效果"——如果当前时间刚好落在
         // 新设置的时间段边界两侧、导致该切换的深浅色模式发生变化，会立刻应用，不需要等到
@@ -1360,8 +1745,17 @@ public partial class SettingsPage : UserControl
         RefreshRegistryStatusText();
         StatusText.Text = "设置已保存。";
         _hasUnsavedChanges = false;
+        // 如果用户是通过页面底部“保存设置”或离页/关闭确认保存，而不是点操作卡里的“保存”，
+        // 旧的“设置已修改”卡片也应立即消失，避免保存后还挂着一张过期提示。
+        ToastService.DismissActionPrompt("settings-dirty");
         _lastSavedUiFingerprint = BuildSettingsUiFingerprint();
         _uiFingerprintReady = true;
+
+        if (enableGuestModeByRestart)
+        {
+            _owner.RequestGuestModeRestart();
+            return;
+        }
     }
 
     /// <summary>刷新"注册表存储"区块下方的状态提示文字：当前 HKLM/HKCU 两支实际是否存在
@@ -1706,6 +2100,9 @@ public partial class SettingsPage : UserControl
         PopupTextOpacitySlider.IsEnabled = useCustom;
         if (_suppressDirtyTracking) return;
         ThemeService.SetPopupAppearanceConfig(useCustom, (int)PopupOpacitySlider.Value, (int)PopupFrostSlider.Value, (int)PopupTextOpacitySlider.Value);
+        // 这些控件属于“展开/抽屉式设置”区域，部分 WPF 模板会吞掉根级路由事件。
+        // 在实际用户改动路径上显式通知一次，保证保存/回退操作卡一定出现。
+        OnSettingsEdited();
     }
 
     /// <summary>弹窗三个滑块（背景透明度/磨砂度/文字透明度）共用同一个即时预览处理器，
@@ -1718,6 +2115,7 @@ public partial class SettingsPage : UserControl
         PopupTextOpacityValueText.Text = $"{(int)PopupTextOpacitySlider.Value}%";
         if (_suppressDirtyTracking) return;
         ThemeService.SetPopupAppearanceConfig(PopupCustomAppearanceCheck.IsChecked == true, (int)PopupOpacitySlider.Value, (int)PopupFrostSlider.Value, (int)PopupTextOpacitySlider.Value);
+        OnSettingsEdited();
     }
 
     /// <summary>抽屉（AI 助手侧栏）"独立外观"开关，逻辑跟 PopupAppearanceControl_Changed 对称。</summary>
@@ -1730,6 +2128,7 @@ public partial class SettingsPage : UserControl
         DrawerTextOpacitySlider.IsEnabled = useCustom;
         if (_suppressDirtyTracking) return;
         ThemeService.SetDrawerAppearanceConfig(useCustom, (int)DrawerOpacitySlider.Value, (int)DrawerFrostSlider.Value, (int)DrawerTextOpacitySlider.Value);
+        OnSettingsEdited();
     }
 
     /// <summary>抽屉三个滑块共用的即时预览处理器，逻辑跟 PopupAppearanceSlider_ValueChanged 对称。</summary>
@@ -1741,6 +2140,7 @@ public partial class SettingsPage : UserControl
         DrawerTextOpacityValueText.Text = $"{(int)DrawerTextOpacitySlider.Value}%";
         if (_suppressDirtyTracking) return;
         ThemeService.SetDrawerAppearanceConfig(DrawerCustomAppearanceCheck.IsChecked == true, (int)DrawerOpacitySlider.Value, (int)DrawerFrostSlider.Value, (int)DrawerTextOpacitySlider.Value);
+        OnSettingsEdited();
     }
 
 /// <summary>原来这里会在勾选 Win11 高级特效时强制把色系锁死成"水"（Aquatic），
@@ -1779,6 +2179,8 @@ public partial class SettingsPage : UserControl
             var selectedSkin = (UiSkinCombo?.SelectedItem as ComboBoxItem)?.Tag as string;
             if (!string.Equals(selectedSkin, ThemeService.SkinCustom, StringComparison.Ordinal)) return;
 
+            // 输入到合法颜色即视为已经做出自定义颜色决定；在此之前仅展开面板不算修改。
+            CommitCustomThemeSelection();
             _accentApplyDebounceTimer?.Stop();
             _accentApplyDebounceTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(300) };
             _accentApplyDebounceTimer.Tick += (_, _) =>
@@ -1798,6 +2200,35 @@ public partial class SettingsPage : UserControl
     private void UiSkinCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         UpdateCustomThemePanelVisibility();
+        if (_suppressDirtyTracking || UiSkinCombo?.SelectedItem is not ComboBoxItem { Tag: string selectedSkin }) return;
+
+        var cfg = _owner.ConfigService.Config;
+        if (string.Equals(selectedSkin, ThemeService.SkinCustom, StringComparison.Ordinal))
+        {
+            // 关键修复：点“自定义”仅展开调色区域。若当前保存的主题本来不是 Custom，
+            // 此时不要预览/保存/弹回退气泡；等用户真正点色块、使用 RGB 或输入合法颜色后再提交。
+            _customThemeSelectionPending = !string.Equals(cfg.UiSkin, ThemeService.SkinCustom, StringComparison.Ordinal);
+            if (!_customThemeSelectionPending && !string.IsNullOrWhiteSpace(cfg.CustomAccentColor))
+                ThemeService.ApplyForCurrentState(cfg.GuestModeEnabled, ThemeService.SkinCustom, cfg.IsDarkMode, cfg.CustomAccentColor);
+            return;
+        }
+
+        // 从自定义切回任一预设时应当立即能看到预设配色，不能继续残留 Custom 强调色造成
+        // “怎么选预设都没切回去”的错觉。真正落盘仍走本页统一保存/自动保存流程。
+        _customThemeSelectionPending = false;
+        ThemeService.ApplyForCurrentState(cfg.GuestModeEnabled, selectedSkin, cfg.IsDarkMode, cfg.CustomAccentColor);
+
+        // 鼠标打开下拉框后，SelectionChanged 可能在 Popup 仍展开、用户还在浏览候选项时先触发。
+        // 预览颜色可以立即做，但此时不能进入自动保存/回退提示，否则气泡会打断尚未结束的选择。
+        // 真正由鼠标下拉选择时统一等 HookDirtyTracking 里的 DropDownClosed 再判断；键盘切换等
+        // 没有打开下拉 Popup 的交互仍可直接记为编辑。
+        if (!UiSkinCombo.IsDropDownOpen)
+            OnSettingsEdited();
+    }
+
+    private void CommitCustomThemeSelection()
+    {
+        _customThemeSelectionPending = false;
     }
 
     private void UpdateCustomThemePanelVisibility()
@@ -1815,6 +2246,7 @@ public partial class SettingsPage : UserControl
         try
         {
             var color = (System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString(hex)!;
+            CommitCustomThemeSelection();
             SetAccentPickerColor(color);
             CustomAccentColorBox.Text = hex;
             ThemeService.ApplyCustomAccent(color);
@@ -1853,6 +2285,7 @@ public partial class SettingsPage : UserControl
     private void AccentPickerUse_Click(object sender, RoutedEventArgs e)
     {
         var color = System.Windows.Media.Color.FromRgb((byte)AccentRSlider.Value, (byte)AccentGSlider.Value, (byte)AccentBSlider.Value);
+        CommitCustomThemeSelection();
         CustomAccentColorBox.Text = $"#{color.R:X2}{color.G:X2}{color.B:X2}";
         ThemeService.ApplyCustomAccent(color);
         OnSettingsEdited();
@@ -1865,6 +2298,7 @@ public partial class SettingsPage : UserControl
         {
             var text = CustomAccentColorBox.Text.Trim();
             var color = (System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString(text)!;
+            CommitCustomThemeSelection();
             ThemeService.ApplyCustomAccent(color);
             OnSettingsEdited();
             ToastService.ShowSuccess("已预览自定义主题颜色，保存设置后会持久生效");
@@ -2010,47 +2444,56 @@ public partial class SettingsPage : UserControl
     /// （Win11 特效、窗口/整窗透明度、高性能模式动效）完全由用户自己在各自的开关上决定，这里
     /// 只负责提示，不再替用户做选择、也不再在取消勾选时把用户可能本来就没开的效果强行打开。
     /// </summary>
-    /// <summary>界面缩放快捷键总开关：即改即生效并直接写回配置（跟这一片其它开关同风格），
-    /// 不需要走"保存设置"按钮。关闭时顺带把下面两个绑定方式勾选框整体禁用（只是视觉上表示
-    /// "现在不生效"，不清空用户原来的勾选，重新打开总开关时上次的绑定组合还在）。</summary>
+    /// <summary>鼠标滚轮灵敏度拖动时立即预览，持久化仍交给设置页统一保存流程。</summary>
+    private void TextOpacitySlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+    {
+        if (TextOpacityValueText == null) return;
+        var percent = Math.Clamp((int)Math.Round(e.NewValue), 50, 100);
+        TextOpacityValueText.Text = $"{percent}%";
+        if (!_suppressDirtyTracking) ThemeService.ApplyTextOpacity(percent);
+    }
+
+    private void MouseWheelSensitivitySlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+    {
+        if (MouseWheelSensitivityValueText == null) return;
+        var percent = ScrollWheelBehavior.ClampSensitivityPercent((int)Math.Round(e.NewValue));
+        MouseWheelSensitivityValueText.Text = $"{percent}%";
+        if (_suppressDirtyTracking) return;
+        ScrollWheelBehavior.SetSensitivityPercent(percent);
+    }
+
+    /// <summary>界面缩放快捷键总开关只做 UI 联动；配置写回统一由 PerformSave 处理。
+    /// 关闭时只禁用下面的绑定和缩放控件，不清空用户已选的绑定组合。</summary>
     private void UiZoomEnabledCheck_Changed(object sender, RoutedEventArgs e)
     {
         if (_suppressDirtyTracking) return;
-        var cfg = _owner.ConfigService.Config;
-        cfg.EnableUiZoomShortcut = UiZoomEnabledCheck.IsChecked == true;
-        _owner.ConfigService.Save();
-        UiZoomBindingsPanel.IsEnabled = cfg.EnableUiZoomShortcut;
-        UiZoomLevelPanel.IsEnabled = cfg.EnableUiZoomShortcut;
+        var enabled = UiZoomEnabledCheck.IsChecked == true;
+        UiZoomBindingsPanel.IsEnabled = enabled;
+        UiZoomLevelPanel.IsEnabled = enabled;
     }
 
-    /// <summary>"Ctrl+滚轮" / "Ctrl+方向键" 两个绑定方式勾选框共用同一个处理器：可以同时勾选
-    /// （List 里可以同时含两个值），也可以都不勾（总开关还开着，但两种触发方式都没绑，
-    /// 等于功能名存实亡——不强制至少选一个，用户想暂时"关掉但保留总开关状态"也是合理用法）。</summary>
+    /// <summary>"Ctrl+滚轮" / "Ctrl+方向键" 两个绑定方式只修改当前 UI，等待统一保存。</summary>
     private void UiZoomBinding_Changed(object sender, RoutedEventArgs e)
     {
         if (_suppressDirtyTracking) return;
-        var bindings = new List<string>();
-        if (UiZoomWheelCheck.IsChecked == true) bindings.Add(UiZoomShortcutMode.CtrlWheel);
-        if (UiZoomArrowCheck.IsChecked == true) bindings.Add(UiZoomShortcutMode.CtrlArrow);
-        var cfg = _owner.ConfigService.Config;
-        cfg.UiZoomShortcutBindings = bindings;
-        _owner.ConfigService.Save();
     }
 
-    /// <summary>缩放比例滑块：拖动时实时预览（立即应用到主窗口 LayoutTransform）并持久化，
-    /// 跟这个页面其它"改了就生效"的控件一致，不单独做"应用"按钮。</summary>
+    /// <summary>缩放比例滑块拖动时仍实时预览，但不直接持久化；点击保存或自动保存后才写入配置。</summary>
     private void UiZoomSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
     {
         if (_suppressDirtyTracking) return;
         int percent = (int)Math.Round(e.NewValue);
-        UiZoomService.SetPercent(percent);
+        UiZoomService.PreviewPercent(percent);
         UiZoomPercentText.Text = $"{UiZoomService.CurrentPercent}%";
+        // 程序点击“重置为 100%”时 Slider 本身没有键盘焦点/鼠标捕获，根级 RangeBase
+        // 追踪会忽略它，所以在这里统一补一次编辑通知；用户拖动时重复通知会被防抖合并。
+        OnSettingsEdited();
     }
 
     private void UiZoomReset_Click(object sender, RoutedEventArgs e)
     {
-        UiZoomService.ResetZoom();
-        UiZoomSlider.Value = UiZoomService.CurrentPercent;
+        UiZoomSlider.Value = UiZoomService.DefaultPercent;
+        UiZoomService.PreviewPercent(UiZoomService.DefaultPercent);
         UiZoomPercentText.Text = $"{UiZoomService.CurrentPercent}%";
     }
 
@@ -2072,16 +2515,7 @@ public partial class SettingsPage : UserControl
             if (PageAnimationsCheck != null)
                 PageAnimationsCheck.IsChecked = true;
         }
-        RefreshConfigUI();
-    }
-
-    /// <summary>把低性能模式开关（连同上面顺带切换的页面动画开关）同步写回配置并即时生效。
-    /// 不再触碰 Win11 特效/窗口透明度/整窗透明度这些独立开关——见 LowPerformanceModeCheck_Changed
-    /// 类注释，这些效果现在完全由用户自己的勾选决定，不受低性能模式开关联动。</summary>
-    private void RefreshConfigUI()
-    {
-        var cfg = _owner.ConfigService.Config;
-        cfg.LowPerformanceMode = LowPerformanceModeCheck.IsChecked == true;
-        cfg.EnablePageAnimations = PageAnimationsCheck.IsChecked == true;
+        // 不在这里写 cfg；否则即使用户还没点保存，内存配置也已经被改掉，随后任何其它
+        // ConfigService.Save() 都可能把这次未确认修改带到磁盘。统一由 PerformSave 处理。
     }
 }

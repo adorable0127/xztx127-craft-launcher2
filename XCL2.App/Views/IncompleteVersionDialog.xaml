@@ -1,0 +1,39 @@
+<local:OverlayDialogControl x:Class="XCL2.App.Views.IncompleteVersionDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="clr-namespace:XCL2.App.Views"
+        Width="520">
+    <!-- 启动前完整性检查发现问题时弹出：告诉用户这个版本文件不全/已损坏，启动可能会有各种
+         纹理/声音/世界生成方面的诡异 bug，并给出 4 种处理方式。这个弹窗只负责收集用户的
+         选择、并且对"删除"分支自己编排好子弹窗流程（复用已有的 DeleteInstanceChoiceDialog /
+         DangerousConfirmDialog），调用方(MainWindow)拿到最终 Result 后再执行真正的
+         补全下载/隐藏/删除/强制启动 逻辑。 -->
+    <StackPanel Margin="20">
+        <TextBlock x:Name="TitleText" Text="这个版本的文件不完整" FontSize="16" FontWeight="SemiBold" Margin="0,0,0,10"/>
+        <TextBlock x:Name="SubtitleText" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}"
+                   TextWrapping="Wrap" Margin="0,0,0,10"
+                   Text="很可能是之前下载到一半、你点了取消或关闭了启动器窗口导致的。在文件补全之前直接启动，可能会出现材质缺失、声音无法播放、世界生成异常等各种奇怪的问题。"/>
+
+        <Border Background="{DynamicResource SideBrush}" CornerRadius="4" Padding="10" MaxHeight="160" Margin="0,0,0,16">
+            <ScrollViewer VerticalScrollBarVisibility="Auto">
+                <TextBlock x:Name="ProblemsText" FontSize="11" TextWrapping="Wrap" FontFamily="Consolas"/>
+            </ScrollViewer>
+        </Border>
+
+        <Button x:Name="RepairBtn" Content="继续启动并补全文件" HorizontalAlignment="Stretch" Padding="14,10"
+                Margin="0,0,0,8" HorizontalContentAlignment="Left" Click="Repair_Click"/>
+        <Button x:Name="RemoveFromListBtn" Content="删除此版本在列表中的显示" HorizontalAlignment="Stretch" Padding="14,10"
+                Margin="0,0,0,8" HorizontalContentAlignment="Left" Click="RemoveFromList_Click"/>
+        <Button x:Name="DeleteFilesBtn" Content="删除本地文件以及显示" HorizontalAlignment="Stretch" Padding="14,10"
+                Margin="0,0,0,16" HorizontalContentAlignment="Left" Click="DeleteFiles_Click"/>
+
+        <Separator Margin="0,0,0,12"/>
+
+        <Button x:Name="ForceLaunchBtn" Content="强行启动（不补全，可能各种 bug）" HorizontalAlignment="Stretch"
+                Padding="14,10" Margin="0,0,0,10" HorizontalContentAlignment="Center"
+                Background="{DynamicResource DangerBrush}" Foreground="White" Click="ForceLaunch_Click"/>
+
+        <Button x:Name="CancelBtn" Content="{DynamicResource Str_Common_Cancel}" HorizontalAlignment="Right"
+                Width="90" Click="Cancel_Click"/>
+    </StackPanel>
+</local:OverlayDialogControl>

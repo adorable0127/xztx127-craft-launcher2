@@ -32,6 +32,13 @@ public partial class ToolboxPage : UserControl
 {
     private readonly MainWindow _owner;
 
+    // ===== Tab 7：桌面便签 —— 已知问题排查期间的临时拦截 =====
+    // 便签功能目前有已知问题（自动保存/文件读写偶发异常），修好之前先在入口拦一下，
+    // 而不是放任用户进去踩坑。不直接把 TabItem 禁用/隐藏，是因为还是想留给用户一个
+    // "我知道有问题，就是要进去看看"的口子（比如手动抢救已经写在里面的内容）。
+    private TabItem? _lastNonStickyToolboxTab;
+    private bool _suppressToolboxTabSelection;
+
     // ===== Tab 1：成就图片 =====
     private byte[]? _achPreviewBytes;
 
@@ -53,6 +60,8 @@ public partial class ToolboxPage : UserControl
     {
         _owner = owner;
         InitializeComponent();
+
+        _lastNonStickyToolboxTab = ToolboxTabControl.SelectedItem as TabItem;
 
         _dlHttp.DefaultRequestHeaders.UserAgent.ParseAdd("XCL2-Launcher-Toolbox/1.0");
 
@@ -120,6 +129,45 @@ public partial class ToolboxPage : UserControl
 
         // ===== Tab 32：附魔台书架数量对照 =====
         BookshelfCountBox_TextChanged(this, null!);
+    }
+
+    // ============================================================
+    // Tab 7：桌面便签 —— 入口拦截提示
+    // ============================================================
+
+    /// <summary>
+    /// 便签功能目前有已知问题，修好之前先在切进这个 Tab 时弹一次提示，让用户自己
+    /// 决定要不要冒着"功能均不可用"的风险进去（比如抢救已经写在里面的旧内容）。
+    /// 只在真正切换到"桌面便签"这个 Tab 时弹一次；用户选择"返回"就把选中项还原成
+    /// 切换前的那个 Tab——期间用 _suppressToolboxTabSelection 挡住这次程序自己触发的
+    /// 选中变化，避免又递归弹一次。
+    /// </summary>
+    private void ToolboxTabControl_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_suppressToolboxTabSelection) return;
+        if (e.OriginalSource != ToolboxTabControl) return; // 避免内部控件的 SelectionChanged 冒泡误触发
+
+        var selected = ToolboxTabControl.SelectedItem as TabItem;
+
+        if (selected == StickyNoteTabItem)
+        {
+            var enter = MessageBoxDialog.ShowCustomYesNo(
+                "当前便签功能出现问题，功能均不可用，建议不要进入。",
+                "桌面便签",
+                leftText: "进入",
+                rightText: "返回",
+                rightIsPrimary: true);
+
+            if (!enter)
+            {
+                _suppressToolboxTabSelection = true;
+                ToolboxTabControl.SelectedItem = _lastNonStickyToolboxTab;
+                _suppressToolboxTabSelection = false;
+                return;
+            }
+        }
+
+        _lastNonStickyToolboxTab = selected;
     }
 
     // ============================================================
@@ -2550,6 +2598,11 @@ public partial class ToolboxPage : UserControl
     // ============================================================
 
     private static readonly Random _seedRandom = new();
+    private static readonly Random _doNotClickRandom = new();
+
+    private const string DoNotClickVideoA = "https://www.bilibili.com/video/BV12rMQ6yEP2";
+    private const string DoNotClickVideoB = "https://www.bilibili.com/video/BV1GJ411x7h7";
+    private const string DoNotClickVideoC = "https://www.bilibili.com/video/BV1XUoEBDEek";
     private const string SeedStringChars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
 
     private void SeedTypeRadio_Changed(object sender, RoutedEventArgs e) { /* 只影响下一次点「生成种子」的结果，这里不用做任何事 */ }
@@ -2579,6 +2632,54 @@ public partial class ToolboxPage : UserControl
         if (string.IsNullOrEmpty(SeedResultText.Text) || SeedResultText.Text.StartsWith("点下面")) return;
         try { Clipboard.SetText(SeedResultText.Text); }
         catch { /* 剪贴板偶尔被其它程序占用导致写入失败，忽略即可 */ }
+    }
+
+    // ============================================================
+    // 百宝箱右下角：“千万别点那按钮”
+    // ============================================================
+
+    private void DoNotClickButton_Click(object sender, RoutedEventArgs e)
+    {
+        var choice = MessageBoxDialog.ShowDangerFourChoice(
+            "警告：这个按钮可能会触发一些不可预料的 Bug。\n\n如果真的发生了奇怪的问题，不用向作者提供反馈。",
+            "千万别点");
+
+        switch (choice)
+        {
+            case XclDangerFourChoiceResult.Cancel:
+                // 取消：严格什么都不做。
+                return;
+
+            case XclDangerFourChoiceResult.Confirm1:
+                // 第一个“确定”：10% -> BV12rMQ6yEP2；90% -> BV1GJ411x7h7。
+                OpenDoNotClickUrl(_doNotClickRandom.Next(100) < 10 ? DoNotClickVideoA : DoNotClickVideoB);
+                return;
+
+            case XclDangerFourChoiceResult.Confirm2:
+                // 第二个“确定”：20% -> BV1GJ411x7h7；70% -> BV12rMQ6yEP2；10% -> BV1XUoEBDEek。
+                var roll = _doNotClickRandom.Next(100);
+                OpenDoNotClickUrl(roll < 20 ? DoNotClickVideoB : roll < 90 ? DoNotClickVideoA : DoNotClickVideoC);
+                return;
+
+            case XclDangerFourChoiceResult.Confirm3:
+                // 红色“确定”：不再固定跳视频，而是无视当前日期，随机启用一个正常只会在
+                // 4 月 1 日出现的彩蛋。状态仅保存在本次启动器进程中，重启后自动消失；
+                // 小白旗/F1、10 秒 Windows 通知、60 秒 Win32 恢复提示全部沿用正式愚人节逻辑。
+                AprilFoolsService.ActivateRandomSessionEffect();
+                return;
+        }
+    }
+
+    private static void OpenDoNotClickUrl(string url)
+    {
+        try
+        {
+            Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
+        }
+        catch
+        {
+            // 这是彩蛋入口；没有默认浏览器等极端环境下静默失败，不影响百宝箱其它功能。
+        }
     }
 
 }

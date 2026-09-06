@@ -649,7 +649,7 @@
     <system:String x:Key="Str_Ui_A_Newer_Loader_Forked_From_Forge_The_Mod">从 Forge 分支出来的新加载器，新版本 Mod 生态逐步迁移到这里。同样需要本地 Java。</system:String>
     <system:String x:Key="Str_Ui_However_Many_You_Tick_Is_However_Many_Ge">勾选几个就装几个，实际会按下面「已选加载器数」为准，跟这里只是文字提示保持一致，不需要手动对齐。</system:String>
     <system:String x:Key="Str_Ui_Only_Affects_Offline_Accounts_Set_To_Use">只影响离线账户里选择了「自定义皮肤」的账户；史蒂夫/艾利克斯默认皮肤、微软账户皮肤不受此项影响。</system:String>
-    <system:String x:Key="Str_Ui_Guest_Mode_Launches_With_A_Temporary_Acc">访客模式（启动游戏使用临时账户，不使用已保存的账户；关闭时清理本次会话产生的日志/临时下载文件）</system:String>
+    <system:String x:Key="Str_Ui_Guest_Mode_Launches_With_A_Temporary_Acc">访客模式（仅本轮会话有效；启动游戏使用临时账户，不使用已保存账户；重启启动器后自动恢复普通模式）</system:String>
     <system:String x:Key="Str_Ui_Download_Any_Direct_Link_Note_That_Some_">下载任意直链文件。请注意，部分网站（例如百度网盘）可能会报错 (403) 已禁止，无法正常下载。</system:String>
     <system:String x:Key="Str_Ui_Get_A_Key_From_Console_Curseforge_Com_Th">去 console.curseforge.com 申请一个 key，然后在「设置」页粘贴保存即可。</system:String>
     <system:String x:Key="Str_Ui_Opens_The_Copy_Of_Minecraft_For_Windows_">唤起已安装的 Minecraft for Windows（基岩版），仅跳转打开，不下载/不管理版本</system:String>

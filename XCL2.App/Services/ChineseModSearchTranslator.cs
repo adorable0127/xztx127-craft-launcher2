@@ -30,7 +30,7 @@ public static class ChineseModSearchTranslator
     /// <summary>结果：翻译出的英文关键词（可能为 null），以及本次中文搜索直接命中的候选 Mod
     /// 的 Slug 列表（Modrinth 场景下可用于"直接按 Slug 批量取工程"，比重新搜索关键词更精确，
     /// 对应 PCL2 的 ModrinthSlugs 直接获取逻辑）。</summary>
-    public readonly record struct TranslationResult(string? Keyword, IReadOnlyList<string> DirectSlugs);
+    public readonly record struct TranslationResult(string? Keyword, IReadOnlyList<string> DirectSlugs, double BestSimilarity);
 
     /// <summary>
     /// 判断查询词是否需要走中文搜索翻译（含至少一个中日韩统一表意文字字符）。
@@ -50,14 +50,19 @@ public static class ChineseModSearchTranslator
     /// </summary>
     public static TranslationResult Translate(string query, ModSource source)
     {
-        if (!IsChineseQuery(query)) return new TranslationResult(null, Array.Empty<string>());
+        if (!IsChineseQuery(query)) return new TranslationResult(null, Array.Empty<string>(), 0);
 
         var normalized = query.Trim().ToLowerInvariant();
         normalized = TraditionalToSimplified(normalized); // 繁体转简体，兼容用户输入繁体中文
 
         var candidateEntries = BuildSearchEntries(source);
         var searchResults = FuzzySearch.Search(candidateEntries, normalized, maxBlurCount: 100, minBlurSimilarity: 0.25);
-        if (searchResults.Count == 0) return new TranslationResult(null, Array.Empty<string>());
+        if (searchResults.Count == 0) return new TranslationResult(null, Array.Empty<string>(), 0);
+
+        // “静态源匹配度”用于决定是否应该信任 WikiEntries.txt 的猜测。直接使用模糊算法
+        // 算出的最高分并限制到 0~1；上层以 0.70 为阈值。这里不因为 AbsoluteRight（子串命中）
+        // 就强行记成 100%，否则像很短的通用词也可能错误绕过 70% 门槛。
+        var bestSimilarity = Math.Clamp(searchResults.Max(r => r.Similarity), 0, 1);
 
         if (source == ModSource.CurseForge)
         {
@@ -69,7 +74,7 @@ public static class ChineseModSearchTranslator
                 : searchResults.Where(r => Math.Abs(r.Similarity - maxSimilarity) < 1e-9).ToList();
             var target = pool.OrderByDescending(r => r.Item.Popularity).First();
             var keyword = string.Join(" ", ExtractWords(target, source));
-            return new TranslationResult(string.IsNullOrEmpty(keyword) ? null : keyword, Array.Empty<string>());
+            return new TranslationResult(string.IsNullOrEmpty(keyword) ? null : keyword, Array.Empty<string>(), bestSimilarity);
         }
         else
         {
@@ -94,7 +99,7 @@ public static class ChineseModSearchTranslator
                 .Select(s => s!)
                 .Distinct()
                 .ToList();
-            return new TranslationResult(keyword, slugs);
+            return new TranslationResult(keyword, slugs, bestSimilarity);
         }
     }
 

@@ -12,6 +12,8 @@ namespace XCL2.App.Services;
 /// </summary>
 public class ModSearchService
 {
+    private const double StaticSourceTrustThreshold = 0.70;
+
     private readonly ModrinthService _modrinth;
     private readonly CurseForgeService _curseForge;
     private readonly McModService _mcMod = new();
@@ -61,18 +63,42 @@ public class ModSearchService
 
         if (isChinese)
         {
+            var mrLocal = searchModrinth ? ChineseModSearchTranslator.Translate(query, ModSource.Modrinth) : default;
+            var cfLocal = searchCurseForge ? ChineseModSearchTranslator.Translate(query, ModSource.CurseForge) : default;
+
+            var needsLiteralTranslation =
+                (searchModrinth && (mrLocal.Keyword == null || mrLocal.BestSimilarity < StaticSourceTrustThreshold)) ||
+                (searchCurseForge && (cfLocal.Keyword == null || cfLocal.BestSimilarity < StaticSourceTrustThreshold));
+
+            // 关键修复：静态 WikiEntries 的最佳匹配不足 70% 时，不再强行相信“最像的那个 Mod”。
+            // 优先把用户原词直接翻成英文，用这个英文去搜 Modrinth/CurseForge。这样搜索生僻词、
+            // 功能描述词时，不会被一个只有 30%~60% 相似度的静态项目名带偏。
+            var literalEnglish = needsLiteralTranslation
+                ? await SearchQueryTranslationService.TranslateToEnglishAsync(query, ct)
+                : null;
+
             if (searchModrinth)
             {
-                var mrTranslated = ChineseModSearchTranslator.Translate(query, ModSource.Modrinth);
-                if (mrTranslated.Keyword != null) { modrinthQuery = mrTranslated.Keyword; translatedForDisplay ??= mrTranslated.Keyword; }
+                modrinthQuery = mrLocal.Keyword != null && mrLocal.BestSimilarity >= StaticSourceTrustThreshold
+                    ? mrLocal.Keyword
+                    : literalEnglish ?? mrLocal.Keyword ?? query;
+                if (!string.Equals(modrinthQuery, query, StringComparison.OrdinalIgnoreCase))
+                    translatedForDisplay ??= modrinthQuery;
             }
             if (searchCurseForge)
             {
-                var crTranslated = ChineseModSearchTranslator.Translate(query, ModSource.CurseForge);
-                if (crTranslated.Keyword != null) { curseForgeQuery = crTranslated.Keyword; translatedForDisplay ??= crTranslated.Keyword; }
+                curseForgeQuery = cfLocal.Keyword != null && cfLocal.BestSimilarity >= StaticSourceTrustThreshold
+                    ? cfLocal.Keyword
+                    : literalEnglish ?? cfLocal.Keyword ?? query;
+                if (!string.Equals(curseForgeQuery, query, StringComparison.OrdinalIgnoreCase))
+                    translatedForDisplay ??= curseForgeQuery;
             }
         }
-        if (translatedForDisplay != null) outcome.TranslatedFrom = query;
+        if (translatedForDisplay != null)
+        {
+            outcome.TranslatedFrom = query;
+            outcome.TranslatedKeyword = translatedForDisplay;
+        }
 
         var modrinthTask = searchModrinth ? SearchModrinthSafe(modrinthQuery ?? query, gameVersion, modLoader, offset, pageSize, ct) : null;
         var curseForgeTask = searchCurseForge ? SearchCurseForgeSafe(curseForgeQuery ?? query, gameVersion, modLoader, offset, pageSize, ct) : null;
@@ -125,26 +151,46 @@ public class ModSearchService
         var searchCurseForge = source is ModSource.Combined or ModSource.CurseForge;
         var offset = pageIndex * pageSize;
 
-        // 中文搜索翻译只对数据包生效（跟 PCL2 一致）：材质包/光影包的名称本身大多没有对应的
-        // MC 百科中文名条目（WikiEntry 数据库主要收录的是 Mod），贸然套用会经常翻译不出结果
-        // 或者翻译错方向；数据包跟 Mod 共用同一套 Slug/中文名体系，可以安全复用。
+        // 资源包/数据包/光影/插件同样支持中文兜底：先看内置 WikiEntries 静态源的最佳匹配。
+        // >=70% 时可以复用它给出的英文专名；<70% 时优先翻译“用户真正输入的文本”，再去
+        // Modrinth / CurseForge 搜索。尤其是资源包名称并不都收录在 Mod 静态库里，这个分支能
+        // 避免低相关 Mod 条目把资源包搜索带偏。
         var effectiveModrinthQuery = query;
         var effectiveCurseForgeQuery = query;
         string? translatedForDisplay = null;
-        if (type == ModrinthResourceType.DataPack && ChineseModSearchTranslator.IsChineseQuery(query))
+        if (ChineseModSearchTranslator.IsChineseQuery(query))
         {
+            var mrLocal = searchModrinth ? ChineseModSearchTranslator.Translate(query, ModSource.Modrinth) : default;
+            var cfLocal = searchCurseForge ? ChineseModSearchTranslator.Translate(query, ModSource.CurseForge) : default;
+            var needsLiteralTranslation =
+                (searchModrinth && (mrLocal.Keyword == null || mrLocal.BestSimilarity < StaticSourceTrustThreshold)) ||
+                (searchCurseForge && (cfLocal.Keyword == null || cfLocal.BestSimilarity < StaticSourceTrustThreshold));
+            var literalEnglish = needsLiteralTranslation
+                ? await SearchQueryTranslationService.TranslateToEnglishAsync(query, ct)
+                : null;
+
             if (searchModrinth)
             {
-                var mrTranslated = ChineseModSearchTranslator.Translate(query, ModSource.Modrinth);
-                if (mrTranslated.Keyword != null) { effectiveModrinthQuery = mrTranslated.Keyword; translatedForDisplay ??= mrTranslated.Keyword; }
+                effectiveModrinthQuery = mrLocal.Keyword != null && mrLocal.BestSimilarity >= StaticSourceTrustThreshold
+                    ? mrLocal.Keyword
+                    : literalEnglish ?? mrLocal.Keyword ?? query;
+                if (!string.Equals(effectiveModrinthQuery, query, StringComparison.OrdinalIgnoreCase))
+                    translatedForDisplay ??= effectiveModrinthQuery;
             }
             if (searchCurseForge)
             {
-                var crTranslated = ChineseModSearchTranslator.Translate(query, ModSource.CurseForge);
-                if (crTranslated.Keyword != null) { effectiveCurseForgeQuery = crTranslated.Keyword; translatedForDisplay ??= crTranslated.Keyword; }
+                effectiveCurseForgeQuery = cfLocal.Keyword != null && cfLocal.BestSimilarity >= StaticSourceTrustThreshold
+                    ? cfLocal.Keyword
+                    : literalEnglish ?? cfLocal.Keyword ?? query;
+                if (!string.Equals(effectiveCurseForgeQuery, query, StringComparison.OrdinalIgnoreCase))
+                    translatedForDisplay ??= effectiveCurseForgeQuery;
             }
         }
-        if (translatedForDisplay != null) outcome.TranslatedFrom = translatedForDisplay;
+        if (translatedForDisplay != null)
+        {
+            outcome.TranslatedFrom = query;
+            outcome.TranslatedKeyword = translatedForDisplay;
+        }
 
         var modrinthTask = searchModrinth ? SearchModrinthResourceSafe(type, effectiveModrinthQuery, gameVersion, offset, pageSize, ct, modLoader) : null;
         var curseForgeTask = searchCurseForge ? SearchCurseForgeResourceSafe(type, effectiveCurseForgeQuery, gameVersion, offset, pageSize, ct, modLoader) : null;
@@ -333,6 +379,10 @@ public class ModSearchOutcome<T>
     /// (具体英文词在 Items 结果里能看到)。UI 可以用这个字段提示用户"已按 XX 搜索"，避免用户
     /// 看到结果里全是英文标题却不知道为什么中文关键词能搜到东西。</summary>
     public string? TranslatedFrom { get; set; }
+
+    /// <summary>真正发往外部搜索源的英文关键词（Modrinth/CurseForge 两边不同名时取首个）。
+    /// 仅用于界面解释“为什么中文输入能搜到英文结果”，不参与分页或下载。</summary>
+    public string? TranslatedKeyword { get; set; }
 
     /// <summary>Modrinth 这一侧这次查询命中的总条数（不是这一页的条数），没有查询这个来源时为 0。
     /// 用于分页条计算"翻页语义说明"（见 SearchAsync 类注释）——综合模式下总页数取两个来源里

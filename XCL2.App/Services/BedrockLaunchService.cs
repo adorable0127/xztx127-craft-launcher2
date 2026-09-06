@@ -164,6 +164,132 @@ public static class BedrockLaunchService
         }
     }
 
+    /// <summary>运行中的 Minecraft for Windows 进程快照。ExecutablePath 在 UWP/受保护进程上可能读不到，
+    /// 这属于正常情况；ProcessId 始终可用于“关闭选中实例”。</summary>
+    public sealed record RunningBedrockProcess(int ProcessId, string ProcessName, string WindowTitle, string? ExecutablePath);
+
+    /// <summary>
+    /// 枚举当前用户可见的基岩版客户端进程。这里只匹配 Minecraft.Windows*，避免把 Java 版
+    /// java/javaw 或 Minecraft Launcher 一起误关掉。新版/Preview/侧载包最终实际游戏进程都使用
+    /// Minecraft.Windows 这一命名族；无法读取 MainModule 路径时仍保留 PID 供用户手动选择关闭。
+    /// </summary>
+    public static IReadOnlyList<RunningBedrockProcess> GetRunningClientProcesses()
+    {
+        var result = new List<RunningBedrockProcess>();
+        foreach (var proc in Process.GetProcesses())
+        {
+            try
+            {
+                var name = proc.ProcessName ?? "";
+                if (!name.StartsWith("Minecraft.Windows", StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                string? path = null;
+                try { path = proc.MainModule?.FileName; }
+                catch { /* Store/UWP 或权限不足时拿不到路径，PID 仍然有效 */ }
+
+                string title;
+                try { title = proc.MainWindowTitle ?? ""; }
+                catch { title = ""; }
+
+                result.Add(new RunningBedrockProcess(proc.Id, name, title, path));
+            }
+            catch
+            {
+                // 进程可能在枚举过程中刚好退出，忽略这一条即可。
+            }
+            finally
+            {
+                proc.Dispose();
+            }
+        }
+
+        return result.OrderBy(p => p.ProcessId).ToList();
+    }
+
+    /// <summary>等待基岩版进程出现。用于 shell/UWP 启动路径的“启动成功”确认。</summary>
+    public static async Task<RunningBedrockProcess?> WaitForRunningClientAsync(
+        TimeSpan timeout, CancellationToken ct = default)
+    {
+        var deadline = DateTime.UtcNow + timeout;
+        while (DateTime.UtcNow < deadline)
+        {
+            ct.ThrowIfCancellationRequested();
+            var process = GetRunningClientProcesses().FirstOrDefault();
+            if (process != null) return process;
+            await Task.Delay(250, ct);
+        }
+        return GetRunningClientProcesses().FirstOrDefault();
+    }
+
+    /// <summary>
+    /// 关闭指定 PID 的基岩版实例。先尝试正常关闭窗口，2 秒内没有退出再强制终止进程树。
+    /// 返回 false 表示该 PID 已不存在或关闭失败；失败原因通过 error 返回给 UI。
+    /// </summary>
+    public static async Task<bool> CloseClientProcessAsync(int processId, CancellationToken ct = default)
+    {
+        Process proc;
+        try { proc = Process.GetProcessById(processId); }
+        catch (ArgumentException) { return true; } // 已经退出，等价于关闭完成
+
+        using (proc)
+        {
+            try
+            {
+                if (!proc.ProcessName.StartsWith("Minecraft.Windows", StringComparison.OrdinalIgnoreCase))
+                    throw new InvalidOperationException($"PID {processId} 不是 Minecraft for Windows 进程，已拒绝关闭。");
+
+                try
+                {
+                    if (proc.CloseMainWindow())
+                    {
+                        var normalClose = proc.WaitForExitAsync(ct);
+                        var timeout = Task.Delay(TimeSpan.FromSeconds(2), ct);
+                        if (await Task.WhenAny(normalClose, timeout) == normalClose)
+                            return true;
+                    }
+                }
+                catch (InvalidOperationException)
+                {
+                    return true; // 等待过程中已经退出
+                }
+
+                if (!proc.HasExited)
+                {
+                    proc.Kill(entireProcessTree: true);
+                    await proc.WaitForExitAsync(ct);
+                }
+                return true;
+            }
+            catch (InvalidOperationException) when (proc.HasExited)
+            {
+                return true;
+            }
+        }
+    }
+
+    /// <summary>一键关闭当前检测到的所有基岩版客户端实例。</summary>
+    public static async Task<(int ClosedCount, List<string> Failures)> CloseAllClientProcessesAsync(
+        CancellationToken ct = default)
+    {
+        var snapshot = GetRunningClientProcesses();
+        var closed = 0;
+        var failures = new List<string>();
+
+        foreach (var item in snapshot)
+        {
+            try
+            {
+                if (await CloseClientProcessAsync(item.ProcessId, ct)) closed++;
+            }
+            catch (Exception ex)
+            {
+                failures.Add($"PID {item.ProcessId}：{ex.Message}");
+            }
+        }
+        return (closed, failures);
+    }
+
     /// <summary>
     /// 跳转到 Minecraft for Windows 在 Microsoft Store 里的商品页——"未安装"或者"没有任何
     /// 有效授权"时该走的路径：登录 Microsoft 账户、领取官方 Trial/Demo、购买正版，这三件事

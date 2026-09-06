@@ -266,6 +266,35 @@ public class DownloadService : IDisposable
         await Task.WhenAll(tasks);
     }
 
+    /// <summary>
+    /// 只补全 assets（资源索引 + objects），不碰 version json / client jar / libraries。
+    /// 供"启动前完整性检查"发现的 assets 缺失走"继续启动并补全"分支时调用——跟
+    /// <see cref="DownloadLibrariesOnlyAsync"/> 是同一种"只修一块，不重装整个版本"的思路。
+    /// AssetIndex 为 null（极少数极旧版本没有独立资源索引）时直接跳过，调用方不需要自己判空。
+    /// </summary>
+    public async Task DownloadAssetsOnlyAsync(string minecraftDir, VersionDetail detail,
+        IProgress<ProgressInfo>? progress, CancellationToken ct = default)
+    {
+        if (detail.AssetIndex == null) return;
+        await DownloadAssetsAsync(minecraftDir, detail.AssetIndex, progress, ct);
+    }
+
+    /// <summary>
+    /// 只补全 client jar，不碰 version json / libraries / assets。用途同上——完整性检查发现
+    /// 主程序 jar 缺失/损坏（0 字节）时，不需要为了这一个文件重新走完整安装流程。
+    /// </summary>
+    public async Task DownloadClientJarOnlyAsync(string minecraftDir, VersionDetail detail,
+        IProgress<ProgressInfo>? progress, CancellationToken ct = default)
+    {
+        if (detail.Downloads == null || !detail.Downloads.TryGetValue("client", out var clientArtifact)) return;
+        var versionDir = Path.Combine(minecraftDir, "versions", detail.Id);
+        Directory.CreateDirectory(versionDir);
+        var jarPath = Path.Combine(versionDir, $"{detail.Id}.jar");
+        progress?.Report(new ProgressInfo("下载客户端主程序", 0, 1, $"{detail.Id}.jar"));
+        await DownloadFileAsync(clientArtifact.Url, jarPath, clientArtifact.Sha1, ct);
+        progress?.Report(new ProgressInfo("下载客户端主程序", 1, 1, $"{detail.Id}.jar"));
+    }
+
     private async Task DownloadAssetsAsync(string minecraftDir, AssetIndexRef assetIndexRef,
         IProgress<ProgressInfo>? progress, CancellationToken ct)
     {

@@ -153,6 +153,112 @@ public partial class VersionSelectPage : UserControl
         }
     }
 
+    /// <summary>"导入整合包..."按钮：跟拖拽整合包进窗口是同一条路，只是不用拖，直接弹文件选择框。
+    /// 复用 MainWindow.ImportDroppedModpackAsync——装成新实例还是装进已有实例、进度弹窗、
+    /// 失败提示，这些都跟拖拽安装完全一致，不用在这里再写一遍。</summary>
+    private async void ImportModpack_Click(object sender, RoutedEventArgs e)
+    {
+        var dialog = new OpenFileDialog
+        {
+            Title = "选择整合包文件",
+            Filter = "整合包文件 (*.zip;*.mrpack)|*.zip;*.mrpack|所有文件 (*.*)|*.*"
+        };
+        if (dialog.ShowDialog() != true) return;
+
+        await _owner.ImportDroppedModpackAsync(dialog.FileName);
+    }
+
+    /// <summary>"导入实例文件夹..."按钮：把一个现成的、已经有 json/jar 的版本文件夹整个拷进
+    /// 当前选中的 .minecraft 的 versions/ 下——不解析清单、不下载任何东西，纯文件拷贝，
+    /// 装的就是一个已经能跑的现成实例。装完直接选中，右侧列表就能用⚙️菜单设置/启动。</summary>
+    private void ImportInstanceFolder_Click(object sender, RoutedEventArgs e)
+    {
+        if (FolderListBox.SelectedItem is not GameFolder folder)
+        {
+            MessageBoxDialog.ShowInfo("请先在左侧选择/添加一个 .minecraft 文件夹，再导入实例。", "提示");
+            return;
+        }
+
+        var pickDialog = new OpenFolderDialog { Title = "选择要导入的版本文件夹" };
+        if (pickDialog.ShowDialog() != true) return;
+        var sourceFolder = pickDialog.FolderName;
+
+        if (Directory.GetFiles(sourceFolder, "*.json", SearchOption.TopDirectoryOnly).Length == 0)
+        {
+            MessageBoxDialog.ShowInfo("所选文件夹里没有找到版本 json 文件，这可能不是一个完整的版本文件夹。", "无法导入");
+            return;
+        }
+
+        var suggested = Path.GetFileName(sourceFolder.TrimEnd('\\', '/'));
+        var existingNames = new HashSet<string>(
+            Directory.Exists(Path.Combine(folder.Path, "versions"))
+                ? Directory.GetDirectories(Path.Combine(folder.Path, "versions")).Select(d => Path.GetFileName(d) ?? string.Empty)
+                : Array.Empty<string>(),
+            StringComparer.OrdinalIgnoreCase);
+
+        var nameDialog = new RenameInstanceDialog(suggested, n => existingNames.Contains(n), "导入实例文件夹");
+        if (OverlayDialogService.ShowModal(nameDialog) != true) return;
+
+        try
+        {
+            _folderService.ImportVersionFolder(folder.Path, sourceFolder, nameDialog.NewName);
+            RefreshInstalledVersions();
+            var imported = _installed.FirstOrDefault(v => v.Id == nameDialog.NewName);
+            if (imported != null) InstalledListBox.SelectedItem = imported;
+            ToastService.ShowSuccess($"已导入实例「{nameDialog.NewName}」");
+        }
+        catch (Exception ex)
+        {
+            ErrorPresenter.ShowFriendlyError("导入实例文件夹失败，请确认源文件夹完整且磁盘空间足够。",
+                ex.ToString(), "导入失败");
+        }
+    }
+
+    /// <summary>"导入实例文件..."（小号链接入口）：跟上面"导入实例文件夹"是同一件事，只是源头
+    /// 换成打包好的 .zip，不用用户先自己解压出来。</summary>
+    private void ImportInstanceFile_Click(object sender, RoutedEventArgs e)
+    {
+        if (FolderListBox.SelectedItem is not GameFolder folder)
+        {
+            MessageBoxDialog.ShowInfo("请先在左侧选择/添加一个 .minecraft 文件夹，再导入实例。", "提示");
+            return;
+        }
+
+        var pickDialog = new OpenFileDialog { Title = "选择要导入的实例文件", Filter = "实例压缩包 (*.zip)|*.zip|所有文件 (*.*)|*.*" };
+        if (pickDialog.ShowDialog() != true) return;
+
+        var suggested = Path.GetFileNameWithoutExtension(pickDialog.FileName);
+        var existingNames = new HashSet<string>(
+            Directory.Exists(Path.Combine(folder.Path, "versions"))
+                ? Directory.GetDirectories(Path.Combine(folder.Path, "versions")).Select(d => Path.GetFileName(d) ?? string.Empty)
+                : Array.Empty<string>(),
+            StringComparer.OrdinalIgnoreCase);
+
+        var nameDialog = new RenameInstanceDialog(suggested, n => existingNames.Contains(n), "导入实例文件");
+        if (OverlayDialogService.ShowModal(nameDialog) != true) return;
+
+        var pd = new ProgressDialog($"正在导入实例文件「{Path.GetFileName(pickDialog.FileName)}」...");
+        pd.Show();
+        try
+        {
+            _folderService.ImportVersionZip(folder.Path, pickDialog.FileName, nameDialog.NewName);
+            RefreshInstalledVersions();
+            var imported = _installed.FirstOrDefault(v => v.Id == nameDialog.NewName);
+            if (imported != null) InstalledListBox.SelectedItem = imported;
+            ToastService.ShowSuccess($"已导入实例「{nameDialog.NewName}」");
+        }
+        catch (Exception ex)
+        {
+            ErrorPresenter.ShowFriendlyError(
+                ex is InvalidOperationException ? ex.Message : "导入实例文件失败，可能是文件损坏或磁盘空间不足。",
+                ex.ToString(), "导入失败");
+        }
+        finally
+        {
+            pd.Close();
+        }
+    }
+
     /// <summary>
     /// "安装新版本"入口：打开 InstallClientLoaderWindow 让用户选加载器/MC版本/构建版本，
     /// 装到"当前选中的文件夹"下。装完之后不需要手动把新版本加进任何列表——
@@ -272,6 +378,23 @@ public partial class VersionSelectPage : UserControl
             _owner.ConfigService.Save();
             _owner.RefreshSidebar();
             RefreshInstalledVersions();
+            return;
+        }
+
+        if (choiceDlg.Choice == DeleteInstanceChoiceDialog.DeleteChoice.DeleteToRecycleBin)
+        {
+            // 回收站可撤销，不需要再追加 xztx127 确认这道门槛。
+            try
+            {
+                InstanceDeletionService.DeleteToRecycleBin(cfg, folderPath, v.Id);
+                _owner.ConfigService.Save();
+                _owner.RefreshSidebar();
+                RefreshInstalledVersions();
+            }
+            catch (Exception ex)
+            {
+                MessageBoxDialog.ShowError("删除失败：\n" + ex.Message);
+            }
             return;
         }
 

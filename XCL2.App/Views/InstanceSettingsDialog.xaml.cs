@@ -1,5 +1,6 @@
 using System.IO;
 using System.Windows;
+using System.Windows.Controls;
 using XCL2.App.Models;
 using XCL2.App.Services;
 
@@ -66,7 +67,54 @@ public partial class InstanceSettingsDialog : OverlayDialogControl
         InstanceMinMemoryBoxDlg.Text = instance.MinMemoryMb?.ToString() ?? "";
         InstanceMaxMemoryBoxDlg.Text = instance.MaxMemoryMb?.ToString() ?? "";
         InstanceCustomJvmArgsBoxDlg.Text = instance.CustomJvmArgs ?? _config.CustomJvmArgs ?? "";
+
+        var supportsGraphicsApi = SupportsGraphicsApiPreference(_version);
+        GraphicsApiPanelDlg.Visibility = supportsGraphicsApi ? Visibility.Visible : Visibility.Collapsed;
+        SelectGraphicsApiPreference(instance.GraphicsApiPreference);
+
         InstanceXclDirTextDlg.Text = InstanceConfigService.GetXclDir(versionDir);
+    }
+
+    private static bool SupportsGraphicsApiPreference(GameVersion version)
+    {
+        return new[] { version.McVersion, version.Id }
+            .Select(VersionInfoResolver.ExtractAnyVersion)
+            .Where(v => !string.IsNullOrWhiteSpace(v))
+            .Any(v => IsAtLeast261(v!));
+    }
+
+    private static bool IsAtLeast261(string value)
+    {
+        var numeric = value.Split('-', 2)[0];
+        var parts = numeric.Split('.');
+        if (parts.Length < 2 || !int.TryParse(parts[0], out var major) || !int.TryParse(parts[1], out var minor))
+            return false;
+        var patch = parts.Length > 2 && int.TryParse(parts[2], out var parsedPatch) ? parsedPatch : 0;
+
+        // 同时兼容项目现有的 26.1 命名与可能出现的 1.26.1 形式。
+        if (major == 1)
+            return minor > 26 || (minor == 26 && patch >= 1);
+        return major > 26 || (major == 26 && minor >= 1);
+    }
+
+    private void SelectGraphicsApiPreference(string? preference)
+    {
+        var normalized = preference?.Trim().ToLowerInvariant();
+        if (normalized != InstanceConfigService.GraphicsApiOpenGl && normalized != InstanceConfigService.GraphicsApiVulkan)
+            normalized = InstanceConfigService.GraphicsApiGame;
+
+        GraphicsApiPreferenceComboDlg.SelectedItem = GraphicsApiPreferenceComboDlg.Items
+            .OfType<ComboBoxItem>()
+            .FirstOrDefault(item => string.Equals(item.Tag?.ToString(), normalized, StringComparison.OrdinalIgnoreCase))
+            ?? GraphicsApiPreferenceComboDlg.Items[0];
+    }
+
+    private string GetSelectedGraphicsApiPreference()
+    {
+        var selected = (GraphicsApiPreferenceComboDlg.SelectedItem as ComboBoxItem)?.Tag?.ToString()?.Trim().ToLowerInvariant();
+        return selected is InstanceConfigService.GraphicsApiOpenGl or InstanceConfigService.GraphicsApiVulkan
+            ? selected
+            : InstanceConfigService.GraphicsApiGame;
     }
 
     private void AutoJoinServerCheckDlg_Changed(object sender, RoutedEventArgs e)
@@ -144,6 +192,9 @@ public partial class InstanceSettingsDialog : OverlayDialogControl
                 MinMemoryMb = instanceMin,
                 MaxMemoryMb = instanceMax,
                 CustomJvmArgs = string.IsNullOrWhiteSpace(InstanceCustomJvmArgsBoxDlg.Text) ? null : InstanceCustomJvmArgsBoxDlg.Text.Trim(),
+                GraphicsApiPreference = GraphicsApiPanelDlg.Visibility == Visibility.Visible
+                    ? GetSelectedGraphicsApiPreference()
+                    : null,
                 AutoJoinServerAddress = AutoJoinServerCheckDlg.IsChecked == true ? AutoJoinServerAddressBoxDlg.Text.Trim() : null
             };
             try
@@ -231,6 +282,7 @@ public partial class InstanceSettingsDialog : OverlayDialogControl
         var autoJoinServer = cfg.VersionAutoJoinServer.TryGetValue(versionId, out var joinAddr) && !string.IsNullOrWhiteSpace(joinAddr)
             ? joinAddr.Trim()
             : null;
+        var instanceSettings = InstanceConfigService.TryLoad(Path.Combine(_folderPath, "versions", versionId));
 
         var options = new LauncherService.LaunchOptions
         {
@@ -238,15 +290,16 @@ public partial class InstanceSettingsDialog : OverlayDialogControl
             VersionId = versionId,
             JavaPath = javaPath,
             Account = account,
-            MinMemoryMb = InstanceConfigService.TryLoad(Path.Combine(_folderPath, "versions", versionId))?.MinMemoryMb ?? cfg.MinMemoryMb,
-            MaxMemoryMb = InstanceConfigService.TryLoad(Path.Combine(_folderPath, "versions", versionId))?.MaxMemoryMb ?? cfg.MaxMemoryMb,
+            MinMemoryMb = instanceSettings?.MinMemoryMb ?? cfg.MinMemoryMb,
+            MaxMemoryMb = instanceSettings?.MaxMemoryMb ?? cfg.MaxMemoryMb,
             WindowWidth = cfg.WindowWidth,
             WindowHeight = cfg.WindowHeight,
             ShowConsoleWindow = cfg.EnableGameConsoleWindow,
             IsolateVersion = isolateVersion,
             GameLanguage = cfg.GameLanguage,
             VersionTypeLabel = cfg.GameVersionTypeLabel,
-            CustomJvmArgs = InstanceConfigService.TryLoad(Path.Combine(_folderPath, "versions", versionId))?.CustomJvmArgs ?? (cfg.AdvancedMode ? cfg.CustomJvmArgs : null),
+            GraphicsApiPreference = instanceSettings?.GraphicsApiPreference,
+            CustomJvmArgs = instanceSettings?.CustomJvmArgs ?? (cfg.AdvancedMode ? cfg.CustomJvmArgs : null),
             PreLaunchCommand = cfg.PreLaunchCommand,
             AutoJoinServerAddress = autoJoinServer
         };

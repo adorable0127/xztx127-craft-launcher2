@@ -43,6 +43,17 @@ public partial class StickyNoteWindow : Window
         _filePath = filePath;
         InitializeComponent();
 
+        // 修复"内容全部显示成一片惨白、文字/图标都是极浅的灰白色几乎看不清"：
+        // Windows 11 会给"没有系统标题栏"（WindowStyle=None）的顶层窗口自动套上一层
+        // 云母/亚克力（Mica/Acrylic）背景材质，这层材质会盖在我们自己画的内容上面，
+        // 把所有颜色都往白色方向"冲淡"——症状正是"该有的底色/字色全在，但看起来像
+        // 蒙了一层白纱"，跟上一步修的"分层窗口合成失败=纯灰方块"是两个完全不同的问题。
+        // 用 DwmSetWindowAttribute 显式把这个窗口的 SystemBackdropType 设成
+        // DWMSBT_NONE（=1），关掉这层自动材质，让 NoteCard/TitleBar/ContentBox 自己
+        // 画的颜色不再被蒙白。SourceInitialized 时机足够早——这时候 HWND 已经创建好，
+        // 但窗口通常还没真正显示到屏幕上。
+        SourceInitialized += (_, _) => TryDisableSystemBackdrop();
+
         TitleText.Text = Path.GetFileName(filePath);
 
         _saveTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(800) };
@@ -60,6 +71,30 @@ public partial class StickyNoteWindow : Window
     }
 
     private static string StylePath(string notePath) => notePath + ".style";
+
+    /// <summary>关闭 Windows 11 给无标题栏顶层窗口自动加的云母/亚克力背景材质。
+    /// 失败（比如系统版本更老、dwmapi.dll 里没有这个属性）就直接忽略——
+    /// 老系统本来就不会有这个自动加材质的行为，不需要这个调用也不受影响。</summary>
+    private void TryDisableSystemBackdrop()
+    {
+        try
+        {
+            var hwnd = new System.Windows.Interop.WindowInteropHelper(this).Handle;
+            if (hwnd == IntPtr.Zero) return;
+            int backdropNone = DwmsbtNone;
+            NativeMethods.DwmSetWindowAttribute(hwnd, DwmwaSystembackdropType, ref backdropNone, sizeof(int));
+        }
+        catch { /* 老系统/驱动不支持，忽略即可 */ }
+    }
+
+    private const int DwmwaSystembackdropType = 38; // DWMWA_SYSTEMBACKDROP_TYPE（Windows 11 22H2+）
+    private const int DwmsbtNone = 1;                // DWMSBT_NONE：不要任何自动背景材质
+
+    private static class NativeMethods
+    {
+        [System.Runtime.InteropServices.DllImport("dwmapi.dll")]
+        internal static extern int DwmSetWindowAttribute(IntPtr hwnd, int attr, ref int attrValue, int attrSize);
+    }
 
     public static string ReadStyleKey(string notePath)
     {
@@ -88,6 +123,10 @@ public partial class StickyNoteWindow : Window
         _styleKey = palette.Key;
 
         Brush B(string hex) => new SolidColorBrush((Color)ColorConverter.ConvertFromString(hex)!);
+        // 窗口本身现在是不透明的（见 xaml 头部关于去掉 AllowsTransparency 的说明），
+        // Window.Background 也要跟着换色，不然切样式时只有 NoteCard 变了色，
+        // 四个直角窗口边缘会露出上一个样式的颜色，跟 NoteCard 的圆角对不上。
+        Background = B(palette.Card);
         NoteCard.Background = B(palette.Card);
         TitleBar.Background = B(palette.TitleBar);
         ContentBox.Background = B(palette.Editor);

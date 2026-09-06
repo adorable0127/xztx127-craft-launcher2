@@ -246,23 +246,50 @@ public class AiAssistantService
         // 需要弹确认框、按用户选择执行或拒绝，再把结果喂回去让模型给出最终回复。
         // ConfirmAccessRequest 由 UI 层（AiAssistantPanel）赋值；没赋值时（比如预热请求）
         // 默认一律拒绝，不能在没有界面可以问用户的情况下静默执行任何操作。
-        var (displayText, followUp) = AiFileAccessService.ProcessReply(
-            rawReply, ConfirmAccessRequest ?? ((_, _) => false));
+        // 工作目录用于轻量编程时，经常需要“先列目录 → 再读文件 → 最后写回”多个连续动作。
+        // 旧实现一条用户消息最多只能处理一个 XCL2_ACCESS：第二轮模型如果继续请求读/写，标记会
+        // 直接作为普通文本落到聊天里，实际上也不会执行。这里改成受控的小型工具循环：单轮最多
+        // 执行 4 个访问动作，每一个动作仍然都会由 AiFileAccessService 单独弹确认；达到上限后
+        // 停止继续执行，避免模型失控地无限请求文件/设置操作。
+        var accessConversation = payloadMessages.ToList();
+        var visibleParts = new List<string>();
+        var currentReply = rawReply;
+        var reachedAccessLimit = false;
+        const int maxAccessActionsPerTurn = 4;
 
-        string replyText;
-        if (followUp == null)
+        for (var accessAction = 0; accessAction < maxAccessActionsPerTurn; accessAction++)
         {
-            replyText = displayText;
-        }
-        else
-        {
-            var secondRoundMessages = payloadMessages.ToList();
-            secondRoundMessages.Add(("assistant", displayText));
-            secondRoundMessages.Add(("user", followUp));
-            var secondReply = await CallChatCompletionAsync(baseUrl, apiKey, route.ModelId, secondRoundMessages,
+            var (displayText, followUp) = AiFileAccessService.ProcessReply(
+                currentReply, ConfirmAccessRequest ?? ((_, _) => false));
+            if (!string.IsNullOrWhiteSpace(displayText))
+                visibleParts.Add(displayText.Trim());
+
+            if (followUp == null)
+            {
+                currentReply = string.Empty;
+                break;
+            }
+
+            accessConversation.Add(("assistant", displayText));
+            accessConversation.Add(("user", followUp));
+            currentReply = await CallChatCompletionAsync(baseUrl, apiKey, route.ModelId, accessConversation,
                 deepThinking, webSearch, ct);
-            replyText = string.IsNullOrWhiteSpace(displayText) ? secondReply : $"{displayText}\n\n{secondReply}";
         }
+
+        if (!string.IsNullOrWhiteSpace(currentReply))
+        {
+            // 达到动作上限后的最后一条模型回复仍要摘掉可能残留的访问标记，但这里使用“拒绝”回调，
+            // 保证第 5 个及更多动作不会被悄悄执行。自然语言部分仍然正常展示给用户。
+            var (finalDisplay, blockedFollowUp) = AiFileAccessService.ProcessReply(currentReply, (_, _) => false);
+            if (!string.IsNullOrWhiteSpace(finalDisplay))
+                visibleParts.Add(finalDisplay.Trim());
+            reachedAccessLimit = blockedFollowUp != null;
+        }
+
+        if (reachedAccessLimit)
+            visibleParts.Add("（本轮 AI 文件/设置操作已达到 4 次上限；如需继续，请再发送一条消息。）");
+
+        var replyText = string.Join("\n\n", visibleParts);
 
         var assistantMsg = new AiChatMessage
         {

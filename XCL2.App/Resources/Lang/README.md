@@ -24,7 +24,8 @@
 见 `Services/LocalizationService.cs` 里的 `SupportedLanguages`。目前包括：
 简体中文(zh-Hans，默认)、繁体中文(zh-Hant)、英语-美国(en-US)、英语-英国(en-GB)、
 德语(de-DE)、法语(fr-FR)、意大利语(it-IT)、瑞典语(sv-SE)、日语(ja-JP)、韩语(ko-KR)、
-粤语(yue-Hant，用繁体字书写，这是目前 Windows/主流系统对粤语书面语的通行处理方式)。
+粤语(yue-Hant，用繁体字书写，这是目前 Windows/主流系统对粤语书面语的通行处理方式)、
+藏文(bo-CN，བོད་ཡིག)。
 
 ### en-US 和 en-GB 是两份独立文件，不要合并
 

@@ -34,6 +34,11 @@ public static class AprilFoolsService
 
     private static AprilFoolsState? _state;
 
+    // “千万别点”第三个确定可在任意日期临时触发一次愚人节效果。
+    // 这两个字段只存在于当前进程内，绝不写 state.json，因此重启启动器后必定消失。
+    private static Effect _sessionEffects = Effect.None;
+    private static bool _sessionEffectsDismissed;
+
     /// <summary>某个整蛊效果被启用/恢复时触发，UI 层（MainWindow/HomePage）订阅它来
     /// 显示/隐藏小白旗、开始/停止各自的效果。</summary>
     public static event Action? StateChanged;
@@ -50,7 +55,7 @@ public static class AprilFoolsService
         DodgeLaunchButton = 1 << 2,
         /// <summary>4：点击"启动游戏"/"下载"跳转到另一个恶搞视频。</summary>
         RickRoll2 = 1 << 3,
-        /// <summary>5：窗口在桌面上乱窜、无法全屏，强制窗口模式（按 F1 恢复，防止真的点不到白旗）。</summary>
+        /// <summary>5：窗口在桌面上乱窜、无法全屏，强制窗口模式（按 F1 可直接恢复）。</summary>
         WindowChaos = 1 << 4,
         /// <summary>7：启动游戏时提示"游戏今天不想启动"之类的抽象拒绝文案。</summary>
         LauncherRefuses = 1 << 5,
@@ -66,7 +71,7 @@ public static class AprilFoolsService
         [2] = (Effect.FakeWin32Error, "愚人节彩蛋 2：每次点击「启动游戏」和「下载游戏」都会弹出一个 Win32 报错窗口，提示某个文件的某行某列出现错误。点击小白旗即可恢复。"),
         [3] = (Effect.DodgeLaunchButton, "愚人节彩蛋 3：鼠标靠近「启动游戏」按钮时，按钮会随机乱窜，永远点不到。点击小白旗即可恢复。"),
         [4] = (Effect.RickRoll2, "愚人节彩蛋 4：点击「开始游戏」和「下载」按钮会跳转到另一个恶搞视频。点击小白旗即可恢复。"),
-        [5] = (Effect.WindowChaos, "愚人节彩蛋 5：界面会在桌面上乱窜，且无法全屏，强制窗口模式。按 F1 可临时恢复以便点击小白旗。点击小白旗即可彻底恢复。"),
+        [5] = (Effect.WindowChaos, "愚人节彩蛋 5：界面会在桌面上乱窜，且无法全屏，强制窗口模式。按 F1 或点击小白旗即可恢复。"),
         [7] = (Effect.LauncherRefuses, "愚人节彩蛋 7：启动游戏时会提示「游戏今天不想启动」「启动器今天不行为你启动」等抽象文案。点击小白旗即可恢复。"),
         [8] = (Effect.TileChaos, "愚人节彩蛋 8：主页上的磁贴会乱跳，点击「启动游戏」磁贴会提示「磁贴今天不开心，很不高兴为你启动游戏」。点击小白旗即可恢复。"),
     };
@@ -80,10 +85,19 @@ public static class AprilFoolsService
         public bool FlagClicked { get; set; }
     }
 
-    /// <summary>当前是否应该表现出任何整蛊效果：是 4 月 1 日 + 没被注册表关掉 + 今天还没点小白旗。</summary>
-    public static bool IsActive => IsAprilFoolsDate() && !IsDisabledByRegistry() && _state is { FlagClicked: false } && _state.Effects != Effect.None;
+    /// <summary>当前是否应该表现出任何整蛊效果。
+    /// 正常愚人节状态仍要求 4 月 1 日；“千万别点”第三按钮触发的会话彩蛋不检查日期，
+    /// 但只活到当前进程结束，不写配置、不写 state.json。</summary>
+    public static bool IsActive => DateEffectsActive || SessionEffectsActive;
 
-    public static Effect ActiveEffects => IsActive ? _state!.Effects : Effect.None;
+    private static bool DateEffectsActive =>
+        IsAprilFoolsDate() && !IsDisabledByRegistry() && _state is { FlagClicked: false } && _state.Effects != Effect.None;
+
+    private static bool SessionEffectsActive => !_sessionEffectsDismissed && _sessionEffects != Effect.None;
+
+    public static Effect ActiveEffects =>
+        (DateEffectsActive ? _state!.Effects : Effect.None) |
+        (SessionEffectsActive ? _sessionEffects : Effect.None);
 
     public static bool Has(Effect effect) => (ActiveEffects & effect) == effect && effect != Effect.None;
 
@@ -158,6 +172,23 @@ public static class AprilFoolsService
         return result;
     }
 
+    /// <summary>
+    /// 从“4 月 1 日可能出现”的 Catalog 中随机抽一个效果，在任意日期强制启用。
+    /// 专供百宝箱“千万别点”第三个红色确定按钮使用。该状态只放内存：
+    /// - 有同一面小白旗；
+    /// - F1 同样可关闭；
+    /// - 10 秒/60 秒恢复提示由 AprilFoolsUi 在 StateChanged 后重新计时；
+    /// - 重启启动器后不会再出现。
+    /// </summary>
+    public static Effect ActivateRandomSessionEffect()
+    {
+        var pool = Catalog.Values.Select(v => v.Effect).ToArray();
+        _sessionEffects = pool[Rng.Next(pool.Length)];
+        _sessionEffectsDismissed = false;
+        StateChanged?.Invoke();
+        return _sessionEffects;
+    }
+
     /// <summary>把今天真正抽中触发过的每个编号的说明文字各写一次 xcl2/cdjs/{n}.txt，
     /// 只有文件还不存在时才写（即"只有触发过这个彩蛋，它才会保存一次这个文件"，且只保存一次，
     /// 不会因为之后年份又抽中同一个编号就反复覆盖）。</summary>
@@ -187,17 +218,31 @@ public static class AprilFoolsService
     public static List<string> ClickWhiteFlag()
     {
         var descriptions = new List<string>();
-        if (_state != null)
+        var effectsToDescribe = ActiveEffects;
+        foreach (var (_, (effect, description)) in Catalog)
         {
-            foreach (var (_, (effect, description)) in Catalog)
-            {
-                if ((_state.Effects & effect) == effect) descriptions.Add(description);
-            }
+            if ((effectsToDescribe & effect) == effect) descriptions.Add(description);
+        }
+        DismissForToday();
+        return descriptions;
+    }
+
+    /// <summary>无需说明弹窗地关闭当天彩蛋。F1 恢复快捷键使用这个入口：
+    /// 跟点击小白旗一样会把 FlagClicked 落盘，因此当天后续重启也保持正常模式。
+    /// </summary>
+    public static void DismissForToday()
+    {
+        // 真实 4 月 1 日状态照旧落盘，保证当天重启后不再出现。
+        if (_state != null && IsAprilFoolsDate())
+        {
             _state.FlagClicked = true;
             SaveState();
         }
+
+        // “千万别点”触发的状态只改内存，不做任何持久化。
+        _sessionEffectsDismissed = true;
+        _sessionEffects = Effect.None;
         StateChanged?.Invoke();
-        return descriptions;
     }
 
     private static void LoadState()

@@ -49,6 +49,25 @@
                                 Click="BedrockImportExisting_Click"
                                 ToolTip="选择电脑上已经存在的基岩版安装文件夹或 Minecraft.Windows.exe（比如别的启动器下载的）。&#10;正版登录能否完整生效取决于这个文件夹本身有没有正确的应用包信息；如果不完整，只能进入离线/Demo（试用）模式。"/>
                     </StackPanel>
+
+                    <!-- 运行中的基岩版进程管理：支持一键关闭全部，也可以按 PID/已知实例选择关闭。
+                         进程枚举只识别 Minecraft.Windows*，不会误杀 Java 版的 java/javaw。 -->
+                    <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                        <Button x:Name="BedrockCloseAllBtn" Content="一键关闭基岩版" Padding="14,7"
+                                Click="BedrockCloseAll_Click" IsEnabled="False"/>
+                        <ComboBox x:Name="BedrockRunningProcessCombo" Width="360" Margin="10,0,0,0"
+                                  VerticalContentAlignment="Center"
+                                  ToolTip="运行中的 Minecraft for Windows 进程；能读取路径时会标出对应的本地实例"
+                                  SelectionChanged="BedrockRunningProcessCombo_SelectionChanged"/>
+                        <Button Content="刷新运行实例" Padding="14,7" Margin="10,0,0,0"
+                                Click="BedrockRefreshRunningProcesses_Click"/>
+                        <Button x:Name="BedrockCloseSelectedProcessBtn" Content="关闭选中实例" Padding="14,7" Margin="10,0,0,0"
+                                Click="BedrockCloseSelectedProcess_Click" IsEnabled="False"/>
+                    </StackPanel>
+                    <TextBlock x:Name="BedrockProcessStatusText" TextWrapping="Wrap" FontSize="11" Margin="0,0,0,8"
+                               Foreground="{DynamicResource TextSecondaryBrush}"
+                               Text="没有检测到正在运行的基岩版进程。"/>
+
                     <TextBlock TextWrapping="Wrap" FontSize="11" Margin="0,0,0,10"
                                Foreground="{DynamicResource TextSecondaryBrush}"
                                Text="点「启动基岩版」后由 Minecraft for Windows 自己判断当前账户的授权状态：正版直接进入游戏，只有官方 Trial/Demo 就进入 Trial，都没有则由它自己引导登录/试用/购买——启动器不读取、不修改这个状态。"/>

@@ -192,6 +192,9 @@ public static class ThemeService
     public static bool CurrentGlobalTransparencyEnabled { get; private set; }
     public static int CurrentGlobalOpacityPercent { get; private set; } = 80;
 
+    private static int _textOpacityPercent = 100;
+    public static int CurrentTextOpacityPercent => _textOpacityPercent;
+
     /// <summary>
     /// AppConfig.EnableWinUi3Design 对应的字体部分。修复"WinUI 3 新设计勾了没有任何效果"：
     /// 这个开关之前只在 SettingsPage 里读写配置字段，从没有任何代码消费过它。WinUI 3/Fluent
@@ -931,6 +934,7 @@ public static class ThemeService
         // Custom 主题的 ButtonBackgroundBrush 也参与面板透明度/底图透出效果；
         // 必须在派生完自定义色后再按当前透明度重算一次。
         ReapplyPanelAlpha();
+        ReapplyTextAlpha();
         RefreshOpenWindows();
     }
 
@@ -990,8 +994,33 @@ public static class ThemeService
         // 窗口透明度：色系/明暗切换时，用新色系的原始面板颜色重新计算一遍透明度，
         // 不然切换配色会把之前设置的透明效果覆盖回不透明。见 ReapplyPanelAlpha 注释。
         ReapplyPanelAlpha();
+        ReapplyTextAlpha();
 
         RefreshOpenWindows();
+    }
+
+    /// <summary>调整主要文字画刷的不透明度；背景透明度很低时可单独把文字保持清晰。</summary>
+    public static void ApplyTextOpacity(int percent)
+    {
+        _textOpacityPercent = Math.Clamp(percent, 50, 100);
+        ReapplyTextAlpha();
+        RefreshOpenWindows();
+    }
+
+    private static void ReapplyTextAlpha()
+    {
+        var res = Application.Current?.Resources;
+        if (res == null) return;
+        var alpha = (byte)Math.Round(_textOpacityPercent / 100.0 * 255.0);
+        foreach (var key in new[]
+                 {
+                     "TextPrimaryBrush", "TextSecondaryBrush", "ButtonForegroundBrush",
+                     "SoftHeaderForegroundBrush", "SuccessTextBrush", "WarningTextBrush", "DangerBrush"
+                 })
+        {
+            if (res[key] is SolidColorBrush brush)
+                SetBrushColorRgba(res, key, brush.Color, alpha);
+        }
     }
 
     /// <summary>

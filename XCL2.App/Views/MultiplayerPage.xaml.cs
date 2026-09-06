@@ -7,12 +7,10 @@ using XCL2.App.Services;
 namespace XCL2.App.Views;
 
 /// <summary>
-/// 「联机」页：陶瓦联机(Terracotta) + 红石联机 两个国内主流联机方案的入口。
-/// 具体集成方式见 TerracottaService 类注释——这两个联机方案的核心逻辑分别在
-/// 独立的第三方可执行程序、和游戏内 Mod 里。陶瓦联机已经内置在启动器里(EmbeddedResource)，
-/// 不再需要"检测本机是否安装/引导用户去官网下载"这一步，本页面只负责"确保内置文件已释放到本地
-/// + 一键拉起 + (可选)让用户手动覆盖成其他版本 + 红石联机一键搜索安装"这层启动器该做的事，
-/// 不假装重新实现了它们的联机协议。
+/// 「联机」页：保留陶瓦联机(Terracotta)入口。
+/// 红石联机的启动器按钮入口已移除；如果用户需要相应 Mod，可直接在下载中心按名称搜索。
+/// 陶瓦联机已经内置在启动器里(EmbeddedResource)，本页面只负责确保内置文件已释放到本地、
+/// 一键拉起，以及允许用户手动覆盖成其他版本，不重新实现第三方联机协议。
 /// </summary>
 public partial class MultiplayerPage : UserControl
 {
@@ -83,10 +81,4 @@ public partial class MultiplayerPage : UserControl
         RefreshTerracottaStatus();
     }
 
-    /// <summary>跳转到下载中心的「Mod」分类，并预填搜索关键词"红石联机"——复用现成的
-    /// Modrinth 综合搜索 + 一键安装逻辑，不重新写一套下载流程。</summary>
-    private void SearchRedstoneMod_Click(object sender, RoutedEventArgs e)
-    {
-        _owner.NavigateToDownloadCenterWithModSearch("红石联机");
-    }
 }

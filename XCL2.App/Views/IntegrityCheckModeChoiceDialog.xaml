@@ -1,0 +1,35 @@
+<local:OverlayDialogControl x:Class="XCL2.App.Views.IntegrityCheckModeChoiceDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="clr-namespace:XCL2.App.Views"
+        Width="440">
+    <!-- 首次遇到"启动前完整性检查"时弹一次，问用户想要多细的检查粒度，选完之后写进
+         AppConfig.IntegrityCheckMode，以后不再重复问（可以在设置页里改）。10 秒不选
+         就按 CountdownTick 里的倒计时自动选 Simple，避免卡住第一次启动流程。 -->
+    <StackPanel Margin="20">
+        <TextBlock Text="启动前的文件检查要多严格？" FontSize="16" FontWeight="SemiBold" Margin="0,0,0,10"/>
+        <TextBlock Text="这个选择会被记住，以后启动前都按这个来查（可以在设置里随时改）。"
+                   FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap" Margin="0,0,0,16"/>
+
+        <Button x:Name="SimpleBtn" HorizontalAlignment="Stretch" Padding="14,10" Margin="0,0,0,8"
+                HorizontalContentAlignment="Left" Click="Simple_Click">
+            <StackPanel>
+                <TextBlock Text="普通（推荐）" FontWeight="SemiBold"/>
+                <TextBlock Text="只查关键文件 + 资源文件数量，启动前几乎不耽误时间。" FontSize="11"
+                           Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap"/>
+            </StackPanel>
+        </Button>
+
+        <Button x:Name="StrictBtn" HorizontalAlignment="Stretch" Padding="14,10" Margin="0,0,0,16"
+                HorizontalContentAlignment="Left" Click="Strict_Click">
+            <StackPanel>
+                <TextBlock Text="严格" FontWeight="SemiBold"/>
+                <TextBlock Text="连每一个资源文件是否完整都逐一核对，更准确但启动前会多花几秒。" FontSize="11"
+                           Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap"/>
+            </StackPanel>
+        </Button>
+
+        <TextBlock x:Name="CountdownText" FontSize="11" HorizontalAlignment="Center"
+                   Foreground="{DynamicResource TextSecondaryBrush}"/>
+    </StackPanel>
+</local:OverlayDialogControl>

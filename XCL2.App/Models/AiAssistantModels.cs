@@ -163,6 +163,10 @@ public class AiAssistantConfig
     public double PanelWidth { get; set; } = 380;
     public bool ClearHistoryOnGuestSessionEnd { get; set; } = true;
     public bool ShowFloatingButton { get; set; } = false;
+
+    /// <summary>AI 轻量编程工作目录。为空时文件工具完全不可用；AI 只能访问这个目录及其子目录，
+    /// 每次读取/写入仍需用户逐次确认，不能通过 ../ 或绝对路径越界。</summary>
+    public string? WorkingDirectory { get; set; }
     public bool PanelWasOpen { get; set; } = false;
 
     /// <summary>是否允许把用户主动提交的崩溃/日志内容发给 AI 分析。默认改为 true——这是用户

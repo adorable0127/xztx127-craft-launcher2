@@ -1,4 +1,4 @@
-using Microsoft.Win32;
+﻿using Microsoft.Win32;
 
 namespace XCL2.App.Services;
 
@@ -26,7 +26,7 @@ public static class AutoStartService
             {
                 var exePath = Environment.ProcessPath;
                 if (string.IsNullOrEmpty(exePath)) return;
-                key.SetValue(ValueName, $"\"{exePath}\"");
+                key.SetValue(ValueName, $"\"{exePath}\" --autostart");
             }
             else
             {

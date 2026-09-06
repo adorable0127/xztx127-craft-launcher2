@@ -15,10 +15,15 @@
         <TextBlock Text="只是不再显示在实例列表里，磁盘上的文件完全不动，随时可以在「已隐藏的实例」里找回来。"
                    FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap" Margin="0,0,0,14"/>
 
-        <Button x:Name="DeleteFromDiskBtn" Content="从电脑中删除（删除所有文件）" HorizontalAlignment="Stretch"
+        <Button x:Name="DeleteFromDiskBtn" Content="从电脑中删除（永久，不可撤销）" HorizontalAlignment="Stretch"
                 Padding="14,10" Margin="0,0,0,8" HorizontalContentAlignment="Left"
                 Background="{DynamicResource DangerBrush}" Click="DeleteFromDisk_Click"/>
         <TextBlock Text="彻底删除这个实例目录下的所有文件（存档、mod、资源包等），不可恢复。需要额外输入确认码。"
+                   FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap" Margin="0,0,0,14"/>
+
+        <Button x:Name="DeleteToRecycleBinBtn" Content="从电脑中删除（移入回收站）" HorizontalAlignment="Stretch"
+                Padding="14,10" Margin="0,0,0,8" HorizontalContentAlignment="Left" Click="DeleteToRecycleBin_Click"/>
+        <TextBlock Text="删除这个实例目录下的所有文件，但先放进 Windows 回收站，删错了还能找回来。"
                    FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap" Margin="0,0,0,18"/>
 
         <Button x:Name="CancelBtn" Content="{DynamicResource Str_Common_Cancel}" HorizontalAlignment="Right"

@@ -2,7 +2,7 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="桌面便签" Width="300" Height="320" MinWidth="200" MinHeight="160"
-        WindowStyle="None" AllowsTransparency="True" Background="Transparent"
+        WindowStyle="None" AllowsTransparency="False" Background="#FFF9C4"
         ResizeMode="CanResizeWithGrip" ShowInTaskbar="False"
         WindowStartupLocation="CenterScreen" Closing="StickyNoteWindow_Closing">
     <Window.Resources>
@@ -37,16 +37,37 @@
         </Style>
     </Window.Resources>
 
-    <!-- 最外层留一点透明边距专门给阴影用；AllowsTransparency + 阴影特效让便签看起来
-         是"悬浮"在桌面上的一张卡片，而不是一块生硬的方框。 -->
-    <Grid Margin="10">
+    <!-- 之前这里是 Grid Margin="10" + NoteCard 套 DropShadowEffect + Window
+         AllowsTransparency="True"，靠"分层窗口+特效阴影"做出圆角悬浮卡片的视觉效果。
+         修复"便签弹出后整块显示成纯灰色方块、看不到标题栏/文字/按钮"：这是
+         AllowsTransparency 分层窗口在部分机器上（没有硬件加速合成、远程桌面、
+         某些独显驱动）跟 Effect 一起用时的已知渲染失败模式——分层窗口合成失败后，
+         WPF 只能画出窗口本身的不透明背景，所有指望"透过分层窗口透明合成"才能显示的
+         子内容全部不可见，症状正是"一块纯色方框，边角是直角不是圆角，什么都看不见"。
+         去掉 AllowsTransparency + Effect，改成普通的不透明窗口（Window.Background
+         直接用便签底色，见 ApplyStyle 里新增的 this.Background 赋值），标题栏/正文
+         就是普通控件正常绘制，不再依赖分层窗口合成这条容易在个别机器上失败的路径。
+         代价是没有了投影和四角圆角（NoteCard 仍保留 CornerRadius，但窗口本身是直角，
+         只是窗口背景色跟 NoteCard 背景色一致，四个角上几乎看不出差异）。 -->
+    <Grid>
         <Border x:Name="NoteCard" CornerRadius="10" Background="#FFF9C4" ClipToBounds="True">
-            <Border.Effect>
-                <DropShadowEffect Color="#000000" Opacity="0.28" BlurRadius="18" ShadowDepth="3" Direction="270"/>
-            </Border.Effect>
             <Border.BorderBrush>
                 <SolidColorBrush Color="#00000000"/>
             </Border.BorderBrush>
+            <!-- 右键菜单兜底："关闭便签"跟标题栏 ✕ 走同一个 CloseBtn_Click。
+                 标题栏那个 ✕ 是自绘的小圆按钮，AllowsTransparency 窗口在个别机器/
+                 截屏软件上偶尔会整体渲染异常（分层窗口显示成一块实色方块，看起来
+                 像"标题栏和关闭按钮都不见了"）——这时候右键菜单是系统原生弹出的
+                 独立窗口，不受同一个渲染问题影响，始终能关掉，不用非得点中那个
+                 可能显示不出来的小按钮。 -->
+            <Border.ContextMenu>
+                <ContextMenu>
+                    <MenuItem Header="切换便签样式" Click="StyleBtn_Click"/>
+                    <MenuItem Header="切换是否置顶" Click="PinBtn_Click"/>
+                    <Separator/>
+                    <MenuItem Header="关闭便签" Click="CloseBtn_Click"/>
+                </ContextMenu>
+            </Border.ContextMenu>
             <Grid>
                 <Grid.RowDefinitions>
                     <RowDefinition Height="34"/>

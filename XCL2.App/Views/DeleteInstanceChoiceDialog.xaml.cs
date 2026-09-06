@@ -13,6 +13,8 @@ public partial class DeleteInstanceChoiceDialog : OverlayDialogControl
     {
         RemoveFromList,
         DeleteFromDisk,
+        /// <summary>删到回收站，而不是直接永久删除——可撤销，所以调用方不需要再追加 xztx127 确认。</summary>
+        DeleteToRecycleBin,
     }
 
     /// <summary>用户选择的删除方式；ShowModal 返回 true 时保证有值。</summary>
@@ -33,6 +35,12 @@ public partial class DeleteInstanceChoiceDialog : OverlayDialogControl
     private void DeleteFromDisk_Click(object sender, RoutedEventArgs e)
     {
         Choice = DeleteChoice.DeleteFromDisk;
+        CloseWith(true);
+    }
+
+    private void DeleteToRecycleBin_Click(object sender, RoutedEventArgs e)
+    {
+        Choice = DeleteChoice.DeleteToRecycleBin;
         CloseWith(true);
     }
 

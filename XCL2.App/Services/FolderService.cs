@@ -114,4 +114,63 @@ public class FolderService
         config.Folders.Add(folder);
         return folder;
     }
+
+    /// <summary>"导入实例文件夹"：把一个现成的版本文件夹（源头可以是备份、其它启动器导出的实例，
+    /// 只要求源文件夹本身直接含有版本 json）原样拷贝进 &lt;minecraftDir&gt;/versions/&lt;instanceName&gt;。
+    /// 跟"导入整合包"的区别：这里不解析清单、不下载任何东西，纯粹是文件拷贝——用户导入的
+    /// 就是一个已经能跑的现成实例。</summary>
+    public void ImportVersionFolder(string minecraftDir, string sourceFolder, string instanceName)
+    {
+        var versionsDir = Path.Combine(minecraftDir, "versions");
+        Directory.CreateDirectory(versionsDir);
+        var targetDir = Path.Combine(versionsDir, instanceName);
+        if (Directory.Exists(targetDir))
+            throw new InvalidOperationException($"目标文件夹「{instanceName}」已经存在。");
+
+        CopyDirectoryRecursive(sourceFolder, targetDir);
+    }
+
+    /// <summary>"导入实例文件"：解压一个打包成 .zip 的实例（可能是"版本 json 直接在压缩包根目录"，
+    /// 也可能是"压缩包里包了一层文件夹再放版本 json"这两种常见打包方式），归拢进
+    /// &lt;minecraftDir&gt;/versions/&lt;instanceName&gt;。</summary>
+    public void ImportVersionZip(string minecraftDir, string zipPath, string instanceName)
+    {
+        var versionsDir = Path.Combine(minecraftDir, "versions");
+        Directory.CreateDirectory(versionsDir);
+        var targetDir = Path.Combine(versionsDir, instanceName);
+        if (Directory.Exists(targetDir))
+            throw new InvalidOperationException($"目标文件夹「{instanceName}」已经存在。");
+
+        var tempDir = Path.Combine(Path.GetTempPath(), "XCL2_ImportInstance_" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tempDir);
+        try
+        {
+            System.IO.Compression.ZipFile.ExtractToDirectory(zipPath, tempDir);
+
+            // 压缩包里如果只包了一层文件夹（没有多余文件），就把这一层"透传"掉，
+            // 避免装出来变成 versions/<instanceName>/<原文件夹名>/xxx.json 这种多套一层的结构。
+            var entries = Directory.GetFileSystemEntries(tempDir);
+            var sourceDir = tempDir;
+            if (entries.Length == 1 && Directory.Exists(entries[0]))
+                sourceDir = entries[0];
+
+            if (Directory.GetFiles(sourceDir, "*.json", SearchOption.TopDirectoryOnly).Length == 0)
+                throw new InvalidOperationException("压缩包里没有找到版本 json 文件，这可能不是一个完整的实例。");
+
+            CopyDirectoryRecursive(sourceDir, targetDir);
+        }
+        finally
+        {
+            try { Directory.Delete(tempDir, recursive: true); } catch { /* 临时文件清理失败不影响导入结果 */ }
+        }
+    }
+
+    private static void CopyDirectoryRecursive(string sourceDir, string targetDir)
+    {
+        Directory.CreateDirectory(targetDir);
+        foreach (var dir in Directory.GetDirectories(sourceDir, "*", SearchOption.AllDirectories))
+            Directory.CreateDirectory(dir.Replace(sourceDir, targetDir));
+        foreach (var file in Directory.GetFiles(sourceDir, "*", SearchOption.AllDirectories))
+            File.Copy(file, file.Replace(sourceDir, targetDir), overwrite: true);
+    }
 }

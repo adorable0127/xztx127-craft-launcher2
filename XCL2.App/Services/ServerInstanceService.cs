@@ -1,4 +1,4 @@
-using System.IO;
+﻿using System.IO;
 using System.Text.Json;
 using XCL2.App.Models;
 
@@ -6,19 +6,43 @@ namespace XCL2.App.Services;
 
 /// <summary>
 /// 服务器实例列表的持久化。风格与 ConfigService 保持一致：内存里维护一份列表，
-/// 每次增删改后立即整体写回 xcl2/servers.json（服务器实例数量级通常很小，几个到十几个，
-/// 不需要为了性能做局部更新的复杂化处理）。
+/// 每次增删改后立即整体写回 %APPDATA%\XCL2\servers.json，并镜像到启动器目录 json/servers.json
+/// （服务器实例数量级通常很小，几个到十几个，不需要为了性能做局部更新的复杂化处理）。
 /// </summary>
 public class ServerInstanceService
 {
     private static readonly JsonSerializerOptions JsonOpts = new() { WriteIndented = true };
 
+    /// <summary>主副本：%APPDATA%\XCL2\servers.json。</summary>
     public string ServersJsonPath { get; }
+    /// <summary>便携镜像：启动器目录\json\servers.json。</summary>
+    public string MirrorServersJsonPath { get; }
+    /// <summary>旧版路径：启动器目录\xcl2\servers.json，仅用于迁移/兜底。</summary>
+    public string LegacyServersJsonPath { get; }
     public List<ServerInstance> Instances { get; private set; } = new();
 
     public ServerInstanceService()
     {
-        ServersJsonPath = Path.Combine(App.DataDir, "servers.json");
+        var appDataDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "XCL2");
+        Directory.CreateDirectory(appDataDir);
+        ServersJsonPath = Path.Combine(appDataDir, "servers.json");
+        MirrorServersJsonPath = Path.Combine(AppContext.BaseDirectory, "json", "servers.json");
+        LegacyServersJsonPath = Path.Combine(App.DataDir, "servers.json");
+
+        try
+        {
+            if (!File.Exists(ServersJsonPath))
+            {
+                var seed = File.Exists(LegacyServersJsonPath) ? LegacyServersJsonPath
+                    : File.Exists(MirrorServersJsonPath) ? MirrorServersJsonPath
+                    : null;
+                if (seed != null) File.Copy(seed, ServersJsonPath, overwrite: false);
+            }
+        }
+        catch (Exception ex)
+        {
+            ErrorPresenter.LogFallback("迁移服务器列表到 AppData 失败，将继续尝试兜底副本", ex);
+        }
     }
 
     /// <summary>
@@ -33,50 +57,53 @@ public class ServerInstanceService
     public void Load()
     {
         LastLoadError = null;
+        Exception? firstError = null;
 
-        if (!File.Exists(ServersJsonPath))
-        {
-            Instances = new List<ServerInstance>();
-            return;
-        }
+        // 与 ConfigService 相同：AppData 是主副本，只有它不存在/损坏时才依次读取便携镜像和旧路径。
+        var candidates = new[] { ServersJsonPath, MirrorServersJsonPath, LegacyServersJsonPath }
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Where(File.Exists)
+            .ToArray();
 
-        try
+        foreach (var candidate in candidates)
         {
-            var json = File.ReadAllText(ServersJsonPath);
-            Instances = JsonSerializer.Deserialize<List<ServerInstance>>(json) ?? new List<ServerInstance>();
-            return;
-        }
-        catch (Exception ex)
-        {
-            LastLoadError = ex;
-        }
-
-        // 主文件解析失败：尝试上一次 Save() 留下的备份（见 Save() 里 .bak 的写入逻辑），
-        // 而不是直接判定"没有服务器"。这一步能救回的场景：上次写入 servers.json 时进程被杀掉/
-        // 断电，导致主文件截断成非法 JSON，但 .bak 仍然是上上次成功写入的完整内容。
-        var backupPath = ServersJsonPath + ".bak";
-        try
-        {
-            if (File.Exists(backupPath))
+            try
             {
+                var json = File.ReadAllText(candidate);
+                Instances = JsonSerializer.Deserialize<List<ServerInstance>>(json) ?? new List<ServerInstance>();
+                if (!string.Equals(candidate, ServersJsonPath, StringComparison.OrdinalIgnoreCase) && !File.Exists(ServersJsonPath))
+                {
+                    try { Save(); } catch (Exception ex) { ErrorPresenter.LogFallback("恢复服务器列表后写回 AppData 主副本失败", ex); }
+                }
+                return;
+            }
+            catch (Exception ex)
+            {
+                firstError ??= ex;
+                ErrorPresenter.LogFallback($"读取服务器列表副本失败：{candidate}", ex);
+            }
+
+            // 每个候选都允许尝试自己的 .bak，避免主副本损坏时直接跳过一份仍可恢复的备份。
+            try
+            {
+                var backupPath = candidate + ".bak";
+                if (!File.Exists(backupPath)) continue;
                 var backupJson = File.ReadAllText(backupPath);
                 var restored = JsonSerializer.Deserialize<List<ServerInstance>>(backupJson);
-                if (restored != null)
-                {
-                    Instances = restored;
-                    return; // 备份恢复成功：LastLoadError 保留主文件的错误信息，供 UI 提示"已从备份恢复"
-                }
+                if (restored == null) continue;
+                Instances = restored;
+                LastLoadError = firstError;
+                try { Save(); } catch (Exception ex) { ErrorPresenter.LogFallback("从服务器列表备份恢复后写回主副本失败", ex); }
+                return;
+            }
+            catch (Exception ex)
+            {
+                firstError ??= ex;
             }
         }
-        catch
-        {
-            // 备份也读不出来：彻底放弃，走下面的空列表兜底。LastLoadError 仍然是主文件的原始异常。
-        }
 
-        // 主文件和备份都读取失败时才回退成空列表——这是真正无法恢复数据时的最后手段，
-        // 调用方应该用 LastLoadError 提示用户"配置文件损坏，已重置服务器列表"，
-        // 而不是让用户以为自己"从来没创建过服务器"。
         Instances = new List<ServerInstance>();
+        LastLoadError = firstError;
     }
 
     /// <summary>
@@ -88,17 +115,34 @@ public class ServerInstanceService
     /// </summary>
     private void Save()
     {
-        Directory.CreateDirectory(App.DataDir);
+        Directory.CreateDirectory(Path.GetDirectoryName(ServersJsonPath)!);
 
         if (File.Exists(ServersJsonPath))
         {
             try { File.Copy(ServersJsonPath, ServersJsonPath + ".bak", overwrite: true); }
-            catch { /* 备份失败不应该阻塞本次保存，下次 Save() 成功时会补上一份新备份 */ }
+            catch { /* 备份失败不阻塞本次保存 */ }
         }
 
-        var tempPath = ServersJsonPath + ".tmp";
-        File.WriteAllText(tempPath, JsonSerializer.Serialize(Instances, JsonOpts));
-        File.Move(tempPath, ServersJsonPath, overwrite: true); // 同卷内 Move 是原子操作，不会产生半截文件
+        var json = JsonSerializer.Serialize(Instances, JsonOpts);
+        WriteAtomically(ServersJsonPath, json);
+
+        // 运行目录副本只是镜像；主副本已经成功后才写。镜像失败不回滚 AppData。
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(MirrorServersJsonPath)!);
+            WriteAtomically(MirrorServersJsonPath, json);
+        }
+        catch (Exception ex)
+        {
+            ErrorPresenter.LogFallback($"更新服务器列表便携镜像失败：{MirrorServersJsonPath}", ex);
+        }
+    }
+
+    private static void WriteAtomically(string path, string content)
+    {
+        var tempPath = path + ".tmp";
+        File.WriteAllText(tempPath, content);
+        File.Move(tempPath, path, overwrite: true);
     }
 
     public ServerInstance Add(ServerInstance instance)

@@ -6,15 +6,22 @@ using XCL2.App.Models;
 namespace XCL2.App.Services;
 
 /// <summary>
-/// 负责 xcl2/config.json（全局配置）与 xcl2/accounts.json（账户缓存）的读写。
-/// 账户缓存实现"无需重复输入账户密码"：离线账户直接记住用户名+UUID，
+/// 负责 %APPDATA%\XCL2\config.json（全局配置主副本）、启动器目录 json/config.json（镜像）
+/// 与 %APPDATA%\XCL2\accounts.json（账户缓存）的读写。账户缓存实现"无需重复输入账户密码"：离线账户直接记住用户名+UUID，
 /// 微软账户记住 refresh token，下次启动可静默刷新 access token。
 /// </summary>
 public class ConfigService
 {
     private static readonly JsonSerializerOptions JsonOpts = new() { WriteIndented = true };
 
+    /// <summary>配置主副本：%APPDATA%\XCL2\config.json。所有保存先写这里。</summary>
     public string ConfigPath { get; }
+    /// <summary>便携镜像：启动器目录\XCL2\Json\config.json。仅作镜像/人工恢复，不作为正常写入主目标。</summary>
+    public string MirrorConfigPath { get; }
+    /// <summary>旧版便携镜像路径（启动器目录\json\config.json），只用于一次性迁移读取，之后不再写入。</summary>
+    public string LegacyMirrorConfigPath { get; }
+    /// <summary>旧版配置路径（启动器目录\xcl2\config.json），只用于首次迁移/兜底读取。</summary>
+    public string LegacyConfigPath { get; }
     public string AccountsPath { get; }
 
     public AppConfig Config { get; private set; } = new();
@@ -44,7 +51,44 @@ public class ConfigService
     public ConfigService()
     {
         Active = this;
-        ConfigPath = Path.Combine(App.DataDir, "config.json");
+
+        // 2.2.9 起把详细全局设置的主副本放到当前 Windows 用户的 AppData：安装目录/便携目录
+        // 即使只读、换盘或被替换，用户设置仍能稳定保留。启动器目录下 json/config.json 只做
+        // 人工可见的镜像；读取优先级永远是 AppData > 便携镜像 > 旧 xcl2/config.json。
+        var roamingConfigDir = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "XCL2");
+        Directory.CreateDirectory(roamingConfigDir);
+        ConfigPath = Path.Combine(roamingConfigDir, "config.json");
+        // 2.3 起把便携镜像收进 "XCL2/Json/config.json"（而不是散落在启动器目录下的 "json/config.json"），
+        // 让启动器根目录更紧凑。旧镜像路径仍保留在 LegacyMirrorConfigPath 里，仅用于一次性迁移读取。
+        MirrorConfigPath = Path.Combine(AppContext.BaseDirectory, "XCL2", "Json", "config.json");
+        LegacyMirrorConfigPath = Path.Combine(AppContext.BaseDirectory, "json", "config.json");
+        LegacyConfigPath = Path.Combine(App.DataDir, "config.json");
+
+        // “appd”要求存的是路径字符串，因此不能用 REG_DWORD（DWORD 只能放数字）；这里按用户
+        // 所说“32 位”落在 HKCU 的 32-bit registry view，并用 REG_SZ 保存 AppData config 路径。
+        RegistryConfigService.SetAppDataConfigPath(ConfigPath);
+
+        // 首次升级时把旧配置迁到 AppData；如果旧路径不存在但便携镜像存在，也可从镜像恢复。
+        try
+        {
+            if (!File.Exists(ConfigPath))
+            {
+                var seed = File.Exists(LegacyConfigPath) ? LegacyConfigPath
+                    : File.Exists(MirrorConfigPath) ? MirrorConfigPath
+                    : File.Exists(LegacyMirrorConfigPath) ? LegacyMirrorConfigPath
+                    : null;
+                if (seed != null)
+                {
+                    Directory.CreateDirectory(Path.GetDirectoryName(ConfigPath)!);
+                    File.Copy(seed, ConfigPath, overwrite: false);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            ErrorPresenter.LogFallback("迁移 AppData 配置失败，将在 Load 时继续使用兜底副本", ex);
+        }
 
         // 修复"登录好的账户，在另一个文件夹启动时就不会显示了"：
         // App.DataDir 是 AppContext.BaseDirectory（启动器自身 exe 所在目录）下的 "xcl2" 子目录，
@@ -90,28 +134,49 @@ public class ConfigService
 
     public void Load()
     {
-        try
+        // 主副本损坏/不存在时才读取镜像；不会因为镜像时间更新就覆盖 AppData，
+        // 从根本上保证“AppData 优先、运行目录仅镜像”。
+        var loadCandidates = new[] { ConfigPath, MirrorConfigPath, LegacyMirrorConfigPath, LegacyConfigPath }
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Where(File.Exists)
+            .ToArray();
+        Exception? lastConfigReadError = null;
+        string? loadedFrom = null;
+        foreach (var candidate in loadCandidates)
         {
-            if (File.Exists(ConfigPath))
+            try
             {
-                var json = File.ReadAllText(ConfigPath);
+                var json = File.ReadAllText(candidate);
                 Config = JsonSerializer.Deserialize<AppConfig>(json) ?? new AppConfig();
+                loadedFrom = candidate;
+                break;
+            }
+            catch (Exception ex)
+            {
+                lastConfigReadError = ex;
+                ErrorPresenter.LogFallback($"读取配置副本失败，尝试下一份：{candidate}", ex);
             }
         }
-        catch (Exception ex)
+        if (loadedFrom == null)
         {
-            ErrorPresenter.LogFallback($"读取配置文件失败，已使用默认配置：{ConfigPath}", ex);
             Config = new AppConfig();
+            if (lastConfigReadError != null)
+                ErrorPresenter.LogFallback("所有配置副本均无法读取，已使用默认配置", lastConfigReadError);
         }
 
         RegistryFeatureEnabled = Config.RegistryFeatureEnabled;
 
-        // 注册表为主存储、config.json 为镜像的字段：这里从注册表读回最新值覆盖 Config 里
-        // 对应字段（如果注册表两支都没有，保留 config.json 里已有的值不动——即便注册表功能
-        // 是这次新开的，也不会用注册表的"没有"把 config.json 里用户原有的设置冲掉）。
-        // 见 RegistrySyncedFields.LoadFromRegistry 的详细字段清单与取舍说明。
-        if (RegistryFeatureEnabled)
+        // AppData JSON 是主存储：只要任意 JSON 副本成功加载，就绝不再用注册表覆盖它。
+        // 注册表中的同步字段现在仅作为“完全没有可读 JSON 时”的灾难恢复来源；正常保存时仍会
+        // 写一份注册表镜像以兼容旧版。这样能严格满足“AppData 优先、运行目录/注册表仅镜像”。
+        if (RegistryFeatureEnabled && loadedFrom == null)
             RegistrySyncedFields.LoadFromRegistry(Config);
+
+        // 访客模式严格限定为当前进程会话状态。旧版本曾把 GuestModeEnabled 置为 true 并持久化，
+        // 导致用户关闭启动器后再次打开仍停在访客模式。无论磁盘/注册表里的旧值是什么，
+        // 每次新进程启动都先恢复普通模式；只有本轮会话里再次手动开启才进入访客模式。
+        Config.GuestModeEnabled = false;
+        GuestAccount = null;
 
         // 默认如有管理员权限，就把注册表的全局设置（全设备注册表）开启
         if (RegistryConfigService.IsRunningAsAdministrator())
@@ -192,6 +257,16 @@ public class ConfigService
         Accounts.RemoveAll(a => a == null); // 清理数组中可能存在的 null 元素
 
         EnsureDefaultFolder();
+
+        // 如果本次是从便携镜像/旧路径恢复出来的，立即把规范化后的配置落到 AppData 主副本，
+        // 后续启动便始终从主副本读取。EnsureDefaultFolder 可能已经触发过 Save，因此先检查文件。
+        if (!string.Equals(loadedFrom, ConfigPath, StringComparison.OrdinalIgnoreCase) && loadedFrom != null)
+        {
+            // 即使 AppData 主文件“存在但已损坏”，也要用刚刚成功读取的镜像/旧配置修复它；
+            // 不能只因为 File.Exists=true 就一直让以后每次启动都先撞一次坏主文件再回退。
+            try { Save(); }
+            catch (Exception ex) { ErrorPresenter.LogFallback($"恢复配置到 AppData 主副本失败：{ConfigPath}", ex); }
+        }
     }
 
     /// <summary>
@@ -213,21 +288,93 @@ public class ConfigService
 
     public void Save()
     {
-        Directory.CreateDirectory(App.DataDir);
+        Directory.CreateDirectory(Path.GetDirectoryName(ConfigPath)!);
         Config.AiAssistant ??= new AiAssistantConfig();
         Config.AiAssistant.AutoModelRouting = Config.AiAssistant.RoutingMode == AiRoutingMode.Auto;
         Config.AiAssistantFloatingButton = Config.AiAssistant.ShowFloatingButton;
-        File.WriteAllText(ConfigPath, JsonSerializer.Serialize(Config, JsonOpts));
 
-        RegistryFeatureEnabled = Config.RegistryFeatureEnabled;
-        if (RegistryFeatureEnabled)
+        // GuestModeEnabled 是会话态，不是持久设置。保存其它配置时临时把它置为 false，
+        // 所有持久副本都明确记录“下次普通模式”。
+        var sessionGuestMode = Config.GuestModeEnabled;
+        try
         {
-            // 注册表为主存储：每次 Save() 顺手把镜像字段同步写回注册表。
-            // 写入分支（HKLM 全设备 / HKCU 当前用户）由 Config.UseMachineWideRegistry +
-            // 当前进程是否管理员共同决定，具体规则见 RegistryConfigService 类头注释与
-            // RegistrySyncedFields.SaveToRegistry。
-            RegistrySyncedFields.SaveToRegistry(Config);
+            Config.GuestModeEnabled = false;
+            var json = JsonSerializer.Serialize(Config, JsonOpts);
+
+            // 主副本先写；只有主副本成功后才更新便携镜像，避免镜像比主副本“领先”。
+            WriteTextAtomically(ConfigPath, json);
+            try
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(MirrorConfigPath)!);
+                WriteTextAtomically(MirrorConfigPath, json);
+            }
+            catch (Exception ex)
+            {
+                // 镜像失败不应让已经成功写入 AppData 的设置被判定为保存失败。
+                ErrorPresenter.LogFallback($"更新便携配置镜像失败：{MirrorConfigPath}", ex);
+            }
+
+            RegistryConfigService.SetAppDataConfigPath(ConfigPath);
+            RegistryFeatureEnabled = Config.RegistryFeatureEnabled;
+            if (RegistryFeatureEnabled)
+                RegistrySyncedFields.SaveToRegistry(Config);
         }
+        finally
+        {
+            Config.GuestModeEnabled = sessionGuestMode;
+        }
+    }
+
+    private static void WriteTextAtomically(string path, string content)
+    {
+        var dir = Path.GetDirectoryName(path);
+        if (!string.IsNullOrWhiteSpace(dir)) Directory.CreateDirectory(dir);
+        var temp = path + ".tmp";
+        File.WriteAllText(temp, content);
+        File.Move(temp, path, overwrite: true);
+    }
+
+    /// <summary>每次进入设置页先备份当前 AppData 主配置。仅保留最近 20 份，防止无限增长。</summary>
+    public string CreateSettingsOpenBackup()
+    {
+        var backupDir = Path.Combine(Path.GetDirectoryName(ConfigPath)!, "backups", "settings");
+        Directory.CreateDirectory(backupDir);
+        var backupPath = Path.Combine(backupDir, $"config-settings-open-{DateTime.Now:yyyyMMdd-HHmmss-fff}.json");
+        var sessionGuestMode = Config.GuestModeEnabled;
+        try
+        {
+            Config.GuestModeEnabled = false;
+            File.WriteAllText(backupPath, JsonSerializer.Serialize(Config, JsonOpts));
+        }
+        finally
+        {
+            Config.GuestModeEnabled = sessionGuestMode;
+        }
+
+        try
+        {
+            foreach (var old in new DirectoryInfo(backupDir).GetFiles("config-settings-open-*.json")
+                         .OrderByDescending(f => f.CreationTimeUtc).Skip(20))
+                old.Delete();
+        }
+        catch { /* 清理旧备份失败不影响本次备份 */ }
+
+        return backupPath;
+    }
+
+    /// <summary>记录设置页打开次数；只在第二次打开时返回 true，用于一次性的恢复提示。</summary>
+    public bool RecordSettingsPageOpenAndShouldShowRestoreTip()
+    {
+        var statePath = Path.Combine(Path.GetDirectoryName(ConfigPath)!, "settings-page-open-count.txt");
+        var count = 0;
+        try
+        {
+            if (File.Exists(statePath)) int.TryParse(File.ReadAllText(statePath), out count);
+            count = Math.Min(count + 1, 1000000);
+            File.WriteAllText(statePath, count.ToString());
+        }
+        catch { return false; }
+        return count == 2;
     }
 
     /// <summary>

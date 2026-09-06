@@ -120,14 +120,35 @@ public class BedrockClientDownloadService
         BedrockClientChannel channel = BedrockClientChannel.Stable,
         CancellationToken ct = default)
     {
-        var fresh = await FetchVersionListFromNetworkAsync(ct);
-        if (fresh.Count > 0)
+        try
         {
-            SaveCachedVersions(fresh);
-            return FilterAndSort(fresh, channel);
+            var fresh = await FetchVersionListFromNetworkAsync(ct);
+            if (fresh.Count > 0)
+            {
+                SaveCachedVersions(fresh);
+                return FilterAndSort(fresh, channel);
+            }
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch
+        {
+            // 任何网络/JSON/镜像异常都不能让版本下拉框变空：下面无条件走本地兜底。
         }
 
-        // 网络全挂：回退本地缓存 → 内置列表
+        return GetLocalFallbackVersionList(channel);
+    }
+
+    /// <summary>
+    /// 完全不访问网络的本地版本列表兜底。优先使用上次成功获取后写入的数据缓存；
+    /// 缓存不存在/损坏时使用程序内置版本表。UI 的自动加载和“刷新列表”失败路径都可以
+    /// 调这个方法，保证断网、GitHub/CDN 不可用时仍然能选择一个本地已知版本。
+    /// </summary>
+    public List<BedrockVersionInfo> GetLocalFallbackVersionList(
+        BedrockClientChannel channel = BedrockClientChannel.Stable)
+    {
         var fallback = LoadCachedVersions();
         if (fallback.Count == 0) fallback = GetBuiltinVersions();
         return FilterAndSort(fallback, channel);

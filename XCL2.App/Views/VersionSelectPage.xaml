@@ -65,6 +65,25 @@
                     <TextBlock Text="{DynamicResource Str_Ui_Add_Or_Import}" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="13" Margin="0,20,0,8"/>
                     <Button Content="{DynamicResource Str_Ui_Add_Existing_Folder}" Style="{StaticResource SideNavButton}" Click="AddFolder_Click"/>
 
+                    <!-- 导入整合包：跟拖拽安装走同一条 ImportDroppedModpackAsync 流程，
+                         这里只是补一个不依赖"拖文件"的入口，方便用户直接点按钮选文件。
+                         图标跟"➕ 添加已有文件夹"保持同一套视觉语言，而不是纯文字按钮。 -->
+                    <Button Content="📦 导入整合包..." Style="{StaticResource SideNavButton}" Margin="0,6,0,0" Click="ImportModpack_Click"/>
+
+                    <!-- 导入实例/版本文件夹：把一个现成的、已经有 json+jar 的版本文件夹（比如从别的
+                         启动器、备份里复制出来的）整个拷进当前选中的 .minecraft 的 versions/ 下，
+                         装完之后自动选中，右侧列表里就能直接用⚙️菜单设置/启动，不用再手动找。 -->
+                    <Button Content="📁 导入实例文件夹..." Style="{StaticResource SideNavButton}" Margin="0,6,0,0" Click="ImportInstanceFolder_Click"/>
+
+                    <!-- "导入实例文件"：比上面两个正式按钮更零散、次要的入口——用来导入单个打包成
+                         .zip 的实例文件（而不是一整个文件夹）。之前用 Hyperlink 做成了默认的
+                         系统蓝/访问态红色链接样式，跟整个界面的配色格格不入；改成跟另外两个按钮
+                         同一个 SideNavButton 样式 + 📄 图标，只是放在稍微缩进、字号略小的位置，
+                         视觉上仍然比上面两个"次要"，但不再突兀。 -->
+                    <Button Content="📄 导入实例文件..." Style="{StaticResource SideNavButton}" FontSize="12"
+                            Margin="8,8,0,0" Padding="6,3" Opacity="0.75" HorizontalAlignment="Left"
+                            Click="ImportInstanceFile_Click"/>
+
                     <!-- "从列表中删除"的实例入口：当前文件夹下如果有被隐藏的实例，这里显示
                          一个按钮打开恢复列表，跟主列表分开放，避免大多数用户（没有任何隐藏实例）
                          平时也要看到这一块。 -->

@@ -27,8 +27,16 @@ public partial class BedrockPage : UserControl
     private readonly BedrockContentService _bedrockService = new();
     private readonly BedrockClientDownloadService _clientDownloadService = new();
 
-    // 客户端版本列表（从 mc-w10-versiondb 获取）
+    // 客户端版本列表（从 mc-w10-versiondb / 新版元数据库 / 本地兜底获取）
     private List<BedrockClientDownloadService.BedrockVersionInfo> _clientVersions = new();
+
+    // 客户端启动全局 10 秒冷却：顶部“启动基岩版”和“启动已安装客户端”共用，
+    // 防止用户连点导致同一个 UWP/GDK 包被重复注册/重复唤起。
+    private DateTime _bedrockLaunchCooldownUntilUtc = DateTime.MinValue;
+    private bool _bedrockStoreLaunchAvailable;
+
+    private sealed record RunningBedrockProcessChoice(
+        int ProcessId, string Label, string? ExecutablePath);
 
     public BedrockPage(MainWindow owner)
     {
@@ -97,28 +105,300 @@ public partial class BedrockPage : UserControl
     // 基岩版客户端：检测 + 唤起 + 下载 + 启动
     // ============================================================
 
+    /// <summary>
+    /// 返回一个当前确实可启动的本地基岩版客户端目录。优先使用列表当前选中的实例，
+    /// 否则按安装时间从新到旧找第一个仍然存在客户端 exe 的实例。
+    /// </summary>
+    private string? GetLaunchableLocalClientDir()
+    {
+        try
+        {
+            if (!string.IsNullOrWhiteSpace(_selectedBedrockClientDir) &&
+                BedrockClientDownloadService.FindClientExe(_selectedBedrockClientDir) != null)
+            {
+                return _selectedBedrockClientDir;
+            }
+
+            return _owner.ConfigService.Config.BedrockClients
+                .OrderByDescending(r => r.InstalledAtUtc)
+                .Select(r => r.Directory)
+                .FirstOrDefault(dir => !string.IsNullOrWhiteSpace(dir) &&
+                    BedrockClientDownloadService.FindClientExe(dir) != null);
+        }
+        catch (Exception ex)
+        {
+            ErrorPresenter.LogFallback("检查本地基岩版客户端失败", ex);
+            return null;
+        }
+    }
+
     /// <summary>检测基岩版是否已安装并更新界面状态。构造时和用户点"重新检测"时都会调。</summary>
     private async void RefreshBedrockStatusAsync()
     {
+        var localClientDir = GetLaunchableLocalClientDir();
         try
         {
             BedrockStatusText.Text = Loc.T("Str_Cs_Detecting_Ellipsis", "正在检测...");
             var installed = await BedrockLaunchService.IsInstalledAsync();
-            BedrockLaunchBtn.IsEnabled = installed;
-            BedrockStatusText.Text = installed
-                ? Loc.T("Str_Cs_Bedrock_Detected", "已检测到 Minecraft for Windows（基岩版）。")
-                : Loc.T("Str_Cs_Bedrock_Not_Detected_2",
-                    "没有检测到基岩版。请从 Microsoft Store 安装并至少启动一次，之后再回来这里。");
+            _bedrockStoreLaunchAvailable = installed;
+            RefreshBedrockLaunchButtonState();
+
+            if (localClientDir != null)
+            {
+                BedrockStatusText.Text = installed
+                    ? $"已检测到可启动的本地基岩版客户端，同时检测到 Microsoft Store 版。顶部按钮会优先启动本地实例：{localClientDir}"
+                    : $"已检测到可启动的本地基岩版客户端。顶部「启动基岩版」会直接启动它：{localClientDir}";
+            }
+            else
+            {
+                BedrockStatusText.Text = installed
+                    ? Loc.T("Str_Cs_Bedrock_Detected", "已检测到 Minecraft for Windows（基岩版）。")
+                    : Loc.T("Str_Cs_Bedrock_Not_Detected_2",
+                        "没有检测到基岩版。请从 Microsoft Store 安装并至少启动一次，之后再回来这里。");
+            }
         }
         catch
         {
-            BedrockStatusText.Text = Loc.T("Str_Cs_Bedrock_Detect_Failed",
-                "检测失败（可能是 PowerShell 被禁用）。可以直接点「启动基岩版」试试。");
-            BedrockLaunchBtn.IsEnabled = true;
+            BedrockStatusText.Text = localClientDir != null
+                ? $"Microsoft Store 版检测失败，但已找到可启动的本地客户端：{localClientDir}"
+                : Loc.T("Str_Cs_Bedrock_Detect_Failed",
+                    "检测失败（可能是 PowerShell 被禁用）。可以直接点「启动基岩版」试试。");
+            // 检测本身失败时仍允许用户直接尝试 Store 唤起；按钮是否处在 10 秒冷却中
+            // 由统一状态方法决定，避免这里把冷却中的按钮误重新启用。
+            _bedrockStoreLaunchAvailable = true;
+            RefreshBedrockLaunchButtonState();
         }
+
+        RefreshRunningBedrockProcesses();
     }
 
     private void BedrockDetect_Click(object sender, RoutedEventArgs e) => RefreshBedrockStatusAsync();
+
+    // ============================================================
+    // 基岩版客户端：启动冷却 / 启动确认 / 运行进程管理
+    // ============================================================
+
+    private bool IsBedrockLaunchCoolingDown => DateTime.UtcNow < _bedrockLaunchCooldownUntilUtc;
+
+    /// <summary>统一刷新所有“启动基岩版客户端”按钮状态，确保任何异步检测/列表刷新都不会绕过 10 秒冷却。</summary>
+    private void RefreshBedrockLaunchButtonState()
+    {
+        try
+        {
+            var cooling = IsBedrockLaunchCoolingDown;
+            var hasLocal = GetLaunchableLocalClientDir() != null;
+            BedrockLaunchBtn.IsEnabled = !cooling && (_bedrockStoreLaunchAvailable || hasLocal);
+            BedrockClientLaunchDownloadedBtn.IsEnabled = !cooling && !string.IsNullOrWhiteSpace(_selectedBedrockClientDir);
+        }
+        catch
+        {
+            // 页面正在卸载时命名控件可能已经不可用；不需要让后台冷却任务变成未观察异常。
+        }
+    }
+
+    /// <summary>
+    /// 启动动作一开始就进入 10 秒冷却，而不是等启动成功后才冷却。这样注册包、Shell 激活等
+    /// 慢操作期间用户也不能连续点出第二个启动请求。冷却失败/启动失败也不提前解除，严格按
+    /// “开始启动后的 10 秒内无法再次启动”执行。
+    /// </summary>
+    private bool TryBeginBedrockLaunchCooldown(string startingMessage)
+    {
+        if (IsBedrockLaunchCoolingDown)
+        {
+            var remaining = Math.Max(1, (int)Math.Ceiling((_bedrockLaunchCooldownUntilUtc - DateTime.UtcNow).TotalSeconds));
+            BedrockClientStatusText.Text = $"基岩版正在启动/冷却中，请 {remaining} 秒后再试。";
+            return false;
+        }
+
+        _bedrockLaunchCooldownUntilUtc = DateTime.UtcNow.AddSeconds(10);
+        BedrockStatusText.Text = startingMessage;
+        BedrockClientStatusText.Text = startingMessage;
+        RefreshBedrockLaunchButtonState();
+        _ = ReleaseBedrockLaunchCooldownAsync(_bedrockLaunchCooldownUntilUtc);
+        return true;
+    }
+
+    private async Task ReleaseBedrockLaunchCooldownAsync(DateTime expectedUntilUtc)
+    {
+        try
+        {
+            var delay = expectedUntilUtc - DateTime.UtcNow;
+            if (delay > TimeSpan.Zero) await Task.Delay(delay);
+            if (_bedrockLaunchCooldownUntilUtc != expectedUntilUtc) return;
+            await Dispatcher.InvokeAsync(RefreshBedrockLaunchButtonState);
+        }
+        catch
+        {
+            // 页面已经被切走/窗口关闭时无需处理。
+        }
+    }
+
+    /// <summary>
+    /// 在启动 API 返回后确认游戏进程实际存在。直接 exe 路径有 Process 句柄，先等 800ms 防止
+    /// “Process.Start 成功但立刻闪退”被误报成功；UWP/Store/注册包路径拿不到句柄，则最多等待
+    /// 5 秒枚举 Minecraft.Windows*。只有确认成功时才弹“启动成功”，否则只更新状态文字。
+    /// </summary>
+    private async Task<bool> ConfirmBedrockLaunchAsync(Process? directProcess, string description)
+    {
+        bool confirmed = false;
+        int? pid = null;
+
+        if (directProcess != null)
+        {
+            await Task.Delay(800);
+            try
+            {
+                confirmed = !directProcess.HasExited;
+                if (confirmed) pid = directProcess.Id;
+            }
+            catch
+            {
+                confirmed = false;
+            }
+        }
+        else
+        {
+            var running = await BedrockLaunchService.WaitForRunningClientAsync(TimeSpan.FromSeconds(5));
+            if (running != null)
+            {
+                confirmed = true;
+                pid = running.ProcessId;
+            }
+        }
+
+        RefreshRunningBedrockProcesses();
+        if (confirmed)
+        {
+            MessageBoxDialog.ShowSuccess(
+                pid.HasValue
+                    ? $"Minecraft for Windows 已成功启动。\n\n{description}\nPID：{pid.Value}"
+                    : $"Minecraft for Windows 已成功启动。\n\n{description}",
+                "基岩版启动成功");
+        }
+        return confirmed;
+    }
+
+    private static bool IsPathInside(string filePath, string directory)
+    {
+        try
+        {
+            var fullFile = Path.GetFullPath(filePath).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            var fullDir = Path.GetFullPath(directory).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+                          + Path.DirectorySeparatorChar;
+            return fullFile.StartsWith(fullDir, StringComparison.OrdinalIgnoreCase);
+        }
+        catch { return false; }
+    }
+
+    /// <summary>刷新“运行中的基岩版实例”下拉框，并尽量把进程路径匹配到启动器已记录的实例名称。</summary>
+    private void RefreshRunningBedrockProcesses()
+    {
+        try
+        {
+            var processes = BedrockLaunchService.GetRunningClientProcesses();
+            var cfg = _owner.ConfigService.Config;
+            var choices = processes.Select(p =>
+            {
+                var matched = !string.IsNullOrWhiteSpace(p.ExecutablePath)
+                    ? cfg.BedrockClients.FirstOrDefault(r => IsPathInside(p.ExecutablePath!, r.Directory))
+                    : null;
+
+                var ownerText = matched != null
+                    ? matched.IsManuallyImported ? $"[手动导入] {matched.DisplayName}" : matched.DisplayName
+                    : "Minecraft for Windows / Store";
+                var pathText = string.IsNullOrWhiteSpace(p.ExecutablePath) ? "路径不可读取" : p.ExecutablePath;
+                return new RunningBedrockProcessChoice(
+                    p.ProcessId,
+                    $"{ownerText} — PID {p.ProcessId} — {pathText}",
+                    p.ExecutablePath);
+            }).ToList();
+
+            var previousPid = (BedrockRunningProcessCombo.SelectedItem as RunningBedrockProcessChoice)?.ProcessId;
+            BedrockRunningProcessCombo.ItemsSource = choices;
+            BedrockRunningProcessCombo.DisplayMemberPath = nameof(RunningBedrockProcessChoice.Label);
+            if (previousPid.HasValue)
+                BedrockRunningProcessCombo.SelectedItem = choices.FirstOrDefault(x => x.ProcessId == previousPid.Value);
+            if (BedrockRunningProcessCombo.SelectedItem == null && choices.Count > 0)
+                BedrockRunningProcessCombo.SelectedIndex = 0;
+
+            BedrockCloseAllBtn.IsEnabled = choices.Count > 0;
+            BedrockCloseSelectedProcessBtn.IsEnabled = BedrockRunningProcessCombo.SelectedItem != null;
+            BedrockProcessStatusText.Text = choices.Count == 0
+                ? "没有检测到正在运行的基岩版进程。"
+                : $"检测到 {choices.Count} 个基岩版进程。可一键关闭全部，也可以从下拉框按 PID 关闭某个实例。";
+        }
+        catch (Exception ex)
+        {
+            ErrorPresenter.LogFallback("刷新基岩版运行进程列表失败", ex);
+            BedrockProcessStatusText.Text = $"读取基岩版运行进程失败：{ex.Message}";
+        }
+    }
+
+    private void BedrockRunningProcessCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (BedrockCloseSelectedProcessBtn != null)
+            BedrockCloseSelectedProcessBtn.IsEnabled = BedrockRunningProcessCombo.SelectedItem is RunningBedrockProcessChoice;
+    }
+
+    private void BedrockRefreshRunningProcesses_Click(object sender, RoutedEventArgs e)
+        => RefreshRunningBedrockProcesses();
+
+    private async void BedrockCloseSelectedProcess_Click(object sender, RoutedEventArgs e)
+    {
+        if (BedrockRunningProcessCombo.SelectedItem is not RunningBedrockProcessChoice selected) return;
+
+        BedrockCloseSelectedProcessBtn.IsEnabled = false;
+        BedrockProcessStatusText.Text = $"正在关闭 PID {selected.ProcessId}...";
+        try
+        {
+            await BedrockLaunchService.CloseClientProcessAsync(selected.ProcessId);
+            BedrockProcessStatusText.Text = $"已关闭基岩版进程 PID {selected.ProcessId}。";
+        }
+        catch (Exception ex)
+        {
+            ErrorPresenter.ShowFriendlyError(
+                $"无法关闭基岩版进程 PID {selected.ProcessId}。",
+                ex.ToString(), "关闭基岩版失败");
+        }
+        finally
+        {
+            RefreshRunningBedrockProcesses();
+        }
+    }
+
+    private async void BedrockCloseAll_Click(object sender, RoutedEventArgs e)
+    {
+        BedrockCloseAllBtn.IsEnabled = false;
+        BedrockCloseSelectedProcessBtn.IsEnabled = false;
+        BedrockProcessStatusText.Text = "正在关闭全部基岩版进程...";
+        try
+        {
+            var result = await BedrockLaunchService.CloseAllClientProcessesAsync();
+            if (result.Failures.Count == 0)
+            {
+                BedrockProcessStatusText.Text = result.ClosedCount == 0
+                    ? "当前没有正在运行的基岩版进程。"
+                    : $"已关闭 {result.ClosedCount} 个基岩版进程。";
+            }
+            else
+            {
+                BedrockProcessStatusText.Text =
+                    $"已关闭 {result.ClosedCount} 个进程，另有 {result.Failures.Count} 个关闭失败。";
+                ErrorPresenter.ShowFriendlyError(
+                    "部分基岩版进程无法关闭。",
+                    string.Join(Environment.NewLine, result.Failures),
+                    "部分关闭失败");
+            }
+        }
+        catch (Exception ex)
+        {
+            ErrorPresenter.ShowFriendlyError("一键关闭基岩版失败。", ex.ToString(), "关闭基岩版失败");
+        }
+        finally
+        {
+            RefreshRunningBedrockProcesses();
+        }
+    }
 
     /// <summary>
     /// 「授权状态分流」的落地点。前面 BedrockLaunchService 顶部的注释解释了原因：
@@ -134,32 +414,92 @@ public partial class BedrockPage : UserControl
     /// </summary>
     private async void BedrockLaunch_Click(object sender, RoutedEventArgs e)
     {
-        if (!BedrockLaunchBtn.IsEnabled)
+        if (!TryBeginBedrockLaunchCooldown("正在启动基岩版...")) return;
+
+        // 顶部按钮与下方“启动已安装在本地的客户端”走同一套可靠启动路径：
+        // 有可用本地实例时优先启动它，而不是无条件走 Microsoft Store 包唤起。
+        Exception? localLaunchError = null;
+        var localClientDir = GetLaunchableLocalClientDir();
+        if (localClientDir != null)
         {
-            var installed = await BedrockLaunchService.IsInstalledAsync();
-            if (!installed)
+            try
             {
-                await PromptGoToStoreAsync();
+                BedrockStatusText.Text = $"正在启动本地基岩版客户端：{localClientDir}";
+                BedrockClientStatusText.Text = BedrockStatusText.Text;
+
+                var proc = await BedrockClientDownloadService.LaunchClientAsync(localClientDir);
+                var confirmed = await ConfirmBedrockLaunchAsync(proc, $"本地实例：{localClientDir}");
+                BedrockClientDownloadService.MonitorLaunchedProcess(proc, msg =>
+                    _owner.Dispatcher.InvokeAsync(() =>
+                        ErrorPresenter.LogFallback("基岩版客户端可能闪退", new Exception(msg))));
+
+                BedrockStatusText.Text = confirmed
+                    ? $"基岩版已启动：{localClientDir}"
+                    : $"已发出启动指令，但暂未检测到基岩版进程：{localClientDir}";
+                BedrockClientStatusText.Text = BedrockStatusText.Text;
                 return;
             }
+            catch (Exception ex)
+            {
+                // 本地实例如果恰好损坏/注册失败，再尝试系统 Store 包，避免一个坏实例把
+                // 仍然可用的正版 Store 安装也挡住。最终两边都失败时一起给出诊断信息。
+                localLaunchError = ex;
+                ErrorPresenter.LogFallback($"从顶部按钮启动本地基岩版客户端失败：{localClientDir}", ex);
+            }
+        }
+
+        bool installed;
+        try
+        {
+            installed = await BedrockLaunchService.IsInstalledAsync();
+            _bedrockStoreLaunchAvailable = installed;
+        }
+        catch
+        {
+            // 检测失败时仍允许直接尝试唤起 Store 包，这跟原来的行为一致。
+            installed = true;
+            _bedrockStoreLaunchAvailable = true;
+        }
+
+        if (!installed)
+        {
+            if (localLaunchError != null)
+            {
+                ErrorPresenter.ShowFriendlyError(
+                    "本地基岩版客户端启动失败，并且没有检测到可作为后备的 Microsoft Store 版。",
+                    localLaunchError.ToString(),
+                    Loc.T("Str_Cs_Couldn_T_Start_Bedrock_Edition", "启动基岩版失败"));
+                return;
+            }
+
+            await PromptGoToStoreAsync();
+            return;
         }
 
         try
         {
+            BedrockStatusText.Text = "正在启动 Microsoft Store 版 Minecraft for Windows...";
             BedrockLaunchService.Launch();
-            // 如实告知：走这条路唤起的是系统另起的独立应用（Microsoft Store 包），本启动器
-            // 拿不到它的进程句柄，没法监控它是不是正常起来了——这不是没做，是这条路径下
-            // 官方就没提供合法途径做到。如果点了之后游戏窗口一直没出现，只能去 Microsoft
-            // Store 自己的「已下载」列表或系统「任务管理器」里确认状态。
-            BedrockStatusText.Text = Loc.T("Str_Cs_Bedrock_Launched_No_Monitor",
-                "已发出启动指令。由于这是系统独立管理的应用，本启动器无法确认它是否正常打开——" +
-                "如果一直没有出现游戏窗口，请检查 Microsoft Store 或任务管理器。");
+            var confirmed = await ConfirmBedrockLaunchAsync(null, "Microsoft Store 版 Minecraft for Windows");
+            BedrockStatusText.Text = confirmed
+                ? "Microsoft Store 版基岩版已启动。"
+                : Loc.T("Str_Cs_Bedrock_Launched_No_Monitor",
+                    "已发出启动指令，但 5 秒内暂未检测到游戏进程。如果窗口稍后出现则无需处理；" +
+                    "如果一直没有出现，请检查 Microsoft Store 或任务管理器。");
         }
         catch (Exception ex)
         {
+            var detail = localLaunchError == null
+                ? ex.ToString()
+                : $"本地客户端启动失败：\n{localLaunchError}\n\nMicrosoft Store 版唤起也失败：\n{ex}";
             ErrorPresenter.ShowFriendlyError(
                 Loc.T("Str_Cs_Couldn_T_Start_Bedrock_2", "唤起基岩版失败，可能它没有正确安装。"),
-                ex.ToString(), Loc.T("Str_Cs_Couldn_T_Start_Bedrock_Edition", "启动基岩版失败"));
+                detail, Loc.T("Str_Cs_Couldn_T_Start_Bedrock_Edition", "启动基岩版失败"));
+        }
+        finally
+        {
+            RefreshBedrockLaunchButtonState();
+            RefreshRunningBedrockProcesses();
         }
     }
 
@@ -351,6 +691,7 @@ public partial class BedrockPage : UserControl
             : cfg.BedrockClientDefaultDownloadDir;
 
         RefreshBedrockClientInstanceList();
+        RefreshRunningBedrockProcesses();
 
         // 页面加载时自动刷新一次版本列表
         _ = LoadClientVersionsAsync();
@@ -455,13 +796,21 @@ public partial class BedrockPage : UserControl
             }
             catch (Exception ex)
             {
+                // 即使强制网络刷新本身抛异常，也必须回到本地缓存/内置列表，不能把版本选择框留空。
+                var channel = GetSelectedClientChannel();
+                var fallback = _clientDownloadService.GetLocalFallbackVersionList(channel);
                 await Dispatcher.InvokeAsync(() =>
                 {
-                    ErrorPresenter.LogFallback("刷新基岩版客户端版本列表失败", ex);
-                    BedrockClientVersionCombo.ItemsSource = new[] { Loc.T("Str_Cs_Version_List_Load_Failed", "版本列表加载失败") };
-                    BedrockClientDownloadBtn.IsEnabled = false;
-                    BedrockClientStatusText.Text = Loc.T("Str_Cs_Version_List_Load_Failed", "版本列表加载失败，请检查网络后点击「刷新列表」重试。");
-                    BedrockClientVersionCombo.IsEnabled = false;
+                    ErrorPresenter.LogFallback("刷新基岩版客户端版本列表失败，已切换本地兜底", ex);
+                    _clientVersions = fallback;
+                    BedrockClientVersionCombo.ItemsSource = fallback;
+                    BedrockClientVersionCombo.DisplayMemberPath = "Name";
+                    BedrockClientVersionCombo.SelectedIndex = fallback.Count > 0 ? 0 : -1;
+                    BedrockClientDownloadBtn.IsEnabled = fallback.Count > 0;
+                    BedrockClientVersionCombo.IsEnabled = fallback.Count > 0;
+                    BedrockClientStatusText.Text = fallback.Count > 0
+                        ? $"无法直接获取在线版本列表，已使用本地兜底，共 {fallback.Count} 个版本。"
+                        : "在线版本列表和本地兜底均不可用。";
                 });
             }
         });
@@ -494,12 +843,16 @@ public partial class BedrockPage : UserControl
             _selectedBedrockClientDir = null;
             BedrockClientLaunchDownloadedBtn.IsEnabled = false;
         }
+
+        // 顶部“启动基岩版”也应认识通过本页下载/手动导入的客户端；
+        // 同时统一遵守 10 秒启动冷却。
+        RefreshBedrockLaunchButtonState();
     }
 
     private void BedrockClientInstanceList_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         _selectedBedrockClientDir = BedrockClientInstanceList.SelectedValue as string;
-        BedrockClientLaunchDownloadedBtn.IsEnabled = !string.IsNullOrEmpty(_selectedBedrockClientDir);
+        RefreshBedrockLaunchButtonState();
     }
 
     private void BedrockClientBrowseDefaultDir_Click(object sender, RoutedEventArgs e)
@@ -551,17 +904,27 @@ public partial class BedrockPage : UserControl
                     $"基岩版客户端 {selectedVersion.Name} 已经安装过了：\n{existingRecord.Directory}\n\n无需重复下载，直接启动它吗？",
                     Loc.T("Str_Cs_Download_Complete", "已安装")))
             {
+                if (!TryBeginBedrockLaunchCooldown($"正在启动基岩版客户端 {selectedVersion.Name}...")) return;
                 try
                 {
                     var proc = await BedrockClientDownloadService.LaunchClientAsync(existingRecord.Directory);
+                    var confirmed = await ConfirmBedrockLaunchAsync(proc, $"{selectedVersion.Name}：{existingRecord.Directory}");
                     BedrockClientDownloadService.MonitorLaunchedProcess(proc, msg =>
                         _owner.Dispatcher.InvokeAsync(() =>
                             ErrorPresenter.LogFallback($"基岩版客户端 {selectedVersion.Name} 可能闪退", new Exception(msg))));
-                    BedrockClientStatusText.Text = $"已启动已安装的基岩版客户端 {selectedVersion.Name}：{existingRecord.Directory}";
+                    BedrockClientStatusText.Text = confirmed
+                        ? $"已启动已安装的基岩版客户端 {selectedVersion.Name}：{existingRecord.Directory}"
+                        : $"已发出启动指令，但暂未检测到进程：{existingRecord.Directory}";
                 }
                 catch (Exception launchEx)
                 {
-                    ErrorPresenter.LogFallback("启动已安装的基岩版客户端失败", launchEx);
+                    ErrorPresenter.ShowFriendlyError(
+                        "启动已安装的基岩版客户端失败。", launchEx.ToString(), "启动基岩版失败");
+                }
+                finally
+                {
+                    RefreshBedrockLaunchButtonState();
+                    RefreshRunningBedrockProcesses();
                 }
             }
             return;
@@ -603,17 +966,27 @@ public partial class BedrockPage : UserControl
                             $"基岩版客户端 {selectedVersion.Name} 已经安装过了：\n{finalDir}\n\n无需重复下载，直接启动它吗？",
                             Loc.T("Str_Cs_Download_Complete", "已安装")))
                     {
+                        if (!TryBeginBedrockLaunchCooldown($"正在启动基岩版客户端 {selectedVersion.Name}...")) return;
                         try
                         {
                             var proc = await BedrockClientDownloadService.LaunchClientAsync(finalDir);
+                            var confirmed = await ConfirmBedrockLaunchAsync(proc, $"{selectedVersion.Name}：{finalDir}");
                             BedrockClientDownloadService.MonitorLaunchedProcess(proc, msg =>
                                 _owner.Dispatcher.InvokeAsync(() =>
                                     ErrorPresenter.LogFallback($"基岩版客户端 {selectedVersion.Name} 可能闪退", new Exception(msg))));
-                            BedrockClientStatusText.Text = $"已启动已安装的基岩版客户端 {selectedVersion.Name}：{finalDir}";
+                            BedrockClientStatusText.Text = confirmed
+                                ? $"已启动已安装的基岩版客户端 {selectedVersion.Name}：{finalDir}"
+                                : $"已发出启动指令，但暂未检测到进程：{finalDir}";
                         }
                         catch (Exception launchEx)
                         {
-                            ErrorPresenter.LogFallback("启动已安装的基岩版客户端失败", launchEx);
+                            ErrorPresenter.ShowFriendlyError(
+                                "启动已安装的基岩版客户端失败。", launchEx.ToString(), "启动基岩版失败");
+                        }
+                        finally
+                        {
+                            RefreshBedrockLaunchButtonState();
+                            RefreshRunningBedrockProcesses();
                         }
                     }
                 });
@@ -649,19 +1022,36 @@ public partial class BedrockPage : UserControl
                 // 也不需要自己去安装/注册任何东西（官方包解压出来就是完整可运行的游戏）。
                 // 启动失败不阻断流程：记录已保存，用户仍可点「启动已安装在本地的客户端」手动重试。
                 string launchNote;
-                try
+                if (!TryBeginBedrockLaunchCooldown($"下载完成，正在自动启动基岩版客户端 {selectedVersion.Name}..."))
                 {
-                    var proc = await BedrockClientDownloadService.LaunchClientAsync(finalDir, progress);
-                    BedrockClientDownloadService.MonitorLaunchedProcess(proc, msg =>
-                        ErrorPresenter.LogFallback($"基岩版客户端 {selectedVersion.Name} 可能闪退", new Exception(msg)));
-                    launchNote = Loc.T("Str_Cs_Bedrock_Client_Auto_Launched", "游戏已自动启动。");
-                    BedrockClientStatusText.Text = $"已下载并启动基岩版客户端 {selectedVersion.Name}：{finalDir}";
+                    launchNote = "游戏没有自动重复启动：当前仍处于 10 秒启动冷却中，可稍后手动启动。";
                 }
-                catch (Exception launchEx)
+                else
                 {
-                    ErrorPresenter.LogFallback("自动启动已下载的基岩版客户端失败", launchEx);
-                    launchNote = Loc.T("Str_Cs_Bedrock_Client_Auto_Launch_Failed", "游戏自动启动失败，可点上面的「启动已安装在本地的客户端」手动重试。");
-                    BedrockClientStatusText.Text = $"已下载基岩版客户端 {selectedVersion.Name} 到：{finalDir}（自动启动失败）";
+                    try
+                    {
+                        var proc = await BedrockClientDownloadService.LaunchClientAsync(finalDir, progress);
+                        var confirmed = await ConfirmBedrockLaunchAsync(proc, $"{selectedVersion.Name}：{finalDir}");
+                        BedrockClientDownloadService.MonitorLaunchedProcess(proc, msg =>
+                            ErrorPresenter.LogFallback($"基岩版客户端 {selectedVersion.Name} 可能闪退", new Exception(msg)));
+                        launchNote = confirmed
+                            ? Loc.T("Str_Cs_Bedrock_Client_Auto_Launched", "游戏已自动启动。")
+                            : "已发出自动启动指令，但暂未检测到游戏进程。";
+                        BedrockClientStatusText.Text = confirmed
+                            ? $"已下载并启动基岩版客户端 {selectedVersion.Name}：{finalDir}"
+                            : $"已下载基岩版客户端 {selectedVersion.Name}，启动指令已发出：{finalDir}";
+                    }
+                    catch (Exception launchEx)
+                    {
+                        ErrorPresenter.LogFallback("自动启动已下载的基岩版客户端失败", launchEx);
+                        launchNote = Loc.T("Str_Cs_Bedrock_Client_Auto_Launch_Failed", "游戏自动启动失败，可点上面的「启动已安装在本地的客户端」手动重试。");
+                        BedrockClientStatusText.Text = $"已下载基岩版客户端 {selectedVersion.Name} 到：{finalDir}（自动启动失败）";
+                    }
+                    finally
+                    {
+                        RefreshBedrockLaunchButtonState();
+                        RefreshRunningBedrockProcesses();
+                    }
                 }
 
                 MessageBoxDialog.ShowSuccess(
@@ -681,19 +1071,30 @@ public partial class BedrockPage : UserControl
             return;
         }
 
+        if (!TryBeginBedrockLaunchCooldown($"正在启动基岩版：{_selectedBedrockClientDir}")) return;
+
         try
         {
+            BedrockClientStatusText.Text = $"正在启动：{_selectedBedrockClientDir}";
             var proc = await BedrockClientDownloadService.LaunchClientAsync(_selectedBedrockClientDir);
+            var confirmed = await ConfirmBedrockLaunchAsync(proc, $"本地实例：{_selectedBedrockClientDir}");
             BedrockClientDownloadService.MonitorLaunchedProcess(proc, msg =>
                 Dispatcher.InvokeAsync(() =>
                     ErrorPresenter.LogFallback("基岩版客户端可能闪退", new Exception(msg))));
-            BedrockClientStatusText.Text = $"已启动：{_selectedBedrockClientDir}";
+            BedrockClientStatusText.Text = confirmed
+                ? $"已启动：{_selectedBedrockClientDir}"
+                : $"已发出启动指令，但暂未检测到进程：{_selectedBedrockClientDir}";
         }
         catch (Exception ex)
         {
             ErrorPresenter.ShowFriendlyError(
                 ex is InvalidOperationException ? ex.Message : Loc.T("Str_Cs_Bedrock_Client_Launch_Failed", "启动基岩版客户端失败。"),
                 ex.ToString(), Loc.T("Str_Cs_Couldn_T_Start_Bedrock_Edition", "启动失败"));
+        }
+        finally
+        {
+            RefreshBedrockLaunchButtonState();
+            RefreshRunningBedrockProcesses();
         }
     }
 

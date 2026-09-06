@@ -1,4 +1,4 @@
-<local:OverlayDialogControl x:Class="XCL2.App.Views.InstanceSettingsDialog"
+﻿<local:OverlayDialogControl x:Class="XCL2.App.Views.InstanceSettingsDialog"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:local="clr-namespace:XCL2.App.Views"
@@ -54,6 +54,17 @@
                 <TextBox x:Name="InstanceCustomJvmArgsBoxDlg" Height="58" Padding="6" TextWrapping="Wrap" AcceptsReturn="True"/>
                 <TextBlock Text="留空表示跟随全局设置；实例设置优先级高于全局设置。" FontSize="11"
                            Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,4,0,8" TextWrapping="Wrap"/>
+
+                <StackPanel x:Name="GraphicsApiPanelDlg" Margin="0,6,0,8" Visibility="Collapsed">
+                    <TextBlock Text="游戏内图形 API（Minecraft 26.1 及以上）" FontSize="12" FontWeight="Bold" Margin="0,0,0,4"/>
+                    <ComboBox x:Name="GraphicsApiPreferenceComboDlg" Width="240" HorizontalAlignment="Left" Padding="6">
+                        <ComboBoxItem Content="游戏自主设置（默认）" Tag="game"/>
+                        <ComboBoxItem Content="强制使用 OpenGL" Tag="opengl"/>
+                        <ComboBoxItem Content="强制使用 Vulkan" Tag="vulkan"/>
+                    </ComboBox>
+                    <TextBlock Text="这是 Minecraft 游戏自己的图形 API 选项，不改变启动器界面的渲染格式。仅对这个版本生效；启动前会同步到该实例实际使用的 options.txt。游戏自主设置对应游戏的 Default，另外两项分别强制优先使用 OpenGL / Vulkan。"
+                               FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,4,0,0" TextWrapping="Wrap"/>
+                </StackPanel>
 
                 <CheckBox x:Name="AutoJoinServerCheckDlg" Content="{DynamicResource Str_Ui_Join_A_Specific_Server_On_Launch_Connect}"
                           Margin="0,0,0,4" Checked="AutoJoinServerCheckDlg_Changed" Unchecked="AutoJoinServerCheckDlg_Changed"/>

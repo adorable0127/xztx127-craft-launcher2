@@ -28,19 +28,25 @@ public static class AprilFoolsUi
 {
     private static DispatcherTimer? _watchdogTimer;
     private static DispatcherTimer? _windowChaosTimer;
+    private static DispatcherTimer? _recoveryNotificationTimer;
+    private static DispatcherTimer? _recoveryWin32Timer;
     private static readonly Random Rng = new();
 
     private const string RickRoll1Url = "https://www.bilibili.com/video/BV1GJ411x7h7/";
     private const string RickRoll2Url = "https://www.bilibili.com/video/BV12rMQ6yEP2";
 
     /// <summary>MainWindow 构造函数里调用一次：挂上小白旗的显隐监听、窗口乱窜效果、
-    /// F1 临时恢复热键。首页磁贴相关的效果（3 号鼠标躲避、8 号磁贴乱跳）由 HomePage 自己
+    /// F1 紧急关闭热键以及 10 秒/60 秒恢复提示。首页磁贴相关的效果（3 号鼠标躲避、8 号磁贴乱跳）由 HomePage 自己
     /// 在构造函数里调用 <see cref="AttachHomeTileEffects"/>，不在这里处理
     /// （HomePage 是后创建的 UserControl，这里拿不到它的控件引用）。</summary>
     public static void Attach(MainWindow owner)
     {
         RefreshFlagVisibility(owner);
-        AprilFoolsService.StateChanged += () => owner.Dispatcher.BeginInvoke(() => RefreshFlagVisibility(owner));
+        AprilFoolsService.StateChanged += () => owner.Dispatcher.BeginInvoke(() =>
+        {
+            RefreshFlagVisibility(owner);
+            ScheduleRecoveryPrompts(owner);
+        });
 
         // 每 2 秒复查一次：防止某些极端情况下 StateChanged 事件没触发（比如刚好跨天但
         // 进程一直没重启），白旗显隐/窗口乱窜状态还是能自己收敛到正确状态。
@@ -49,7 +55,7 @@ public static class AprilFoolsUi
         _watchdogTimer.Start();
 
         // 5 号：窗口乱窜 + 强制窗口模式。F11 拦截已经在 MainWindow.xaml.cs 里做了，
-        // 这里只负责"随机挪动窗口位置"和"F1 临时恢复"。
+        // 这里只负责随机挪动窗口位置；F1 在下面作为所有彩蛋统一的紧急恢复键。
         _windowChaosTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(3) };
         _windowChaosTimer.Tick += (_, _) =>
         {
@@ -62,23 +68,53 @@ public static class AprilFoolsUi
         };
         _windowChaosTimer.Start();
 
-        // F1：5 号效果生效期间临时"定住"窗口 3 秒，方便用户腾出手去点小白旗
-        // （不直接恢复正常，只是给一个喘息窗口——真正恢复还是要点小白旗）。
+        // F1：作为所有愚人节彩蛋的紧急恢复键。它和点击小白旗一样会关闭当天彩蛋并落盘，
+        // 但不额外弹出“刚才遇到了什么”的说明，保证用户真的点不到按钮时可以一键恢复。
         owner.PreviewKeyDown += (_, e) =>
         {
-            if (e.Key != Key.F1) return;
-            if (!AprilFoolsService.Has(AprilFoolsService.Effect.WindowChaos)) return;
+            if (e.Key != Key.F1 || !AprilFoolsService.IsActive) return;
             e.Handled = true;
-            if (_windowChaosTimer == null) return;
-            _windowChaosTimer.Stop();
-            var resumeTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(3) };
-            resumeTimer.Tick += (_, _) =>
-            {
-                resumeTimer.Stop();
-                if (AprilFoolsService.Has(AprilFoolsService.Effect.WindowChaos)) _windowChaosTimer.Start();
-            };
-            resumeTimer.Start();
+            // 不停止窗口乱窜 Timer 本体，只让 Has(WindowChaos) 变成 false。这样用户之后如果
+            // 再从“千万别点”红色确定重新抽到窗口彩蛋，同一进程内仍能再次正常触发。
+            AprilFoolsService.DismissForToday();
+            owner.AprilFoolsFlagButton.Visibility = Visibility.Collapsed;
         };
+
+        // 真实 4 月 1 日启动时从这里开始计时；“千万别点”第三按钮之后则会由
+        // StateChanged 再调用一次 ScheduleRecoveryPrompts，从点击的那一刻重新算 10/60 秒。
+        ScheduleRecoveryPrompts(owner);
+    }
+
+    private static void ScheduleRecoveryPrompts(MainWindow owner)
+    {
+        _recoveryNotificationTimer?.Stop();
+        _recoveryWin32Timer?.Stop();
+        _recoveryNotificationTimer = null;
+        _recoveryWin32Timer = null;
+
+        if (!AprilFoolsService.IsActive) return;
+
+        _recoveryNotificationTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(10) };
+        _recoveryNotificationTimer.Tick += (_, _) =>
+        {
+            _recoveryNotificationTimer?.Stop();
+            if (AprilFoolsService.IsActive)
+                ToastService.ShowSystemNotification("按不到按钮？F1即可恢复！", "XCL2 愚人节彩蛋");
+        };
+        _recoveryNotificationTimer.Start();
+
+        _recoveryWin32Timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(60) };
+        _recoveryWin32Timer.Tick += (_, _) =>
+        {
+            _recoveryWin32Timer?.Stop();
+            if (!AprilFoolsService.IsActive) return;
+            System.Windows.MessageBox.Show(
+                "按不到按钮？F1即可恢复！",
+                "XCL2 愚人节彩蛋",
+                MessageBoxButton.OK,
+                MessageBoxImage.Information);
+        };
+        _recoveryWin32Timer.Start();
     }
 
     private static void RefreshFlagVisibility(MainWindow owner)

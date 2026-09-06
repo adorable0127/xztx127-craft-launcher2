@@ -151,6 +151,27 @@ public sealed class MarkdownViewer : StackPanel
                 continue;
             }
 
+            // | 表头 | ... |
+            // |------|-----|
+            // | 单元格 | ... |
+            // 修复"AI 助手回复里用 Markdown 表格格式时不会正常显示"：以前这里完全没有表格分支，
+            // 表格的每一行都会落进下面的"普通段落"分支，原样把 | 字符打印出来。
+            // GFM 表格的判定标准是"表头行 + 紧跟着的分隔行（只含 -/:/| 和空白）"，只看这两行就够，
+            // 不用管后面数据行是否对齐——对齐交给下面的 Grid 布局自动处理。
+            if (IsTableRow(raw) && i + 1 < lines.Length && IsTableSeparatorRow(lines[i + 1]))
+            {
+                var headerCells = ParseTableRow(raw);
+                i += 2;
+                var dataRows = new List<string[]>();
+                while (i < lines.Length && IsTableRow(lines[i]))
+                {
+                    dataRows.Add(ParseTableRow(lines[i]));
+                    i++;
+                }
+                AddTable(headerCells, dataRows);
+                continue;
+            }
+
             // 普通段落：连续普通行保留软换行，但不显示 Markdown 标记本身。
             var paragraphLines = new List<string>();
             while (i < lines.Length && !IsBlockStart(lines[i]))
@@ -178,7 +199,62 @@ public sealed class MarkdownViewer : StackPanel
             return true;
         if (GetHeadingLevel(t, out _) > 0 || t is "---" or "***" or "___")
             return true;
+        // 段落累积到表格行时也要停下，不然表格第一行会被前一段普通文字的软换行吞掉。
+        if (IsTableRow(line))
+            return true;
         return IsUnorderedListLine(line) || OrderedListRegex.IsMatch(line);
+    }
+
+    /// <summary>是不是"看起来像表格行"：含至少一个未转义的 `|`。用来判断段落到哪里为止，
+    /// 以及表头/数据行的扫描范围；真正确认"这是表格"还要看下一行是不是分隔行，见调用处。</summary>
+    private static bool IsTableRow(string line) => CountUnescapedPipes(line.Trim()) >= 1;
+
+    /// <summary>分隔行：`|---|:---:|---:|` 这种只含 `-`、`:`、`|` 和空白的行（且至少有一个 `-`）。</summary>
+    private static bool IsTableSeparatorRow(string line)
+    {
+        var t = line.Trim();
+        return t.Length > 0 && t.Contains('-') && TableSeparatorRegex.IsMatch(t);
+    }
+
+    private static readonly Regex TableSeparatorRegex = new(
+        @"^\|?\s*:?-{1,}:?\s*(\|\s*:?-{1,}:?\s*)*\|?$", RegexOptions.Compiled);
+
+    private static int CountUnescapedPipes(string t)
+    {
+        int count = 0;
+        for (int idx = 0; idx < t.Length; idx++)
+        {
+            if (t[idx] == '\\' && idx + 1 < t.Length && t[idx + 1] == '|') { idx++; continue; }
+            if (t[idx] == '|') count++;
+        }
+        return count;
+    }
+
+    /// <summary>把一行表格行拆成单元格：去掉首尾的 `|`，按未转义的 `|` 分割，`\|` 表示字面竖线。</summary>
+    private static string[] ParseTableRow(string line)
+    {
+        var t = line.Trim();
+        if (t.StartsWith("|", StringComparison.Ordinal)) t = t[1..];
+        if (t.EndsWith("|", StringComparison.Ordinal) && !t.EndsWith("\\|", StringComparison.Ordinal)) t = t[..^1];
+
+        var cells = new List<string>();
+        var sb = new System.Text.StringBuilder();
+        for (int idx = 0; idx < t.Length; idx++)
+        {
+            if (t[idx] == '\\' && idx + 1 < t.Length && t[idx + 1] == '|')
+            {
+                sb.Append('|');
+                idx++;
+            }
+            else if (t[idx] == '|')
+            {
+                cells.Add(sb.ToString().Trim());
+                sb.Clear();
+            }
+            else sb.Append(t[idx]);
+        }
+        cells.Add(sb.ToString().Trim());
+        return cells.ToArray();
     }
 
     private static bool IsUnorderedListLine(string line)
@@ -232,6 +308,58 @@ public sealed class MarkdownViewer : StackPanel
         grid.Children.Add(markerBlock);
         grid.Children.Add(contentBlock);
         Children.Add(grid);
+    }
+
+    /// <summary>用 Grid 画一个简单的带边框表格：表头行加粗、浅底色，其余行只画分隔线。
+    /// 列数取表头和所有数据行里最宽的那一行，缺的单元格补空——AI 输出的表格经常某一行少写
+    /// 一两个 `|`，这里不因为某行列数不一致就整段放弃渲染。</summary>
+    private void AddTable(string[] headerCells, List<string[]> dataRows)
+    {
+        int colCount = headerCells.Length;
+        foreach (var row in dataRows) colCount = Math.Max(colCount, row.Length);
+        if (colCount == 0) return;
+
+        var grid = new Grid { Margin = new Thickness(0, 4, 0, 8) };
+        for (int c = 0; c < colCount; c++)
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+        void AddRow(string[] cells, bool isHeader, int rowIndex)
+        {
+            grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            for (int c = 0; c < colCount; c++)
+            {
+                var text = c < cells.Length ? cells[c] : string.Empty;
+                var cellText = CreateTextBlock(12.5, isHeader ? FontWeights.SemiBold : FontWeights.Normal, new Thickness(0));
+                AddInlineMarkdown(cellText, text);
+
+                var border = new Border
+                {
+                    BorderThickness = new Thickness(0, 0, c == colCount - 1 ? 0 : 1, 1),
+                    Padding = new Thickness(9, 6, 9, 6),
+                    Child = cellText
+                };
+                border.SetResourceReference(Border.BorderBrushProperty, "DividerBrush");
+                if (isHeader) border.SetResourceReference(Border.BackgroundProperty, "SideBrush");
+
+                Grid.SetRow(border, rowIndex);
+                Grid.SetColumn(border, c);
+                grid.Children.Add(border);
+            }
+        }
+
+        AddRow(headerCells, true, 0);
+        for (int r = 0; r < dataRows.Count; r++)
+            AddRow(dataRows[r], false, r + 1);
+
+        var outer = new Border
+        {
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(6),
+            Margin = new Thickness(0, 3, 0, 7),
+            Child = grid
+        };
+        outer.SetResourceReference(Border.BorderBrushProperty, "DividerBrush");
+        Children.Add(outer);
     }
 
     private void AddCodeBlock(string code)

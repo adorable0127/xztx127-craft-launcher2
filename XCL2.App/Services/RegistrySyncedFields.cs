@@ -1,18 +1,16 @@
-namespace XCL2.App.Services;
+﻿namespace XCL2.App.Services;
 
 /// <summary>
-/// 定义"哪些 <see cref="Models.AppConfig"/> 字段以注册表为主存储"，以及它们跟注册表值名的
-/// 映射关系。只挑选"启动早期就要用到、且天然是全局/跨实例概念"的一小撮字段——
+/// 定义“哪些 <see cref="Models.AppConfig"/> 字段额外同步一份到注册表”，以及它们跟注册表值名的
+/// 映射关系。AppData JSON 已经是主存储；这里只保留兼容/灾难恢复镜像。只挑选
+/// “启动早期就要用到、且天然是全局/跨实例概念”的一小撮字段——
 /// 是否阅读/同意过用户协议、基本模式状态、界面配色、语言这些——不是把整个 config.json
 /// 都搬进注册表（大部分设置比如下载源、Java 列表、收藏夹这些没有"注册表化"的必要，
 /// 继续只放 config.json 里）。
 ///
-/// 每次 <see cref="ConfigService.Load"/> 都会调用 <see cref="LoadFromRegistry"/> 用注册表里的值
-/// 覆盖 Config 对应字段（注册表优先于 config.json 镜像值），每次 <see cref="ConfigService.Save"/>
-/// 都会调用 <see cref="SaveToRegistry"/> 把 Config 当前值写回注册表——这就是需求里
-/// "注册表为主存储，config 岗位镜像"：注册表是权威来源，config.json 里的同名字段只是
-/// 一份跟随写入的备份（万一注册表功能被关闭，config.json 里仍留着最后一次读到的值，
-/// 不会突然打回出厂默认值）。
+/// 正常 <see cref="ConfigService.Load"/> 只读取 AppData/JSON，不允许注册表反向覆盖；只有所有 JSON
+/// 副本都不可用时，才调用 <see cref="LoadFromRegistry"/> 做灾难恢复。每次 <see cref="ConfigService.Save"/>
+/// 仍会调用 <see cref="SaveToRegistry"/> 写兼容镜像，因此老版本/人工排障仍能读取这些值。
 /// </summary>
 public static class RegistrySyncedFields
 {

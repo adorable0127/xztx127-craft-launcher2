@@ -331,6 +331,30 @@ public partial class DownloadCenterPage : UserControl
         _ = RunModSearchAsync(showHints: true);
     }
 
+    /// <summary>
+    /// 供命令行参数 --d --版本 X --加载器 Y 调用：切到「版本」分类（下载中心默认分类，
+    /// 这里显式点一下保证从其它分类跳过来时也能正确切回），把版本搜索框填成给定的
+    /// 版本号并按版本筛选出结果。加载器目前只做提示（弹一句 Toast 告诉用户点开
+    /// "下载安装"后要选哪个加载器）——真正的加载器选择需要走 LoaderChoiceDialog 这个
+    /// 交互式弹窗，不适合在命令行这种无人值守场景里代替用户点掉，保留由用户在看到
+    /// 筛选好的版本列表后自己点选，避免命令行一步操作就把游戏目录悄悄改成跟预期不符的
+    /// 加载器版本。
+    /// </summary>
+    public void PrepareVersionSelection(string mcVersion, string? loader)
+    {
+        CatVersion.IsChecked = true; // 触发 Category_Checked，确保切到版本面板
+        VersionSearchBox.Text = mcVersion;
+        ApplyVersionFilterFromOutside();
+
+        if (!string.IsNullOrWhiteSpace(loader))
+        {
+            ToastService.ShowInfo($"已按版本号「{mcVersion}」筛选，点击下载安装后请选择「{loader}」加载器。");
+        }
+    }
+
+    /// <summary>ApplyVersionFilter 是 private，命令行入口在页面外部调用，包一层 public 转发。</summary>
+    private void ApplyVersionFilterFromOutside() => ApplyVersionFilter();
+
     public void SelectResourceCategoryAndSearch(ModrinthResourceType type, string keyword)
     {
         var radio = type switch
@@ -1624,18 +1648,14 @@ public partial class DownloadCenterPage : UserControl
             var hasChinese = keyword.Any(ch => ch is >= '\u4e00' and <= '\u9fff');
             if (outcome.TranslatedFrom != null)
             {
-                ModTranslationHintText.Text = $"“{outcome.TranslatedFrom}” 已自动按对应的英文名搜索。";
+                ModTranslationHintText.Text = !string.IsNullOrWhiteSpace(outcome.TranslatedKeyword)
+                    ? $"“{outcome.TranslatedFrom}” 已自动转换为 “{outcome.TranslatedKeyword}” 后优先搜索 Modrinth / CurseForge。"
+                    : $"“{outcome.TranslatedFrom}” 已自动按对应的英文名搜索。";
                 ModTranslationHintText.Visibility = Visibility.Visible;
             }
             else if (hasChinese && outcome.Items.Count == 0)
             {
-                // 中文关键词、内置词典没命中、Modrinth/CurseForge 英文接口也是零结果：这是"中文搜不到"
-                // 抱怨的根本原因——这两个接口本身基本不理解中文。内置词典只覆盖了高知名度 Mod，
-                // 覆盖不到的生僻/小众 Mod 无法在客户端凭空翻译，这里给出明确的下一步操作指引，
-                // 而不是让用户对着空列表自己猜为什么，也不是无限扩充一个永远补不完的静态词典。
-                ModTranslationHintText.Text = "没有直接搜到结果：Modrinth/CurseForge 的搜索接口本身不识别中文关键词，" +
-                    "内置词典也没有收录这个名字。可以点右侧「MC百科 参考」列表里的条目，" +
-                    "打开百科页面看它的英文原名，再回来用英文名重新搜索。";
+                ModTranslationHintText.Text = "没有找到匹配结果：已尝试内置中文名静态源及英文兜底搜索，可以换一个更具体的关键词再试。";
                 ModTranslationHintText.Visibility = Visibility.Visible;
             }
             else

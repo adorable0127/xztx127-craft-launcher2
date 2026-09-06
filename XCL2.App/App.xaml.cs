@@ -14,13 +14,20 @@ namespace XCL2.App;
 public partial class App : Application
 {
     /// <summary>
-    /// XCL2 的私有数据目录：启动器运行目录下的 "xcl2" 文件夹。
-    /// 存放配置文件(config.json)、账户缓存(accounts.json)、日志、下载的 Java 等。
+    /// XCL2 的便携数据目录：启动器运行目录下的 "xcl2" 文件夹。
+    /// 主要存放日志、下载的 Java、缓存和便携资源；2.2.9 起全局 config/账户主副本改存 AppData，
+    /// 启动器目录下 json/config.json 只保留可人工恢复的配置镜像。
     /// </summary>
     public static string DataDir { get; } = Path.Combine(AppContext.BaseDirectory, "xcl2");
 
     private const string WriteXorExecuteEnvVar = "DOTNET_EnableWriteXorExecute";
     private const string Win7RelaunchMarkerEnvVar = "XCL2_WIN7_WXORX_RELAUNCHED";
+
+    /// <summary>
+    /// 本次启动解析出来的命令行参数（-r / -gui / --d 等），供 MainWindow 首帧渲染完成后消费。
+    /// -help 分支不会走到这里——命中 -help 直接在 OnStartup 里打印帮助并退出，不创建主窗口。
+    /// </summary>
+    public static CommandLineService.ParsedArgs StartupArgs { get; private set; } = new();
 
     /// <summary>
     /// 需求排查："主界面还没进、连启动提示窗都还没看到，没有任何报错提示，进程直接消失"。
@@ -225,6 +232,58 @@ public partial class App : Application
             return;
         }
 
+        // 命令行参数：-help 需要在整个启动流程最前面处理——用户是想快速看一眼用法就退出，
+        // 不需要（也不应该）先跑一遍 Win7 修复检测、创建启动提示窗、加载主界面这些跟
+        // "查看帮助"完全无关的重活。命中 -help 直接用 MessageBox 展示帮助文本（WPF 应用
+        // 默认没有附加控制台，写 Console.WriteLine 在双击运行时用户根本看不到；如果是从
+        // 命令行/脚本调用，MessageBox 同样能保证用户一定能看到内容），然后立即退出，
+        // 不再往下创建任何窗口。
+        //
+        // 其余参数（-r/-gui/--d）只是解析出来存到 StartupArgs，真正的动作（选账户、切实例、
+        // 跳页面、开下载中心）留到 MainWindow 首帧渲染完成之后再执行——命令行启动这一刻，
+        // 账户列表/实例列表/ConfigService 都还没加载好，此时就去匹配账户名/实例名没有意义。
+        var cliArgs = CommandLineService.Parse(e.Args);
+
+        // 访客模式必须经过一次真正的进程重启：-l 只是“请求进入访客”，当前进程不直接
+        // 切模式，而是拉起带隐藏 --guest-session 标记的新进程。--wait-pid 让接力进程先等
+        // 旧进程退出，避免旧实例的单实例管道还没释放就误弹“已经运行”。
+        if (cliArgs.WaitForPid > 0 && cliArgs.WaitForPid != Environment.ProcessId)
+        {
+            try
+            {
+                using var oldProcess = Process.GetProcessById(cliArgs.WaitForPid);
+                oldProcess.WaitForExit(15000);
+            }
+            catch { /* 父进程已经退出/不存在，直接继续 */ }
+        }
+
+        if (cliArgs.GuestModeRelaunchRequested)
+        {
+            var exe = Environment.ProcessPath;
+            if (!string.IsNullOrWhiteSpace(exe))
+            {
+                var psi = new ProcessStartInfo(exe)
+                {
+                    UseShellExecute = true,
+                    WorkingDirectory = AppContext.BaseDirectory
+                };
+                psi.ArgumentList.Add("--guest-session");
+                psi.ArgumentList.Add("--wait-pid");
+                psi.ArgumentList.Add(Environment.ProcessId.ToString());
+                Process.Start(psi);
+            }
+            Shutdown();
+            return;
+        }
+
+        if (cliArgs.ShowHelp)
+        {
+            MessageBox.Show(CommandLineService.HelpText, "XCL2 命令行帮助", MessageBoxButton.OK, MessageBoxImage.Information);
+            Shutdown();
+            return;
+        }
+        StartupArgs = cliArgs;
+
         // Win7 专属修复：必须在 base.OnStartup / 任何托管代码正式跑起来之前做，
         // 见 TryRelaunchForWin7WriteXorExecuteFix 上面的注释。
         if (TryRelaunchForWin7WriteXorExecuteFix())
@@ -393,8 +452,10 @@ public partial class App : Application
         // Loaded 类处理器自动套用，不需要逐个窗口接线，见 Win11EffectsService 类注释。
         ThemeService.ApplyWindowTransparency(earlyConfig.Config.EnableWindowTransparency, earlyConfig.Config.WindowOpacityPercent);
         ThemeService.ApplyGlobalWindowTransparency(earlyConfig.Config.EnableGlobalWindowTransparency, earlyConfig.Config.GlobalWindowOpacityPercent);
+        ThemeService.ApplyTextOpacity(earlyConfig.Config.TextOpacityPercent);
         ThemeService.SetPopupAppearanceConfig(earlyConfig.Config.PopupUseCustomAppearance, earlyConfig.Config.PopupOpacityPercent, earlyConfig.Config.PopupFrostPercent, earlyConfig.Config.PopupTextOpacityPercent);
         ThemeService.SetDrawerAppearanceConfig(earlyConfig.Config.DrawerUseCustomAppearance, earlyConfig.Config.DrawerOpacityPercent, earlyConfig.Config.DrawerFrostPercent, earlyConfig.Config.DrawerTextOpacityPercent);
+        ScrollWheelBehavior.SetSensitivityPercent(earlyConfig.Config.MouseWheelSensitivityPercent);
         var earlyMaterial = Enum.TryParse<Win11EffectsService.BackdropMaterial>(earlyConfig.Config.Win11BackdropMaterial, out var earlyM)
             ? earlyM : Win11EffectsService.BackdropMaterial.Mica;
         Win11EffectsService.SetEnabled(earlyConfig.Config.EnableWin11VisualEffects, earlyMaterial);

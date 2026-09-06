@@ -28,8 +28,8 @@ namespace XCL2.App.Services;
 /// 1) 启动几秒后（不卡启动流程）后台请求 GitHub Releases「latest」接口，跟当前程序集版本
 ///    比较大小。
 /// 2) 有新版本 → 弹一个确认框（带更新日志），用户选"现在更新"才会继续下载，选"稍后"
-///    本次直接结束，不写任何"已忽略/跳过"的标记——所以哪怕这次没更新到 2.2.8，
-///    下次启动检测到 2.2.9 时依然会正常提示，不会被"之前拒绝过"影响。
+///    本次直接结束，不写任何"已忽略/跳过"的标记。当前版本为 2.2.9；下次 GitHub 发布
+///    2.2.10（或更高版本）时仍会正常提示，不会被"之前拒绝过"影响。
 /// 3) 根据当前系统是 32 位还是 64 位，从 Release 附件里挑出对应架构的 exe 下载到临时目录，
 ///    在 xcl2/up-log/ 下写一条以时间戳命名的日志。
 /// 4) 生成一个 .bat：等主程序进程真正退出 → 把当前正在跑的这个 exe 备份一份（"新旧互换"
@@ -40,9 +40,9 @@ namespace XCL2.App.Services;
 ///    主程序退出之后发生，避免"进程覆盖自己正在运行的 exe"这个 Windows 下办不到的操作。
 ///
 /// ===== 为什么不做"跳过此版本" =====
-/// 需求是"用户没更新到 2.2.8，2.2.9 出来后还要继续提示"——只要不持久化任何"已拒绝/
-/// 已忽略"的版本号，每次检查都是"当前版本 vs 服务端最新版本"的即时比较，这个需求就是
-/// 默认行为，不需要额外写状态。
+/// 当前正式版是 2.2.9；下一次 GitHub Release 为 2.2.10（或更高版本）时要继续提示。
+/// 只要不持久化任何"已拒绝/已忽略"的版本号，每次检查都是"当前版本 vs 服务端最新版本"
+/// 的即时比较，这个需求就是默认行为，不需要额外写状态。
 /// </summary>
 public static class UpdateCheckService
 {
@@ -122,7 +122,7 @@ public static class UpdateCheckService
         Application.Current.Dispatcher.Invoke(() =>
         {
             confirmed = MessageBoxDialog.ShowConfirm(
-                $"发现新版本 v{remoteVersion}（当前 v{localVersion}）：\n\n{changelog}\n\n是否现在下载并更新？\n" +
+                $"发现新版本 v{FormatVersion(remoteVersion)}（当前 v{FormatVersion(localVersion)}）：\n\n{changelog}\n\n是否现在下载并更新？\n" +
                 "（如果选择「否」，下次启动检测到更新版本时还会继续提示。）",
                 "发现新版本");
         });
@@ -162,6 +162,15 @@ public static class UpdateCheckService
         return Version.TryParse(m.Value, out var v) ? v : null;
     }
 
+    /// <summary>程序集版本通常是 2.2.9.0，而 Release tag 是 2.2.10。提示里去掉末尾无意义的 .0，
+    /// 让当前版本稳定显示为 2.2.9、下一版稳定显示为 2.2.10。</summary>
+    private static string FormatVersion(Version version)
+    {
+        if (version.Revision > 0) return version.ToString(4);
+        if (version.Build >= 0) return version.ToString(3);
+        return version.ToString(2);
+    }
+
     /// <summary>
     /// 按当前系统是 32 位还是 64 位，从 assets 里挑对应的那个 exe。
     /// 附件命名固定形如："...x86(32位特供）不含运行时.exe" / "...x64...不含运行时.exe"，
@@ -196,19 +205,19 @@ public static class UpdateCheckService
         var currentExePath = Process.GetCurrentProcess().MainModule?.FileName
             ?? Path.Combine(AppContext.BaseDirectory, "XCL2.exe");
 
-        Log($"检测到新版本：v{localVersion} -> v{remoteVersion}（{(Environment.Is64BitOperatingSystem ? "x64" : "x86")}）");
+        Log($"检测到新版本：v{FormatVersion(localVersion)} -> v{FormatVersion(remoteVersion)}（{(Environment.Is64BitOperatingSystem ? "x64" : "x86")}）");
         Log($"更新包：{asset.Name}");
         Log($"当前程序文件：{currentExePath}");
         Log($"更新日志：\n{changelog}");
 
-        var tempRoot = Path.Combine(App.DataDir, "_update_temp", remoteVersion.ToString());
+        var tempRoot = Path.Combine(App.DataDir, "_update_temp", FormatVersion(remoteVersion));
 
         ProgressDialog? progressDialog = null;
         try
         {
             Application.Current.Dispatcher.Invoke(() =>
             {
-                progressDialog = new ProgressDialog($"正在下载 v{remoteVersion}…");
+                progressDialog = new ProgressDialog($"正在下载 v{FormatVersion(remoteVersion)}…");
                 progressDialog.Show();
             });
 
@@ -224,7 +233,7 @@ public static class UpdateCheckService
             Log($"下载完成：{newExePath}");
 
             var backupPath = Path.Combine(App.DataDir, "_backup",
-                $"{Path.GetFileNameWithoutExtension(currentExePath)}_v{localVersion}_{timestamp}.exe");
+                $"{Path.GetFileNameWithoutExtension(currentExePath)}_v{FormatVersion(localVersion)}_{timestamp}.exe");
 
             var batPath = Path.Combine(Path.GetTempPath(), $"xcl2_update_{timestamp}.bat");
             WriteUpdateBat(batPath, newExePath, currentExePath, backupPath, logPath, tempRoot, Environment.ProcessId);
@@ -274,6 +283,7 @@ public static class UpdateCheckService
         sb.AppendLine($"set \"NEWEXE={newExePath}\"");
         sb.AppendLine($"set \"CUREXE={currentExePath}\"");
         sb.AppendLine($"set \"BACKUP={backupPath}\"");
+        sb.AppendLine("for %%D in (\"%BACKUP%\") do set \"BACKUPDIR=%%~dpD\"");
         sb.AppendLine($"set \"LOG={logPath}\"");
         sb.AppendLine($"set \"TEMPROOT={tempRoot}\"");
         sb.AppendLine();
@@ -288,6 +298,13 @@ public static class UpdateCheckService
         sb.AppendLine(">>\"%LOG%\" echo [%date% %time%] 主程序已退出，开始备份旧版本...");
         sb.AppendLine("for %%D in (\"%BACKUP%\") do if not exist \"%%~dpD\" mkdir \"%%~dpD\" >nul 2>nul");
         sb.AppendLine("copy /y \"%CUREXE%\" \"%BACKUP%\" >nul 2>nul");
+        sb.AppendLine("if errorlevel 1 (");
+        sb.AppendLine("  >>\"%LOG%\" echo [%date% %time%] 旧版本备份失败，为避免丢失回退版本，本次更新已取消。");
+        sb.AppendLine("  start \"\" \"%CUREXE%\"");
+        sb.AppendLine("  rmdir /s /q \"%TEMPROOT%\" >nul 2>nul");
+        sb.AppendLine("  (goto) 2>nul & del \"%~f0\"");
+        sb.AppendLine("  exit /b 1");
+        sb.AppendLine(")");
         sb.AppendLine();
         sb.AppendLine(">>\"%LOG%\" echo [%date% %time%] 用新版本覆盖旧文件...");
         sb.AppendLine("copy /y \"%NEWEXE%\" \"%CUREXE%\" >nul");
@@ -296,6 +313,8 @@ public static class UpdateCheckService
         sb.AppendLine("  copy /y \"%BACKUP%\" \"%CUREXE%\" >nul 2>nul");
         sb.AppendLine(") else (");
         sb.AppendLine("  >>\"%LOG%\" echo [%date% %time%] 文件替换完成。");
+        sb.AppendLine("  >>\"%LOG%\" echo [%date% %time%] 清理 _backup 中的旧临时文件，只保留本次更新前版本...");
+        sb.AppendLine("  for %%F in (\"%BACKUPDIR%*\") do if /I not \"%%~fF\"==\"%BACKUP%\" del /f /q \"%%~fF\" >nul 2>nul");
         sb.AppendLine(")");
         sb.AppendLine();
         sb.AppendLine(">>\"%LOG%\" echo [%date% %time%] 重新启动程序...");

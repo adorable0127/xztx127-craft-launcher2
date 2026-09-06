@@ -1,4 +1,4 @@
-using System.Windows;
+﻿using System.Windows;
 using System.Windows.Input;
 using System.Windows.Media;
 using XCL2.App.Models;
@@ -80,8 +80,11 @@ public static class UiZoomService
 
     public static void ResetZoom() => ApplyPercent(DefaultPercent, persist: true);
 
-    /// <summary>供设置页"预览"用：拖动滑块时实时改变缩放但立即持久化（设置页本身
-    /// 就是"改了就生效"的风格，跟应用里其它开关一致，不单独做"应用/取消"二段式）。</summary>
+    /// <summary>供设置页预览用：实时改变当前窗口缩放，但不写入配置文件。
+    /// 设置页是否持久化由其统一的“保存设置 / 自动保存”流程决定。</summary>
+    public static void PreviewPercent(int percent) => ApplyPercent(ClampPercent(percent), persist: false);
+
+    /// <summary>需要明确立即持久化的调用方仍可使用此方法。</summary>
     public static void SetPercent(int percent) => ApplyPercent(ClampPercent(percent), persist: true);
 
     /// <summary>判断当前这次滚轮事件是否应该被当成"缩放"处理：需要功能总开关开启、

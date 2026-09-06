@@ -1,5 +1,6 @@
 ﻿using System;
 using System.IO;
+using System.Diagnostics;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -27,7 +28,7 @@ public partial class MainWindow : Window
     /// <summary>全局游戏进程注册表，供主页进程控制按钮组、日志面板、崩溃/注入分析共用。</summary>
     public GameProcessManager ProcessManager { get; } = new();
 
-    /// <summary>已创建的服务器实例列表（服务端管理模块），持久化于 xcl2/servers.json。</summary>
+    /// <summary>已创建的服务器实例列表（服务端管理模块），AppData 为主存储、json/servers.json 为镜像。</summary>
     public ServerInstanceService ServerInstanceService { get; } = new();
 
     /// <summary>正在运行的服务器进程注册表，供服务端管理页的列表/控制台面板共用。</summary>
@@ -38,6 +39,13 @@ public partial class MainWindow : Window
 
     /// <summary>AI 助手当前配置，供设置页/面板热更新用。</summary>
     public AiAssistantConfig AiAssistantConfig { get; set; } = new();
+
+    /// <summary>
+    /// AI 助手页面使用同一个面板实例。这样用户发送消息后即使切到别的页面，正在进行的
+    /// 异步回复和当前会话 UI 仍由这个实例持有；再次切回来不会因为重新 new 面板而丢失
+    /// 正在生成的任务/显示状态。真正停止回复只由面板里的“停止”操作触发。
+    /// </summary>
+    private AiAssistantPanel? _aiAssistantPanel;
 
     private readonly DispatcherTimer _pruneTimer;
 
@@ -434,6 +442,27 @@ public partial class MainWindow : Window
             _ = ScanJavaInBackgroundAsync();
         };
         ContentRendered += scanJavaOnce;
+
+        // 命令行参数（-r / -gui / --d）：同样挂在 ContentRendered 上、只执行一次，理由跟
+        // 上面 MC 文件夹/Java 扫描完全一样——要等主窗口首帧真正画出来之后再动，不能在
+        // 构造函数同步执行阶段就去弹窗口/切页面/发起启动。如果本次启动还需要走"协议同意/
+        // 新手引导"流程，先跳过命令行参数——老用户升级后同意新协议、或全新安装还没走完
+        // 引导之前，账户列表/实例列表这些命令行参数依赖的数据本来就可能还不完整，
+        // 强行执行只会造出一堆"账户不存在"之类的误报；这种情况下用户本来就得先手动
+        // 走完一次向导，届时再重新用命令行启动即可。
+        if (App.StartupArgs.HasAnyAction &&
+            (App.StartupArgs.EnterGuestMode ||
+             (ConfigService.Config.FirstRunWizardCompleted &&
+              ConfigService.Config.AcceptedAgreementVersion >= AgreementsText.AgreementsVersion)))
+        {
+            EventHandler? applyStartupArgsOnce = null;
+            applyStartupArgsOnce = (_, _) =>
+            {
+                ContentRendered -= applyStartupArgsOnce;
+                ApplyStartupArgs(App.StartupArgs);
+            };
+            ContentRendered += applyStartupArgsOnce;
+        }
 
         // 定时清理已退出的进程记录，保持"进程管理"列表/按钮的可用性状态是最新的
         _pruneTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
@@ -1010,23 +1039,30 @@ public partial class MainWindow : Window
         // 停在设置页且是非自动保存模式下有未保存改动，就先问用户"重新编辑 / 放弃改动 /
         // 保存设置"，选"重新编辑"则整个切页动作取消、留在设置页上。
         if (MainContent.Content is SettingsPage leavingSettingsPage
-            && !ReferenceEquals(page, leavingSettingsPage)
-            && leavingSettingsPage.HasUnsavedChanges)
+            && !ReferenceEquals(page, leavingSettingsPage))
         {
-            var choice = MessageBoxDialog.ShowThreeChoice(
-                "设置页还有未保存的改动，离开前要怎么处理这些改动？",
-                "有未保存的设置",
-                "重新编辑", "放弃改动", "保存设置");
-            switch (choice)
+            // 用户可能刚改完抽屉/滑块就立刻点导航，此时 400ms dirty 防抖还没有 Tick。
+            // 先同步结算一次，避免最后一次修改因为“来不及进入 HasUnsavedChanges”而静默丢失。
+            // 自动保存模式仍保留“回退”操作卡，切到其它页面后也能撤销最近一次自动保存。
+            leavingSettingsPage.FlushPendingEditsForLeave(preserveAutoSaveRollbackPrompt: true);
+            if (leavingSettingsPage.HasUnsavedChanges)
             {
-                case XclMessageResult.Cancel: // 重新编辑：取消这次切页，留在设置页
-                    return;
-                case XclMessageResult.No: // 放弃改动
-                    leavingSettingsPage.DiscardUnsavedChangesWithoutNavigating();
-                    break;
-                case XclMessageResult.Yes: // 保存设置
-                    leavingSettingsPage.SaveNow();
-                    break;
+                var choice = MessageBoxDialog.ShowThreeChoice(
+                    "设置页还有未保存的改动，离开前要怎么处理这些改动？",
+                    "有未保存的设置",
+                    "重新编辑", "放弃改动", "保存设置");
+                switch (choice)
+                {
+                    case XclMessageResult.Cancel: // 重新编辑：取消这次切页，留在设置页
+                        leavingSettingsPage.ShowPendingEditPromptIfNeeded();
+                        return;
+                    case XclMessageResult.No: // 放弃改动
+                        leavingSettingsPage.DiscardUnsavedChangesWithoutNavigating();
+                        break;
+                    case XclMessageResult.Yes: // 保存设置
+                        leavingSettingsPage.SaveNow();
+                        break;
+                }
             }
         }
 
@@ -1329,12 +1365,224 @@ public partial class MainWindow : Window
         entry.Navigate?.Invoke();
     }
 
+    /// <summary>
+    /// 需求："访客模式需要重新阅读协议（类似于在新电脑上打开）"。不管这台机器上是否已经
+    /// 用真实账户同意过当前版本协议，只要用户主动切换进访客模式，就强制重新弹一遍协议页
+    /// ——访客模式本来就是给"借用这台电脑的人"用的，不能假定这个人就是之前同意过协议的
+    /// 那个真实用户。跟首次启动同一个 AgreementsWindow/ShowModal 调用方式，只是触发时机
+    /// 不同（这里是"切换访客模式"而不是"版本号比对发现需要重新同意"）。
+    /// </summary>
+    public void ForceReshowAgreementsForGuestMode()
+    {
+        var agreements = new AgreementsWindow(this);
+        OverlayDialogService.ShowModal(agreements, dismissOnBackgroundClick: false, dismissOnEsc: false);
+    }
+
+    /// <summary>
+    /// 命令行参数 -l：直接以访客模式启动本次会话——等价于"打开设置页勾选访客模式并保存"，
+    /// 但省去手动点击的步骤，常用于给别人临时借用/在公共电脑上启动的场景。同样要求
+    /// 重新阅读协议，理由见 ForceReshowAgreementsForGuestMode 的注释。
+    /// </summary>
+    public bool RequestGuestModeRestart()
+    {
+        try
+        {
+            // 磁盘上永远先明确保存为普通模式；新进程是否为访客只由一次性的隐藏参数决定。
+            ConfigService.Config.GuestModeEnabled = false;
+            ConfigService.Save();
+
+            var exe = Environment.ProcessPath;
+            if (string.IsNullOrWhiteSpace(exe))
+            {
+                MessageBoxDialog.ShowWarning("无法确定启动器程序路径，因此暂时不能重启进入访客模式。", "访客模式");
+                return false;
+            }
+
+            var psi = new ProcessStartInfo(exe)
+            {
+                UseShellExecute = true,
+                WorkingDirectory = AppContext.BaseDirectory
+            };
+            psi.ArgumentList.Add("--guest-session");
+            psi.ArgumentList.Add("--wait-pid");
+            psi.ArgumentList.Add(Environment.ProcessId.ToString());
+            Process.Start(psi);
+            Application.Current.Shutdown();
+            return true;
+        }
+        catch (Exception ex)
+        {
+            LauncherLogService.AppendLine($"[访客模式] 重启失败：{ex}");
+            MessageBoxDialog.ShowWarning($"访客模式需要重启启动器，但重启失败：{ex.Message}", "访客模式");
+            return false;
+        }
+    }
+
+    public void EnterGuestModeFromCommandLine()
+    {
+        // 这里只消费隐藏的 --guest-session。ConfigService.Load 每次启动都先把访客状态清为 false，
+        // 因此这次开启只存在于当前进程内；用户下次普通双击启动时没有这个参数，就自动回普通模式。
+        var cfg = ConfigService.Config;
+        cfg.GuestModeEnabled = true;
+        RefreshGuestModeState();
+        ForceReshowAgreementsForGuestMode();
+        RefreshSidebar();
+    }
+
+    /// <summary>
+    /// 执行命令行参数（-r / -gui / --d / -l）对应的动作，见 CommandLineService 的参数说明。
+    /// 只在首帧渲染完成、且不需要走协议/新手引导流程时才会被调用一次（见构造函数里的
+    /// ContentRendered 订阅）。三类动作互斥（分别对应 -r / -gui / --d 三种命令行用法，
+    /// 正常情况下用户一次只会传其中一种），这里按 LaunchGame → GuiPage → OpenDownload
+    /// 的顺序判断，命中一个就返回，不叠加执行。
+    /// </summary>
+    public void ApplyStartupArgs(CommandLineService.ParsedArgs args)
+    {
+        try
+        {
+            if (args.EnterGuestMode)
+            {
+                EnterGuestModeFromCommandLine();
+                return;
+            }
+
+            if (args.LaunchGame)
+            {
+                ApplyStartupLaunch(args.AccountName, args.InstanceName);
+                return;
+            }
+
+            if (!string.IsNullOrWhiteSpace(args.GuiPage))
+            {
+                ApplyStartupGuiNavigation(args.GuiPage);
+                return;
+            }
+
+            if (args.OpenDownload)
+            {
+                NavigateToDownloadCenterWithVersion(args.DownloadVersion, args.DownloadLoader);
+                return;
+            }
+
+            if (args.StartedByAutoStart)
+                ApplyAutoStartWindowBehavior();
+        }
+        catch (Exception ex)
+        {
+            // 命令行参数处理失败（账户/实例名写错了、页面名对不上之类）不应该让整个启动器
+            // 崩溃退出——用户手边至少还有一个能正常操作的主界面，比直接闪退好得多。
+            LauncherLogService.AppendLine($"[命令行参数] 处理失败: {ex}");
+            ToastService.ShowWarning($"命令行参数处理失败：{ex.Message}");
+        }
+    }
+
+    private void ApplyAutoStartWindowBehavior()
+    {
+        switch (ConfigService.Config.AutoStartBehavior)
+        {
+            case AutoStartLaunchBehavior.Minimize:
+                WindowState = WindowState.Minimized;
+                break;
+            case AutoStartLaunchBehavior.MinimizeToTray:
+                MinimizeToTray();
+                break;
+            default:
+                Show();
+                WindowState = WindowState.Normal;
+                Activate();
+                break;
+        }
+    }
+
+    /// <summary>
+    /// -r --账户名 X --实例名称 Y：按名字匹配已保存的账户和已安装的实例（版本），
+    /// 匹配上就直接切换选中项并触发跟点"启动游戏"按钮完全相同的启动流程；
+    /// 任意一个没找到都只弹提示、不启动，避免"名字打错了却启动了别的账户/版本"这种
+    /// 更危险的静默兜底行为。
+    /// </summary>
+    private void ApplyStartupLaunch(string? accountName, string? instanceName)
+    {
+        if (string.IsNullOrWhiteSpace(accountName) || string.IsNullOrWhiteSpace(instanceName))
+        {
+            ToastService.ShowWarning("命令行 -r 启动需要同时指定 --账户名 和 --实例名称，本次启动已跳过。");
+            return;
+        }
+
+        var account = ConfigService.Accounts.FirstOrDefault(a =>
+            string.Equals(a.Username, accountName, StringComparison.OrdinalIgnoreCase));
+        if (account == null)
+        {
+            ToastService.ShowWarning($"未找到账户「{accountName}」，命令行启动已取消。");
+            return;
+        }
+
+        var folder = ConfigService.Config.Folders.FirstOrDefault(f => f.Path == ConfigService.Config.SelectedFolderPath)
+                     ?? ConfigService.Config.Folders.FirstOrDefault();
+        var instanceExists = folder != null &&
+            Directory.Exists(Path.Combine(folder.Path, "versions", instanceName));
+        if (!instanceExists)
+        {
+            ToastService.ShowWarning($"未找到实例「{instanceName}」，命令行启动已取消。");
+            return;
+        }
+
+        ConfigService.SelectAccount(account.Id);
+        ConfigService.Config.SelectedVersionId = instanceName;
+        ConfigService.Save();
+        RefreshSidebar();
+
+        Launch_Click(this, new RoutedEventArgs());
+    }
+
+    /// <summary>
+    /// -gui &lt;页面名&gt;：复用首页搜索框那套"标题/关键词"索引做匹配，先精确匹配标题，
+    /// 找不到再退化成标题或关键词包含关系的模糊匹配——命令行场景下用户很可能只记得
+    /// 大概的名字（比如输入"下载"而不是完整的"下载中心"），模糊匹配体验更好，
+    /// 且这条索引本来就是给"搜索"场景设计的，模糊匹配符合它原本的用途。
+    /// </summary>
+    private void ApplyStartupGuiNavigation(string page)
+    {
+        var index = HomeSearchIndex;
+        var entry = index.FirstOrDefault(e => string.Equals(e.Title, page, StringComparison.OrdinalIgnoreCase));
+        if (entry.Navigate == null)
+        {
+            entry = index.FirstOrDefault(e =>
+                e.Title.Contains(page, StringComparison.OrdinalIgnoreCase) ||
+                e.Keywords.Contains(page, StringComparison.OrdinalIgnoreCase));
+        }
+
+        if (entry.Navigate == null)
+        {
+            ToastService.ShowWarning($"未找到名为「{page}」的页面，命令行 -gui 已跳过。");
+            return;
+        }
+
+        entry.Navigate();
+    }
+
+    /// <summary>
+    /// --d --版本 X --加载器 Y：跳转到下载中心；版本号留空时就是单纯把下载中心这个 GUI
+    /// 页面弹出来，交给用户自己在里面选（这正是需求里"版本在未填写时会弹出下载gui"的
+    /// 含义）。版本号有填时额外调用 DownloadCenterPage.PrepareVersionSelection 把
+    /// 版本筛选框和加载器提示一并预置好，减少用户还要自己再输一遍的步骤。
+    /// </summary>
+    public void NavigateToDownloadCenterWithVersion(string? mcVersion, string? loader)
+    {
+        NavigateLazy(() => new DownloadCenterPage(this), page =>
+        {
+            if (!string.IsNullOrWhiteSpace(mcVersion) && page is DownloadCenterPage downloadPage)
+            {
+                downloadPage.PrepareVersionSelection(mcVersion, loader);
+            }
+        });
+    }
+
     private (string Title, string Keywords, Action Navigate)[] HomeSearchIndex => new (string, string, Action)[]
     {
         ("首页", "主页 磁贴 总控台", NavigateToHome),
         ("版本管理", "版本选择 加载器 Forge Fabric NeoForge Quilt", NavigateToVersions),
         ("下载中心", "下载 Mod 资源包 光影 整合包", NavigateToDownloadCenter),
-        ("联机", "多人游戏 陶瓦联机 红石联机 局域网", NavigateToMultiplayer),
+        ("联机", "多人游戏 陶瓦联机 局域网", NavigateToMultiplayer),
         ("Mod 管理", "本地 Mod 管理", NavigateToModManager),
         ("服务端管理", "开服 服务器", NavigateToServerManager),
         ("账户", "登录 正版 离线", NavigateToAccounts),
@@ -1388,20 +1636,8 @@ public partial class MainWindow : Window
         NavigateLazy(() => new MultiplayerPage(this));
     }
 
-    /// <summary>供其他页面调用的公开导航方法，跳转到「联机」页（陶瓦联机/红石联机入口）。</summary>
+    /// <summary>供其他页面调用的公开导航方法，跳转到「联机」页（陶瓦联机入口）。</summary>
     public void NavigateToMultiplayer() => NavigateLazy(() => new MultiplayerPage(this));
-
-    /// <summary>
-    /// 从「联机」页跳转到下载中心并直接按给定关键词搜索 Mod——用于"红石联机"的
-    /// 一键搜索安装入口，复用下载中心现成的 Mod 分类 + Modrinth 综合搜索逻辑，
-    /// 不需要在联机页里重新实现一遍下载/安装流程。
-    /// </summary>
-    public void NavigateToDownloadCenterWithModSearch(string keyword)
-    {
-        NavigateLazy(
-            () => new DownloadCenterPage(this),
-            page => ((DownloadCenterPage)page).SelectModCategoryAndSearch(keyword));
-    }
 
     private void NavModManager_Click(object sender, RoutedEventArgs e)
     {
@@ -1452,6 +1688,13 @@ public partial class MainWindow : Window
     /// 避免两条入口后续出现设置保存逻辑不一致。</summary>
     private AiAssistantPanel CreateAiAssistantPanel()
     {
+        if (_aiAssistantPanel != null)
+        {
+            // 配置可能在别处被修改过；复用面板时只刷新配置，不重新 Attach/切换 Session。
+            _aiAssistantPanel.ApplyConfig(AiAssistantConfig);
+            return _aiAssistantPanel;
+        }
+
         var panel = new AiAssistantPanel();
         panel.Attach(AiAssistantService, AiAssistantConfig);
         panel.CloseRequested += (_, _) => ShowHome();
@@ -1470,6 +1713,7 @@ public partial class MainWindow : Window
             };
             OverlayDialogService.ShowModal(settingsPanel);
         };
+        _aiAssistantPanel = panel;
         return panel;
     }
 
@@ -2045,6 +2289,136 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
+    /// "继续启动并补全文件"：在 RepairMissingLibrariesAsync（只管 libraries）的基础上，
+    /// 再补上 client jar（缺失/0 字节时重新下载）和 assets（缺失的资源对象重新下载）。
+    /// 这两块原来完全没有补全入口——用户以前遇到这种问题只能去「版本选择」页整个重装。
+    /// </summary>
+    private async Task RepairInstanceIntegrityAsync(string minecraftDir, VersionDetail detail,
+        InstanceIntegrityService.IntegrityCheckResult check, AppConfig cfg, ProgressDialog repairWin)
+    {
+        using var repairDownloader = DownloadService.CreateFromConfig(cfg);
+
+        if (check.ClientJarMissing)
+        {
+            await repairDownloader.DownloadClientJarOnlyAsync(minecraftDir, detail, repairWin.Progress);
+        }
+
+        if (check.MissingLibraries.Count > 0)
+        {
+            await RepairMissingLibrariesAsync(minecraftDir, detail.Id, cfg, repairWin);
+        }
+
+        if (check.MissingAssets.Count > 0)
+        {
+            await repairDownloader.DownloadAssetsOnlyAsync(minecraftDir, detail, repairWin.Progress);
+        }
+    }
+
+    /// <summary>
+    /// 启动前完整性检查用的严格程度：cfg.IntegrityCheckMode 还没选过时弹一次
+    /// IntegrityCheckModeChoiceDialog（10 秒不选自动 Simple），选完写回配置，以后不再问。
+    /// </summary>
+    private IntegrityCheckMode GetOrPromptIntegrityCheckMode(AppConfig cfg)
+    {
+        if (cfg.IntegrityCheckMode is { } mode) return mode;
+
+        var dlg = new IntegrityCheckModeChoiceDialog();
+        dlg.ShowDialog();
+        cfg.IntegrityCheckMode = dlg.Result;
+        ConfigService.Save();
+        return dlg.Result;
+    }
+
+    /// <summary>
+    /// 启动前完整性检查：处理 IncompleteVersionDialog 的四种结果。
+    /// 返回 true 表示可以继续走后面的启动流程；返回 false 表示这次不应该启动
+    /// （比如用户选了"删除"、或强行启动的二级确认没通过）。
+    /// </summary>
+    private async Task<bool> RunInstanceIntegrityCheckAsync(GameFolder folder, AppConfig cfg, CancellationToken cancelToken)
+    {
+        var versionId = cfg.SelectedVersionId;
+        if (string.IsNullOrEmpty(versionId)) return true;
+
+        var mode = GetOrPromptIntegrityCheckMode(cfg);
+        var integrityService = new InstanceIntegrityService(new LauncherService());
+
+        InstanceIntegrityService.IntegrityCheckResult check;
+        try
+        {
+            check = integrityService.Check(folder.Path, versionId, mode);
+        }
+        catch (Exception ex)
+        {
+            // 检查本身失败不应该阻止启动，跟原有 CheckMissingLibraries 的兜底策略一致。
+            File.AppendAllText(Path.Combine(App.DataDir, "logs", "crash.log"),
+                $"[{DateTime.Now}] 启动前实例完整性检查失败(不影响启动): {ex}\n\n");
+            return true;
+        }
+
+        if (!check.HasProblems || cancelToken.IsCancellationRequested) return true;
+
+        var problems = new List<string>();
+        if (check.VersionJsonMissing) problems.Add("版本描述文件(json)缺失或已损坏");
+        if (check.ClientJarMissing) problems.Add("客户端主程序(jar)缺失或已损坏(0 字节)");
+        problems.AddRange(check.MissingLibraries);
+        problems.AddRange(check.MissingAssets);
+
+        var dlg = new IncompleteVersionDialog(versionId, problems);
+        if (dlg.ShowDialog() != true || dlg.Result == null) return false; // 直接叉掉弹窗：当作取消启动，不猜用户想干什么
+
+        switch (dlg.Result)
+        {
+            case IncompleteVersionDialog.ResultChoice.RemoveFromList:
+                InstanceDeletionService.HideFromList(cfg, folder.Path, versionId);
+                cfg.SelectedVersionId = null;
+                ConfigService.Save();
+                RefreshSidebar();
+                return false;
+
+            case IncompleteVersionDialog.ResultChoice.DeleteFromDisk:
+                try
+                {
+                    if (dlg.DeleteMode == DeleteInstanceChoiceDialog.DeleteChoice.DeleteToRecycleBin)
+                        InstanceDeletionService.DeleteToRecycleBin(cfg, folder.Path, versionId);
+                    else
+                        InstanceDeletionService.DeletePermanently(cfg, folder.Path, versionId);
+                    ConfigService.Save();
+                    RefreshSidebar();
+                }
+                catch (Exception ex)
+                {
+                    MessageBoxDialog.ShowError("删除失败：\n" + ex.Message);
+                }
+                return false;
+
+            case IncompleteVersionDialog.ResultChoice.ForceLaunch:
+                return true; // 已经过两级确认，放行直接启动，不做任何补全
+
+            case IncompleteVersionDialog.ResultChoice.ContinueAndRepair:
+            default:
+                if (check.Detail == null) return true; // 理论不会发生：VersionJsonMissing 时 Detail 必为 null，但那种情况这里也没法补
+                var repairWin = new ProgressDialog("正在补全文件...");
+                repairWin.Show();
+                try
+                {
+                    await RepairInstanceIntegrityAsync(folder.Path, check.Detail, check, cfg, repairWin);
+                }
+                catch (Exception repairEx)
+                {
+                    ErrorPresenter.ShowFriendlyError(
+                        "自动补全失败，请检查网络连接后重试，或前往「版本选择」页重新安装该版本。" +
+                        "\n（也可以选择「强行启动」跳过补全，游戏内可能会有部分内容异常。）",
+                        $"[启动前补全文件失败] {repairEx}", "补全失败");
+                }
+                finally
+                {
+                    repairWin.Close();
+                }
+                return true;
+        }
+    }
+
+    /// <summary>
     /// 启动游戏的实际逻辑，从 Launch_Click 拆出来，专门用于被防手滑冷却的
     /// try/finally 包裹，避免把冷却相关代码和原有的一大段启动流程混在一起、
     /// 显得臃肿难读。
@@ -2303,10 +2677,13 @@ public partial class MainWindow : Window
             if (javaPath == null)
             {
                 var versionHint = preferMajor is > 0
-                    ? $"这个版本需要 Java {preferMajor}，但未找到匹配的 Java（可能没安装，或已安装的版本不对）。"
-                    : "未检测到可用的 Java 环境。";
-                var result = MessageBoxDialog.ShowConfirm($"{versionHint}\n是否自动下载对应的便携版 Java？",
-                    "需要 Java");
+                    ? $"这个游戏需要 Java {preferMajor}，但启动器没有找到合适的 Java（可能没安装，或现有版本不匹配）。"
+                    : "启动器没有找到这个游戏可用的 Java。";
+                var friendlyHint = cfg.AdvancedMode ? ""
+                    : "\n\nJava 是这个游戏的心脏。你可以理解为：没有 Java，游戏就只是一层空壳，操作系统不认识它，因此无法运行。";
+                var result = MessageBoxDialog.ShowConfirm(
+                    $"{versionHint}{friendlyHint}\n\n是否让 XCL2 按这个 Minecraft 版本的需求自动匹配并下载合适的便携版 Java？",
+                    "游戏缺少 Java");
                 if (!result) return;
 
                 var progressWin = new ProgressDialog("正在下载 Java 运行时...");
@@ -2433,6 +2810,7 @@ public partial class MainWindow : Window
                 ShowConsoleWindow = cfg.EnableGameConsoleWindow,
                 IsolateVersion = isolateVersion,
                 GameLanguage = cfg.GameLanguage,
+                GraphicsApiPreference = instanceSettings?.GraphicsApiPreference,
                 VersionTypeLabel = cfg.GameVersionTypeLabel,
                 SkinJvmArgs = skinJvmArgs,
                 // 自定义 JVM 参数仅在高手模式下生效：普通模式下即使配置里残留了历史值，
@@ -2442,47 +2820,15 @@ public partial class MainWindow : Window
                 AutoJoinServerAddress = autoJoinServer
             };
 
-            // 启动前主动完整性检查（参考 PCL 等主流第三方启动器的"启动前自动修复"设计）：
-            // 与其等真正拉起 Java 进程、BuildArguments 抛出 MissingLibrariesException 才发现
-            // 问题，这里先主动扫一遍——LauncherService.CheckMissingLibraries 除了跟 BuildArguments
-            // 一样检查 library jar 是否存在，还额外检查了"natives 文件夹是不是空的"这种
-            // BuildArguments 检测不到、但确确实实会导致游戏刚起来就崩(找不到 lwjgl.dll 之类)
-            // 的情况，能提前把这类问题挑出来，而不是让用户对着一闪而过的黑框摸不着头脑。
-            //
-            // 只有真正"会影响启动"的缺失才会走到这里弹窗——用户可以选"否"跳过，不强制
-            // 打断任何人；选完之后无论补没补，后面都会照常继续走原有的启动流程。
+            // 启动前主动完整性检查：不再只查 libraries，version json / client jar / assets
+            // 一起查（见 InstanceIntegrityService），检查粒度按用户选过的
+            // AppConfig.IntegrityCheckMode（简单/严格）来，发现问题时弹 IncompleteVersionDialog
+            // 让用户在"补全并启动 / 从列表删除 / 删除本地文件 / 强行启动"里选一个，
+            // 而不是像原来那样只有一个"是否自动下载补全"的简单确认框。
             try
             {
-                var precheckMissing = launcher.CheckMissingLibraries(folder.Path, cfg.SelectedVersionId);
-                if (precheckMissing.Count > 0 && !cancelToken.IsCancellationRequested)
-                {
-                    var doPrecheckRepair = MessageBoxDialog.ShowConfirm(
-                        $"启动前检测到 {precheckMissing.Count} 个可能导致启动失败的文件缺失或不完整：\n\n" +
-                        string.Join("\n", precheckMissing.Take(10)) +
-                        (precheckMissing.Count > 10 ? $"\n...等共 {precheckMissing.Count} 个" : "") +
-                        "\n\n是否现在自动下载补全？（选择「否」将跳过修复，直接尝试启动）",
-                        Loc.T("Str_Cs_Missing_Library", "缺少依赖库"));
-                    if (doPrecheckRepair && !cancelToken.IsCancellationRequested)
-                    {
-                        var precheckRepairWin = new ProgressDialog("正在补全缺失的依赖库...");
-                        precheckRepairWin.Show();
-                        try
-                        {
-                            await RepairMissingLibrariesAsync(folder.Path, cfg.SelectedVersionId, cfg, precheckRepairWin);
-                        }
-                        catch (Exception precheckRepairEx)
-                        {
-                            ErrorPresenter.ShowFriendlyError(
-                                "自动补全依赖库失败，请检查网络连接后重试，或前往「版本选择」页重新安装该版本。" +
-                                "\n（也可以直接继续尝试启动，游戏是否能正常运行不受这里失败的影响。）",
-                                $"[启动前补全依赖库失败] {precheckRepairEx}", "补全失败");
-                        }
-                        finally
-                        {
-                            precheckRepairWin.Close();
-                        }
-                    }
-                }
+                var shouldContinueLaunch = await RunInstanceIntegrityCheckAsync(folder, cfg, cancelToken);
+                if (!shouldContinueLaunch) return;
             }
             catch (Exception precheckEx)
             {
@@ -3040,6 +3386,19 @@ public partial class MainWindow : Window
             RestoreFromTray();
             Launch_Click(this, new RoutedEventArgs());
         });
+        _trayIcon.OpenSettingsRequested += () => Dispatcher.Invoke(() => { RestoreFromTray(); NavigateToSettings(); });
+        _trayIcon.OpenDownloadsRequested += () => Dispatcher.Invoke(() => { RestoreFromTray(); NavigateToDownloadCenter(); });
+        _trayIcon.OpenToolboxRequested += () => Dispatcher.Invoke(() => { RestoreFromTray(); NavigateToToolbox(); });
+        _trayIcon.OpenProcessManagerRequested += () => Dispatcher.Invoke(() =>
+        {
+            RestoreFromTray();
+            CloseSelectedGame_Click(this, new RoutedEventArgs());
+        });
+        _trayIcon.CloseAllGamesRequested += () => Dispatcher.Invoke(() =>
+        {
+            RestoreFromTray();
+            CloseAllGames_Click(this, new RoutedEventArgs());
+        });
         _trayIcon.ExitRequested += () => Dispatcher.Invoke(() =>
         {
             // 托盘"退出"是用户明确表达的真正退出意图，不应该再走"下载/启动进行中"
@@ -3097,6 +3456,32 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
+    /// 结束本进程名下所有正在运行的游戏进程和服务器进程（先优雅 CloseAll，服务器直接 ForceKill）。
+    /// 供 <see cref="PerformFullExit"/>（托盘"退出"/多开"FORCE_EXIT"）和
+    /// <see cref="MainWindow_Closing"/>（点关闭按钮、真的没有留任何东西要保留时）共用——
+    /// 两种路径本质都是"用户已经明确选择/确认了要真的关闭"，都不能留孤儿进程。
+    /// </summary>
+    private void KillAllGameAndServerProcesses()
+    {
+        // 游戏进程：先尝试 CloseAll()（优雅关闭：CloseMainWindow 超时后才 Kill），
+        // 跟"一键关闭游戏"按钮走的是同一套实现，见 GameProcessManager.CloseAll 注释。
+        try { ProcessManager.CloseAll(); } catch { /* 单个进程关闭失败不影响整体退出 */ }
+
+        // 服务器进程没有窗口，CloseAll 语义上更接近"强制"，这里直接对每个仍在运行的
+        // 服务器实例调用 ForceKill——真正退出启动器时不适合再等"发 stop 命令、等它
+        // 优雅保存世界"这种可能耗时数秒到数十秒的流程，用户此刻的意图是"立刻结束"。
+        try
+        {
+            foreach (var p in ServerProcessManager.Processes.ToArray())
+            {
+                try { if (!p.HasExited) p.ForceKill(); }
+                catch { /* 忽略单个失败，继续处理其它进程 */ }
+            }
+        }
+        catch { /* 忽略：不能因为清理服务器进程失败而卡住退出流程 */ }
+    }
+
+    /// <summary>
     /// 彻底退出：结束本进程名下所有正在运行的游戏进程和服务器进程，再关闭窗口/退出应用。
     /// 供托盘"退出"菜单、以及被另一个新实例通过 SingleInstanceService 的 "FORCE_EXIT"
     /// 指令要求关闭时共用——两种场景本质都是"用户已经明确选择了要真的关闭"，不需要
@@ -3104,29 +3489,9 @@ public partial class MainWindow : Window
     /// </summary>
     public void PerformFullExit()
     {
-        void KillAllChildProcesses()
-        {
-            // 游戏进程：先尝试 CloseAll()（优雅关闭：CloseMainWindow 超时后才 Kill），
-            // 跟"一键关闭游戏"按钮走的是同一套实现，见 GameProcessManager.CloseAll 注释。
-            try { ProcessManager.CloseAll(); } catch { /* 单个进程关闭失败不影响整体退出 */ }
-
-            // 服务器进程没有窗口，CloseAll 语义上更接近"强制"，这里直接对每个仍在运行的
-            // 服务器实例调用 ForceKill——真正退出启动器时不适合再等"发 stop 命令、等它
-            // 优雅保存世界"这种可能耗时数秒到数十秒的流程，用户此刻的意图是"立刻结束"。
-            try
-            {
-                foreach (var p in ServerProcessManager.Processes.ToArray())
-                {
-                    try { if (!p.HasExited) p.ForceKill(); }
-                    catch { /* 忽略单个失败，继续处理其它进程 */ }
-                }
-            }
-            catch { /* 忽略：不能因为清理服务器进程失败而卡住退出流程 */ }
-        }
-
         try
         {
-            KillAllChildProcesses();
+            KillAllGameAndServerProcesses();
         }
         finally
         {
@@ -3358,6 +3723,32 @@ public partial class MainWindow : Window
     /// "取消"则拦下这次关闭，两边都不动。没有任何便签在开时直接放行，不打扰。</summary>
     private async void MainWindow_Closing(object? sender, System.ComponentModel.CancelEventArgs e)
     {
+        // 真正关闭窗口前，优先处理设置页未保存修改。注意必须先 Flush：用户刚松开滑块/
+        // 关闭下拉框就点叉号时，400ms 防抖可能还没执行，不能因此误判成“没有修改”。
+        if (MainContent.Content is SettingsPage closingSettingsPage)
+        {
+            closingSettingsPage.FlushPendingEditsForLeave(preserveAutoSaveRollbackPrompt: false);
+            if (closingSettingsPage.HasUnsavedChanges)
+            {
+                var settingsChoice = MessageBoxDialog.ShowThreeChoice(
+                    "关闭了窗口，但是设置还没有保存，请选择保存、放弃或者取消关闭。",
+                    "设置还没有保存",
+                    "取消关闭", "放弃", "保存");
+
+                if (settingsChoice == XclMessageResult.Cancel)
+                {
+                    e.Cancel = true;
+                    closingSettingsPage.ShowPendingEditPromptIfNeeded();
+                    return;
+                }
+
+                if (settingsChoice == XclMessageResult.No)
+                    closingSettingsPage.DiscardUnsavedChangesWithoutNavigating();
+                else if (settingsChoice == XclMessageResult.Yes)
+                    closingSettingsPage.SaveNow();
+            }
+        }
+
         // 第一次关闭时仍保留原来的桌面便签三选一；关闭备份完成后第二次 Close() 不重复打扰。
         if (!_stickyNoteCloseDecisionHandled && Views.StickyNoteWindow.OpenWindows.Count > 0)
         {
@@ -3408,6 +3799,16 @@ public partial class MainWindow : Window
         if (Application.Current.Windows.Cast<Window>().Any(w => !ReferenceEquals(w, this)))
         {
             _trayIcon?.Show();
+        }
+        else
+        {
+            // 需求："让启动器在选择关闭时彻底关闭，并且结束所有 XCL2 的进程，不要有残留进程"，
+            // 除非用户选了后台运行/托盘/最小化（这些选项根本不会调用 Close()，走不到这个方法），
+            // 或者上面便签三选一时保留了便签/还有其它窗口（走上面那个 if 分支，进了托盘常驻）。
+            // 走到这个 else 说明真的没有任何东西要保留——是一次彻底退出，
+            // 顺手清理掉还在跑的游戏/服务器子进程，跟托盘"退出"/PerformFullExit 用同一个方法，
+            // 不留孤儿进程。
+            KillAllGameAndServerProcesses();
         }
 
         if (!ConfigService.Config.BackupInstanceOnClose || _closeLifecycleBackupCompleted)
@@ -3561,7 +3962,10 @@ public partial class MainWindow : Window
     /// 想装进已有实例仍然可以——设置里把「拖入整合包时新建实例」关掉，
     /// 就会退回原来的 ModpackTargetVersionDialog 让你选目标目录。
     /// </summary>
-    private async Task ImportDroppedModpackAsync(string modpackPath)
+    /// <summary>internal 而非 private：VersionSelectPage 里"导入整合包..."按钮要复用这同一套
+    /// 流程（新建实例 / 装进已有实例，取决于 ModpackDropCreatesNewInstance 设置），
+    /// 不用再抄一遍装整合包的逻辑。</summary>
+    internal async Task ImportDroppedModpackAsync(string modpackPath)
     {
         var cfg = ConfigService.Config;
         var folder = cfg.Folders.FirstOrDefault(f => f.Path == cfg.SelectedFolderPath)

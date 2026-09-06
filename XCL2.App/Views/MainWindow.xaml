@@ -651,10 +651,9 @@
              常驻在窗口右下角，点击打开 AI 助手面板。受设置页 "显示右下角常驻悬浮球入口" 控制。
              放在最上层 (Grid.ColumnSpan="2" 且声明在最后)，确保始终浮在内容区、侧边栏、弹窗之上。 -->
         <!-- ===== 愚人节小白旗 =====
-             只有 4 月 1 日抽中过彩蛋、且今天还没点过这面旗时才会显示（AprilFoolsUi.Attach
-             在代码里控制 Visibility，其余 364 天恒为 Collapsed）。放在最右下角、AI 悬浮球
-             左边一点，不遮挡悬浮球。ToolTip 按需求写死这句话，不解释这面旗具体对应哪个彩蛋
-             （彩蛋本身就是"惊喜"，点之前不用剧透）。 -->
+             正常 4 月 1 日彩蛋，或“千万别点”第三个确定临时触发的会话彩蛋处于活动状态时显示。
+             放在最右下角、AI 悬浮球左边一点，不遮挡悬浮球。这里不再使用 Emoji 字体：
+             部分 Windows 字体/回退字体会把白旗渲染成两条横线或缺字方框，因此改成固定矢量图形。 -->
         <Button x:Name="AprilFoolsFlagButton" Grid.Column="0" Grid.ColumnSpan="2"
                 HorizontalAlignment="Right" VerticalAlignment="Bottom"
                 Width="36" Height="36" Margin="0,0,66,22"
@@ -662,11 +661,18 @@
                 Click="AprilFoolsFlagButton_Click"
                 ToolTip="点击小白旗就不会受到折磨了"
                 Visibility="Collapsed" Panel.ZIndex="999">
-            <!-- 修复：这个 TextBlock 之前没写 FontFamily，默认字体不含彩色 Emoji 字形，
-                 4 月 1 日当天这面小白旗实际上渲染成空白（按钮区域存在、可点，但视觉上
-                 什么都看不见），跟项目里其它 Emoji TextBlock（见 DownloadCenterPage 等）
-                 统一补上 "Segoe UI Emoji"，保证真的画得出来。 -->
-            <TextBlock Text="🏳" FontFamily="Segoe UI Emoji" FontSize="24" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+            <Viewbox Width="24" Height="24" Stretch="Uniform" IsHitTestVisible="False">
+                <Canvas Width="24" Height="24">
+                    <!-- 白色旗面 + 深色描边：亮/暗主题和不同背景下都能看清。 -->
+                    <Path Data="M 7,3 L 18,3 L 16,7 L 18,11 L 7,11 Z"
+                          Fill="White" Stroke="#666666" StrokeThickness="1.4"
+                          StrokeLineJoin="Round"/>
+                    <!-- 旗杆与底脚，不依赖任何字体/Emoji 渲染。 -->
+                    <Path Data="M 7,2.5 L 7,21 M 4.5,21 L 10,21"
+                          Stroke="#666666" StrokeThickness="1.8"
+                          StrokeStartLineCap="Round" StrokeEndLineCap="Round"/>
+                </Canvas>
+            </Viewbox>
         </Button>
 
         <Button x:Name="AiFloatingButton" Grid.Column="0" Grid.ColumnSpan="2"

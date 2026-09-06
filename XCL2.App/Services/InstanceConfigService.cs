@@ -1,4 +1,4 @@
-using System.IO;
+﻿using System.IO;
 using System.Text.Json;
 using XCL2.App.Models;
 
@@ -23,6 +23,10 @@ namespace XCL2.App.Services;
 /// </summary>
 public static class InstanceConfigService
 {
+    public const string GraphicsApiGame = "game";
+    public const string GraphicsApiOpenGl = "opengl";
+    public const string GraphicsApiVulkan = "vulkan";
+
     private static readonly JsonSerializerOptions JsonOpts = new() { WriteIndented = true };
 
     /// <summary>实例的 xcl/ 子目录路径。</summary>
@@ -119,6 +123,13 @@ public class InstanceSettings
     /// <summary>这个实例单独的 JVM 自定义参数；null=跟随全局 CustomJvmArgs（不覆盖，
     /// 而是在全局参数基础上追加——具体拼接顺序见 LauncherService）。</summary>
     public string? CustomJvmArgs { get; set; }
+
+    /// <summary>
+    /// Minecraft 26.1+ 的实例级“游戏内图形 API”偏好："game"=游戏自主设置，
+    /// "opengl"=强制 OpenGL，"vulkan"=强制 Vulkan；null=旧配置/未设置，按 game 处理。
+    /// 这是 Minecraft 自身的视频/图形选项，不是启动器窗口的渲染模式。
+    /// </summary>
+    public string? GraphicsApiPreference { get; set; }
 
     /// <summary>开启后自动加入的服务器地址；null/空=不自动进服务器。</summary>
     public string? AutoJoinServerAddress { get; set; }

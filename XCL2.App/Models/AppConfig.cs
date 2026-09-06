@@ -32,6 +32,16 @@ public enum CloseButtonAction
 /// 所以刻意选一个"什么都不做"当默认值，跟 <see cref="CloseButtonAction"/> 默认直接关闭
 /// 的取舍逻辑不同（那个是兼容旧行为，这个是新功能，新功能默认不应该改变用户没预期到的行为）。
 /// </summary>
+public enum AutoStartLaunchBehavior
+{
+    /// <summary>开机自启动后正常显示主界面。</summary>
+    ShowWindow,
+    /// <summary>开机自启动后保留任务栏按钮，但窗口最小化。</summary>
+    Minimize,
+    /// <summary>开机自启动后隐藏主窗口，仅保留系统托盘入口。</summary>
+    MinimizeToTray
+}
+
 public enum PostGameLaunchAction
 {
     /// <summary>保持不变，默认值——启动器窗口状态不受游戏启动这件事影响。</summary>
@@ -58,6 +68,17 @@ public enum LifecycleBackupTargetMode
 }
 
 /// <summary>
+/// 启动前完整性检查的严格程度。见 InstanceIntegrityService 上的完整说明。
+/// </summary>
+public enum IntegrityCheckMode
+{
+    /// <summary>只查关键文件（version json、client jar、加载器 jar/依赖库）+ assets 按"数量"抽查，不逐个核对哈希，速度快。</summary>
+    Simple,
+    /// <summary>在 Simple 的基础上，assets 里每一个 object 文件也逐个核对是否存在、大小是否匹配，更准但启动前会慢一些。</summary>
+    Strict
+}
+
+/// <summary>
 /// xcl2/config.json 的内容：全局配置。
 /// </summary>
 public class AppConfig
@@ -65,6 +86,13 @@ public class AppConfig
     public List<GameFolder> Folders { get; set; } = new();
     public string? SelectedFolderPath { get; set; }
     public string? SelectedVersionId { get; set; }
+
+    /// <summary>
+    /// 启动前完整性检查的严格程度。null 表示用户还没选过——首次触发检查时会弹一个
+    /// 10 秒倒计时的选择框，选完（或超时后自动按 Simple）就把结果写回这里，之后不再重复问，
+    /// 用户也可以随时在设置页里改。见 IntegrityCheckModeChoiceDialog。
+    /// </summary>
+    public IntegrityCheckMode? IntegrityCheckMode { get; set; }
 
     /// <summary>
     /// 默认使用官方源 (Mojang)：数据权威、不依赖第三方镜像的可用性。
@@ -361,6 +389,9 @@ public class AppConfig
     /// 不需要管理员权限，只影响当前登录用户）。默认关闭。</summary>
     public bool AutoStartOnBoot { get; set; } = false;
 
+    /// <summary>仅在“开机自启动”这条启动路径中生效；用户平时双击启动器不受影响。</summary>
+    public AutoStartLaunchBehavior AutoStartBehavior { get; set; } = AutoStartLaunchBehavior.ShowWindow;
+
     /// <summary>
     /// 收藏的游戏版本 ID 列表（来自下载中心的"☆ 收藏"按钮）。
     /// 保留这个字段只是为了兼容老版本配置文件（升级前已经收藏过版本的用户，配置文件里
@@ -433,10 +464,10 @@ public class AppConfig
     public bool SmartBandwidthThrottle { get; set; } = false;
 
     /// <summary>
-    /// 「访客模式」：开启后，主页的账户始终是一个只存在于本次运行的临时离线账户（不写入
-    /// accounts.json，不出现在账户管理页的持久列表里），且关闭启动器时会清理本次会话新产生的
-    /// 游戏日志/临时下载文件。适合在别人电脑上临时借用启动器、不想留下任何个人痕迹的场景。
-    /// 默认关闭。见 <see cref="Services.GuestModeService"/>。
+    /// 「访客模式」：严格属于当前进程会话。开启后主页账户是只存在于本次运行的临时离线账户
+    /// （不写入 accounts.json、不进入持久账户列表），关闭时清理本次会话新产生的日志/临时下载；
+    /// GuestModeEnabled 本身也不会持久化为 true，启动器重启后始终自动回到普通模式。
+    /// 默认关闭。见 <see cref="Services.GuestModeService"/> 与 ConfigService.Save()。
     /// </summary>
     public bool GuestModeEnabled { get; set; } = false;
 
@@ -652,14 +683,18 @@ public class AppConfig
     /// </summary>
     public int GlobalWindowOpacityPercent { get; set; } = 80;
 
+    /// <summary>界面主要文字的不透明度百分比。默认 100，范围 50~100。它只调整文字画刷，
+    /// 不会改变背景/卡片透明度；用于背景特别通透时单独把文字拉回清晰。</summary>
+    public int TextOpacityPercent { get; set; } = 100;
+
     /// <summary>
     /// 设置页"是否可以直接保存，无需点击保存设置"。默认关闭（false）——维持原有的
     /// "改完必须手动点保存设置按钮"流程，避免老用户误触发不想要的自动保存。
     /// 开启后，设置页里任何控件的改动都会在短暂防抖（约 0.4 秒无新改动）后自动保存，
-    /// 并在右下角弹出一张云母气泡卡片："设置已保存，是否回退"，2 秒后自动消失
-    /// （消失前可以点"回退"撤销这一次自动保存，见 SettingsPage.OnSettingsEdited）。
-    /// 关闭时改为左下角弹出"设置已修改，是否保存"的气泡卡片（撤销/保存两个按钮，
-    /// 同样 2 秒后自动消失），以及切换到其它页面时的三选一确认弹窗。
+    /// 并在左下角保留一张“设置已自动保存 / 回退”操作卡片；它不会计时自动消失，
+    /// 用户可随时点击“回退”撤销最近一次自动保存（见 SettingsPage.OnSettingsEdited）。
+    /// 关闭时改为左下角保留“设置已修改，是否保存”的操作卡片（撤销/保存两个按钮），
+    /// 以及切换到其它页面时的三选一确认弹窗。
     /// </summary>
     public bool SettingsAutoSaveWithoutConfirm { get; set; } = false;
 
@@ -795,9 +830,9 @@ public class AppConfig
     public int DownloadPopupSizeDisplayMode { get; set; } = 0;
 
     /// <summary>高性能模式：跟 LowPerformanceMode 相反，开启更强的切页/交互动效（缩放+位移+
-    /// 回弹缓动）。不做任何自动降级，仅由 FrameRateMonitorService 在持续低帧率时提示用户，
-    /// 见该服务类注释。</summary>
-    public bool EnableHighPerformanceMode { get; set; } = false;
+    /// 回弹缓动）。默认开启：新配置、缺少该字段的旧配置以及“恢复默认设置”都会使用高性能模式。
+    /// 用户仍可在设置页手动关闭；不做任何自动降级，仅由 FrameRateMonitorService 在持续低帧率时提示。</summary>
+    public bool EnableHighPerformanceMode { get; set; } = true;
 
     // ===== 注册表功能（HKLM/HKCU 双路径存储） =====
 
@@ -861,6 +896,11 @@ public class AppConfig
     public int DrawerFrostPercent { get; set; } = 40;
     /// <summary>抽屉内文字透明度百分比（40~100）。仅在 <see cref="DrawerUseCustomAppearance"/> 开启时生效。</summary>
     public int DrawerTextOpacityPercent { get; set; } = 100;
+
+    /// <summary>鼠标滚轮灵敏度百分比。100 表示 ScrollWheelBehavior 的基准步长，
+    /// 默认 90，较旧版本的固定高速滚动略微降低一点，减少长设置页一格滚得过头的感觉。
+    /// 用户可在设置页调整，范围由 ScrollWheelBehavior.ClampSensitivityPercent 统一限制。</summary>
+    public int MouseWheelSensitivityPercent { get; set; } = 90;
 
     /// <summary>是否启用"按住 Ctrl + 滚轮/方向键缩放整窗界面"功能。默认开启——跟浏览器
     /// Ctrl+滚轮缩放页面是同一套用户习惯，开启后不会影响任何现有操作（只有同时按住 Ctrl
