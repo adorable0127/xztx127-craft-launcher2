@@ -121,6 +121,38 @@ public static class ScrollWheelBehavior
     {
         if (sender is not ScrollViewer sv) return;
 
+        // 修复"设置主题选择页里，滚动字体/主题这类长下拉列表（抽屉）时，整个设置页会跟着
+        // 一起跳动，并且被误判成正在修改设置从而打断用户进度"：
+        //
+        // 根因：ComboBox 的下拉列表用 Popup 承载，Popup 的内容在渲染上属于独立的顶层窗口
+        // （见下面 CloseAnyOpenComboBoxDropdown 的注释），但 WPF 对 Popup 的路由事件做了
+        // "缝合"——Popup 内容的逻辑父级仍然是 PlacementTarget（这里的 ComboBox），所以
+        // PreviewMouseWheel 这种隧道事件，会先经过 Popup 外层、挂在设置页最外层 ScrollViewer
+        // 上的这个处理器，然后才轮到 Popup 内部自己的列表 ScrollViewer。
+        //
+        // 而下面紧接着的 CloseAnyOpenComboBoxDropdown(sv) 原本是无条件执行的：只要滚轮事件
+        // 路过这个外层 ScrollViewer，不管来源是不是就在这个展开的下拉列表本身里面，都会先把
+        // 它关掉。于是用户想在字体列表这种几十项的长下拉里滚轮翻页时，第一下滚轮就会把
+        // 下拉框直接关掉——下拉一关，事件来源(originalSource)所在的视觉子树跟着被拆掉，
+        // 后面 HasScrollableAncestorBefore 沿视觉树往上找"内层可滚动祖先"时自然再也找不到
+        // 刚刚已经被摘掉的那个下拉列表 ScrollViewer，只能一路找到外层，于是转而滚动了外层的
+        // 设置长页面本身——表现出来就是"抽屉/下拉列表滚动时，全屏（外层大页面）跟着一起动"。
+        // 同时某些 ComboBox 模板会在 IsDropDownOpen 被程序改成 false 时，把当前鼠标悬停/
+        // 高亮的那一项提交为选中项，触发 SelectionChanged，从而被设置页的脏检测誤判为
+        // "用户刚刚修改了一项设置"，打断用户原本只是想浏览选项、还没做决定的操作进度。
+        //
+        // 修法：在关闭下拉框之前，先判断这次滚轮事件是不是恰好来自某个仍处于展开状态的
+        // Popup 内部（用 PresentationSource 是否与外层 ScrollViewer 一致来判断，Popup 内容
+        // 的呈现源必然与主窗口不同）。如果是，说明用户正在滚动的就是这个下拉列表本身，
+        // 这里什么都不做、直接放行，让隧道事件继续往下走到 Popup 内部自己的 ScrollViewer，
+        // 由它按标准逻辑接管滚动；既不关闭下拉框，也不会让外层设置页跟着移动。只有当滚轮
+        // 事件来自页面上其它地方（不是正在滚动的这个下拉列表自己）时，才继续走下面"顺手
+        // 收起其它还开着的下拉框，避免其 Popup 跟丢定位"的原有逻辑。
+        if (e.OriginalSource is DependencyObject popupSource && IsInsideOpenPopup(popupSource, sv))
+        {
+            return;
+        }
+
         // 抽屉/展开式局部区域声明了 ContainWheel 时，外层 ScrollViewer 不允许抢这次滚轮。
         // 这里只 return、不设 Handled，给区域内部控件先处理；若内部没有处理，冒泡到该区域本身
         // 时 ContainedElement_MouseWheel 会截断，确保事件不会继续滚动整个外层页面。
@@ -212,6 +244,26 @@ public static class ScrollWheelBehavior
             }
             CloseAnyOpenComboBoxDropdown(child);
         }
+    }
+
+    /// <summary>判断这次滚轮事件的原始来源(source)是不是身处某个当前展开着的 Popup（下拉列表、
+    /// 展开式面板等）内部、且这个 Popup 是挂在 outer 这个外层 ScrollViewer 下面某个控件上的。
+    /// 判断依据：Popup 内容单独渲染在自己的呈现源(PresentationSource)里，只是逻辑父级仍然
+    /// 指回主窗口这一侧的 PlacementTarget——所以只要 source 的呈现源跟 outer 的呈现源不是
+    /// 同一个，就说明 source 当前正处在某个展开的 Popup 内容里面，而不是主窗口可视树本身。
+    /// 用 PresentationSource 判断而不是单纯沿视觉树 GetParent 往上爬，是因为视觉树在 Popup
+    /// 边界处本来就是断开的（爬不回 outer），没法像 IsInsideContainWheelBoundary 那样直接
+    /// 复用同一种"往上找"的写法。</summary>
+    private static bool IsInsideOpenPopup(DependencyObject source, ScrollViewer outer)
+    {
+        if (source is not Visual sourceVisual) return false;
+
+        var sourceRoot = PresentationSource.FromVisual(sourceVisual);
+        var outerRoot = PresentationSource.FromVisual(outer);
+
+        // 两者呈现源不同，说明 source 位于一个独立呈现的 Popup 内容树里（下拉列表、
+        // 展开式浮层等），而不是主窗口本身这一支可视树上。
+        return sourceRoot != null && !ReferenceEquals(sourceRoot, outerRoot);
     }
 
     private static bool IsInsideContainWheelBoundary(DependencyObject source, ScrollViewer outer)

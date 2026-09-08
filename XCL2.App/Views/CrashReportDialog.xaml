@@ -4,8 +4,9 @@
         xmlns:local="clr-namespace:XCL2.App.Views"
         MinWidth="420" MaxWidth="560">
     <!-- 游戏崩溃提示弹窗：跟通用的 MessageBoxDialog 分开单独做一个，是因为这个场景
-         比普通提示多两个专属动作——"查看日志"（跳转到日志页对应标签）和"导出完整日志"
-         （把启动器日志+游戏崩溃前输出+游戏日志文件合并成一个文件另存），这两个按钮塞进
+         比普通提示多几个专属动作——"查看完整日志"（跳转到日志页对应标签）、"在记事本中
+         查看日志"（把同一份合并日志写到临时文件并用系统记事本打开）和"导出完整日志"
+         （把启动器日志+游戏崩溃前输出+游戏日志文件合并成一个文件另存），这几个按钮塞进
          通用 MessageBoxDialog 的按钮方案（OK/OKCancel/YesNo/YesNoCancel）里都不合适，
          硬塞进去只会让那个通用类变得更难维护，所以单独建一个。-->
     <StackPanel Margin="24" MaxWidth="520">
@@ -36,13 +37,30 @@
             </StackPanel>
         </Border>
 
-        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,20,0,0">
-            <Button x:Name="ViewLogButton" Content="查看完整日志" Padding="20,8" Margin="0,0,8,0"
-                    Style="{DynamicResource SecondaryButton}" Click="ViewLog_Click"/>
-            <Button x:Name="ExportLogButton" Content="导出完整日志" Padding="20,8" Margin="0,0,8,0"
-                    Style="{DynamicResource SecondaryButton}" Click="ExportLog_Click"/>
-            <Button Content="关闭" Padding="20,8" IsDefault="True"
+        <!-- WrapPanel 而不是原来的 Orientation="Horizontal" StackPanel：新增"在记事本中查看日志"
+             后一排要放 4 个按钮，窄屏/小分辨率下容易挤得放不下（弹窗 MinWidth 只有 420），
+             用 WrapPanel 让放不下的按钮自动换到第二行，不会被裁切或挤出弹窗右边界。
+             FlowDirection="RightToLeft" 配合每个子按钮内部再手动 FlowDirection="LeftToRight"，
+             是为了让"关闭"这个主按钮始终排在最右（视觉上跟原来 HorizontalAlignment="Right"
+             的效果一致），换行时次要按钮从右往左依次排列，不会因为换行改变了原有的
+             视觉主次顺序。 -->
+        <WrapPanel HorizontalAlignment="Right" FlowDirection="RightToLeft" Margin="0,20,0,0">
+            <Button Content="关闭" Padding="20,8" IsDefault="True" FlowDirection="LeftToRight"
                     Style="{DynamicResource PrimaryButton}" Click="Close_Click"/>
-        </StackPanel>
+            <Button x:Name="ExportLogButton" Content="导出完整日志" Padding="20,8" Margin="8,0,0,0"
+                    FlowDirection="LeftToRight"
+                    Style="{DynamicResource SecondaryButton}" Click="ExportLog_Click"/>
+            <!-- 需求：原来的"查看日志"其实是跳转到启动器内部的日志页，并不是真的用"记事本"
+                 打开，按钮名字容易让人以为点了会拉起系统记事本，产生误导。这里新增一个
+                 真正会拉起系统记事本的按钮，跟原来跳转启动器日志页的"查看完整日志"分开，
+                 各自名副其实，不用改原按钮的行为（日志页里三个 Tab 分类展示的体验仍然保留，
+                 只是多给一个"直接甩给记事本，可以自己搜索/复制/发给别人"的选项）。 -->
+            <Button x:Name="OpenInNotepadButton" Content="在记事本中查看日志" Padding="20,8" Margin="8,0,0,0"
+                    FlowDirection="LeftToRight"
+                    Style="{DynamicResource SecondaryButton}" Click="OpenInNotepad_Click"/>
+            <Button x:Name="ViewLogButton" Content="查看完整日志" Padding="20,8" Margin="8,0,0,0"
+                    FlowDirection="LeftToRight"
+                    Style="{DynamicResource SecondaryButton}" Click="ViewLog_Click"/>
+        </WrapPanel>
     </StackPanel>
 </local:OverlayDialogControl>

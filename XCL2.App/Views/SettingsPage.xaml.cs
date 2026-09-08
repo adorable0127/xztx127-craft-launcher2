@@ -182,6 +182,8 @@ public partial class SettingsPage : UserControl
         IsolateResourcePacksCheck.IsChecked = cfg.IsolateResourcePacksByDefault;
         // CurseForge 地图下载走内置 Key，不再需要在这里读取/展示用户配置状态（见下方删除说明）。
 
+        SelectComboByTag(ModFileNamingStyleCombo, cfg.ModFileNamingStyle.ToString());
+
         MultiThreadDownloadCheck.IsChecked = cfg.EnableMultiThreadDownload;
         ThreadCountBox.Text = cfg.MaxDownloadThreads.ToString();
         ThreadCountPanel.Visibility = cfg.EnableMultiThreadDownload ? Visibility.Visible : Visibility.Collapsed;
@@ -1645,6 +1647,9 @@ public partial class SettingsPage : UserControl
         cfg.SmartBandwidthThrottle = SmartThrottleCheck.IsChecked == true;
 
         cfg.LowPerformanceMode = LowPerformanceModeCheck.IsChecked == true;
+
+        if (Enum.TryParse<ModFileNamingStyle>(TagOf(ModFileNamingStyleCombo), out var namingStyle))
+            cfg.ModFileNamingStyle = namingStyle;
 
         cfg.DownloadNotifyMode = DownloadNotifyModeCombo.SelectedIndex;
         cfg.GameVersionNoPopup = GameVersionNoPopupCheck.IsChecked == true;

@@ -653,15 +653,19 @@
         <!-- ===== 愚人节小白旗 =====
              正常 4 月 1 日彩蛋，或“千万别点”第三个确定临时触发的会话彩蛋处于活动状态时显示。
              放在最右下角、AI 悬浮球左边一点，不遮挡悬浮球。这里不再使用 Emoji 字体：
-             部分 Windows 字体/回退字体会把白旗渲染成两条横线或缺字方框，因此改成固定矢量图形。 -->
+             部分 Windows 字体/回退字体会把白旗渲染成两条横线或缺字方框，因此改成固定矢量图形。
+             按钮/图形尺寸在原有 36/24 基础上整体放大两倍（72/48）：原尺寸太小，鼠标不好精准
+             点中；HorizontalAlignment=Right + VerticalAlignment=Bottom 意味着按钮是以右下角
+             为锚点向左上方向扩张变大的，不会因为变大而反过来跟右侧的 AI 悬浮球重叠，
+             右侧 Margin 保持 66 不用跟着放大调整。 -->
         <Button x:Name="AprilFoolsFlagButton" Grid.Column="0" Grid.ColumnSpan="2"
                 HorizontalAlignment="Right" VerticalAlignment="Bottom"
-                Width="36" Height="36" Margin="0,0,66,22"
+                Width="72" Height="72" Margin="0,0,66,22"
                 Background="Transparent" BorderThickness="0" Cursor="Hand"
                 Click="AprilFoolsFlagButton_Click"
                 ToolTip="点击小白旗就不会受到折磨了"
                 Visibility="Collapsed" Panel.ZIndex="999">
-            <Viewbox Width="24" Height="24" Stretch="Uniform" IsHitTestVisible="False">
+            <Viewbox Width="48" Height="48" Stretch="Uniform" IsHitTestVisible="False">
                 <Canvas Width="24" Height="24">
                     <!-- 白色旗面 + 深色描边：亮/暗主题和不同背景下都能看清。 -->
                     <Path Data="M 7,3 L 18,3 L 16,7 L 18,11 L 7,11 Z"

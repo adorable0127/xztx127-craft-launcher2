@@ -61,4 +61,16 @@ public static class ModDisplayNameResolver
 
         return $"{chineseName} ({englishTitle})";
     }
+
+    /// <summary>
+    /// 给定平台 + Slug，查这个 Mod/资源的中文名，查不到返回 null。
+    /// 跟 <see cref="Resolve"/> 共用同一份索引，区别是这个方法不拼英文标题，
+    /// 单纯给"要不要在文件名里加中文名"这类场景用——查不到就什么都不加，不用占位符。
+    /// slug 为空（CurseForge 目前查不到 slug）时直接返回 null，不查表。
+    /// </summary>
+    public static string? GetChineseName(ModSource source, string? slug)
+    {
+        if (string.IsNullOrEmpty(slug)) return null;
+        return _bySlug.Value.TryGetValue((source, slug.ToLowerInvariant()), out var chineseName) ? chineseName : null;
+    }
 }

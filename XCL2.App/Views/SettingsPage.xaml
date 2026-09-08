@@ -796,6 +796,19 @@
                 <ComboBoxItem Content="不提示（完全静默）" Tag="3"/>
             </ComboBox>
 
+            <!-- 社区资源下载后的文件命名样式：查到中文名（见 ModDisplayNameResolver）时，
+                 按这里选的样式把中文名拼进文件名；查不到中文名时不管选哪种样式都只用原始文件名。 -->
+            <TextBlock Text="社区资源文件命名" FontSize="14" FontWeight="Bold" Margin="0,16,0,4"/>
+            <TextBlock Text="下载 Mod 后，如果能查到中文名，用什么格式拼进文件名（查不到中文名时始终使用原始文件名）"
+                       FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4" TextWrapping="Wrap"/>
+            <ComboBox x:Name="ModFileNamingStyleCombo" Width="220" Margin="0,0,0,4" HorizontalAlignment="Left">
+                <ComboBoxItem Content="【中文名】原始文件名" Tag="FullBracket"/>
+                <ComboBoxItem Content="[中文名] 原始文件名" Tag="SquareBracket" IsSelected="True"/>
+                <ComboBoxItem Content="中文名-原始文件名" Tag="DashPrefix"/>
+                <ComboBoxItem Content="原始文件名-中文名" Tag="DashSuffix"/>
+                <ComboBoxItem Content="保持原始文件名" Tag="Original"/>
+            </ComboBox>
+
             <!-- 下载列表详情：标题栏下载气泡（点右上角下载图标弹出的那个列表）里是否额外
                  显示一行"剩余时间/当前速度/大小"，开启后气泡整体放大60%留出空间，
                  见 AppConfig.DownloadPopupShowDetailStats / DownloadPopupSizeDisplayMode

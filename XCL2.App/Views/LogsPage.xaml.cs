@@ -204,6 +204,25 @@ public partial class LogsPage : UserControl
     // --- 日志提交给 AI ---
     private void AnalyzeCurrentGameLogWithAi_Click(object sender, RoutedEventArgs e)
     {
+        var (raw, source) = GetCurrentGameLogRawAndSource();
+
+        if (string.IsNullOrWhiteSpace(raw))
+        {
+            MessageBoxDialog.ShowInfo("当前没有可提交的游戏日志。请先启动游戏，或保留一次已退出游戏的日志快照。", "AI 日志分析");
+            return;
+        }
+
+        SubmitLogToAi(
+            source,
+            raw,
+            "请分析下面的 Minecraft 游戏日志。先给出最可能的根因，再列出关键证据（错误类型、类名、Mod/Loader 名、退出码等），最后给出按优先级排序且可直接执行的修复步骤。不要把普通 INFO/WARN 当成崩溃根因；信息不足时明确说明还缺什么。" );
+    }
+
+    /// <summary>提取自 AnalyzeCurrentGameLogWithAi_Click：拿"当前游戏日志"这份原始文本
+    /// （选中运行中进程就取它的 OutputBuffer，否则退回最近一次的日志快照），供 AI 分析和
+    /// "复制"按钮共用同一份取值逻辑，避免两处各写一遍、以后改一处忘了改另一处。</summary>
+    private (string? raw, string source) GetCurrentGameLogRawAndSource()
+    {
         string? raw = null;
         string source = "当前游戏日志";
 
@@ -220,37 +239,27 @@ public partial class LogsPage : UserControl
                 : $"最近一次游戏日志 - {_lastKnownLogVersionId}";
         }
 
-        if (string.IsNullOrWhiteSpace(raw))
-        {
-            MessageBoxDialog.ShowInfo("当前没有可提交的游戏日志。请先启动游戏，或保留一次已退出游戏的日志快照。", "AI 日志分析");
-            return;
-        }
+        return (raw, source);
+    }
 
-        SubmitLogToAi(
-            source,
-            raw,
-            "请分析下面的 Minecraft 游戏日志。先给出最可能的根因，再列出关键证据（错误类型、类名、Mod/Loader 名、退出码等），最后给出按优先级排序且可直接执行的修复步骤。不要把普通 INFO/WARN 当成崩溃根因；信息不足时明确说明还缺什么。" );
+    /// <summary>"复制"：把 AI 分析同一份原始游戏日志文本整个复制到剪贴板，不是复制
+    /// GameLogBox 里可能因为性能考虑被截断显示的那部分。</summary>
+    private void CopyCurrentGameLog_Click(object sender, RoutedEventArgs e)
+    {
+        var (raw, _) = GetCurrentGameLogRawAndSource();
+        CopyLogTextToClipboard(raw);
     }
 
     private void AnalyzeLauncherLogWithAi_Click(object sender, RoutedEventArgs e)
     {
-        var crashLog = Path.Combine(App.DataDir, "logs", "crash.log");
-        if (!File.Exists(crashLog))
+        if (!TryReadLauncherCrashLog(out var raw, out var error))
         {
-            MessageBoxDialog.ShowInfo("当前没有启动器异常日志可提交。", "AI 日志分析");
+            MessageBoxDialog.ShowError(error!, "AI 日志分析");
             return;
         }
-
-        string raw;
-        try
+        if (raw == null)
         {
-            using var stream = new FileStream(crashLog, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
-            using var reader = new StreamReader(stream, Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
-            raw = reader.ReadToEnd();
-        }
-        catch (Exception ex)
-        {
-            MessageBoxDialog.ShowError("读取启动器日志失败：" + ex.Message, "AI 日志分析");
+            MessageBoxDialog.ShowInfo("当前没有启动器异常日志可提交。", "AI 日志分析");
             return;
         }
 
@@ -258,6 +267,41 @@ public partial class LogsPage : UserControl
             "启动器异常日志",
             raw,
             "请分析下面的 XCL2 启动器异常日志。区分启动器自身代码错误、Java、网络/下载、权限、文件占用、配置或 Minecraft 环境问题；给出最可能根因、关键证据和最短修复路径。" );
+    }
+
+    /// <summary>提取自 AnalyzeLauncherLogWithAi_Click：读取磁盘上的 crash.log 全文，
+    /// 供 AI 分析和"复制"按钮共用。返回 false 表示读取过程中出了异常（error 带原因）；
+    /// 返回 true 但 raw 为 null 表示文件本来就不存在（不算错误，是正常的"还没有异常日志"）。</summary>
+    private bool TryReadLauncherCrashLog(out string? raw, out string? error)
+    {
+        raw = null;
+        error = null;
+
+        var crashLog = Path.Combine(App.DataDir, "logs", "crash.log");
+        if (!File.Exists(crashLog)) return true;
+
+        try
+        {
+            using var stream = new FileStream(crashLog, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+            using var reader = new StreamReader(stream, Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
+            raw = reader.ReadToEnd();
+            return true;
+        }
+        catch (Exception ex)
+        {
+            error = "读取启动器日志失败：" + ex.Message;
+            return false;
+        }
+    }
+
+    private void CopyLauncherLog_Click(object sender, RoutedEventArgs e)
+    {
+        if (!TryReadLauncherCrashLog(out var raw, out var error))
+        {
+            MessageBoxDialog.ShowError(error!, "复制日志");
+            return;
+        }
+        CopyLogTextToClipboard(raw);
     }
 
     private void AnalyzeCrashLogWithAi_Click(object sender, RoutedEventArgs e)
@@ -280,6 +324,14 @@ public partial class LogsPage : UserControl
             isCrashLogContext: true);
     }
 
+    /// <summary>"复制"：跟"AI 分析崩溃报告"不同，复制不涉及把内容发给第三方 AI 接口，
+    /// 不需要检查 AllowCrashLogReading 这个"允许发给 AI"的开关——用户自己复制给自己用，
+    /// 不受这个限制。</summary>
+    private void CopyCrashLog_Click(object sender, RoutedEventArgs e)
+    {
+        CopyLogTextToClipboard(CrashRawBox.Text);
+    }
+
     private void AnalyzeInjectionLogWithAi_Click(object sender, RoutedEventArgs e)
     {
         if (string.IsNullOrWhiteSpace(_lastInjectionScanSnapshot))
@@ -292,6 +344,19 @@ public partial class LogsPage : UserControl
             "游戏进程注入扫描",
             _lastInjectionScanSnapshot,
             "请分析下面的 Minecraft/Java 进程模块注入扫描结果。重点判断 Suspicious/Unknown 项更像系统组件、显卡驱动、JVM/LWJGL、录屏/Overlay/输入法等正常模块，还是需要人工排查的注入模块。不要仅凭 Unknown 就判定恶意；列出最值得核实的文件、理由和安全的核实步骤。" );
+    }
+
+    /// <summary>"复制"：这个 Tab 没有日志 TextBox，复制的是跟"AI 分析注入日志"同一份
+    /// _lastInjectionScanSnapshot（BuildInjectionScanSnapshot 生成的文本化扫描结果），
+    /// 还没执行过扫描时跟 AI 分析一样提示"请先扫描"，不复制空内容。</summary>
+    private void CopyInjectionLog_Click(object sender, RoutedEventArgs e)
+    {
+        if (string.IsNullOrWhiteSpace(_lastInjectionScanSnapshot))
+        {
+            MessageBoxDialog.ShowInfo("请先选择游戏进程并执行一次“扫描”。", "复制日志");
+            return;
+        }
+        CopyLogTextToClipboard(_lastInjectionScanSnapshot);
     }
 
     private async void AnalyzeFullLauncherLogWithAi_Click(object sender, RoutedEventArgs e)
@@ -308,6 +373,46 @@ public partial class LogsPage : UserControl
         catch (Exception ex)
         {
             MessageBoxDialog.ShowError("汇总日志失败：" + ex.Message, "AI 日志分析");
+        }
+    }
+
+    /// <summary>"复制"：跟 AI 分析一样调用同一个 BuildAllLauncherLogsText 汇总当前会话+磁盘
+    /// 日志，同样放线程池跑避免卡界面；复制的内容跟提交给 AI 的完全一致（未经过 PrepareLogForAi
+    /// 的截断处理——复制给用户自己看应该给全文，截断只是为了不把过长内容灌爆 AI 的上下文）。</summary>
+    private async void CopyFullLauncherLog_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            var raw = await Task.Run(BuildAllLauncherLogsText);
+            CopyLogTextToClipboard(raw);
+        }
+        catch (Exception ex)
+        {
+            MessageBoxDialog.ShowError("汇总日志失败：" + ex.Message, "复制日志");
+        }
+    }
+
+    /// <summary>五个"复制"按钮共用的落地逻辑：写入剪贴板 + Toast 提示。内容为空时提示
+    /// "没有可复制的日志内容"而不是静默复制一个空字符串（空字符串一旦复制会覆盖用户剪贴板
+    /// 里原来的内容，属于有害的"静默副作用"，必须先挡住）。剪贴板偶发被其它程序占用会抛
+    /// 异常，跟项目里其它 Clipboard.SetText 调用处理方式一致：捕获后用 Toast 提示失败，
+    /// 不弹阻断式对话框打断用户。</summary>
+    private static void CopyLogTextToClipboard(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            ToastService.ShowWarning("没有可复制的日志内容。");
+            return;
+        }
+
+        try
+        {
+            Clipboard.SetText(text);
+            ToastService.ShowSuccess("日志已复制到剪贴板。");
+        }
+        catch
+        {
+            ToastService.ShowWarning("复制失败，剪贴板可能正被其它程序占用。");
         }
     }
 

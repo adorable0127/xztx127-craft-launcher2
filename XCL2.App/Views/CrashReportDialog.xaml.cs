@@ -91,6 +91,37 @@ public partial class CrashReportDialog : OverlayDialogControl
         _owner.NavigateToLogs();
     }
 
+    /// <summary>"在记事本中查看日志"：跟"查看完整日志"（其实是跳转到启动器内部的日志页）
+    /// 分开——那个按钮名字容易让人以为点了会拉起系统记事本，其实只是启动器自己的一个页面，
+    /// 存在误导。这里把 CrashLogExportService 组装的同一份合并日志（启动器日志+游戏崩溃前
+    /// 输出+游戏日志文件）写到临时文件，再真正用系统记事本（notepad.exe）打开它，做到
+    /// 名副其实：点了就是打开记事本，可以直接搜索/复制/另存/发给别人。
+    ///
+    /// 用临时文件而不是直接找一个已有的日志文件打开，是因为"合并日志"本身就是三段内容
+    /// 拼接出来的新文本，磁盘上并不存在这样一份现成文件——跟"导出完整日志"用的是同一个
+    /// BuildCombinedLog，只是这里不用用户手选保存位置，直接扔进临时目录即开即用。
+    /// 临时文件不做清理：内容量小、不敏感到需要即用即删的程度，且 Windows 会按自己的策略
+    /// 定期清理 %TEMP%，不需要这里额外操心生命周期。</summary>
+    private void OpenInNotepad_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            var tempPath = Path.Combine(Path.GetTempPath(), $"XCL2_崩溃日志_{DateTime.Now:yyyyMMdd_HHmmss}.txt");
+            File.WriteAllText(tempPath, CrashLogExportService.BuildCombinedLog(_processInfo));
+
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("notepad.exe", $"\"{tempPath}\"")
+            {
+                UseShellExecute = true
+            });
+        }
+        catch (Exception ex)
+        {
+            // 极少数情况下（比如系统记事本被彻底删除/替换、临时目录写不进去）打不开，
+            // 退化成友好错误提示，不影响弹窗其它按钮继续可用。
+            MessageBoxDialog.ShowError($"用记事本打开日志失败：{ex.Message}");
+        }
+    }
+
     private void ExportLog_Click(object sender, RoutedEventArgs e)
     {
         var dialog = new SaveFileDialog

@@ -276,6 +276,13 @@ public class AppConfig
     /// </summary>
     public bool ShowPreviewVersions { get; set; } = false;
 
+    /// <summary>
+    /// 社区资源下载到本地后，文件名里中文名和原始文件名的组合样式（见 <see cref="ModFileNamingStyle"/>）。
+    /// 默认 SquareBracket（"[中文名] 原始文件名"），跟旧版无中文名前缀的文件名相比多了一层可读性，
+    /// 同时用方括号而不是中文全角括号，避免个别老旧压缩软件/命令行工具对全角字符处理不一致的问题。
+    /// </summary>
+    public ModFileNamingStyle ModFileNamingStyle { get; set; } = ModFileNamingStyle.SquareBracket;
+
     /// <summary>是否在服务器启动成功后自动弹出"如何开放外网访问"教程窗口。默认开启，
     /// 帮助不熟悉内网穿透/端口映射的用户第一次开服后就知道下一步该做什么；用户在教程窗口里
     /// 勾选"不再提示"后关闭。</summary>
@@ -945,4 +952,23 @@ public enum DropJarTarget
     Server,
     /// <summary>每次都问。</summary>
     Ask,
+}
+
+/// <summary>
+/// 社区资源（Mod 等）下载到本地后，文件名里中文名和原始文件名的组合方式。
+/// 只有在能查到中文名（见 ModDisplayNameResolver）时才会生效——查不到中文名，
+/// 不管选哪种样式，都只使用原始文件名，不留下"【】"或"-"这类空壳前后缀。
+/// </summary>
+public enum ModFileNamingStyle
+{
+    /// <summary>【中文名】原始文件名（默认）。</summary>
+    FullBracket,
+    /// <summary>[中文名] 原始文件名。</summary>
+    SquareBracket,
+    /// <summary>中文名-原始文件名。</summary>
+    DashPrefix,
+    /// <summary>原始文件名-中文名。</summary>
+    DashSuffix,
+    /// <summary>保持原始文件名，不加中文名。</summary>
+    Original,
 }

@@ -1894,6 +1894,13 @@ public partial class DownloadCenterPage : UserControl
         var targetDir = PromptSaveDirectory(effectiveModDir, entry.Name);
         if (targetDir == null) return; // 用户取消
 
+        // 下载前先查一次中文名：跟 item.Title 复用 UnifiedModItem 上已有的 Source/SourceId，
+        // Modrinth 用 slug（RawItem 里的 ModrinthSearchHit.Slug），CurseForge 目前查不到 slug，
+        // GetChineseName 会直接返回 null——查不到就按原始文件名下载，不影响正常下载流程。
+        var slug = item.Source == ModSource.Modrinth ? (item.RawItem as ModrinthSearchHit)?.Slug : null;
+        var chineseName = ModDisplayNameResolver.GetChineseName(item.Source, slug);
+        var namingStyle = _owner.ConfigService.Config.ModFileNamingStyle;
+
         // 同 DownloadResourceInlineAsync：接入全局下载队列，不再用独占的模态弹窗。
         DownloadQueueService.Instance.StartNew($"下载 {entry.Name}", async (queueItem, ct) =>
         {
@@ -1905,6 +1912,25 @@ public partial class DownloadCenterPage : UserControl
             else
                 path = await GetCurseForge().DownloadModAsync(targetDir, (CurseForgeFile)entry.RawVersion, progress,
                     appendCategorySubdir: false, ct: ct);
+
+            // 按用户设置的命名样式，把中文名拼进落地文件名里；查不到中文名或用户选了"保持原名"
+            // 时 BuildFileName 原样返回，下面这步等于没改名。
+            var desiredName = ModFileNamingHelper.BuildFileName(Path.GetFileName(path), chineseName, namingStyle);
+            if (!string.Equals(desiredName, Path.GetFileName(path), StringComparison.Ordinal))
+            {
+                var renamedPath = Path.Combine(Path.GetDirectoryName(path)!, desiredName);
+                try
+                {
+                    if (File.Exists(renamedPath)) File.Delete(renamedPath);
+                    File.Move(path, renamedPath);
+                    path = renamedPath;
+                }
+                catch
+                {
+                    // 改名失败（比如文件名里出现了非法字符）不影响下载本身：保留原文件名，
+                    // 用户仍然拿到了正确的 Mod 文件，只是没有中文名前缀。
+                }
+            }
 
             await _owner.Dispatcher.InvokeAsync(() =>
             {

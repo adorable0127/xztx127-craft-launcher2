@@ -1743,9 +1743,40 @@ public partial class MainWindow : Window
         return true;
     }
 
+    /// <summary>修复"未同意完整协议、停留在基本模式下时，点击 AI 助手相关按钮（侧边栏智能
+    /// 助手导航、右下角悬浮球）没有任何提示就直接尝试打开"：这两个入口原本只经过
+    /// EnsureAiTermsAccepted（只管 AI 专属条款版本），完全没有检查 RestrictedMode，
+    /// 而 ApplyRestrictedModeGating 里"置灰其余功能"的 gatedButtons 名单也一直没把
+    /// NavAiAssistantButton 算进去、悬浮球更是完全独立于 RestrictedMode 之外——AI 属于
+    /// 「完整服务」的一部分，用户只同意基本模式协议时本就不该放行。
+    ///
+    /// 这里统一在真正打开 AI 助手之前拦一道：RestrictedMode 为 true 时弹出说明，告知用户
+    /// 只同意了基本模式协议、无法提供完整服务，"确定"带用户去重新走一遍完整协议流程
+    /// （复用 ReReadAgreements 同一套 AgreementsWindow，同意后 RestrictedMode 会被写回
+    /// false，门控随之解除），"返回"则什么都不做、留在原地。</summary>
+    private bool EnsureNotRestrictedModeForAi()
+    {
+        if (!ConfigService.Config.RestrictedMode) return true;
+
+        var goRead = MessageBoxDialog.ShowCustomYesNo(
+            "你只同意了基本模式协议。根据协议要求与规定，将无法为你提供完整服务。如果想使用此服务，请点击确定键去阅读协议并同意；如果需要返回，选择返回按钮",
+            "无法使用完整服务",
+            leftText: "返回",
+            rightText: "确定",
+            rightIsPrimary: true);
+        if (!goRead) return false;
+
+        var agreements = new AgreementsWindow(this);
+        OverlayDialogService.ShowModal(agreements, dismissOnBackgroundClick: false, dismissOnEsc: false);
+        ApplyRestrictedModeGating();
+
+        return !ConfigService.Config.RestrictedMode;
+    }
+
     /// <summary>供其他页面/窗口调用的公开导航方法，跳转到 AI 助手面板。</summary>
     public void NavigateToAiAssistant()
     {
+        if (!EnsureNotRestrictedModeForAi()) return;
         if (!EnsureAiTermsAccepted()) return;
         NavigateLazy(() => CreateAiAssistantPanel());
     }
@@ -1754,6 +1785,7 @@ public partial class MainWindow : Window
     /// NavigateLazy 的 onLoaded 保证控件真正挂到可视树之后才开始发送，不会抢占页面切换的首帧。</summary>
     public void NavigateToAiAssistantWithPrompt(string prompt, string sessionTitle = "日志分析", bool isCrashLogContext = false)
     {
+        if (!EnsureNotRestrictedModeForAi()) return;
         if (!EnsureAiTermsAccepted()) return;
         NavigateLazy(
             () => CreateAiAssistantPanel(),
