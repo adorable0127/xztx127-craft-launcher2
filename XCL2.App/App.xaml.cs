@@ -278,7 +278,12 @@ public partial class App : Application
 
         if (cliArgs.ShowHelp)
         {
-            MessageBox.Show(CommandLineService.HelpText, "XCL2 命令行帮助", MessageBoxButton.OK, MessageBoxImage.Information);
+            // 原来是 MessageBox.Show(CommandLineService.HelpText, ...)：变宽字体 + 不可滚动/
+            // 不可调整大小，帮助文本里靠空格手动对齐的参数列表在变宽字体下全部错位、长内容
+            // 还会被截断。换成独立的 CommandLineHelpWindow（等宽字体 + 只读可滚动 TextBox +
+            // 复制按钮），见该类 xaml 头部注释里的完整说明。
+            var helpWindow = new Views.CommandLineHelpWindow(CommandLineService.HelpText);
+            helpWindow.ShowDialog();
             Shutdown();
             return;
         }
@@ -604,7 +609,29 @@ public partial class App : Application
 
         // 自动更新检查：整个过程在后台线程进行（内部延迟几秒，不跟首帧渲染抢时间），
         // 有新版本才会弹提示，见 UpdateCheckService 类注释。
-        UpdateCheckService.CheckForUpdateInBackground();
+        //
+        // 修复"偶发情况下，XCL 有更新且用户尚未阅读协议时，协议的倒计时秒数会停止，导致
+        // 用户无法点击「同意」"：根因是这里之前不管协议流程有没有在走，一律无条件在这里
+        // 触发后台更新检查——5 秒延迟结束、后台请求 GitHub 接口拿到结果这个时间点，
+        // 恰好可能撞上用户正在 AgreementsWindow 里读第 1/2 页、倒计时正在走的窗口期。
+        // UpdateCheckService.RunCheckAsync 发现有更新后会用
+        // Application.Current.Dispatcher.Invoke(...) 同步弹出确认更新的模态框——Invoke
+        // 默认按 Send 优先级把一个新的 Dispatcher 帧压到 UI 线程上，在这个帧退出之前，
+        // 优先级更低的 DispatcherTimer.Tick（AgreementsWindow 倒计时用的正是默认的
+        // Background 优先级）不会被处理，表现出来就是协议页上的倒计时数字卡住不再往下走，
+        // 5 秒永远读不满，「同意并继续」按钮也就永远点不了。
+        //
+        // 这里不去改 Dispatcher 优先级这类容易牵一发动全身的底层机制，而是从根上避免
+        // 两者的时间窗口重叠：只有当"本次启动不需要重新走协议流程"时才在这里立即安排
+        // 检查；需要走协议流程时，交给 MainWindow 在用户真正同意完协议、进入主界面之后
+        // 再触发（见 MainWindow.TriggerDeferredUpdateCheckIfNeeded 的调用点），
+        // 保证用户读协议这段时间里，后台绝不会弹出任何可能抢占 Dispatcher 的模态框。
+        var needsAgreementsBeforeUpdateCheck =
+            mainWindow.ConfigService.Config.AcceptedAgreementVersion < Views.AgreementsText.AgreementsVersion;
+        if (!needsAgreementsBeforeUpdateCheck)
+        {
+            UpdateCheckService.CheckForUpdateInBackground();
+        }
     }
 
     /// <summary>

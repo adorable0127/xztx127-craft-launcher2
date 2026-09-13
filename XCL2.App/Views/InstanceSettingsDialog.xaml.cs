@@ -64,9 +64,39 @@ public partial class InstanceSettingsDialog : OverlayDialogControl
 
         var versionDir = Path.Combine(_folderPath, "versions", versionId);
         var instance = InstanceConfigService.LoadOrCreateDefault(versionDir);
+        var gpuTag = instance.UseHighPerformanceGpuForGame switch
+        {
+            true => "Enabled",
+            false => "Disabled",
+            null => "Follow",
+        };
+        InstanceHighPerformanceGpuComboDlg.SelectedItem = InstanceHighPerformanceGpuComboDlg.Items.Cast<ComboBoxItem>()
+            .FirstOrDefault(i => (string)i.Tag == gpuTag) ?? InstanceHighPerformanceGpuComboDlg.Items[0];
+
         InstanceMinMemoryBoxDlg.Text = instance.MinMemoryMb?.ToString() ?? "";
         InstanceMaxMemoryBoxDlg.Text = instance.MaxMemoryMb?.ToString() ?? "";
         InstanceCustomJvmArgsBoxDlg.Text = instance.CustomJvmArgs ?? _config.CustomJvmArgs ?? "";
+
+        // 内存优化：EnableMemoryOptimization 为 null 时代表"跟随全局"，非 null 时代表
+        // 这个实例显式选了开启(true)/关闭(false)。开启时再看 MemoryOptimizationTiming
+        // （同样 null=跟随全局的时机）决定具体是"启动前"还是"打开时"这两项里的哪一项。
+        string memOptTag;
+        if (instance.EnableMemoryOptimization == false)
+        {
+            memOptTag = "Disabled";
+        }
+        else if (instance.EnableMemoryOptimization == true)
+        {
+            memOptTag = instance.MemoryOptimizationTiming == MemoryOptimizationTiming.OnLauncherOpen
+                ? "OnLauncherOpen"
+                : "BeforeGameLaunch";
+        }
+        else
+        {
+            memOptTag = "Follow";
+        }
+        InstanceMemOptComboDlg.SelectedItem = InstanceMemOptComboDlg.Items.Cast<ComboBoxItem>()
+            .FirstOrDefault(i => (string)i.Tag == memOptTag) ?? InstanceMemOptComboDlg.Items[0];
 
         var supportsGraphicsApi = SupportsGraphicsApiPreference(_version);
         GraphicsApiPanelDlg.Visibility = supportsGraphicsApi ? Visibility.Visible : Visibility.Collapsed;
@@ -181,22 +211,50 @@ public partial class InstanceSettingsDialog : OverlayDialogControl
         int? instanceMax = ParseNullableMemory(InstanceMaxMemoryBoxDlg.Text);
         _config.SelectedVersionId = versionId;
 
+        var gpuTag = (InstanceHighPerformanceGpuComboDlg.SelectedItem as ComboBoxItem)?.Tag as string ?? "Follow";
+        bool? instanceUseHighPerformanceGpu = gpuTag switch
+        {
+            "Enabled" => true,
+            "Disabled" => false,
+            _ => null,
+        };
+
+        // 内存优化下拉框 → EnableMemoryOptimization / MemoryOptimizationTiming 这一对可空字段：
+        // "跟随全局设置" 两个都留 null；"关闭" 只置 EnableMemoryOptimization=false；
+        // 另外两项置 EnableMemoryOptimization=true 并带上对应的时机。
+        var memOptTag = (InstanceMemOptComboDlg.SelectedItem as ComboBoxItem)?.Tag as string ?? "Follow";
+        bool? instanceMemOptEnabled = memOptTag switch
+        {
+            "Disabled" => false,
+            "BeforeGameLaunch" or "OnLauncherOpen" => true,
+            _ => null,
+        };
+        MemoryOptimizationTiming? instanceMemOptTiming = memOptTag switch
+        {
+            "BeforeGameLaunch" => MemoryOptimizationTiming.BeforeGameLaunch,
+            "OnLauncherOpen" => MemoryOptimizationTiming.OnLauncherOpen,
+            _ => null,
+        };
+
         // 镜像写入实例目录：versions/<id>/xcl/settings.json（同 VersionSelectPage 那份逻辑）。
         var versionDir = Path.Combine(_folderPath, "versions", versionId);
         if (Directory.Exists(versionDir))
         {
-            var instanceSettings = new InstanceSettings
-            {
-                IsolateVersion = VersionIsolationOverrideCheckDlg.IsChecked == true,
-                JavaId = selectedJava?.Id,
-                MinMemoryMb = instanceMin,
-                MaxMemoryMb = instanceMax,
-                CustomJvmArgs = string.IsNullOrWhiteSpace(InstanceCustomJvmArgsBoxDlg.Text) ? null : InstanceCustomJvmArgsBoxDlg.Text.Trim(),
-                GraphicsApiPreference = GraphicsApiPanelDlg.Visibility == Visibility.Visible
-                    ? GetSelectedGraphicsApiPreference()
-                    : null,
-                AutoJoinServerAddress = AutoJoinServerCheckDlg.IsChecked == true ? AutoJoinServerAddressBoxDlg.Text.Trim() : null
-            };
+            // 在已有实例配置上修改，避免保存这个弹窗时把 LastLaunchedAtUtc 等与本页无关的
+            // 已有字段顺手清掉。旧配置不存在时再创建一份默认对象。
+            var instanceSettings = InstanceConfigService.TryLoad(versionDir) ?? new InstanceSettings();
+            instanceSettings.IsolateVersion = VersionIsolationOverrideCheckDlg.IsChecked == true;
+            instanceSettings.JavaId = selectedJava?.Id;
+            instanceSettings.UseHighPerformanceGpuForGame = instanceUseHighPerformanceGpu;
+            instanceSettings.MinMemoryMb = instanceMin;
+            instanceSettings.MaxMemoryMb = instanceMax;
+            instanceSettings.CustomJvmArgs = string.IsNullOrWhiteSpace(InstanceCustomJvmArgsBoxDlg.Text) ? null : InstanceCustomJvmArgsBoxDlg.Text.Trim();
+            instanceSettings.GraphicsApiPreference = GraphicsApiPanelDlg.Visibility == Visibility.Visible
+                ? GetSelectedGraphicsApiPreference()
+                : null;
+            instanceSettings.AutoJoinServerAddress = AutoJoinServerCheckDlg.IsChecked == true ? AutoJoinServerAddressBoxDlg.Text.Trim() : null;
+            instanceSettings.EnableMemoryOptimization = instanceMemOptEnabled;
+            instanceSettings.MemoryOptimizationTiming = instanceMemOptTiming;
             try
             {
                 InstanceConfigService.Save(versionDir, instanceSettings);
@@ -299,6 +357,7 @@ public partial class InstanceSettingsDialog : OverlayDialogControl
             GameLanguage = cfg.GameLanguage,
             VersionTypeLabel = cfg.GameVersionTypeLabel,
             GraphicsApiPreference = instanceSettings?.GraphicsApiPreference,
+            UseHighPerformanceGpu = instanceSettings?.ResolveUseHighPerformanceGpuForGame(cfg) ?? cfg.UseHighPerformanceGpuForGame,
             CustomJvmArgs = instanceSettings?.CustomJvmArgs ?? (cfg.AdvancedMode ? cfg.CustomJvmArgs : null),
             PreLaunchCommand = cfg.PreLaunchCommand,
             AutoJoinServerAddress = autoJoinServer

@@ -52,7 +52,7 @@
     <system:String x:Key="Str_Nav_Experimental">实验室的机能</system:String>
     <system:String x:Key="Str_Nav_Toolbox">一百个宝物的箱子</system:String>
     <system:String x:Key="Str_Nav_AboutHelp">鸟鸣的谢意与救命</system:String>
-    <system:String x:Key="Str_Nav_Bedrock">实验室-床岩石的版本</system:String>
+    <system:String x:Key="Str_Nav_Bedrock">床岩石的版本</system:String>
     <system:String x:Key="Str_Ui_Bedrock_Page_Subtitle">在这里发射床岩石版本的客户端点、向内走私内容，并管理床岩石版本专用的提供服务者端点。</system:String>
 
     <!-- ============ 安置页新增加的"发射器面貌舌头"区块 ============ -->

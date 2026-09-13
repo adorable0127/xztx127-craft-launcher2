@@ -1,0 +1,31 @@
+<local:OverlayDialogControl x:Class="XCL2.App.Views.InputConflictChoiceDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="clr-namespace:XCL2.App.Views"
+        MaxWidth="420">
+    <!-- 撤回消息时，如果待发送框里已经有内容，问用户要怎么处理冲突：
+         替换 / 替换并复制 / 不替换并复制 / 取消（不替换）。 -->
+    <StackPanel Margin="24">
+        <TextBlock Text="当前对话框有内容，要做什么？" FontSize="16" FontWeight="Bold"/>
+
+        <TextBlock Margin="0,8,0,0" FontSize="12" TextWrapping="Wrap"
+                   Foreground="{DynamicResource TextSecondaryBrush}"
+                   Text="撤回的消息内容会放回待发送框，但待发送框里已经有你还没发出去的内容，需要你决定怎么处理。"/>
+
+        <StackPanel Margin="0,18,0,0">
+            <Button x:Name="ReplaceButton" Content="替换" HorizontalContentAlignment="Left"
+                    Style="{StaticResource SecondaryButton}" Padding="14,8" Margin="0,0,0,8"
+                    Click="Replace_Click"/>
+            <Button x:Name="ReplaceAndCopyButton" Content="替换并复制（原内容复制到剪贴板）" HorizontalContentAlignment="Left"
+                    Style="{StaticResource SecondaryButton}" Padding="14,8" Margin="0,0,0,8"
+                    Click="ReplaceAndCopy_Click"/>
+            <Button x:Name="KeepAndCopyButton" Content="不替换并复制（撤回内容复制到剪贴板）" HorizontalContentAlignment="Left"
+                    Style="{StaticResource SecondaryButton}" Padding="14,8" Margin="0,0,0,8"
+                    Click="KeepAndCopy_Click"/>
+        </StackPanel>
+
+        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,16,0,0">
+            <Button Content="取消（不替换）" Style="{StaticResource SecondaryButton}" Padding="18,7" Click="Cancel_Click"/>
+        </StackPanel>
+    </StackPanel>
+</local:OverlayDialogControl>

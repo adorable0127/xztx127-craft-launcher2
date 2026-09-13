@@ -409,6 +409,22 @@ public partial class InstallClientLoaderWindow : OverlayDialogControl
             return;
         }
 
+        // OptiFine 兼容性提醒：很多 mod（尤其是需要 Fabric/Forge Mixin 注入、或者跟光影/渲染管线
+        // 打交道的 mod）跟 OptiFine 自成一体的渲染实现冲突，装了容易直接崩溃或者部分效果失效；
+        // 新版本上 OptiFine 的帧数表现也普遍不如 Sodium（社区俗称"钠"）这类基于 Fabric 的现代
+        // 渲染优化 mod。这不是"能不能装"的技术限制（探测到有构建就真的能装），而是"装了值不值"
+        // 的取舍问题，交给用户自己决定，安装前明确告知一次，用户选择继续就正常走安装流程。
+        if (_selectedLoaderType == ServerCoreType.OptiFine)
+        {
+            var proceed = MessageBoxDialog.ShowConfirm(
+                "OptiFine 对很多 Mod 的兼容性不太好，容易跟需要 Mixin 注入或者光影相关的 Mod 冲突；" +
+                "在较新版本上，它的性能也往往不如 Sodium（俗称\"钠\"）这类基于 Fabric 的现代渲染优化 Mod。\n\n" +
+                "如果只是单纯想要光影/高清材质支持，不一定非要 OptiFine 不可，可以考虑 Fabric + Sodium + Iris 这个组合。\n\n" +
+                "仍然要继续安装 OptiFine 吗？",
+                "安装前提醒：OptiFine 兼容性");
+            if (!proceed) return;
+        }
+
         InstallBtn.IsEnabled = false;
         ProgressPanel.Visibility = Visibility.Visible;
 

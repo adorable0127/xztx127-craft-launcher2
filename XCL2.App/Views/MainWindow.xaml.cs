@@ -62,6 +62,15 @@ public partial class MainWindow : Window
     private bool _closeLifecycleBackupRunning;
     private bool _closeLifecycleBackupCompleted;
     private bool _stickyNoteCloseDecisionHandled;
+    /// <summary>关闭前的"淡出+下沉"收尾动画只播一次：动画播完的回调里会再调用一次 Close()，
+    /// 重新进入 MainWindow_Closing，这时候要能识别出"动画已经放过了"直接放行，不然会
+    /// 死循环播放动画。</summary>
+    private bool _closeAnimationPlayed;
+    /// <summary>配合 MainWindow_StateChanged 判断"这次状态变化是不是从最小化恢复"——
+    /// 从最小化恢复要接 FadeInMove(呼应 MinimizeWithAnimation 收起时的淡出)，
+    /// 其它 Normal⇄Maximized 之间的切换则接 SettleScale，两种过渡不一样，需要先知道
+    /// "上一个状态"才能分辨，仅从 StateChanged 事件本身拿不到旧值。</summary>
+    private WindowState _previousWindowStateForAnimation = WindowState.Normal;
     /// <summary>MainWindow 是否已经被真正 Close() 掉（"仅关闭启动器"场景：进程可能还在
     /// 后台跑，但这个窗口对象本身已经关闭，不能再对它调用 Show()/Activate()）。
     /// 供 <see cref="TryActivateFromAnotherInstance"/> 判断此刻是否还有窗口可以拉起。</summary>
@@ -156,6 +165,14 @@ public partial class MainWindow : Window
         };
         ContentRendered += firstFrameOnce;
 
+        // 启动器打开时的淡入+从下方归位动画：RootWindowGrid 的 Opacity/位移初始值已经在
+        // XAML 里通过 TransformGroup 挂好了挂载点，这里只在 Loaded(窗口即将首次显示)时
+        // 触发一次 FadeInMove。放在 Loaded 而不是 ContentRendered，是因为要让动画在
+        // 用户看到窗口的那一刻就开始播，不用等首帧渲染+后面一串 ContentRendered 收尾逻辑
+        // 都跑完；EnableUiAnimations 关闭时 UiAnimationHelper 内部直接同步定终值，不引入
+        // 任何延迟，不影响启动速度。
+        Loaded += (_, _) => UiAnimationHelper.FadeInMove(RootWindowGrid, RootWindowMoveTransform);
+
         ApplyFeatureVisibility();
 
         // 愚人节彩蛋：只在 4 月 1 日、且没有被注册表 noyrj 关闭时才会真正抽中/生效，
@@ -217,16 +234,22 @@ public partial class MainWindow : Window
             // 愚人节彩蛋 5 号手段生效期间："无法全屏，强制窗口模式"——直接吃掉这次 F11，
             // 不调用 ToggleFullScreen，也不改任何 Chrome/标题栏状态。
             if (AprilFoolsService.Has(AprilFoolsService.Effect.WindowChaos)) { e.Handled = true; return; }
-            WindowChromeService.ToggleFullScreen(this);
-            // 全屏时把自绘标题栏这一行整个收起来（Height=0），同时把 WindowChrome 的
-            // CaptionHeight 一起降到 0：不然虽然标题栏在视觉上被收起了，窗口最上面那
-            // 36px 依然会被当成"可拖拽标题区"响应鼠标，全屏下这块区域应该完全让位给
-            // 页面内容本身。退出全屏时两者一起恢复回 36。
-            var isFullScreen = WindowChromeService.IsFullScreen;
-            TitleBarRow.Height = new GridLength(isFullScreen ? 0 : 32);
-            CustomTitleBar.Visibility = isFullScreen ? Visibility.Collapsed : Visibility.Visible;
-            var chrome = System.Windows.Shell.WindowChrome.GetWindowChrome(this);
-            if (chrome != null) chrome.CaptionHeight = isFullScreen ? 0 : 32;
+            // 全屏切换会瞬间改变标题栏高度/内容区尺寸，直接跳变很生硬——这里用 CrossFade：
+            // 先把主内容区淡出，等看不见了再真正执行 ToggleFullScreen + 尺寸调整，最后淡回来，
+            // 这样"切全屏"在视觉上是一次过渡而不是硬闪。
+            UiAnimationHelper.CrossFade(MainContent, () =>
+            {
+                WindowChromeService.ToggleFullScreen(this);
+                // 全屏时把自绘标题栏这一行整个收起来（Height=0），同时把 WindowChrome 的
+                // CaptionHeight 一起降到 0：不然虽然标题栏在视觉上被收起了，窗口最上面那
+                // 36px 依然会被当成"可拖拽标题区"响应鼠标，全屏下这块区域应该完全让位给
+                // 页面内容本身。退出全屏时两者一起恢复回 36。
+                var isFullScreen = WindowChromeService.IsFullScreen;
+                TitleBarRow.Height = new GridLength(isFullScreen ? 0 : 32);
+                CustomTitleBar.Visibility = isFullScreen ? Visibility.Collapsed : Visibility.Visible;
+                var chrome = System.Windows.Shell.WindowChrome.GetWindowChrome(this);
+                if (chrome != null) chrome.CaptionHeight = isFullScreen ? 0 : 32;
+            });
             e.Handled = true;
         };
 
@@ -609,13 +632,101 @@ public partial class MainWindow : Window
                     OverlayDialogService.ShowModal(wizard, dismissOnBackgroundClick: false);
                 }
                 ApplyRestrictedModeGating();
+                ShowPendingAnnouncementsIfNeeded();
                 _ = ScanMinecraftFoldersInBackgroundAsync();
+                ApplyLauncherOpenMemoryOptimizationIfNeeded();
+
+                // 协议流程（如果本次启动需要）到这里已经真正走完并同意，才是触发后台更新检查
+                // 的安全时机——见 App.xaml.cs OnStartup 里对应那段注释：避免更新检查弹出的
+                // 确认框跟协议页的倒计时抢 Dispatcher，导致倒计时卡住点不了「同意」。
+                UpdateCheckService.CheckForUpdateInBackground();
             };
             ContentRendered += showFirstRunOnce;
         }
         else
         {
             ApplyRestrictedModeGating();
+            // 同样要等首帧真正渲染完成再弹（理由同上面向导那段注释：构造函数期间就弹模态
+            // Overlay 容易跟主窗口自己的首帧渲染抢 UI 线程，表现是白屏）。这个分支走到时
+            // 协议/新手引导都已经是老用户完成过的状态，不需要再反订阅只弹一次的局部变量
+            // 写法，直接一次性 ContentRendered 就行。
+            EventHandler? showAnnouncementsOnce = null;
+            showAnnouncementsOnce = (_, _) =>
+            {
+                ContentRendered -= showAnnouncementsOnce;
+                ShowPendingAnnouncementsIfNeeded();
+                ApplyLauncherOpenMemoryOptimizationIfNeeded();
+            };
+            ContentRendered += showAnnouncementsOnce;
+        }
+    }
+
+    /// <summary>启动公告：见 AnnouncementService 类注释。拿到待展示列表(用户还没点"确定"
+    /// 过的那些)，非空才创建弹窗；用户点了"我知道了"(ShowModal 返回 true)才把这一批标记
+    /// 为已读并保存配置，其它任何关闭方式(Esc/点遮罩/叉掉)都不标记，下次启动继续弹出。
+    /// dismissOnBackgroundClick 特意不禁掉(默认允许点遮罩关闭)——公告不是法律性文本，
+    /// 不需要强制阅读，点旁边空白等同于"这次先不点确定"，跟直接关闭是一回事。</summary>
+    /// <summary>
+    /// "内存优化"触发时机选了「启动器打开时」（全局或当前选中实例单独设置）时，在这里
+    /// 一次性算好推荐的 -Xms/-Xmx 并直接写回配置——跟「游戏启动前」那条路径（见
+    /// LaunchInternalAsync 里对 memOptTiming 的判断）分工明确：那边只在
+    /// "BeforeGameLaunch" 时才临场重新计算，这里只在 "OnLauncherOpen" 时算一次。
+    /// 每次启动器打开各调用一次即可（挂在 ContentRendered 只触发一次的两个入口上），
+    /// 不需要额外的"是否已经算过"标记。
+    /// 只针对当前选中的文件夹 + 版本；没有选中版本（比如全新安装、还没导入任何版本）时
+    /// 直接跳过，不产生任何副作用。
+    /// </summary>
+    private void ApplyLauncherOpenMemoryOptimizationIfNeeded()
+    {
+        try
+        {
+            var cfg = ConfigService.Config;
+            var folder = cfg.Folders.FirstOrDefault(f => f.Path == cfg.SelectedFolderPath);
+            if (folder == null || string.IsNullOrWhiteSpace(cfg.SelectedVersionId)) return;
+
+            var versionDir = Path.Combine(folder.Path, "versions", cfg.SelectedVersionId);
+            var instanceSettings = InstanceConfigService.TryLoad(versionDir);
+
+            var enabled = instanceSettings?.ResolveEnableMemoryOptimization(cfg) ?? cfg.EnableMemoryOptimization;
+            var timing = instanceSettings?.ResolveMemoryOptimizationTiming(cfg) ?? cfg.MemoryOptimizationTiming;
+            if (!enabled || timing != MemoryOptimizationTiming.OnLauncherOpen) return;
+
+            var recommendation = MemoryOptimizerService.Calculate(cfg.MemoryOptimizationReserveMb);
+            if (recommendation == null) return;
+
+            // 实例有自己的内存覆盖值（MinMemoryMb/MaxMemoryMb 非空）就写回实例设置，
+            // 保持"这个实例带着自己的配置走"的语义；否则写回全局设置。
+            if (instanceSettings != null && (instanceSettings.MinMemoryMb.HasValue || instanceSettings.MaxMemoryMb.HasValue))
+            {
+                instanceSettings.MinMemoryMb = recommendation.RecommendedMinMemoryMb;
+                instanceSettings.MaxMemoryMb = recommendation.RecommendedMaxMemoryMb;
+                InstanceConfigService.Save(versionDir, instanceSettings);
+            }
+            else
+            {
+                cfg.MinMemoryMb = recommendation.RecommendedMinMemoryMb;
+                cfg.MaxMemoryMb = recommendation.RecommendedMaxMemoryMb;
+                ConfigService.Save();
+            }
+        }
+        catch (Exception ex)
+        {
+            // 这是一个"锦上添花"的自动优化，任何异常都不应该影响启动器正常打开，
+            // 静默记日志即可。
+            ErrorPresenter.LogFallback("启动器打开时的内存优化失败（已忽略）", ex);
+        }
+    }
+
+    private void ShowPendingAnnouncementsIfNeeded()
+    {
+        var pending = AnnouncementService.GetPending(ConfigService.Config);
+        if (pending.Count == 0) return;
+
+        var dialog = new AnnouncementDialog(pending);
+        if (OverlayDialogService.ShowModal(dialog) == true)
+        {
+            AnnouncementService.MarkSeen(ConfigService.Config, pending);
+            ConfigService.Save();
         }
     }
 
@@ -1915,7 +2026,10 @@ public partial class MainWindow : Window
 
     private void SidebarCollapseToggle_Click(object sender, RoutedEventArgs e)
     {
-        ApplySidebarCollapsedState(!_sidebarCollapsed);
+        // 收起/展开会同时改宽度、文案、图标一大堆东西，直接跳变很突兀——用 CrossFade 把
+        // 整个侧边栏区域先淡出、在看不见的那一刻真正应用新状态、再淡回来，比单独给宽度
+        // 做 GridLength 动画简单得多，视觉效果也足够（内容变化被"藏"在淡出的间隙里）。
+        UiAnimationHelper.CrossFade(SidebarAreaBorder, () => ApplySidebarCollapsedState(!_sidebarCollapsed));
     }
 
     /// <summary>
@@ -2666,7 +2780,10 @@ public partial class MainWindow : Window
                 // 丢到线程池执行，避免这几秒内卡住 UI 线程(LaunchInternalAsync 本身是 async 方法)。
                 var actualMajor = await Task.Run(() => JavaService.TryGetJavaMajorVersionSync(javaPath));
 
-                if (actualMajor is > 0 && actualMajor != preferMajor)
+                // 用 IsJavaMajorCompatible 而不是精确 == ：1.17 官方 version json 写的是要求
+                // Java 16，但 Java 16 早停止发行，实际用 Java 17 启动完全没问题（见该方法注释），
+                // 不应该被这里当成"版本不匹配"弹窗提示用户切换。
+                if (actualMajor is > 0 && preferMajor is > 0 && !JavaService.IsJavaMajorCompatible(actualMajor.Value, preferMajor.Value))
                 {
                     var matchedInList = cfg.InstalledJavas.FirstOrDefault(j => j.MajorVersion == preferMajor);
                     var suggestion = matchedInList != null
@@ -2735,7 +2852,7 @@ public partial class MainWindow : Window
                         var installMode = cfg.AdvancedMode && cfg.PreferredJavaInstallMode == "System"
                             ? JavaInstallMode.System : JavaInstallMode.Portable;
                         javaPath = await javaService.DownloadJavaAsync(
-                            new JavaDownloadRequest(preferMajor.Value, arch, installMode),
+                            new JavaDownloadRequest(JavaService.GetDownloadTargetMajorVersion(preferMajor.Value), arch, installMode),
                             progressWin.Progress);
                     }
                     else
@@ -2759,7 +2876,7 @@ public partial class MainWindow : Window
             // 自定义皮肤/认证服务器(AuthServer)账户都需要"万能皮肤补丁"(authlib-injector)
             // 才能在客户端里正确显示皮肤、通过对应服务器的会话校验。
             //
-            // 修复：这里原来只判断"离线账户 + 自定义皮肤"，完全没覆盖 AuthServer 账户——
+            // 修复 1：这里原来只判断"离线账户 + 自定义皮肤"，完全没覆盖 AuthServer 账户——
             // AuthServer 账户的登录/取 token/启动传参这条主链路本身是完整可用的，
             // 唯独这里"首次启动自动下载 jar"的条件写漏了 AuthServer 分支。
             // 后果就是：如果用户电脑上从来没下载过 authlib-injector.jar，第一次用皮肤站
@@ -2769,8 +2886,21 @@ public partial class MainWindow : Window
             // 现在两种情况统一判断"这个账户是否需要皮肤补丁"，需要就统一走同一套
             // "jar 不存在则先下载"的流程，跟离线自定义皮肤完全一致的体验。
             //
+            // 修复 2（本次）：离线账户不再要求 SkinType==Custom 才挂 authlib-injector，
+            // 史蒂夫/艾利克斯这种内置骨架也统一挂上。根因见 SkinService.BuildSkinJvmArgs 的
+            // 详细注释：不挂补丁时离线账户的 accessToken 是假的，部分版本（实测 1.16.5 复现，
+            // 1.20.1 不复现）会因为多人游戏资格在线校验失败而直接禁用"多人游戏"按钮，
+            // 跟版本号本身无关，是"这个版本的客户端代码遇到校验失败时选择禁用还是放行"的差异，
+            // 统一挂上 authlib-injector 之后校验会走皮肤站而不是真正的 Mojang/Xbox 接口，
+            // 所有版本下离线账户的多人游戏都能正常使用。
+            //
             // 挂在启动前而不是"下载/安装某个版本"时：这样即使用户很早之前就下载好了
             // 版本、后来才改选自定义皮肤/切换成皮肤站账户，也能在真正启动的这一刻补齐 jar，不会漏掉。
+            // 根据用户明确反馈改回：纯离线账户（史蒂夫/艾利克斯，未选自定义皮肤）不应该被强制
+            // 联网下载"万能皮肤补丁"——离线模式本来就该是完全离线、不依赖任何皮肤站的。
+            // 只有离线账户主动选了"自定义皮肤"，或者本来就是皮肤站(AuthServer)账户，才需要这个补丁。
+            // 1.16.5 "多人游戏被禁用"是 Minecraft 客户端自己在线校验假 accessToken 失败导致的，
+            // 跟皮肤补丁无关，这里不再用"顺带修掉这个"作为强制下载的理由。
             List<string>? skinJvmArgs = null;
             var needsAuthlibInjector =
                 (account.Type == AccountType.Offline && account.SkinType == OfflineSkinType.Custom) ||
@@ -2792,7 +2922,7 @@ public partial class MainWindow : Window
                     {
                         var hint = account.Type == AccountType.AuthServer
                             ? "下载万能皮肤补丁失败，本次将无法通过认证服务器的皮肤/会话校验：\n"
-                            : "下载万能皮肤补丁失败，本次将不会显示自定义皮肤：\n";
+                            : "下载万能皮肤补丁失败，本次可能无法正常使用多人游戏（部分版本会因此禁用多人游戏按钮）、自定义皮肤也不会生效：\n";
                         MessageBoxDialog.ShowWarning(hint + skinEx.Message, Loc.T("Str_Cs_Failed_To_Download_The_Skin_Patch", "皮肤补丁下载失败"));
                     }
                     finally { skinProgressWin.Close(); }
@@ -2818,7 +2948,17 @@ public partial class MainWindow : Window
             var instanceSettings = InstanceConfigService.TryLoad(Path.Combine(folder.Path, "versions", cfg.SelectedVersionId));
             if (instanceSettings?.MinMemoryMb is > 0) effectiveMinMemoryMb = instanceSettings.MinMemoryMb.Value;
             if (instanceSettings?.MaxMemoryMb is > 0) effectiveMaxMemoryMb = instanceSettings.MaxMemoryMb.Value;
-            if (cfg.EnableMemoryOptimization)
+
+            // 内存优化：是否开启、以及"游戏启动前"还是"启动器打开时"生效，都按
+            // "实例单独设置 > 全局设置，实例未配置则跟随全局"的优先级解析（见
+            // InstanceSettings.ResolveEnableMemoryOptimization/ResolveMemoryOptimizationTiming）。
+            // 只有解析结果是"启动前"才在这里临场重新计算——如果是"启动器打开时"，
+            // 推荐值已经在 ApplyLauncherOpenMemoryOptimizationIfNeeded 里算好并写回
+            // MinMemoryMb/MaxMemoryMb 了，这里沿用上面已经取到的 effectiveMin/MaxMemoryMb 即可，
+            // 不需要也不应该在临启动这一刻再算一遍。
+            var memOptEnabled = instanceSettings?.ResolveEnableMemoryOptimization(cfg) ?? cfg.EnableMemoryOptimization;
+            var memOptTiming = instanceSettings?.ResolveMemoryOptimizationTiming(cfg) ?? cfg.MemoryOptimizationTiming;
+            if (memOptEnabled && memOptTiming == Models.MemoryOptimizationTiming.BeforeGameLaunch)
             {
                 var recommendation = MemoryOptimizerService.Calculate(cfg.MemoryOptimizationReserveMb);
                 if (recommendation != null)
@@ -2843,6 +2983,7 @@ public partial class MainWindow : Window
                 IsolateVersion = isolateVersion,
                 GameLanguage = cfg.GameLanguage,
                 GraphicsApiPreference = instanceSettings?.GraphicsApiPreference,
+                UseHighPerformanceGpu = instanceSettings?.ResolveUseHighPerformanceGpuForGame(cfg) ?? cfg.UseHighPerformanceGpuForGame,
                 VersionTypeLabel = cfg.GameVersionTypeLabel,
                 SkinJvmArgs = skinJvmArgs,
                 // 自定义 JVM 参数仅在高手模式下生效：普通模式下即使配置里残留了历史值，
@@ -3488,6 +3629,44 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
+    /// "彻底退出"路径下的兜底自杀保险：正常情况下 Application.Current.Shutdown() 会让整个
+    /// 进程干净退出，不需要这个方法做任何事。但实际观察到的问题是——某些情况下（未处理的
+    /// 后台线程没设 IsBackground、第三方组件起的 COM/句柄、WebView2 子进程没退干净等）
+    /// Shutdown() 触发了，主窗口也关了，但 xcl2.exe 本体在任务管理器里其实还挂着一个孤儿
+    /// 进程。用户完全看不出来，下次双击图标重新打开时，SingleInstanceService 探测到这个
+    /// "看不见"的旧实例，弹出多开确认框，在用户看来就是一次莫名其妙的弹窗骚扰。
+    ///
+    /// 这里在每次"彻底退出"（不是最小化/托盘/保留便签这几种明确要继续留在后台的场景）时，
+    /// 顺手起一个隐藏的 cmd 进程，先等几秒给 Shutdown() 走完正常流程的时间，再对着
+    /// 当前进程 PID 补一刀 taskkill /F。如果那时候进程早就正常退出了，taskkill 对一个
+    /// 不存在的 PID 只会静默失败，不会有任何副作用；只有真的卡成孤儿进程时，这一刀才有意义。
+    /// CreateNoWindow + UseShellExecute=false，不会弹出任何黑框打扰用户。
+    /// </summary>
+    private static void ScheduleSelfKillFailSafe()
+    {
+        try
+        {
+            var pid = Environment.ProcessId;
+            var psi = new ProcessStartInfo("cmd.exe")
+            {
+                // /c 后面：先睡 6 秒把时间留给正常 Shutdown()，再无条件尝试 taskkill 这个 PID。
+                // 用 timeout /t 而不是 ping -n 之类的老技巧，避免在没有回环网络的极端环境下失效；
+                // 2>nul / >nul 把"进程已不存在"这种预期内的失败信息吞掉，不留下任何痕迹。
+                Arguments = $"/c timeout /t 6 >nul 2>nul & taskkill /F /PID {pid} >nul 2>nul",
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                WindowStyle = ProcessWindowStyle.Hidden,
+            };
+            Process.Start(psi);
+        }
+        catch
+        {
+            // 这个兜底保险本身失败（比如极端沙盒环境限制起进程）不应该影响正常退出流程，
+            // 正常的 Shutdown() 该怎么走还怎么走，只是少了这道保险。
+        }
+    }
+
+    /// <summary>
     /// 结束本进程名下所有正在运行的游戏进程和服务器进程（先优雅 CloseAll，服务器直接 ForceKill）。
     /// 供 <see cref="PerformFullExit"/>（托盘"退出"/多开"FORCE_EXIT"）和
     /// <see cref="MainWindow_Closing"/>（点关闭按钮、真的没有留任何东西要保留时）共用——
@@ -3528,6 +3707,7 @@ public partial class MainWindow : Window
         finally
         {
             _trayIcon?.Hide();
+            ScheduleSelfKillFailSafe();
             // 不再需要多开检测把这个进程当成"仍然存活的旧实例"，Shutdown() 会自然触发
             // MainWindow.Closed（如果窗口还没关的话），SingleInstanceService 的管道服务端
             // 线程是后台线程（IsBackground=true），进程退出时会被系统直接终止，不需要
@@ -3541,7 +3721,10 @@ public partial class MainWindow : Window
     private void MinimizeToTray()
     {
         _trayIcon?.Show();
-        Hide();
+        // 从前台切到后台：先把窗口内容淡出，动画播完（视觉上已经看不见了）再真正 Hide()，
+        // 而不是内容还没淡完窗口就没了——那样等于没做动画。EnableUiAnimations 关闭时
+        // UiAnimationHelper 内部会直接同步 Hide，不引入任何延迟。
+        UiAnimationHelper.FadeOut(this, onCompleted: Hide);
     }
 
     /// <summary>游戏窗口成功出现后，按设置页「游戏启动后」选项处理启动器主窗口——跟
@@ -3553,7 +3736,7 @@ public partial class MainWindow : Window
         switch (action)
         {
             case Models.PostGameLaunchAction.Minimize:
-                if (WindowState != WindowState.Minimized) WindowState = WindowState.Minimized;
+                if (WindowState != WindowState.Minimized) MinimizeWithAnimation();
                 break;
             case Models.PostGameLaunchAction.MinimizeToTray:
                 MinimizeToTray();
@@ -3576,6 +3759,9 @@ public partial class MainWindow : Window
         WindowState = _lastNonMinimizedWindowState;
         Activate();
         _trayIcon?.Hide();
+        // 从后台切回前台：Show() 之后窗口是瞬间满 Opacity 出现的，这里补一个淡入，
+        // 呼应上面 MinimizeToTray 的淡出，让"托盘还原"也有过渡而不是硬切。
+        UiAnimationHelper.FadeIn(this);
     }
 
     /// <summary>绑定标题栏下载列表的数据源，并在集合变化时刷新角标数字/显示状态。</summary>
@@ -3672,7 +3858,18 @@ public partial class MainWindow : Window
     /// 「关闭」按钮才需要保留确认提示（见 CloseButton_Click）。</summary>
     private void MinimizeButton_Click(object sender, RoutedEventArgs e)
     {
-        SystemCommands.MinimizeWindow(this);
+        MinimizeWithAnimation();
+    }
+
+    /// <summary>真正把窗口最小化之前，先播一遍"淡出+下沉"过渡，动画播完的回调里才调用
+    /// SystemCommands.MinimizeWindow——不这样做的话，窗口内容会在按钮点下去那一刻瞬间消失，
+    /// 是"傻快傻快"的典型场景。所有会把主窗口最小化的入口(标题栏按钮、关闭时选择"最小化"、
+    /// 四选一提示里的"最小化"、游戏启动后的"最小化")都统一走这一个方法，保证观感一致，
+    /// 不用每处各自复制一遍动画调用代码。</summary>
+    private void MinimizeWithAnimation()
+    {
+        UiAnimationHelper.FadeOutMove(RootWindowGrid, RootWindowMoveTransform,
+            onCompleted: () => SystemCommands.MinimizeWindow(this));
     }
 
     private void MaximizeRestoreButton_Click(object sender, RoutedEventArgs e)
@@ -3711,7 +3908,7 @@ public partial class MainWindow : Window
                 MinimizeToTray();
                 break;
             case CloseButtonAction.Minimize:
-                SystemCommands.MinimizeWindow(this);
+                MinimizeWithAnimation();
                 break;
             case CloseButtonAction.AskEachTime:
                 var choice = MessageBoxDialog.ShowFourChoice(
@@ -3739,7 +3936,7 @@ public partial class MainWindow : Window
                 SystemCommands.CloseWindow(this);
                 break;
             case XclFourChoiceResult.Minimize:
-                SystemCommands.MinimizeWindow(this);
+                MinimizeWithAnimation();
                 break;
             case XclFourChoiceResult.Tray:
                 MinimizeToTray();
@@ -3841,24 +4038,43 @@ public partial class MainWindow : Window
             // 顺手清理掉还在跑的游戏/服务器子进程，跟托盘"退出"/PerformFullExit 用同一个方法，
             // 不留孤儿进程。
             KillAllGameAndServerProcesses();
+            // 同上，补一道 ScheduleSelfKillFailSafe 兜底：Closing 这条路径最终也是靠
+            // WPF 自身"最后一个窗口关闭 -> 进程退出"（ShutdownMode=OnLastWindowClose）
+            // 来结束进程的，不是显式调用 Shutdown()，反而更可能因为某个残留的非
+            // IsBackground 线程/句柄卡成孤儿进程，所以这里同样需要这道保险。
+            ScheduleSelfKillFailSafe();
         }
 
-        if (!ConfigService.Config.BackupInstanceOnClose || _closeLifecycleBackupCompleted)
+        if (ConfigService.Config.BackupInstanceOnClose && !_closeLifecycleBackupCompleted)
+        {
+            // 真正退出前必须等备份结束；第一次 Closing 先取消，后台 zip 完成后再主动 Close 一次
+            // （会重新进入这个方法，这次 _closeLifecycleBackupCompleted 已经是 true，往下走到
+            // 关闭动画那一段）。
+            e.Cancel = true;
+            if (_closeLifecycleBackupRunning) return;
+            _closeLifecycleBackupRunning = true;
+            try
+            {
+                await RunLifecycleBackupAsync("关闭时备份", showToast: true);
+            }
+            finally
+            {
+                _closeLifecycleBackupRunning = false;
+                _closeLifecycleBackupCompleted = true;
+                _ = Dispatcher.BeginInvoke(new Action(Close), DispatcherPriority.Background);
+            }
             return;
-
-        // 真正退出前必须等备份结束；第一次 Closing 先取消，后台 zip 完成后再主动 Close 一次。
-        e.Cancel = true;
-        if (_closeLifecycleBackupRunning) return;
-        _closeLifecycleBackupRunning = true;
-        try
-        {
-            await RunLifecycleBackupAsync("关闭时备份", showToast: true);
         }
-        finally
+
+        // 走到这里说明这次关闭真的会发生——上面设置未保存/桌面便签/备份这几处该拦的都已经
+        // 放行了，不会再被取消。先播一遍"淡出+下沉"的收尾动画，动画播完的回调里再真正
+        // Close()（会再次进入这个方法，_closeAnimationPlayed 已经是 true，直接放行，不会
+        // 死循环）。不这样做的话，用户点关闭那一下窗口会瞬间消失，是典型的"傻快傻快"。
+        if (!_closeAnimationPlayed)
         {
-            _closeLifecycleBackupRunning = false;
-            _closeLifecycleBackupCompleted = true;
-            _ = Dispatcher.BeginInvoke(new Action(Close), DispatcherPriority.Background);
+            e.Cancel = true;
+            _closeAnimationPlayed = true;
+            UiAnimationHelper.FadeOutMove(RootWindowGrid, RootWindowMoveTransform, onCompleted: Close);
         }
     }
 
@@ -3895,7 +4111,27 @@ public partial class MainWindow : Window
 
     /// <summary>窗口最大化⇄还原后，标题栏按钮的图标（□ ⇄ 两个重叠的方块）要跟着切换，
     /// 否则用户点了最大化，按钮图标却还停在"最大化"那个样子，看起来像没生效。</summary>
-    private void MainWindow_StateChanged(object? sender, EventArgs e) => UpdateMaximizeRestoreIcon();
+    /// <summary>窗口状态(Normal/Maximized/Minimized)每次变化都会经过这里，除了原有的图标
+    /// 刷新，还负责给"最小化恢复"和"最大化⇄还原"接上收尾过渡动画：
+    /// - 从 Minimized 恢复：接 FadeInMove，呼应 MinimizeWithAnimation 收起前播的淡出+下沉。
+    /// - Normal⇄Maximized 之间切换(不管是点按钮、双击标题栏，还是 Aero 贴靠触发的)：接
+    ///   SettleScale 短促回弹，缓解原生 resize 瞬间跳变的生硬感。
+    /// - 进入 Minimized 本身不用在这里处理：那一下的动画是 MinimizeWithAnimation 在真正
+    ///   调用 SystemCommands.MinimizeWindow 之前就已经播完了。</summary>
+    private void MainWindow_StateChanged(object? sender, EventArgs e)
+    {
+        UpdateMaximizeRestoreIcon();
+
+        var previous = _previousWindowStateForAnimation;
+        _previousWindowStateForAnimation = WindowState;
+
+        if (WindowState == WindowState.Minimized) return;
+
+        if (previous == WindowState.Minimized)
+            UiAnimationHelper.FadeInMove(RootWindowGrid, RootWindowMoveTransform);
+        else if (previous != WindowState)
+            UiAnimationHelper.SettleScale(RootWindowGrid, RootWindowScaleTransform);
+    }
 
     /// <summary>
     /// 兼容旧版/补丁叠加后的 MainWindow.xaml：部分版本仍然绑定 SizeChanged="MainWindow_SizeChanged"。

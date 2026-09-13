@@ -114,6 +114,12 @@ public class InstanceSettings
     /// <summary>这个实例使用的 Java 列表条目 Id；null=跟随全局/自动探测。</summary>
     public string? JavaId { get; set; }
 
+    /// <summary>
+    /// 这个实例是否使用高性能独立显卡启动；null=“跟随所有”，即跟随全局
+    /// <see cref="AppConfig.UseHighPerformanceGpuForGame"/>。true/false 分别表示该实例显式使用/不使用。
+    /// </summary>
+    public bool? UseHighPerformanceGpuForGame { get; set; }
+
     /// <summary>这个实例的最小内存(MB)；null=跟随全局设置。</summary>
     public int? MinMemoryMb { get; set; }
 
@@ -136,4 +142,22 @@ public class InstanceSettings
 
     /// <summary>这个实例最后一次成功启动的时间（UTC），仅用于展示，不参与任何启动逻辑判断。</summary>
     public DateTime? LastLaunchedAtUtc { get; set; }
+
+    /// <summary>这个实例是否开启"内存优化"；null=未配置，跟随全局 <see cref="AppConfig.EnableMemoryOptimization"/>。
+    /// 优先级：实例单独设置 &gt; 全局设置——全局已配置但实例没配置时，实例视为"未配置"，
+    /// 跟随全局；只有实例这里显式选了"开启"或"关闭"才会覆盖全局。</summary>
+    public bool? EnableMemoryOptimization { get; set; }
+
+    /// <summary>这个实例的内存优化触发时机；null=未配置，跟随全局 <see cref="AppConfig.MemoryOptimizationTiming"/>。
+    /// 同样遵循"实例单独设置 &gt; 全局设置，实例未配置则跟随全局"的优先级规则。</summary>
+    public Models.MemoryOptimizationTiming? MemoryOptimizationTiming { get; set; }
+
+    /// <summary>解析“是否使用高性能独立显卡”的最终生效值：实例未配置(null)时跟随总体设置。</summary>
+    public bool ResolveUseHighPerformanceGpuForGame(AppConfig cfg) => UseHighPerformanceGpuForGame ?? cfg.UseHighPerformanceGpuForGame;
+
+    /// <summary>解析"是否开启内存优化"的最终生效值：实例未配置(null)时跟随全局。</summary>
+    public bool ResolveEnableMemoryOptimization(AppConfig cfg) => EnableMemoryOptimization ?? cfg.EnableMemoryOptimization;
+
+    /// <summary>解析"内存优化触发时机"的最终生效值：实例未配置(null)时跟随全局。</summary>
+    public Models.MemoryOptimizationTiming ResolveMemoryOptimizationTiming(AppConfig cfg) => MemoryOptimizationTiming ?? cfg.MemoryOptimizationTiming;
 }

@@ -35,7 +35,38 @@
             <shell:WindowChrome CaptionHeight="32" GlassFrameThickness="0" CornerRadius="0"
                                  ResizeBorderThickness="6" UseAeroCaptionButtons="False"/>
         </shell:WindowChrome.WindowChrome>
-    <Grid>
+    <!-- x:Name="RootWindowGrid" + 下面这个 TransformGroup(ScaleTransform+TranslateTransform)是
+         专门给"打开/关闭/最小化/还原/最大化⇄还原"这一批窗口级过渡动画用的挂载点，见
+         UiAnimationHelper 里 FadeInMove/FadeOutMove/SettleScale 三个方法与 MainWindow.xaml.cs
+         里对应的调用处。RenderTransformOrigin="0.5,0.5" 保证 SettleScale 的缩放是以窗口中心
+         为基准做的"回弹"，而不是从左上角长出来。
+
+         CacheMode="BitmapCache"：修复"缩小/放大/最小化/最大化动画掉帧且短暂黑屏"——
+         这个 Grid 底下挂的是整个窗口内容（标题栏+主体+背景图 BlurEffect 毛玻璃层等一整棵
+         很重的可视化树）。之前没有缓存时，FadeInMove/FadeOutMove/SettleScale 每一帧动画
+         (Opacity/ScaleTransform 变化)都会让 WPF 重新走一遍这棵树的完整渲染管线，包括重新
+         计算 BlurEffect 这种本身就很吃性能的像素着色器特效——13帧/220ms 的动画期间等于
+         反复整树重绘+重新模糊，这就是掉帧的根因；而 WindowState 原生切换(最大化/还原/
+         从最小化恢复)本身是瞬间发生的，切换那一刻新尺寸下的整树还没重新布局渲染完，
+         画面就已经不是旧的了，中间那一下"还没画完"的空隙就是用户看到的短暂黑屏。
+         设成 BitmapCache 后，WPF 会把这棵树预先光栅化成一张位图，动画期间只是拿这张现成
+         位图做 GPU 合成层面的缩放/透明度变化，不再逐帧重新布局/重绘/重新算模糊，既消除了
+         掉帧，也让 WindowState 切换瞬间始终有一张已经就绪的位图可以立刻显示，不会露出
+         中间的空白/黑屏帧。
+
+         这里刻意不在 XAML 里常驻挂 CacheMode（那样会导致平时点击/悬停/文字输入等所有
+         跟这棵树相关的重绘都要经过位图光栅化，反而拖慢日常交互、文字也会变糊）。改成
+         只在 UiAnimationHelper 的这几个窗口级动画方法内部"动画开始前临时打开、动画
+         结束后立刻关闭" CacheMode——见 UiAnimationHelper.cs 里 BeginWindowCache/
+         EndWindowCache 两个辅助方法，仅这一小段动画窗口期吃到缓存带来的性能收益，
+         平时保持原来的正常(非缓存)渲染质量。 -->
+    <Grid x:Name="RootWindowGrid" RenderTransformOrigin="0.5,0.5">
+        <Grid.RenderTransform>
+            <TransformGroup>
+                <ScaleTransform x:Name="RootWindowScaleTransform"/>
+                <TranslateTransform x:Name="RootWindowMoveTransform"/>
+            </TransformGroup>
+        </Grid.RenderTransform>
         <Grid.RowDefinitions>
             <RowDefinition x:Name="TitleBarRow" Height="32"/>
             <RowDefinition Height="*"/>

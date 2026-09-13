@@ -5,29 +5,7 @@ using XCL2.App.Services;
 
 namespace XCL2.App.BedrockDecode;
 
-/// <summary>
-/// 修复"解压基岩版 MSIXVC 包时整个启动器直接崩溃、没有任何输出、界面卡死"。
-///
-/// 根因（排查记录，供以后维护参考）：
-/// MsiXVDStream/Extensions 里用 Marshal.PtrToStructure/Marshal.StructureToPtr 把文件里的
-/// 原始字节直接反序列化成 MsiXVDHeader 等 C# 结构体（结构体里混了 byte[]/char[]/自定义
-/// 结构体数组等非托管数组字段，配合 Pack=1）。这套手法一旦遇到跟预期不完全一致的包体
-/// （版本差异、损坏、非标准来源），有极小概率触发 AccessViolationException —— 这是
-/// "损坏进程状态"级别的异常（Corrupted State Exception），CLR 默认既不会被
-/// try/catch(Exception) 捕获，也不会被 AppDomain.UnhandledException 捕获（哪怕两者都已经
-/// 在 App.xaml.cs 里注册），进程会被 Windows 直接判定为崩溃并当场终止，不会有任何
-/// .NET 异常堆栈写进日志——用户看到的现象就是"没有任何输出，界面卡死，直接没了"。
-/// 这也是为什么 crash.log／会话日志都是空的：LauncherLogService 的日志只在进程正常退出
-/// 或走到 DispatcherUnhandledException 处理器时才落盘，AccessViolationException 两边都
-/// 到不了。
-///
-/// 修复方式：不改动解压逻辑本身（BedrockLauncher.Core 移植代码，按要求不动），而是把这一步
-/// 隔离到独立子进程里跑。子进程如果被这类无法捕获的原生异常整个杀掉，父进程（主界面所在
-/// 进程）只会看到子进程以非 0 退出码结束，可以正常捕获并提示"解压失败"，不会连累主界面
-/// 一起消失。跟 App.xaml.cs 里 TryRelaunchForWin7WriteXorExecuteFix 复用自身 exe 重新拉起
-/// 一个进程是同一个思路，这里只是换成"拉起子进程跑完一段任务就退出"而不是"整个替换当前
-/// 进程"。
-/// </summary>
+
 public static class BedrockExtractWorkerProcess
 {
     /// <summary>命令行参数里用来识别"以子进程 worker 模式启动"的标记，App.xaml.cs 的

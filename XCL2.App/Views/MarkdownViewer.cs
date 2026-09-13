@@ -66,12 +66,16 @@ public sealed class MarkdownViewer : StackPanel
             // ```lang ... ```
             if (trimmed.StartsWith("```", StringComparison.Ordinal))
             {
+                // 语言标注就是围栏这一行 ``` 后面剩下的部分（比如 ```csharp、```json），
+                // 可能带多余空格，也可能整个没写（纯 ```）——没写就留空，AddCodeBlock 那边
+                // 会把语言标签整块隐藏掉，不显示"未知语言"这种没意义的占位文字。
+                var lang = trimmed.Length > 3 ? trimmed[3..].Trim() : "";
                 i++;
                 var codeLines = new List<string>();
                 while (i < lines.Length && !lines[i].TrimStart().StartsWith("```", StringComparison.Ordinal))
                     codeLines.Add(lines[i++]);
                 if (i < lines.Length) i++;
-                AddCodeBlock(string.Join(Environment.NewLine, codeLines));
+                AddCodeBlock(string.Join(Environment.NewLine, codeLines), lang);
                 continue;
             }
 
@@ -362,7 +366,7 @@ public sealed class MarkdownViewer : StackPanel
         Children.Add(outer);
     }
 
-    private void AddCodeBlock(string code)
+    private void AddCodeBlock(string code, string language = "")
     {
         var box = new TextBox
         {
@@ -380,13 +384,83 @@ public sealed class MarkdownViewer : StackPanel
             Padding = new Thickness(8, 7, 8, 7)
         };
         box.SetResourceReference(TextBox.ForegroundProperty, "TextPrimaryBrush");
+        // IsReadOnly 的 TextBox 本身就是可选中、可 Ctrl+C 的（跟网页上选中一段代码复制的手感
+        // 一致），这里不需要额外接线——用户可以直接拖选一部分代码复制，不是"只能整段复制"。
+
+        // 顶部条：左边语言标签（没写语言就整块不显示，不留一个空标签占地方），
+        // 右边一个"复制"按钮，点一下把整段代码复制到剪贴板并给个 Toast 反馈——
+        // 对应"像网页上 AI 输出代码块那样，一键复制整段"的诉求；框内选中复制是另一条路径，
+        // 两者互不冲突，都要支持。
+        var header = new Grid { Margin = new Thickness(10, 5, 6, 5) };
+        header.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+        if (!string.IsNullOrWhiteSpace(language))
+        {
+            var langText = new TextBlock
+            {
+                Text = language.Trim(),
+                FontFamily = new FontFamily("Consolas"),
+                FontSize = 11,
+                VerticalAlignment = VerticalAlignment.Center
+            };
+            langText.SetResourceReference(TextBlock.ForegroundProperty, "TextSecondaryBrush");
+            Grid.SetColumn(langText, 0);
+            header.Children.Add(langText);
+        }
+
+        var copyBtn = new Button
+        {
+            Content = "复制",
+            Padding = new Thickness(8, 2, 8, 2),
+            FontSize = 11,
+            Cursor = System.Windows.Input.Cursors.Hand,
+            Background = Brushes.Transparent,
+            BorderThickness = new Thickness(1)
+        };
+        copyBtn.SetResourceReference(Button.ForegroundProperty, "TextSecondaryBrush");
+        copyBtn.SetResourceReference(Button.BorderBrushProperty, "BorderBrush2");
+        copyBtn.Click += (_, _) =>
+        {
+            try
+            {
+                Clipboard.SetText(code);
+                copyBtn.Content = "已复制";
+                // 一秒半后把按钮文案换回来，避免一直停在"已复制"让人以为按钮坏了——
+                // 用 DispatcherTimer 而不是 Thread.Sleep，不阻塞 UI 线程。
+                var resetTimer = new System.Windows.Threading.DispatcherTimer
+                {
+                    Interval = TimeSpan.FromMilliseconds(1500)
+                };
+                resetTimer.Tick += (_, _) =>
+                {
+                    copyBtn.Content = "复制";
+                    resetTimer.Stop();
+                };
+                resetTimer.Start();
+            }
+            catch
+            {
+                // 剪贴板偶发被其它程序占用，跟项目里其它 Clipboard.SetText 调用处理方式一致：
+                // 静默失败即可，不因为这个次要功能弹一个打断性的错误框。
+            }
+        };
+        Grid.SetColumn(copyBtn, 1);
+        header.Children.Add(copyBtn);
+
+        var codeBorder = new Border { BorderThickness = new Thickness(0, 1, 0, 0), Child = box };
+        codeBorder.SetResourceReference(Border.BorderBrushProperty, "DividerBrush");
+
+        var outerStack = new StackPanel();
+        outerStack.Children.Add(header);
+        outerStack.Children.Add(codeBorder);
 
         var border = new Border
         {
             CornerRadius = new CornerRadius(7),
             BorderThickness = new Thickness(1),
             Margin = new Thickness(0, 5, 0, 7),
-            Child = box
+            Child = outerStack
         };
         border.SetResourceReference(Border.BackgroundProperty, "SideBrush");
         border.SetResourceReference(Border.BorderBrushProperty, "BorderBrush2");

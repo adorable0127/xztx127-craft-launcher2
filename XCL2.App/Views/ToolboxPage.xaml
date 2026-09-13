@@ -237,6 +237,18 @@
                             <TextBlock Text="{DynamicResource Str_Ui_When_On_Xms_And_Xmx_Are_Recalculated_Fro}"
                                        TextWrapping="Wrap" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,10"/>
                             <CheckBox x:Name="MemOptCheck" Content="{DynamicResource Str_Ui_Optimise_Memory_Allocation_Before_}" Checked="MemOptCheck_Changed" Unchecked="MemOptCheck_Changed" Margin="0,0,0,10"/>
+
+                            <!-- 内存优化触发时机：全局默认值，某个版本可以在「版本的单独设置」里单独覆盖。 -->
+                            <TextBlock Text="优化时机" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,6"/>
+                            <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
+                                <RadioButton x:Name="MemOptTimingBeforeLaunchRadio" GroupName="MemOptTiming"
+                                             Content="游戏启动前进行内存优化" Margin="0,0,20,0"
+                                             Checked="MemOptTiming_Changed"/>
+                                <RadioButton x:Name="MemOptTimingOnOpenRadio" GroupName="MemOptTiming"
+                                             Content="启动器打开时进行内存优化"
+                                             Checked="MemOptTiming_Changed"/>
+                            </StackPanel>
+
                             <Button Content="{DynamicResource Str_Ui_Preview_Recommended_Values}" Padding="14,7" HorizontalAlignment="Left" Click="MemOptPreview_Click"/>
                             <TextBlock x:Name="MemOptStatusText" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,10,0,0" TextWrapping="Wrap"/>
                         </StackPanel>

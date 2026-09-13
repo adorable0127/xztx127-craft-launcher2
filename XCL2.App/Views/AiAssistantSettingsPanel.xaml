@@ -33,20 +33,26 @@
                     <PasswordBox x:Name="ApiKeyBox" Margin="0,4,0,8"/>
 
                     <StackPanel x:Name="BuiltInModelsHintPanel">
-                        <TextBlock Text="内置模型" FontSize="11" FontWeight="SemiBold" Margin="0,3,0,4"/>
-                        <TextBlock Text="Hy3 Free · MiMo V2.5 Free · Muse Spark 1.2 Free · Nemotron 3 Ultra Free · Nemotron 3.5 Lightning Free"
+                        <TextBlock Text="内置模型（OpenRouter，均为免费额度）" FontSize="11" FontWeight="SemiBold" Margin="0,3,0,4"/>
+                        <TextBlock Text="普通档：Nemotron 3.5 Lightning · LFM2.5-2.6B · Gemma 4 26B A4B · Nex-N2.5-Mini · Ling 3.0 Flash Sante · Ling 3.0 Flash Fin"
                                    TextWrapping="Wrap" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}"/>
+                        <TextBlock Text="专家档：Nemotron 3 Ultra · Nemotron 3 Super · Nemotron 3 Nano Omni · Gemma 4 31B · Inkling Small · Inkling · Laguna S 2.1 · Nex-N2.5-Pro · North Mini Code"
+                                   TextWrapping="Wrap" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,2,0,0"/>
+                        <TextBlock Text="其中 Inkling / Inkling Small 及 Nemotron 系列模型有各自独立的使用条款（见上方提示条），使用前请留意。"
+                                   TextWrapping="Wrap" FontSize="10" Foreground="{DynamicResource WarningTextBrush}" Margin="0,4,0,0"/>
                     </StackPanel>
 
                     <StackPanel x:Name="CustomModelsEditor" Visibility="Collapsed" Margin="0,4,0,0">
-                        <TextBlock Text="自定义 API 模型列表" FontSize="11" FontWeight="SemiBold" Margin="0,2,0,6"/>
+                        <TextBlock Text="自定义模型列表（支持多供应商）" FontSize="11" FontWeight="SemiBold" Margin="0,2,0,6"/>
+                        <TextBlock Text="每个模型可以单独填“供应商地址/Key”：留空表示沿用上方公共的接口地址和 API Key；填了就用自己的——这样可以在同一张表里混用多个不同供应商的模型。"
+                                   TextWrapping="Wrap" FontSize="10" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,6"/>
                         <Grid>
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="*"/>
                                 <ColumnDefinition Width="*"/>
                                 <ColumnDefinition Width="Auto"/>
                             </Grid.ColumnDefinitions>
-                            <TextBox x:Name="CustomModelIdBox" Grid.Column="0" Margin="0,0,6,0" ToolTip="例如：gpt-4.1-mini"/>
+                            <TextBox x:Name="CustomModelIdBox" Grid.Column="0" Margin="0,0,6,0" ToolTip="例如：openai/gpt-4.1-mini"/>
                             <TextBox x:Name="CustomModelNameBox" Grid.Column="1" Margin="0,0,6,0" ToolTip="例如：GPT-4.1 Mini"/>
                             <Button Grid.Column="2" Content="添加" Padding="12,5" Click="AddCustomModel_Click"/>
                         </Grid>
@@ -55,9 +61,32 @@
                             <TextBlock Text="模型 ID（请求用）" FontSize="9" Foreground="{DynamicResource TextSecondaryBrush}"/>
                             <TextBlock Grid.Column="1" Text="显示名称（界面用）" FontSize="9" Foreground="{DynamicResource TextSecondaryBrush}"/>
                         </Grid>
+
+                        <Grid Margin="0,6,0,0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBox x:Name="CustomModelProviderBaseUrlBox" Grid.Column="0" Margin="0,0,6,0"
+                                     ToolTip="可选：这个模型自己的供应商接口地址，留空则沿用上方公共 Base URL"/>
+                            <PasswordBox x:Name="CustomModelProviderApiKeyBox" Grid.Column="1"
+                                         ToolTip="可选：这个模型自己的 API Key，留空则沿用上方公共 API Key"/>
+                        </Grid>
+                        <Grid Margin="0,3,0,2">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                            <TextBlock Text="供应商地址（可选，多供应商）" FontSize="9" Foreground="{DynamicResource TextSecondaryBrush}"/>
+                            <TextBlock Grid.Column="1" Text="供应商 API Key（可选）" FontSize="9" Foreground="{DynamicResource TextSecondaryBrush}"/>
+                        </Grid>
+
+                        <StackPanel Orientation="Horizontal" Margin="0,6,0,4">
+                            <TextBlock Text="分组：" FontSize="10" VerticalAlignment="Center" Margin="0,0,6,0"/>
+                            <RadioButton x:Name="CustomModelTierNormalRadio" Content="普通" GroupName="CustomModelTier" IsChecked="True" Margin="0,0,12,0"/>
+                            <RadioButton x:Name="CustomModelTierExpertRadio" Content="专家" GroupName="CustomModelTier"/>
+                        </StackPanel>
+
                         <TextBlock Text="注意：模型 ID 必须与 API 文档中的 model 值完全一致，不能填显示名称；填错时接口通常会返回 HTTP 400/404。"
                                    TextWrapping="Wrap" FontSize="9" Margin="0,0,0,5" Foreground="{DynamicResource WarningTextBrush}"/>
-                        <ListBox x:Name="CustomModelsList" MaxHeight="160" BorderBrush="{DynamicResource BorderBrush2}" BorderThickness="1">
+                        <ListBox x:Name="CustomModelsList" MaxHeight="200" BorderBrush="{DynamicResource BorderBrush2}" BorderThickness="1">
                             <ListBox.ItemTemplate>
                                 <DataTemplate>
                                     <Grid Margin="5,3">
@@ -66,11 +95,21 @@
                                             <ColumnDefinition Width="Auto"/>
                                         </Grid.ColumnDefinitions>
                                         <StackPanel>
-                                            <TextBlock Text="{Binding DisplayName}" FontWeight="SemiBold" FontSize="11"/>
+                                            <TextBlock FontWeight="SemiBold" FontSize="11">
+                                                <Run Text="{Binding DisplayName, Mode=OneWay}"/>
+                                                <Run Text=" · " Foreground="{DynamicResource TextSecondaryBrush}"/>
+                                                <Run Text="{Binding TierLabel, Mode=OneWay}" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="9"/>
+                                            </TextBlock>
                                             <TextBlock Text="{Binding Id}" FontSize="9" Foreground="{DynamicResource TextSecondaryBrush}"/>
+                                            <TextBlock Text="{Binding ProviderSummary}" FontSize="9"
+                                                       Foreground="{DynamicResource TextSecondaryBrush}"/>
                                         </StackPanel>
-                                        <Button Grid.Column="1" Content="删除" FontSize="10" Padding="8,3" Margin="8,0,0,0"
-                                                Click="RemoveCustomModel_Click" Tag="{Binding}" Style="{StaticResource SecondaryButton}"/>
+                                        <StackPanel Grid.Column="1" Orientation="Horizontal">
+                                            <Button Content="测试" FontSize="10" Padding="8,3" Margin="8,0,0,0"
+                                                    Click="TestCustomModel_Click" Tag="{Binding}" Style="{StaticResource SecondaryButton}"/>
+                                            <Button Content="删除" FontSize="10" Padding="8,3" Margin="6,0,0,0"
+                                                    Click="RemoveCustomModel_Click" Tag="{Binding}" Style="{StaticResource SecondaryButton}"/>
+                                        </StackPanel>
                                     </Grid>
                                 </DataTemplate>
                             </ListBox.ItemTemplate>
@@ -107,13 +146,32 @@
                     </ComboBox>
 
                     <TextBlock Text="普通模型（功能入口、使用说明、常规问题）" FontSize="11"/>
-                    <ComboBox x:Name="NormalModelCombo" Margin="0,4,0,9" DisplayMemberPath="DisplayName" SelectedValuePath="Id" SelectionChanged="ModelCombo_SelectionChanged"/>
+                    <Grid Margin="0,4,0,9">
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                        <ComboBox x:Name="NormalModelCombo" Grid.Column="0" DisplayMemberPath="DisplayName" SelectedValuePath="Id" SelectionChanged="ModelCombo_SelectionChanged"/>
+                        <Button x:Name="TestNormalModelButton" Grid.Column="1" Content="测试" Padding="10,4" Margin="6,0,0,0" Click="TestNormalModel_Click"/>
+                    </Grid>
 
                     <TextBlock Text="专家模型（日志/崩溃/注入/复杂排障）" FontSize="11"/>
-                    <ComboBox x:Name="ExpertModelCombo" Margin="0,4,0,9" DisplayMemberPath="DisplayName" SelectedValuePath="Id" SelectionChanged="ModelCombo_SelectionChanged"/>
+                    <Grid Margin="0,4,0,9">
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                        <ComboBox x:Name="ExpertModelCombo" Grid.Column="0" DisplayMemberPath="DisplayName" SelectedValuePath="Id" SelectionChanged="ModelCombo_SelectionChanged"/>
+                        <Button x:Name="TestExpertModelButton" Grid.Column="1" Content="测试" Padding="10,4" Margin="6,0,0,0" Click="TestExpertModel_Click"/>
+                    </Grid>
 
                     <TextBlock Text="指定模型模式的默认模型" FontSize="11"/>
-                    <ComboBox x:Name="ManualModelCombo" Margin="0,4,0,0" DisplayMemberPath="DisplayName" SelectedValuePath="Id" SelectionChanged="ModelCombo_SelectionChanged"/>
+                    <Grid Margin="0,4,0,0">
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                        <ComboBox x:Name="ManualModelCombo" Grid.Column="0" DisplayMemberPath="DisplayName" SelectedValuePath="Id" SelectionChanged="ModelCombo_SelectionChanged"/>
+                        <Button x:Name="TestManualModelButton" Grid.Column="1" Content="测试" Padding="10,4" Margin="6,0,0,0" Click="TestManualModel_Click"/>
+                    </Grid>
+
+                    <Border x:Name="SpecialTermsNoticeBox" Visibility="Collapsed" Margin="0,10,0,0" Padding="8"
+                            Background="{DynamicResource PanelBrush}" CornerRadius="6"
+                            BorderBrush="{DynamicResource WarningTextBrush}" BorderThickness="1">
+                        <TextBlock x:Name="SpecialTermsNoticeText" TextWrapping="Wrap" FontSize="10"
+                                   Foreground="{DynamicResource WarningTextBrush}"/>
+                    </Border>
                 </StackPanel>
             </Border>
 
@@ -139,7 +197,7 @@
             <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
                 <Button Content="恢复默认" Width="86" Margin="0,0,8,0" Click="ResetDefaults_Click" Style="{StaticResource SecondaryButton}"/>
                 <Button Content="取消" Width="80" Margin="0,0,8,0" Click="Cancel_Click"/>
-                <Button Content="保存" Width="80" Click="Save_Click" IsDefault="True"/>
+                <Button x:Name="SaveButton" Content="保存" Width="80" Click="Save_Click" IsDefault="True"/>
             </StackPanel>
         </StackPanel>
     </ScrollViewer>

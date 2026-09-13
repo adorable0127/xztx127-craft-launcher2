@@ -79,6 +79,18 @@ public enum IntegrityCheckMode
 }
 
 /// <summary>
+/// 内存优化功能的触发时机。见 <see cref="AppConfig.MemoryOptimizationTiming"/>
+/// 与 <see cref="Services.InstanceSettings.MemoryOptimizationTiming"/> 上的说明。
+/// </summary>
+public enum MemoryOptimizationTiming
+{
+    /// <summary>默认：每次点「启动游戏」之前，临场按当前可用内存重新计算一次。</summary>
+    BeforeGameLaunch,
+    /// <summary>启动器一打开就算好一次，直接写回 MinMemoryMb/MaxMemoryMb，游戏启动时不再重新计算。</summary>
+    OnLauncherOpen,
+}
+
+/// <summary>
 /// xcl2/config.json 的内容：全局配置。
 /// </summary>
 public class AppConfig
@@ -101,6 +113,15 @@ public class AppConfig
     public DownloadSource Source { get; set; } = DownloadSource.Official;
 
     public string? JavaPath { get; set; }
+
+    /// <summary>
+    /// 启动 Minecraft Java 版时是否优先使用系统的“高性能 GPU”偏好。默认开启。
+    /// 实际启动前会针对最终选中的 javaw.exe 写入 Windows 图形首选项，并同时为该子进程
+    /// 注入兼容 Optimus 的高性能 GPU 环境提示；没有独立显卡时 Windows 会自动退回可用 GPU，
+    /// 不会因此阻止游戏启动。具体某个版本可在 xcl/settings.json 中单独覆盖。
+    /// </summary>
+    public bool UseHighPerformanceGpuForGame { get; set; } = true;
+
     public int MinMemoryMb { get; set; } = 1024;
     public int MaxMemoryMb { get; set; } = 4096;
     public int WindowWidth { get; set; } = 854;
@@ -585,6 +606,16 @@ public class AppConfig
     /// <summary>每次真正关闭主窗口前自动备份实例；备份完成后才继续退出。</summary>
     public bool BackupInstanceOnClose { get; set; } = false;
 
+    /// <summary>界面过渡动画开关：最小化到托盘/从托盘还原、F11 全屏切换、侧边栏收起/展开
+    /// 时是否播放淡入淡出动画。默认开启；低配机器/追求极致响应速度的用户可以在设置里关掉，
+    /// 关掉后这几处操作立即生效，不等待任何过渡。</summary>
+    public bool EnableUiAnimations { get; set; } = true;
+
+    /// <summary>启动公告弹窗——用户已经点过"确定"的公告 Id 集合，见 AnnouncementService。
+    /// 只要某条公告的 Id 不在这里面，启动器每次打开(包括更新后重新打开)都会继续弹出，
+    /// 直到用户点"确定"为止；点了之后 Id 写进来，永久不再弹这一条。</summary>
+    public List<string> SeenAnnouncementIds { get; set; } = new();
+
     /// <summary>启动/关闭自动备份时的实例选择方式。</summary>
     public LifecycleBackupTargetMode LifecycleBackupTargetMode { get; set; } = LifecycleBackupTargetMode.Single;
 
@@ -745,6 +776,14 @@ public class AppConfig
     /// <summary>内存优化时，给系统自身/其它程序预留的内存(MB)，不会被分配给 Java 堆。
     /// 默认 1536MB，兼顾"尽量把内存让给游戏"和"不能让系统本身卡死"两个目标。</summary>
     public int MemoryOptimizationReserveMb { get; set; } = 1536;
+
+    /// <summary>内存优化的触发时机：默认"游戏启动前"（跟这个功能上线时的行为一致），
+    /// 也可以改成"启动器打开时"——启动器一打开就算好一次推荐值并直接写回
+    /// MinMemoryMb/MaxMemoryMb，不用每次点启动都重新算一遍（见 <see cref="Services.MemoryOptimizerService"/>
+    /// 和 MainWindow 里 ApplyLauncherOpenMemoryOptimizationIfNeeded 的调用点）。这里只是
+    /// 全局默认值，具体某个实例可以在「版本的单独设置」里用 <see cref="Services.InstanceSettings.MemoryOptimizationTiming"/>
+    /// 单独覆盖；实例未配置时跟随这里。</summary>
+    public MemoryOptimizationTiming MemoryOptimizationTiming { get; set; } = MemoryOptimizationTiming.BeforeGameLaunch;
 
     // ===== 功能隐藏 =====
 

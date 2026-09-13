@@ -1,0 +1,43 @@
+<local:OverlayDialogControl x:Class="XCL2.App.Views.AnnouncementDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="clr-namespace:XCL2.App.Views"
+        Width="520">
+    <!--
+        启动公告弹窗：见 AnnouncementService 类注释。这里只负责展示、不负责判断"要不要弹"——
+        MainWindow 在启动流程里先调用 AnnouncementService.GetPending 拿到待展示列表，非空
+        才会创建这个弹窗。多条公告用 ItemsControl 依次列出标题+正文，只有一个"确定"按钮，
+        点了之后一次性把当前展示的这一批全部标记为已读(见 code-behind Confirm_Click)；
+        点右上角关闭/Esc/点遮罩（dismissOnBackgroundClick 由调用方决定是否允许）则不标记，
+        下次启动继续弹出，对应需求里"没点确定就会在下次打开时继续显示"。
+    -->
+    <DockPanel Margin="0" MaxHeight="560">
+        <TextBlock DockPanel.Dock="Top" Text="公告" FontSize="18" FontWeight="Bold" Margin="20,20,20,4"/>
+        <TextBlock DockPanel.Dock="Top" Text="请仔细阅读以下内容，点击「我知道了」后本次不再提示"
+                   FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" Margin="20,0,20,12"/>
+
+        <Button DockPanel.Dock="Bottom" x:Name="ConfirmBtn" Content="我知道了"
+                HorizontalAlignment="Right" Margin="0,0,20,20" Padding="20,8"
+                Background="{DynamicResource AccentBrush}" Foreground="White"
+                Click="Confirm_Click"/>
+
+        <ScrollViewer MaxHeight="440" VerticalScrollBarVisibility="Auto" Margin="20,0,20,0">
+            <ItemsControl x:Name="AnnouncementList">
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate>
+                        <Border Background="{DynamicResource PanelBrush}" CornerRadius="8"
+                                Padding="14,12" Margin="0,0,0,10">
+                            <StackPanel>
+                                <TextBlock Text="{Binding Title}" FontSize="14" FontWeight="Bold"
+                                           Foreground="{DynamicResource TextPrimaryBrush}" Margin="0,0,0,6"
+                                           TextWrapping="Wrap"/>
+                                <TextBlock Text="{Binding Content}" FontSize="12.5" TextWrapping="Wrap"
+                                           Foreground="{DynamicResource TextPrimaryBrush}" LineHeight="20"/>
+                            </StackPanel>
+                        </Border>
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
+        </ScrollViewer>
+    </DockPanel>
+</local:OverlayDialogControl>

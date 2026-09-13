@@ -28,7 +28,7 @@ public static class AiQuickAnswers
         new(new[] { "捐助", "赞助", "爱发电", "支持作者" }, "作者爱发电（捐助/赞助）：https://ifdian.net/a/xztx127"),
         new(new[] { "mc百科", "mc百科官网", "mcmod" }, "MC 百科（MCMOD）：https://mcmod.cn"),
         new(new[] { "mc中文wiki", "mc中文百科", "minecraft wiki", "mc wiki" }, "Minecraft 中文 Wiki：https://zh.minecraft.wiki"),
-        new(new[] { "下载地址", "启动器下载", "xcl2下载", "在哪下载" }, "XCL2 启动器下载地址：https://xztx127.dpdns.org/download"),
+        new(new[] { "下载地址", "启动器下载", "xcl2下载", "在哪下载" }, "XCL2 启动器下载地址：https://xcl.xztx127.dpdns.org"),
         new(new[] { "作者mc服务器", "作者的服务器", "作者服务器地址" }, "作者的 Minecraft 服务器：xztx127mc.dpdns.org"),
         new(new[] { "作者mc服务器官网", "服务器官网" }, "作者 Minecraft 服务器官网：https://www.xztx127mc.dpdns.org"),
         new(new[] { "作者b站", "up主b站", "作者哔哩哔哩" }, "作者 B 站：https://space.bilibili.com/3546834976902089"),

@@ -89,6 +89,7 @@ public partial class SettingsPage : UserControl
             }
         };
 
+        HighPerformanceGpuLaunchCheck.IsChecked = cfg.UseHighPerformanceGpuForGame;
         MinMemBox.Text = cfg.MinMemoryMb.ToString();
         MaxMemBox.Text = cfg.MaxMemoryMb.ToString();
         WidthBox.Text = cfg.WindowWidth.ToString();
@@ -97,6 +98,7 @@ public partial class SettingsPage : UserControl
         SelectComboByTag(GameLanguageCombo, cfg.GameLanguage);
         GameVersionTypeLabelBox.Text = cfg.GameVersionTypeLabel;
         PageAnimationsCheck.IsChecked = cfg.EnablePageAnimations;
+        WindowAnimationsCheck.IsChecked = cfg.EnableUiAnimations;
         LowPerformanceModeCheck.IsChecked = cfg.LowPerformanceMode;
         AlwaysOnTopCheck.IsChecked = cfg.AlwaysOnTop;
         UiZoomEnabledCheck.IsChecked = cfg.EnableUiZoomShortcut;
@@ -1536,6 +1538,7 @@ public partial class SettingsPage : UserControl
         cfg.UiZoomPercent = Math.Clamp((int)Math.Round(UiZoomSlider.Value), UiZoomService.MinPercent, UiZoomService.MaxPercent);
         cfg.MouseWheelSensitivityPercent = ScrollWheelBehavior.ClampSensitivityPercent((int)Math.Round(MouseWheelSensitivitySlider.Value));
 
+        cfg.UseHighPerformanceGpuForGame = HighPerformanceGpuLaunchCheck.IsChecked == true;
         cfg.MinMemoryMb = int.TryParse(MinMemBox.Text, out var min) ? min : cfg.MinMemoryMb;
         cfg.MaxMemoryMb = int.TryParse(MaxMemBox.Text, out var max) ? max : cfg.MaxMemoryMb;
         cfg.WindowWidth = int.TryParse(WidthBox.Text, out var w) ? w : cfg.WindowWidth;
@@ -1544,6 +1547,7 @@ public partial class SettingsPage : UserControl
         if ((GameLanguageCombo.SelectedItem as ComboBoxItem)?.Tag is string lang) cfg.GameLanguage = lang;
         cfg.GameVersionTypeLabel = GameVersionTypeLabelBox.Text?.Trim() ?? "";
         cfg.EnablePageAnimations = PageAnimationsCheck.IsChecked == true;
+        cfg.EnableUiAnimations = WindowAnimationsCheck.IsChecked == true;
         cfg.LowPerformanceMode = LowPerformanceModeCheck.IsChecked == true;
         cfg.AlwaysOnTop = AlwaysOnTopCheck.IsChecked == true;
         cfg.ScheduledInstanceBackupEnabled = ScheduledBackupCheck.IsChecked == true;
@@ -2511,14 +2515,20 @@ public partial class SettingsPage : UserControl
             // 窗口透明度、全局透明度、高性能模式动效）是否要一起关，交给用户自己决定。
             if (PageAnimationsCheck != null)
                 PageAnimationsCheck.IsChecked = false;
-            ToastService.ShowInfo("已启用低性能模式：页面切换动画已关闭。云母/亚克力特效、"
+            // 窗口过渡动画(打开/最小化/最大化/关闭)本质上也是"动画"，低性能模式一起带上关掉，
+            // 跟 PageAnimationsCheck 同一个处理逻辑，理由一致。
+            if (WindowAnimationsCheck != null)
+                WindowAnimationsCheck.IsChecked = false;
+            ToastService.ShowInfo("已启用低性能模式：页面切换动画、窗口过渡动画已关闭。云母/亚克力特效、"
                 + "透明度、高性能模式动效等其它开关不受影响，仍按你自己的勾选生效");
         }
         else
         {
-            ToastService.ShowInfo("已关闭低性能模式：页面切换动画已恢复默认开启");
+            ToastService.ShowInfo("已关闭低性能模式：页面切换动画、窗口过渡动画已恢复默认开启");
             if (PageAnimationsCheck != null)
                 PageAnimationsCheck.IsChecked = true;
+            if (WindowAnimationsCheck != null)
+                WindowAnimationsCheck.IsChecked = true;
         }
         // 不在这里写 cfg；否则即使用户还没点保存，内存配置也已经被改掉，随后任何其它
         // ConfigService.Save() 都可能把这次未确认修改带到磁盘。统一由 PerformSave 处理。

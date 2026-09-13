@@ -1,5 +1,4 @@
-// Ported from BedrockLauncher.Core (MIT License, Copyright (c) Round-Studio)
-// Source: https://github.com/Round-Studio/BedrockLauncher.Core
+
 using System;
 using System.Collections.Generic;
 using System.Text;

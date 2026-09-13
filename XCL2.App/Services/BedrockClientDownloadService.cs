@@ -501,9 +501,7 @@ public class BedrockClientDownloadService
             // 删除失败以前会整条路回退到"换源重新下载"。overwriteFiles 直接覆盖同名文件，
             // 旧版本残留的额外文件不影响运行，重下才真正浪费流量和时间。
             Directory.CreateDirectory(extractDir);
-            // 新版（1.26.x 起）官方包是 .msixvc（GDK/XVD 容器），用内置的 MSIXVC 解码器解压
-            //（见 Services/BedrockDecode/，移植自 BedrockBoot 用的 BedrockLauncher.Core）；
-            // 老版本 .appx 仍是标准 zip 结构，走原来的逐条目解压。
+
             if (BedrockDecode.GdkPackageExtractor.IsMsixvcPackage(filePath))
                 // 不直接在当前（主界面）进程里调用 ExtractAsync：MSIXVC 解码涉及大量
                 // Marshal.PtrToStructure 之类的非托管内存操作（移植代码，按要求不改动），

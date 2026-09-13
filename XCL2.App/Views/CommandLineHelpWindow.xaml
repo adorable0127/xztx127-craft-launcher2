@@ -1,0 +1,45 @@
+﻿<Window x:Class="XCL2.App.Views.CommandLineHelpWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="XCL2 命令行帮助" Width="720" Height="560" MinWidth="480" MinHeight="320"
+        WindowStartupLocation="CenterScreen" ResizeMode="CanResizeWithGrip"
+        ShowInTaskbar="True" Background="#1B2030">
+    <!--
+        修复"-help 弹出的帮助窗口显示有问题"：原来直接用系统 MessageBox.Show(HelpText, ...) 展示，
+        问题有两个：①MessageBox 用的是系统默认变宽字体，帮助文本里靠空格手动对齐的参数列/说明列
+        在变宽字体下全部错位，看起来像一堆乱码对不齐；②MessageBox 文本框不可选中/不可滚动/不能
+        调整大小，稍长一点的帮助内容（含示例）在小分辨率屏幕上会被截断或挤成一团，用户既看不全
+        也没法复制去粘贴到命令行里参考。
+        这里换成一个独立窗口：等宽字体（Consolas，帮助文本本身就是按等宽对齐排版的）+ 只读多行
+        TextBox（原生支持鼠标选中/Ctrl+A/Ctrl+C，双向滚动条，还可以自由拉伸调整窗口大小）+ 一个
+        "复制全部"按钮，不再依赖系统 MessageBox 的固定尺寸和变宽字体。
+    -->
+    <Grid Margin="18">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <TextBlock Grid.Row="0" Text="XCL2 启动器 命令行参数说明" FontSize="18" FontWeight="Bold"
+                   Foreground="White" Margin="0,0,0,12"/>
+
+        <Border Grid.Row="1" Background="#12151F" BorderBrush="#33425A6CFF" BorderThickness="1" CornerRadius="6">
+            <TextBox x:Name="HelpTextBox"
+                     IsReadOnly="True" IsReadOnlyCaretVisible="True"
+                     TextWrapping="NoWrap"
+                     AcceptsReturn="True"
+                     FontFamily="Consolas, Courier New, Cascadia Mono"
+                     FontSize="13.5"
+                     Foreground="#E4E9F2" Background="Transparent" BorderThickness="0"
+                     Padding="14"
+                     VerticalScrollBarVisibility="Auto"
+                     HorizontalScrollBarVisibility="Auto"/>
+        </Border>
+
+        <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,14,0,0">
+            <Button x:Name="CopyAllBtn" Content="复制全部" Padding="16,7" Margin="0,0,10,0" Click="CopyAll_Click"/>
+            <Button x:Name="CloseBtn" Content="关闭" Padding="16,7" Click="Close_Click" IsDefault="True" IsCancel="True"/>
+        </StackPanel>
+    </Grid>
+</Window>

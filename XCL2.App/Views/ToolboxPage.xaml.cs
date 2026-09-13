@@ -37,6 +37,9 @@ public partial class ToolboxPage : UserControl
     // 而不是放任用户进去踩坑。不直接把 TabItem 禁用/隐藏，是因为还是想留给用户一个
     // "我知道有问题，就是要进去看看"的口子（比如手动抢救已经写在里面的内容）。
     private TabItem? _lastNonStickyToolboxTab;
+    /// <summary>加载页面、用代码设置内存优化时机单选框初始状态时，临时置 true 抑制
+    /// RadioButton.Checked 事件里的保存逻辑，避免刚打开页面就多写一次配置文件。</summary>
+    private bool _suppressMemOptTimingSave;
     private bool _suppressToolboxTabSelection;
 
     // ===== Tab 1：成就图片 =====
@@ -67,6 +70,15 @@ public partial class ToolboxPage : UserControl
 
         RefreshAchBedrockDirText();
         MemOptCheck.IsChecked = _owner.ConfigService.Config.EnableMemoryOptimization;
+        // RadioButton.Checked 事件在 IsChecked 被代码设成 true 时也会触发；这里只是初始化
+        // UI 状态，先记一个标记避免刚加载页面就把配置写回一遍（值没变，写不写其实无所谓，
+        // 但用这个标记更干净，跟别处"避免加载阶段触发保存"的写法保持一致）。
+        _suppressMemOptTimingSave = true;
+        if (_owner.ConfigService.Config.MemoryOptimizationTiming == MemoryOptimizationTiming.OnLauncherOpen)
+            MemOptTimingOnOpenRadio.IsChecked = true;
+        else
+            MemOptTimingBeforeLaunchRadio.IsChecked = true;
+        _suppressMemOptTimingSave = false;
         BuildColorCodeSwatches();
         ColorCodeInputBox_TextChanged(this, null!);
 
@@ -1998,6 +2010,23 @@ public partial class ToolboxPage : UserControl
         MemOptStatusText.Text = cfg.EnableMemoryOptimization
             ? "已开启：下次启动游戏前会自动按当前可用内存重新计算 -Xms/-Xmx。"
             : "已关闭：启动游戏将使用「设置」页手动填写的固定内存数值。";
+    }
+
+    /// <summary>「游戏启动前」/「启动器打开时」二选一单选框变化：只是全局默认时机，
+    /// 具体某个版本可以在「版本的单独设置」里单独覆盖（见 InstanceSettingsDialog）。</summary>
+    private void MemOptTiming_Changed(object sender, RoutedEventArgs e)
+    {
+        if (_suppressMemOptTimingSave) return;
+
+        var cfg = _owner.ConfigService.Config;
+        cfg.MemoryOptimizationTiming = MemOptTimingOnOpenRadio.IsChecked == true
+            ? MemoryOptimizationTiming.OnLauncherOpen
+            : MemoryOptimizationTiming.BeforeGameLaunch;
+        _owner.ConfigService.Save();
+
+        MemOptStatusText.Text = cfg.MemoryOptimizationTiming == MemoryOptimizationTiming.OnLauncherOpen
+            ? "已切换为「启动器打开时」：下次打开启动器会自动算好一次并直接写回内存设置，启动游戏时不再重新计算。"
+            : "已切换为「游戏启动前」：每次点「启动游戏」之前才临场按当前可用内存重新计算。";
     }
 
     private void MemOptPreview_Click(object sender, RoutedEventArgs e)

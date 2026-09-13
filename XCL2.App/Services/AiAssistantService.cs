@@ -15,10 +15,12 @@ namespace XCL2.App.Services;
 
 /// <summary>
 /// XCL2 内置 AI 助手服务：
-/// - 走标准 OpenAI /chat/completions 格式，兼容 OpenCode Zen（或任何同格式的中转/自建服务）。
-/// - 按问题复杂度在两档模型间自动路由：简单问题（问入口/用法）用 Nemotron 3.5 Lightning Free，
-///   复杂问题（崩溃分析等）用 MiMo V2.5 Free；两者都是免费档，路由的目的是"该快的快、该准的准"，
-///   不是省钱。
+/// - 走标准 OpenAI /chat/completions 格式，兼容 OpenRouter（或任何同格式的中转/自建服务）。
+/// - 支持多供应商：每个模型可以在设置里单独指定自己的 Base URL + API Key（不填就沿用
+///   公共接口配置），从而在同一个模型表里混用多个不同供应商的模型。
+/// - 按问题复杂度在"普通/专家"两档模型间自动路由：简单问题（问入口/用法）用普通档默认模型
+///   Nemotron 3.5 Lightning，复杂问题（崩溃分析等）用专家档默认模型 Nemotron 3 Ultra；
+///   两者都是免费档，路由的目的是"该快的快、该准的准"，不是省钱。
 /// - "快速模式"：请求体里不开思考/推理参数（不传 reasoning/thinking 相关字段，
 ///   不要求模型输出思考过程），System Prompt 里也明确要求直接给结论。
 /// - 聊天记录按 Session 落盘到 xcl2/ai_chat/*.json，纯本地，不上传除用户自己配置的 API 端点外的任何地方。
@@ -189,9 +191,6 @@ public class AiAssistantService
         bool webSearch = false,
         CancellationToken ct = default)
     {
-        var (baseUrl, apiKey) = AiCredentialResolver.Resolve(_config);
-        if (string.IsNullOrWhiteSpace(apiKey))
-            throw new InvalidOperationException("尚未配置 API Key（内置 Key 未设置，且未勾选使用自定义 Key）。");
         if (isCrashLogContext && !_config.AllowCrashLogReading)
             throw new InvalidOperationException("尚未在设置里打开“允许把日志/崩溃内容发给 AI 分析”开关。");
 
@@ -238,6 +237,11 @@ public class AiAssistantService
         }
 
         var route = ChooseModel(userText, isCrashLogContext, forcedModel);
+        // 多供应商：不同模型可能各自带自己的 BaseUrl/ApiKey（自定义模型表里单独填的），
+        // 所以要先选好这次实际用哪个模型，再按这个模型解析接口信息，不能只解析一次公共的。
+        var (baseUrl, apiKey) = AiCredentialResolver.Resolve(_config, route.ModelId);
+        if (string.IsNullOrWhiteSpace(apiKey))
+            throw new InvalidOperationException("尚未配置 API Key（内置 Key 未设置，且未勾选使用自定义 Key）。");
         var payloadMessages = BuildContextMessages(session);
 
         var rawReply = await CallChatCompletionAsync(baseUrl, apiKey, route.ModelId, payloadMessages, deepThinking, webSearch, ct);
@@ -321,10 +325,10 @@ public class AiAssistantService
     {
         try
         {
-            var (baseUrl, apiKey) = AiCredentialResolver.Resolve(_config);
+            var route = ChooseModel(userText: "", forceComplex: false, forcedModel: null);
+            var (baseUrl, apiKey) = AiCredentialResolver.Resolve(_config, route.ModelId);
             if (string.IsNullOrWhiteSpace(apiKey)) return;
 
-            var route = ChooseModel(userText: "", forceComplex: false, forcedModel: null);
             var messages = new List<(string role, string content)>
             {
                 ("system", SystemPrompt),
@@ -336,6 +340,39 @@ public class AiAssistantService
         catch
         {
             // 预热本来就是"能省则省"的优化，不应该以任何形式打断或影响正常聊天流程。
+        }
+    }
+
+    /// <summary>供设置页"测试模型"按钮用：对指定模型 ID 发一次最小化的对话请求，
+    /// 用来验证这个模型（在当前配置的接口/Key 下）到底能不能正常用，不影响正常聊天会话/历史。
+    /// 返回 (是否成功, 给用户看的结果说明)；失败时的说明复用 CallChatCompletionAsync 里
+    /// 已经写好的那些"人话"错误提示（网络设置/换模型/密钥地址是否正确等），不用重新包装。</summary>
+    public async Task<(bool Ok, string Message)> TestModelAsync(string modelId, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(modelId))
+            return (false, "模型 ID 为空。");
+
+        var (baseUrl, apiKey) = AiCredentialResolver.Resolve(_config, modelId);
+        if (string.IsNullOrWhiteSpace(apiKey))
+            return (false, "尚未配置 API Key（内置 Key 未设置，且未勾选/填写自定义 Key）。");
+
+        try
+        {
+            var messages = new List<(string role, string content)>
+            {
+                ("system", "你现在是一次连通性测试，收到用户消息后只需要回复“ok”两个字，不要输出任何其它内容。"),
+                ("user", "ping")
+            };
+            var reply = await CallChatCompletionAsync(baseUrl, apiKey, modelId, messages,
+                deepThinking: false, webSearch: false, ct: ct);
+
+            var preview = string.IsNullOrWhiteSpace(reply) ? "(空)" : reply.Trim();
+            if (preview.Length > 60) preview = preview.Substring(0, 60) + "…";
+            return (true, $"请求成功，模型有正常回复：{preview}");
+        }
+        catch (Exception ex)
+        {
+            return (false, ex.Message);
         }
     }
 
@@ -459,8 +496,8 @@ public class AiAssistantService
 
         try
         {
-            var (baseUrl, apiKey) = AiCredentialResolver.Resolve(_config);
             var summaryModel = ChooseModel("对话上下文摘要", forceComplex: false, forcedModel: null).ModelId;
+            var (baseUrl, apiKey) = AiCredentialResolver.Resolve(_config, summaryModel);
             var summary = await CallChatCompletionAsync(baseUrl, apiKey, summaryModel, summarizeRequest, ct: ct);
             session.SummaryOfOlderMessages = summary.Trim();
             session.SummarizedUpToIndex = end - 1;
@@ -517,29 +554,36 @@ private async Task<string> CallChatCompletionAsync(
                     if ((status == 400 || status == 404) && LooksLikeModelError(detail))
                     {
                         throw new AiClientRequestException(
-                            $"模型 ID“{model}”被接口拒绝（HTTP {status}）。请打开 AI 设置检查该模型的“模型 ID（请求用）”；" +
+                            $"模型出错了！请检查网络设置，或换个模型（HTTP {status}，模型 ID“{model}”被接口拒绝）。" +
+                            $"也请检查 API 密钥/API 地址是否正确。可以打开 AI 设置核对该模型的“模型 ID（请求用）”——" +
                             $"显示名称不会发送给 API。{AppendProviderDetail(detail)}");
                     }
 
                     if (status == 400)
                     {
                         throw new AiClientRequestException(
-                            $"AI 接口拒绝了请求（HTTP 400）。当前模型 ID：{model}。" +
-                            $"如果你使用自定义 API，请确认模型 ID 与提供商文档完全一致，并检查该模型是否支持当前请求参数。" +
+                            $"模型出错了！请检查网络设置，或换个模型（HTTP 400）。当前模型 ID：{model}。" +
+                            $"也请检查 API 密钥/API 地址是否正确；如果你使用自定义 API，还请确认模型 ID 与提供商文档完全一致、" +
+                            $"该模型是否支持当前请求参数。" +
                             AppendProviderDetail(detail));
                     }
                     if (status == 401)
-                        throw new AiClientRequestException("AI API Key 无效或已失效（HTTP 401）。请到 AI 设置重新填写 API Key。" + AppendProviderDetail(detail));
+                        throw new AiClientRequestException("AI API Key 无效或已失效（HTTP 401）。请检查 API 密钥是否正确，或到 AI 设置重新填写。" + AppendProviderDetail(detail));
                     if (status == 403)
-                        throw new AiClientRequestException("AI 接口拒绝访问（HTTP 403）。请检查 API Key 权限、模型权限或提供商策略。" + AppendProviderDetail(detail));
+                        throw new AiClientRequestException("AI 接口拒绝访问（HTTP 403）。请检查 API 密钥权限、模型权限或提供商策略。" + AppendProviderDetail(detail));
                     if (status == 404)
-                        throw new AiClientRequestException($"AI 接口地址或模型不存在（HTTP 404）。当前请求地址：{url}；模型：{model}。" + AppendProviderDetail(detail));
+                        throw new AiClientRequestException(
+                            $"模型出错了！请检查网络设置，或换个模型（HTTP 404，接口地址或模型不存在）。" +
+                            $"当前请求地址：{url}；模型：{model}。也请检查 API 密钥/API 地址是否正确。" + AppendProviderDetail(detail));
 
                     // 408/429 和 5xx 可能是暂时性问题，可以重试；其它 4xx 都不应重复轰炸接口。
                     if (status >= 400 && status < 500 && status != 408 && status != 429)
-                        throw new AiClientRequestException($"AI 接口调用失败（HTTP {status}）。" + AppendProviderDetail(detail));
+                        throw new AiClientRequestException(
+                            $"AI 接口调用失败（HTTP {status}）。请检查网络设置、换个模型，或检查 API 密钥/API 地址是否正确。" +
+                            AppendProviderDetail(detail));
 
-                    throw new InvalidOperationException($"AI 接口暂时不可用（HTTP {status}）。" + AppendProviderDetail(detail));
+                    throw new InvalidOperationException(
+                        $"AI 接口暂时不可用（HTTP {status}）。请检查网络设置，或稍后重试/换个模型。" + AppendProviderDetail(detail));
                 }
 
                 using var doc = JsonDocument.Parse(respText);
@@ -568,7 +612,8 @@ private async Task<string> CallChatCompletionAsync(
                 lastError = ex;
             }
         }
-        throw new InvalidOperationException($"AI 调用失败（已重试 3 次）：{lastError?.Message}");
+        throw new InvalidOperationException(
+            $"AI 调用失败（已重试 3 次），请检查网络设置，或换个模型：{lastError?.Message}");
     }
 
     private static bool LooksLikeModelError(string detail)

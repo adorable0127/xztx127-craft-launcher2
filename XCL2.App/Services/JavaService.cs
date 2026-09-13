@@ -55,6 +55,30 @@ public class JavaService
     /// 逐条尝试，选第一个跟当前要求兼容的那个——有 preferMajorVersion 时要求版本号精确吻合，
     /// 没有时列表里排最前的可用项直接命中，不需要再为每个版本单独去配置里翻一遍。
     /// </summary>
+    /// <summary>
+    /// 版本兼容判断：多数情况下要求版本号精确吻合，但 Mojang 官方 1.17 系列 version json 里
+    /// javaVersion.majorVersion 写的是 16（当年 16 是刚发布的最新 JDK 特性版）。Java 16 早已
+    /// EOL，Adoptium 等主流发行商都已不再提供下载，强制要求用户装一个找不到官方构建的 Java 16
+    /// 并不现实；实测 Java 17（LTS，长期支持、目前仍在发布）完全能正常运行 1.17，主流第三方
+    /// 启动器也是这么放行的。这里加一条特例：要求 16 时，实际探测到 17 也算匹配。
+    /// 除这一条特例外，其余版本仍要求精确吻合，不做更宽泛的"就近取整"，避免掩盖真正的版本错配。
+    /// </summary>
+    internal static bool IsJavaMajorCompatible(int detectedMajor, int requiredMajor)
+    {
+        if (detectedMajor == requiredMajor) return true;
+        if (requiredMajor == 16 && detectedMajor == 17) return true;
+        return false;
+    }
+
+    /// <summary>
+    /// 自动下载 Java 时实际去下的主版本号：Java 16 是短生命周期的特性版，早已 EOL，
+    /// Adoptium 官方和 BMCLAPI 镜像现在都下不到它了（见 KnownGoodMajorVersions，16 根本
+    /// 不在里面）。要求是 16 时（也就是 1.17）改成下载 17，跟 IsJavaMajorCompatible 放行
+    /// 17 是同一个决定的两面——不然会出现"允许用已装的 17，但没装时非要下一个下不到的 16"
+    /// 这种自相矛盾的情况。
+    /// </summary>
+    internal static int GetDownloadTargetMajorVersion(int requiredMajor) => requiredMajor == 16 ? 17 : requiredMajor;
+
     public string? FindJava(string? configuredPath, int? preferMajorVersion = null, ConfigService? configService = null)
     {
         // 第一优先级：用户在"Java 列表"里维护的、按 Priority 排序的登记项。
@@ -72,7 +96,8 @@ public class JavaService
                 // 有版本要求：优先信任登记时探测到的 MajorVersion(避免每次启动都重新起进程探测)，
                 // 缺失时才现测一次(兼容手动编辑 config.json 漏填版本号的情况)。
                 var detected = entry.MajorVersion ?? TryGetJavaMajorVersionSync(entry.JavawPath);
-                if (detected == preferMajorVersion.Value) return entry.JavawPath;
+                if (detected is int detectedListMajor && IsJavaMajorCompatible(detectedListMajor, preferMajorVersion.Value))
+                    return entry.JavawPath;
             }
         }
 
@@ -135,7 +160,8 @@ public class JavaService
         foreach (var candidate in orderedCandidates)
         {
             var detected = TryGetJavaMajorVersionSync(candidate);
-            if (detected == preferMajorVersion.Value) return candidate;
+            if (detected is int detectedCandidateMajor && IsJavaMajorCompatible(detectedCandidateMajor, preferMajorVersion.Value))
+                return candidate;
         }
 
         // 没有任何候选匹配要求的版本：返回 null，让上层去下载正确版本，

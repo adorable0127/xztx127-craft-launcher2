@@ -1184,7 +1184,7 @@ public partial class QuickStartWizardWindow : OverlayDialogControl
         });
 
         var request = new JavaDownloadRequest(
-            preferMajor ?? 21,
+            JavaService.GetDownloadTargetMajorVersion(preferMajor ?? 21),
             Environment.Is64BitOperatingSystem ? "x64" : "x86",
             JavaInstallMode.Portable);
         return await _javaService.DownloadJavaAsync(request, progress);

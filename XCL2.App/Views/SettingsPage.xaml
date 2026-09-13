@@ -183,10 +183,15 @@
             </StackPanel>
 
             <TextBlock Text="{DynamicResource Str_Ui_Global_Default_Java_Used_When_A_Version_}" Margin="0,0,0,4"/>
-            <ComboBox x:Name="DefaultJavaCombo" Margin="0,0,0,16" Padding="8"
+            <ComboBox x:Name="DefaultJavaCombo" Margin="0,0,0,12" Padding="8"
                       DisplayMemberPath="DisplayText"
                       ToolTip="{DynamicResource Str_Ui_Pick_One_From_The_Java_List_Above_As_The}"/>
 
+            <CheckBox x:Name="HighPerformanceGpuLaunchCheck"
+                      Content="使用高性能独立显卡进行启动"
+                      Margin="0,0,0,4"/>
+            <TextBlock Text="默认开启。启动游戏时优先让 Windows 为 javaw.exe 选择高性能 GPU（独立显卡/外置显卡）；没有可用独显时会自动使用现有显卡。每个版本可以在“版本设置”里单独覆盖。"
+                       FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,16" TextWrapping="Wrap"/>
 
             <TextBlock Text="{DynamicResource Str_Ui_Min_Memory_Mb}" Margin="0,0,0,4"/>
             <TextBox x:Name="MinMemBox" Padding="8" Margin="0,0,0,16"/>
@@ -529,6 +534,13 @@
             <TextBlock Text="（低配设备上如果持续掉帧，启动器会用一次提示建议你关闭这个开关，不会自动关）"
                        FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,-2,0,4" TextWrapping="Wrap"/>
             <CheckBox x:Name="AlwaysOnTopCheck" Content="启动器始终置顶（F3 可临时切换，本次会话有效）"
+                      Margin="0,0,0,8"/>
+            <!-- 窗口级过渡动画（打开淡入/最小化收起/从最小化恢复/最大化⇄还原回弹/关闭淡出）
+                 单独一个开关，跟上面"页面切换动画"是两回事：这个只管窗口本身的开合/状态切换，
+                 关掉之后 UiAnimationHelper.FadeInMove/FadeOutMove/SettleScale 会直接同步
+                 定终值，不播放任何过渡，等同于旧版本"傻快傻快"瞬切的效果，方便低配设备或
+                 不喜欢动效的用户关掉。 -->
+            <CheckBox x:Name="WindowAnimationsCheck" Content="启用窗口过渡动画（打开/最小化/还原/最大化/关闭时的淡入淡出与位移）"
                       Margin="0,0,0,8"/>
 
             <TextBlock Text="鼠标滚轮" FontSize="14" FontWeight="Bold" Margin="0,10,0,4"/>

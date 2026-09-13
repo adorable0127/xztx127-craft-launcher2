@@ -1,7 +1,3 @@
-// MSIXVC（XVD）容器解密密钥。
-// 与 BedrockLauncher.Core 同源（MIT License, Copyright (c) Round-Studio），
-// 密钥取自其已发布的 NuGet 包（BedrockBoot 引用的同一份），
-// 用反射从发布版 DLL 提取，非占位符。
 namespace XCL2.App.BedrockDecode
 {
     internal static class _DEFINE_REF2

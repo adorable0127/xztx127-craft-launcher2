@@ -98,13 +98,25 @@ public class SkinService
 
     /// <summary>
     /// 为需要自定义皮肤的离线账户构造额外的 JVM 参数（-javaagent 挂载 authlib-injector，
-    /// 并指定皮肤服务 API Root）。只有 SkinType=Custom 的离线账户才需要这个；史蒂夫/艾利克斯
-    /// 是原版内置骨架，不需要任何额外参数。调用方应该在启动前调用
-    /// <see cref="EnsureAuthlibInjectorAsync"/> 确保 jar 已存在，再调用这个方法拼参数。
+    /// 并指定皮肤服务 API Root）。史蒂夫/艾利克斯这种内置骨架也统一挂上（见下面 BuildSkinJvmArgs
+    /// 的说明——不只是为了皮肤，也是为了修复离线账户在部分版本里"多人游戏被禁用"的问题）。
+    /// 调用方应该在启动前调用 <see cref="EnsureAuthlibInjectorAsync"/> 确保 jar 已存在，
+    /// 再调用这个方法拼参数。
     /// </summary>
     /// <summary>
     /// 为需要挂载 authlib-injector 的账户构造额外的 JVM 参数：
-    /// - 离线账户且选了自定义皮肤(SkinType=Custom)：用全局默认/用户配置的皮肤源 apiRoot（原有行为，未改动）；
+    /// - 离线账户（不分是否自定义皮肤）：用全局默认/用户配置的皮肤源 apiRoot。
+    ///   之前这里只处理 SkinType=Custom 的账户，理由是"史蒂夫/艾利克斯不需要皮肤补丁"——
+    ///   这个理由本身没错，但漏算了一件事：不挂 authlib-injector 时，离线账户的
+    ///   --accessToken 是假的占位值("0")，Minecraft 客户端在部分版本（实测 1.16.5 复现，
+    ///   1.20.1 不复现）会拿这个假 token 去请求 Mojang/Xbox 的多人游戏资格校验接口，
+    ///   请求失败后客户端直接把"多人游戏"按钮禁用，提示"请检查你的 Microsoft 账户设置"——
+    ///   这不是 XCL2 传的启动参数有问题，是 Minecraft 自己发起的在线校验请求失败了，
+    ///   而且不同版本对"校验失败"这件事的处理不一致（有的版本失败后放行，有的直接禁用）。
+    ///   authlib-injector 会把 Yggdrasil 相关的网络请求（登录/会话/多人游戏资格）都改指向
+    ///   配置的皮肤站 API Root，只要皮肤站给出"这是个正常账户"的合法响应，游戏就不会再去问
+    ///   真正的 Mojang/Xbox 接口，多人游戏资格校验自然就通过了——这也是 PCL2/HMCL 等主流
+    ///   第三方启动器的通行做法：离线账户统一挂 authlib-injector，不只是为了皮肤。
     /// - 认证服务器(AuthServer)账户：用这个账户登录时使用的 AuthServerApiRoot（忽略传入的 apiRoot 参数，
     ///   因为认证服务器账户的皮肤/会话校验必须对应它登录的那个服务器，不能用全局默认源）。
     /// 调用方应该在启动前调用 <see cref="EnsureAuthlibInjectorAsync"/> 确保 jar 已存在，再调用这个方法拼参数。
@@ -123,7 +135,7 @@ public class SkinService
             };
         }
 
-        if (account.Type != AccountType.Offline || account.SkinType != OfflineSkinType.Custom)
+        if (account.Type != AccountType.Offline)
             return new List<string>();
 
         return new List<string>

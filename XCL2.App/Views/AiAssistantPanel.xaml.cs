@@ -303,6 +303,37 @@ public partial class AiAssistantPanel : UserControl
                 break;
         }
         UpdateModelSelectionState();
+        UpdateSpecialTermsNotice();
+    }
+
+    /// <summary>当前实际会用到的模型（不是全部三个候选，而是这个路由模式下真的会调用的那些）
+    /// 里，只要有一个带独立使用条款，就在聊天页顶部提示一下，避免用户没注意到设置页里的提示。</summary>
+    private void UpdateSpecialTermsNotice()
+    {
+        var activeIds = _config.RoutingMode switch
+        {
+            AiRoutingMode.Normal => new[] { _config.NormalModelId },
+            AiRoutingMode.Expert => new[] { _config.ExpertModelId },
+            AiRoutingMode.SpecificModel => new[] { _config.SelectedModel },
+            _ => new[] { _config.NormalModelId, _config.ExpertModelId }
+        };
+
+        var notices = activeIds
+            .Where(id => !string.IsNullOrWhiteSpace(id))
+            .SelectMany(id => new[] { AiModelIds.GetSpecialTermsNotice(id), AiModelIds.GetKnownIssueNotice(id) })
+            .Where(n => !string.IsNullOrWhiteSpace(n))
+            .Distinct()
+            .ToList();
+
+        if (notices.Count == 0)
+        {
+            ChatSpecialTermsNoticeText.Visibility = Visibility.Collapsed;
+            ChatSpecialTermsNoticeText.Text = "";
+            return;
+        }
+
+        ChatSpecialTermsNoticeText.Text = string.Join("\n\n", notices);
+        ChatSpecialTermsNoticeText.Visibility = Visibility.Visible;
     }
 
     private void UpdateConfigHint()
@@ -325,8 +356,41 @@ public partial class AiAssistantPanel : UserControl
             return;
         }
 
-        InputTextBox.Text = "";
+        // 当前模式下会实际用到的模型（普通/专家/指定模型三种是确定的；自动模式要按问题内容
+        // 判断走哪个，这里不重复那套打分逻辑，直接跳过拦截——自动模式默认的普通/专家模型
+        // 本身就不会是已知有问题的模型）如果是已知有问题（供应商结构性拒绝/常限流）的模型，
+        // 弹窗拦截一次，让用户自己决定要不要照发；不是静默失败让用户自己去猜为什么又报错了。
+        var activeModelId = _config.RoutingMode switch
+        {
+            AiRoutingMode.Normal => _config.NormalModelId,
+            AiRoutingMode.Expert => _config.ExpertModelId,
+            AiRoutingMode.SpecificModel => _config.SelectedModel,
+            _ => null
+        };
+        var knownIssue = AiModelIds.GetKnownIssueNotice(activeModelId);
+        if (!string.IsNullOrWhiteSpace(knownIssue))
+        {
+            var displayName = AiModelIds.GetDisplayName(_config, activeModelId);
+            var proceed = MessageBoxDialog.ShowConfirm(
+                $"当前选择的模型“{displayName}”目前已知有问题：\n\n{knownIssue}\n\n大概率会请求失败，仍要继续发送吗？建议先去 AI 设置换一个模型。",
+                "模型暂不可用");
+            if (!proceed) return;
+        }
+
+        ClearInputAndResetUndo();
         await GenerateAsync(text, isCrashLogContext);
+    }
+
+    /// <summary>清空待发送框，并把它的 Ctrl+Z 撤销历史一起清掉：撤销只应该能撤回"这一次还没发出去
+    /// 的输入"（比如中文输入法一次打出的一个字算一次输入单元），不应该在发送之后还能用 Ctrl+Z
+    /// 把上一条已经发出去的消息内容"复活"回来——那样会跟"撤回"按钮的语义混在一起，容易误操作。
+    /// WPF TextBox 没有直接的"清空撤销栈"方法，把 UndoLimit 先设成 0 再改回默认值是官方认可的
+    /// 清空撤销栈手法（设成 0 会立即丢弃当前撤销栈，改回正常值后新的输入重新开始记录）。</summary>
+    private void ClearInputAndResetUndo()
+    {
+        InputTextBox.Text = "";
+        InputTextBox.UndoLimit = 0;
+        InputTextBox.UndoLimit = int.MaxValue;
     }
 
     private async Task GenerateAsync(string text, bool isCrashLogContext)
@@ -491,6 +555,42 @@ public partial class AiAssistantPanel : UserControl
         if (_sending || sender is not Button { Tag: BubbleVm vm } || vm.OriginalMessage == null || _service == null) return;
         int idx = _session.Messages.IndexOf(vm.OriginalMessage);
         if (idx < 0) return;
+
+        // 需求变更：撤回不再是"直接从对话里删掉这条消息"，而是把这条消息的原文放回待发送框，
+        // 让用户可以改一改再重新发送。待发送框如果已经有用户还没发出去的内容，不能悄悄覆盖掉，
+        // 弹窗问清楚要怎么处理（替换 / 替换并复制 / 不替换并复制 / 取消）。
+        string recalledText = vm.OriginalMessage.Content;
+        string existingInput = InputTextBox.Text;
+
+        if (existingInput.Length > 0)
+        {
+            var dialog = new InputConflictChoiceDialog();
+            if (OverlayDialogService.ShowModal(dialog) != true || dialog.Choice == InputConflictChoice.Cancel)
+                return;
+
+            switch (dialog.Choice)
+            {
+                case InputConflictChoice.Replace:
+                    InputTextBox.Text = recalledText;
+                    break;
+                case InputConflictChoice.ReplaceAndCopy:
+                    Clipboard.SetText(existingInput);
+                    InputTextBox.Text = recalledText;
+                    ToastService.ShowSuccess("原内容已复制到剪贴板");
+                    break;
+                case InputConflictChoice.KeepAndCopy:
+                    Clipboard.SetText(recalledText);
+                    ToastService.ShowSuccess("撤回内容已复制到剪贴板");
+                    return; // 不替换、不移除消息，用户只是想要一份撤回内容的副本。
+            }
+        }
+        else
+        {
+            InputTextBox.Text = recalledText;
+        }
+
+        InputTextBox.CaretIndex = InputTextBox.Text.Length;
+        InputTextBox.Focus();
 
         int count = 1;
         if (idx + 1 < _session.Messages.Count && _session.Messages[idx + 1].Role == AiMessageRole.Assistant)

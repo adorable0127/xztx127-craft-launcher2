@@ -4,15 +4,51 @@ using System.Linq;
 
 namespace XCL2.App.Models;
 
-/// <summary>AI 模型条目。Id 是实际发给 OpenAI 兼容接口的 model；DisplayName 只用于界面展示。</summary>
+/// <summary>AI 模型条目。Id 是实际发给 OpenAI 兼容接口的 model；DisplayName 只用于界面展示。
+/// ProviderBaseUrl/ProviderApiKey 用于"多供应商"：留空表示沿用上方公共的 Base URL / API Key
+/// （内置模型固定沿用内置接口；自定义模型表里的条目沿用 config.BaseUrl/ApiKey）。填了的话，
+/// 这一条模型请求时改用它自己的接口地址和 Key —— 这样用户可以在同一个模型表里，同时混用
+/// 多个不同供应商（不同 Base URL + 不同 API Key）的模型，不需要在设置里反复切换。</summary>
 public class AiModelDefinition
 {
     public string Id { get; set; } = "";
     public string DisplayName { get; set; } = "";
+    public string? ProviderBaseUrl { get; set; }
+    public string? ProviderApiKey { get; set; }
+
+    /// <summary>该模型所属分类：普通（轻量、响应快，适合日常问答/功能入口讲解）或
+    /// 专家（能力更强，适合复杂问题/日志排障/复杂编程），仅用于界面分组展示。</summary>
+    public AiModelTier Tier { get; set; } = AiModelTier.Normal;
+
+    public bool HasOwnProvider =>
+        !string.IsNullOrWhiteSpace(ProviderBaseUrl) && !string.IsNullOrWhiteSpace(ProviderApiKey);
+
+    /// <summary>仅供界面展示："独立供应商：https://..."；没有单独供应商时为空字符串
+    /// （而不是 null），这样直接绑定到 TextBlock.Text 也不会报绑定错误，空文本自然不占视觉重量。</summary>
+    public string ProviderSummary => HasOwnProvider ? $"独立供应商：{ProviderBaseUrl}" : "";
+
+    /// <summary>Tier 的中文展示文本，供界面直接绑定，避免枚举 ToString() 显示英文。</summary>
+    public string TierLabel => Tier == AiModelTier.Expert ? "专家" : "普通";
 
     public override string ToString() => string.IsNullOrWhiteSpace(DisplayName) ? Id : DisplayName;
 
-    public AiModelDefinition Clone() => new() { Id = Id, DisplayName = DisplayName };
+    public AiModelDefinition Clone() => new()
+    {
+        Id = Id,
+        DisplayName = DisplayName,
+        ProviderBaseUrl = ProviderBaseUrl,
+        ProviderApiKey = ProviderApiKey,
+        Tier = Tier
+    };
+}
+
+/// <summary>模型分类：普通档（轻量/快）还是专家档（更强/更慢）。只是分组标签，
+/// 跟 AiRoutingMode 里的 Normal/Expert 路由档位是两回事——路由档位决定"这次对话用哪个模型"，
+/// 这个 Tier 只决定"这个模型该出现在设置页的普通分组还是专家分组里"。</summary>
+public enum AiModelTier
+{
+    Normal = 0,
+    Expert = 1
 }
 
 /// <summary>
@@ -27,47 +63,146 @@ public enum AiRoutingMode
     SpecificModel = 3
 }
 
-/// <summary>内置 OpenCode Zen 接口目前提供的预设模型。</summary>
+/// <summary>内置接口（OpenRouter）目前提供的预设免费模型，按"普通/专家"两档分组。
+/// 模型 ID 使用 OpenRouter 上的真实 model 值（含大小写/连字符），不是随手拼的；OpenRouter 上的
+/// 免费模型会不定期调整（下线、改名、限流），如果某个内置模型出现 400/404，通常就是供应商那边
+/// 把这个免费端点调整了，去 https://openrouter.ai/models?max_price=0 核对一下最新的模型 ID 即可，
+/// 不代表启动器这边配置有问题。
+/// 注意：Embedding / Rerank / Content-Safety 这几类模型不是对话模型（不能走 /chat/completions
+/// 拿到正常回复），所以不放进下面的普通/专家模型表——即使 OpenRouter 免费列表里有它们。</summary>
 public static class AiModelIds
 {
-    public const string Hy3 = "hy3-free";
-    public const string MimoV25 = "mimo-v2.5-free";
-    public const string MuseSpark12 = "muse-spark-1.2-free";
-    public const string Nemotron3Ultra = "nemotron-3-ultra-free";
-    public const string Nemotron35Lightning = "nemotron-3.5-lightning-free";
+    // 普通档：轻量、响应快，适合日常问答、功能入口讲解这类简单问题。
+    public const string NemotronLightning = "nvidia/nemotron-3.5-lightning:free";
+    public const string Lfm25 = "liquid/lfm-2.5-2.6b:free";
+    public const string Gemma4_26B = "google/gemma-4-26b-a4b-it:free";
+    public const string NexN25Mini = "nex-agi/nex-n2.5-mini:free";
+    public const string LingFlashSante = "inclusionai/ling-3.0-flash-sante:free";
+    public const string LingFlashFin = "inclusionai/ling-3.0-flash-fin:free";
+
+    // 专家档：参数规模更大/推理更强，适合复杂编程、日志与崩溃分析等排障场景。
+    public const string Nemotron3Ultra = "nvidia/nemotron-3-ultra-550b-a55b:free";
+    public const string Nemotron3Super = "nvidia/nemotron-3-super-120b-a12b:free";
+    public const string NemotronNanoOmni = "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free";
+    public const string Gemma4_31B = "google/gemma-4-31b-it:free";
+    public const string InklingSmall = "thinkingmachines/inkling-small:free";
+    public const string Inkling = "thinkingmachines/inkling:free";
+    public const string LagunaS21 = "poolside/laguna-s-2.1:free";
+    public const string NexN25Pro = "nex-agi/nex-n2.5-pro:free";
+    public const string NorthMiniCode = "cohere/north-mini-code:free";
+
+    // 以下几个是 Embedding / Rerank / Content-Safety 模型，不能走 /chat/completions 对话，
+    // 不出现在 BuiltIn 模型表里；只在这里留个常量方便代码里按需引用/判断。
+    public const string NemotronContentSafety = "nvidia/nemotron-3.5-content-safety:free";
+    public const string NemotronEmbed1B = "nvidia/nemotron-3-embed-1b:free";
+    public const string LlamaNemotronEmbedVl1BV2 = "nvidia/llama-nemotron-embed-vl-1b-v2:free";
+    public const string LlamaNemotronRerankVl1BV2 = "nvidia/llama-nemotron-rerank-vl-1b-v2:free";
+    public const string LfmEmbedding350M = "liquid/lfm-2.5-embedding-350m:free";
+
+    // 保留旧字段名兼容旧配置的反序列化引用位置（值指向新的普通/专家默认模型）。
+    public const string Nemotron35Lightning = NemotronLightning;
+    public const string MimoV25 = Nemotron3Ultra;
 
     public static readonly IReadOnlyList<AiModelDefinition> BuiltIn = new List<AiModelDefinition>
     {
-        new() { Id = Hy3, DisplayName = "Hy3 Free" },
-        new() { Id = MimoV25, DisplayName = "MiMo V2.5 Free" },
-        new() { Id = MuseSpark12, DisplayName = "Muse Spark 1.2 Free" },
-        new() { Id = Nemotron3Ultra, DisplayName = "Nemotron 3 Ultra Free" },
-        new() { Id = Nemotron35Lightning, DisplayName = "Nemotron 3.5 Lightning Free" }
+        new() { Id = NemotronLightning, DisplayName = "Nemotron 3.5 Lightning（普通·免费）", Tier = AiModelTier.Normal },
+        new() { Id = Lfm25, DisplayName = "LFM2.5-2.6B（普通·免费）", Tier = AiModelTier.Normal },
+        new() { Id = Gemma4_26B, DisplayName = "Gemma 4 26B A4B（普通·免费·常限流）", Tier = AiModelTier.Normal },
+        new() { Id = NexN25Mini, DisplayName = "Nex-N2.5-Mini（普通·免费）", Tier = AiModelTier.Normal },
+        new() { Id = LingFlashSante, DisplayName = "Ling 3.0 Flash Sante（普通·医疗领域·免费）", Tier = AiModelTier.Normal },
+        new() { Id = LingFlashFin, DisplayName = "Ling 3.0 Flash Fin（普通·金融领域·免费）", Tier = AiModelTier.Normal },
+
+        new() { Id = Nemotron3Ultra, DisplayName = "Nemotron 3 Ultra（专家·免费）", Tier = AiModelTier.Expert },
+        new() { Id = Nemotron3Super, DisplayName = "Nemotron 3 Super（专家·免费）", Tier = AiModelTier.Expert },
+        new() { Id = NemotronNanoOmni, DisplayName = "Nemotron 3 Nano Omni（专家·多模态推理·免费）", Tier = AiModelTier.Expert },
+        new() { Id = Gemma4_31B, DisplayName = "Gemma 4 31B（专家·免费）", Tier = AiModelTier.Expert },
+        new() { Id = InklingSmall, DisplayName = "Inkling Small（专家·免费·暂不可用）", Tier = AiModelTier.Expert },
+        new() { Id = Inkling, DisplayName = "Inkling（专家·免费·暂不可用）", Tier = AiModelTier.Expert },
+        new() { Id = LagunaS21, DisplayName = "Laguna S 2.1（专家·免费）", Tier = AiModelTier.Expert },
+        new() { Id = NexN25Pro, DisplayName = "Nex-N2.5-Pro（专家·免费）", Tier = AiModelTier.Expert },
+        new() { Id = NorthMiniCode, DisplayName = "North Mini Code（专家·免费）", Tier = AiModelTier.Expert }
     };
+
+    /// <summary>实测发现某些内置模型目前有问题（供应商侧限制/限流），不是配置错误，用户没必要
+    /// 反复排查。Key 是模型 ID，Value 是给用户看的简要说明。跟 SpecialTermsNotices 不是一回事：
+    /// 那个是"能用，但有条款要注意"；这个是"选了大概率会请求失败"。
+    /// - Inkling / Inkling Small：供应商把这个免费端点限定为只给 Agent 类工具（编程/生产力应用）
+    ///   调用，普通对话请求会被直接拒绝（HTTP 403），是结构性限制，不是网络或 Key 的问题。
+    /// - Gemma 4 26B A4B：近期实测经常被限流（HTTP 429），可能是免费额度紧张，不代表模型下线，
+    ///   换个时间或换个模型通常就好了。
+    /// 供应商恢复正常后，把对应条目从这个字典删掉、DisplayName 里的"暂不可用/常限流"去掉即可。</summary>
+    public static readonly IReadOnlyDictionary<string, string> KnownIssueNotices =
+        new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            [InklingSmall] = "供应商限制：此免费端点只允许 Agent 类工具（编程/生产力应用）调用，普通对话请求会被直接拒绝（HTTP 403），暂不建议选用，建议换成 Nemotron 3 Ultra 等其它专家模型。",
+            [Inkling] = "供应商限制：此免费端点只允许 Agent 类工具（编程/生产力应用）调用，普通对话请求会被直接拒绝（HTTP 403），暂不建议选用，建议换成 Nemotron 3 Ultra 等其它专家模型。",
+            [Gemma4_26B] = "实测近期经常被供应商限流（HTTP 429），可能是免费额度紧张，不代表模型已下线；如果频繁失败，建议先换成 Nemotron 3.5 Lightning 等其它普通模型。",
+            [Gemma4_31B] = "实测近期经常请求失败/被供应商限流，暂不建议选用，建议换成 Nemotron 3 Ultra 等其它专家模型。"
+        };
+
+    public static bool HasKnownIssue(string? modelId) =>
+        !string.IsNullOrWhiteSpace(modelId) && KnownIssueNotices.ContainsKey(modelId.Trim());
+
+    public static string? GetKnownIssueNotice(string? modelId)
+    {
+        if (string.IsNullOrWhiteSpace(modelId)) return null;
+        return KnownIssueNotices.TryGetValue(modelId.Trim(), out var notice) ? notice : null;
+    }
+
+    /// <summary>部分厂商对自己的免费端点有独立的使用条款/数据处理说明（不同于 OpenRouter 通用条款），
+    /// 选中这些模型时要在界面上提示用户。Key 是模型 ID，Value 是给用户看的简要提示文案。</summary>
+    public static readonly IReadOnlyDictionary<string, string> SpecialTermsNotices =
+        new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            [InklingSmall] =
+                "Thinking Machines 提示：此免费端点仅供 Agent 类工具使用；请勿上传任何机密信息或个人隐私内容（如人脸照片/声音）。" +
+                "你的使用记录（含提示词与输出）会被用于改进 Thinking Machines 的模型与服务，使用即代表同意其免费研究 API 条款。",
+            [Inkling] =
+                "Thinking Machines 提示：此免费端点仅供 Agent 类工具使用；请勿上传任何机密信息或个人隐私内容（如人脸照片/声音）。" +
+                "你的使用记录（含提示词与输出）会被用于改进 Thinking Machines 的模型与服务，使用即代表同意其免费研究 API 条款。",
+            [NemotronContentSafety] =
+                "NVIDIA 提示：请勿上传任何机密信息；如上传图片，NVIDIA 及其服务商可能将其用于提供本演示服务，" +
+                "使用记录会被记录并可能用于改进 NVIDIA 产品与服务，使用即代表同意 NVIDIA API 试用条款。",
+            [Nemotron3Ultra] =
+                "NVIDIA 提示：请勿上传任何机密信息；如上传图片，NVIDIA 及其服务商可能将其用于提供本演示服务，" +
+                "使用记录会被记录并可能用于改进 NVIDIA 产品与服务，使用即代表同意 NVIDIA API 试用条款。",
+            [Nemotron3Super] =
+                "NVIDIA 提示：请勿上传任何机密信息；如上传图片，NVIDIA 及其服务商可能将其用于提供本演示服务，" +
+                "使用记录会被记录并可能用于改进 NVIDIA 产品与服务，使用即代表同意 NVIDIA API 试用条款。",
+            [NemotronEmbed1B] =
+                "NVIDIA 提示：请勿上传任何机密信息；使用记录会被记录并可能用于改进 NVIDIA 产品与服务，使用即代表同意 NVIDIA API 试用条款。",
+            [LlamaNemotronEmbedVl1BV2] =
+                "NVIDIA 提示：请勿上传任何机密信息；如上传图片，NVIDIA 及其服务商可能将其用于提供本演示服务，使用即代表同意 NVIDIA API 试用条款。",
+            [LlamaNemotronRerankVl1BV2] =
+                "NVIDIA 提示：请勿上传任何机密信息；如上传图片，NVIDIA 及其服务商可能将其用于提供本演示服务，使用即代表同意 NVIDIA API 试用条款。",
+            [LfmEmbedding350M] =
+                "Liquid AI 提示：请勿上传任何机密信息。你成功的请求与生成的向量可能被 Liquid AI 保留并用于训练其模型。"
+        };
+
+    /// <summary>某个模型是否有需要额外提示用户的独立使用条款。</summary>
+    public static bool HasSpecialTerms(string? modelId) =>
+        !string.IsNullOrWhiteSpace(modelId) && SpecialTermsNotices.ContainsKey(modelId.Trim());
+
+    /// <summary>取某个模型的独立条款提示文案；没有则返回 null。</summary>
+    public static string? GetSpecialTermsNotice(string? modelId)
+    {
+        if (string.IsNullOrWhiteSpace(modelId)) return null;
+        return SpecialTermsNotices.TryGetValue(modelId.Trim(), out var notice) ? notice : null;
+    }
 
     // 保留旧代码兼容入口。
     public static readonly string[] Available = BuiltIn.Select(m => m.Id).ToArray();
 
-    /// <summary>当前默认 API key 下实际可用的模型。原因：供应商侧的 API 问题，Hy3 Free 和
-    /// Muse Spark 1.2 Free 暂时无法访问，只有这 3 个稳定可用。这个限制只影响"未使用自定义
-    /// API key"的场景；自定义 API key 的模型表不受影响。恢复可用后，把对应模型 ID 加回本列表即可。</summary>
-    public static readonly IReadOnlyList<string> DefaultAvailable = new[]
-    {
-        MimoV25, Nemotron3Ultra, Nemotron35Lightning
-    };
-
+    /// <summary>内置模型目前都视为可用；不再维护"个别模型暂时不可用"的白名单——OpenRouter
+    /// 侧模型下线/限流时直接看请求报错即可，不需要客户端提前猜哪些能用。</summary>
     public static bool IsAvailableByDefault(string? modelId) =>
         !string.IsNullOrWhiteSpace(modelId) &&
-        DefaultAvailable.Any(id => string.Equals(id, modelId.Trim(), StringComparison.OrdinalIgnoreCase));
-
-    /// <summary>因供应商 API 问题暂不可用的模型被选中时，展示给用户的提示原话（注意措辞，勿改）。</summary>
-    public const string UnavailableModelMessage =
-        "当前因模型提供商的 API 问题，这些模型暂时无法访问，请谅解，如果可以使用会第一时间通知您";
+        BuiltIn.Any(m => string.Equals(m.Id, modelId.Trim(), StringComparison.OrdinalIgnoreCase));
 
     public static List<AiModelDefinition> GetCatalog(AiAssistantConfig config)
     {
         if (!config.UseCustomApiKey)
-            return BuiltIn.Where(m => IsAvailableByDefault(m.Id)).Select(m => m.Clone()).ToList();
+            return BuiltIn.Select(m => m.Clone()).ToList();
 
         return (config.CustomModels ?? new List<AiModelDefinition>())
             .Where(m => m != null && !string.IsNullOrWhiteSpace(m.Id))
@@ -79,7 +214,10 @@ public static class AiModelIds
                 return new AiModelDefinition
                 {
                     Id = id,
-                    DisplayName = string.IsNullOrWhiteSpace(item.DisplayName) ? id : item.DisplayName.Trim()
+                    DisplayName = string.IsNullOrWhiteSpace(item.DisplayName) ? id : item.DisplayName.Trim(),
+                    ProviderBaseUrl = string.IsNullOrWhiteSpace(item.ProviderBaseUrl) ? null : item.ProviderBaseUrl.Trim(),
+                    ProviderApiKey = item.ProviderApiKey,
+                    Tier = item.Tier
                 };
             })
             .ToList();
@@ -96,22 +234,29 @@ public static class AiModelIds
             string.Equals(m.Id, modelId, StringComparison.OrdinalIgnoreCase));
         return builtIn?.DisplayName ?? modelId;
     }
+
+    /// <summary>在当前生效的模型表（内置或自定义）里查找一个模型的定义，主要用于拿它的
+    /// ProviderBaseUrl/ProviderApiKey 覆盖值（多供应商）。找不到时返回 null，调用方应回退到
+    /// config 的公共 BaseUrl/ApiKey（或内置默认接口）。</summary>
+    public static AiModelDefinition? FindInCatalog(AiAssistantConfig config, string? modelId)
+    {
+        if (string.IsNullOrWhiteSpace(modelId)) return null;
+        return GetCatalog(config).FirstOrDefault(m =>
+            string.Equals(m.Id, modelId.Trim(), StringComparison.OrdinalIgnoreCase));
+    }
 }
 
 /// <summary>AI 助手全局配置，持久化在 AppConfig.AiAssistant。</summary>
 public class AiAssistantConfig
 {
     public bool Enabled { get; set; } = true;
-    public string BaseUrl { get; set; } = "https://opencode.ai/zen/v1";
+    public string BaseUrl { get; set; } = "https://openrouter.ai/api/v1";
     public string ApiKey { get; set; } = "";
     public bool UseCustomApiKey { get; set; } = false;
 
-    /// <summary>默认路由模式：自动 / 普通 / 专家 / 指定模型。默认改成 SpecificModel（"指定模型·
-    /// 始终使用手动模型"）——实测目前接口下只有 MiMo V2.5 Free 和 Nemotron 3 Ultra Free
-    /// 这两个模型稳定可用，其余预设模型经常请求失败，与其让新用户第一次用就撞上路由到
-    /// 不可用模型报错，不如默认直接锁定手动模式，普通/专家档和"指定模型"默认值都固定指向
-    /// 这两个目前验证可用的模型（见下面三个字段）。</summary>
-    public AiRoutingMode RoutingMode { get; set; } = AiRoutingMode.SpecificModel;
+    /// <summary>默认路由模式：自动 / 普通 / 专家 / 指定模型。默认 Auto——普通问题走轻量模型、
+    /// 复杂/排障问题走专家模型，不需要用户手动选。</summary>
+    public AiRoutingMode RoutingMode { get; set; } = AiRoutingMode.Auto;
 
     /// <summary>
     /// 旧版兼容字段。新代码以 RoutingMode 为准；保存时同步成 RoutingMode==Auto。
@@ -119,19 +264,20 @@ public class AiAssistantConfig
     /// </summary>
     public bool AutoModelRouting { get; set; } = true;
 
-    /// <summary>"指定模型"模式下实际使用的模型 ID。默认 Nemotron 3 Ultra Free（见 RoutingMode 注释：
-    /// 实测目前只有这个和 MiMo V2.5 Free 稳定可用）。</summary>
-    public string SelectedModel { get; set; } = AiModelIds.Nemotron3Ultra;
+    /// <summary>"指定模型"模式下实际使用的模型 ID。默认 Nemotron 3.5 Lightning（普通档）。</summary>
+    public string SelectedModel { get; set; } = AiModelIds.NemotronLightning;
 
-    /// <summary>普通档默认模型：功能入口、设置位置、常规使用说明等。默认 MiMo V2.5 Free。</summary>
-    public string NormalModelId { get; set; } = AiModelIds.MimoV25;
+    /// <summary>普通档默认模型：功能入口、设置位置、常规使用说明等。默认 Nemotron 3.5 Lightning。</summary>
+    public string NormalModelId { get; set; } = AiModelIds.NemotronLightning;
 
-    /// <summary>专家档默认模型：日志、崩溃、注入、堆栈、复杂故障排查等。默认 Nemotron 3 Ultra Free。</summary>
+    /// <summary>专家档默认模型：日志、崩溃、注入、堆栈、复杂故障排查等。默认 Nemotron 3 Ultra。</summary>
     public string ExpertModelId { get; set; } = AiModelIds.Nemotron3Ultra;
 
     /// <summary>
     /// 自定义 API 的模型表。使用自定义 API 时不会猜供应商有哪些模型，必须由用户自己填写
     /// Model ID + 显示名称，面板/普通档/专家档的模型选择都只从这里取。
+    /// 每个条目还可以单独填 ProviderBaseUrl/ProviderApiKey（多供应商）：留空则沿用下面这一份
+    /// 公共 BaseUrl/ApiKey；填了就用自己的，这样可以在同一张表里混用多个不同供应商的模型。
     /// </summary>
     public List<AiModelDefinition> CustomModels { get; set; } = new();
 

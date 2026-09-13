@@ -42,6 +42,9 @@ public class LauncherService
         public int WindowWidth { get; set; } = 854;
         public int WindowHeight { get; set; } = 480;
 
+        /// <summary>是否为本次 javaw.exe 启动请求 Windows 的高性能 GPU。默认由调用方按“实例 > 总体”解析后传入。</summary>
+        public bool UseHighPerformanceGpu { get; set; } = true;
+
         /// <summary>是否额外弹出一个独立 CMD 窗口，实时镜像游戏控制台输出，方便在命令行里直接查看日志。</summary>
         public bool ShowConsoleWindow { get; set; } = false;
 
@@ -466,6 +469,11 @@ public class LauncherService
         };
         foreach (var a in args) psi.ArgumentList.Add(a);
 
+        // GPU 首选项必须在 javaw.exe 创建之前设置。Windows 图形设置按可执行文件路径保存
+        // GpuPreference；同时给子进程注入 SHIM_MCCOMPAT，兼容一部分 NVIDIA Optimus 机器。
+        // 任何注册表/驱动兼容性异常都只记录日志，不得阻止 Minecraft 正常启动。
+        HighPerformanceGpuService.ApplyForLaunch(psi, opts.JavaPath, opts.UseHighPerformanceGpu);
+
         var process = new Process { StartInfo = psi, EnableRaisingEvents = true };
         process.Start();
 
@@ -491,6 +499,10 @@ public class LauncherService
         // 双击运行时中文注释/路径不会因为系统默认 GBK 代码页而乱码。
         sb.AppendLine("chcp 65001 >nul");
         sb.AppendLine($"cd /d \"{opts.EffectiveGameDir}\"");
+        if (opts.UseHighPerformanceGpu)
+            sb.AppendLine("set \"SHIM_MCCOMPAT=0x800000001\"");
+        else
+            sb.AppendLine("set \"SHIM_MCCOMPAT=\"");
         sb.Append('"').Append(opts.JavaPath).Append('"');
         foreach (var a in args)
         {
@@ -1130,6 +1142,12 @@ public class LauncherService
         var gameArgsFromJson = new List<string>();
         if (parent?.Arguments?.Game != null) gameArgsFromJson.AddRange(ParseArgumentEntries(parent.Arguments.Game, currentFeatures));
         if (detail.Arguments?.Game != null) gameArgsFromJson.AddRange(ParseArgumentEntries(detail.Arguments.Game, currentFeatures));
+
+        // 双保险：上面 ParseArgumentEntries 已经按 features.is_demo_user 正确过滤了 --demo，
+        // 理论上不会再混进来；这里再显式剔除一次，防止极端情况下（比如某个 version json
+        // 用了未来才会出现的、目前还没识别的规则写法）漏判，导致离线/自定义账户被强制进入
+        // Minecraft 的试玩模式。
+        gameArgsFromJson.RemoveAll(a => string.Equals(a, "--demo", StringComparison.OrdinalIgnoreCase));
 
         // 已经手写过的这些键（连同各自的值）不再从 json 里重复追加，避免同一个参数出现两次。
         var alreadyHandledKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase)

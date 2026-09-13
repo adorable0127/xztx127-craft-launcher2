@@ -4,20 +4,6 @@ using XCL2.App.Services;
 
 namespace XCL2.App.BedrockDecode;
 
-/// <summary>
-/// 基岩版 MSIXVC/XVD（GDK 通道安装包）检测与解压入口。
-///
-/// 1.26.x 起微软官方把基岩版 Windows 客户端切到 GDK 通道，微软 CDN 给的全是
-/// .msixvc（XVD 容器，Xbox/Game Pass 云安装格式，不是 zip）。本类用移植自
-/// BedrockLauncher.Core（MIT License，BedrockBoot 同款，见本目录各文件头注释）
-/// 的解码器把这种格式解开：
-///   1. 魔数识别：XVD 头固定偏移 0x200 处是 8 字节 ASCII "msft-xvd"；
-///   2. 完整解析校验（Parse）确认容器结构合法，用于下载完成后的完整性验证；
-///   3. 用内置 CIK 密钥（正式版 rel / 预览版 pre）做 XTS-AES 解密并逐段落盘。
-///
-/// 保留 BedrockBoot 同款能力的同时不引入任何外部依赖：解码器源码直接内置于
-/// Services/BedrockDecode/，目标框架仍是 net8.0-windows，用户运行环境要求不变。
-/// </summary>
 public static class GdkPackageExtractor
 {
     /// <summary>XVD 头魔数：8 字节 ASCII "msft-xvd"，位于文件偏移 0x200（签名区之后）。</summary>
@@ -85,7 +71,7 @@ public static class GdkPackageExtractor
         return false;
     }
 
-    /// <summary>按渠道选解密密钥：正式版 rel，预览版 pre（与 BedrockLauncher.Core 一致）。</summary>
+    
     public static byte[] GetCikKeyBytes(BedrockClientDownloadService.BedrockClientChannel channel)
         => channel == BedrockClientDownloadService.BedrockClientChannel.Preview
             ? _DEFINE_REF2.pre

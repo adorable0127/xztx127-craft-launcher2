@@ -35,6 +35,15 @@
                 <TextBlock Text="勾选后，即使这个 Java 跟版本自动匹配的主版本号不一致，启动时也不会再弹出确认/强制切换的提示，直接使用你在上面选定的 Java（仅在选择了具体 Java 时生效）。"
                            FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,8" TextWrapping="Wrap"/>
 
+                <TextBlock Text="高性能独立显卡（覆盖总体设置）" FontSize="12" FontWeight="Bold" Margin="0,4,0,4"/>
+                <ComboBox x:Name="InstanceHighPerformanceGpuComboDlg" Width="280" HorizontalAlignment="Left" Padding="6">
+                    <ComboBoxItem Content="跟随所有" Tag="Follow"/>
+                    <ComboBoxItem Content="使用高性能独立显卡启动" Tag="Enabled"/>
+                    <ComboBoxItem Content="不使用（交给 Windows 决定）" Tag="Disabled"/>
+                </ComboBox>
+                <TextBlock Text="没有为这个版本单独设置时，默认就是“跟随所有”，使用总体设置中的开关；单独选择后只覆盖当前版本。"
+                           FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,4,0,8" TextWrapping="Wrap"/>
+
                 <CheckBox x:Name="VersionIsolationOverrideCheckDlg" Content="{DynamicResource Str_Ui_Turn_On_Version_Isolation_Just_For_This_}"
                           Margin="0,0,0,4"/>
                 <TextBlock Text="{DynamicResource Str_Ui_Leave_Unchecked_To_Follow_The_Global_Def}" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,8"/>
@@ -54,6 +63,16 @@
                 <TextBox x:Name="InstanceCustomJvmArgsBoxDlg" Height="58" Padding="6" TextWrapping="Wrap" AcceptsReturn="True"/>
                 <TextBlock Text="留空表示跟随全局设置；实例设置优先级高于全局设置。" FontSize="11"
                            Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,4,0,8" TextWrapping="Wrap"/>
+
+                <TextBlock Text="内存优化（覆盖全局）" FontSize="12" FontWeight="Bold" Margin="0,4,0,4"/>
+                <ComboBox x:Name="InstanceMemOptComboDlg" Width="260" HorizontalAlignment="Left" Padding="6">
+                    <ComboBoxItem Content="跟随全局设置" Tag="Follow"/>
+                    <ComboBoxItem Content="启用 — 游戏启动前进行内存优化" Tag="BeforeGameLaunch"/>
+                    <ComboBoxItem Content="启用 — 启动器打开时进行内存优化" Tag="OnLauncherOpen"/>
+                    <ComboBoxItem Content="不进行内存优化（关闭）" Tag="Disabled"/>
+                </ComboBox>
+                <TextBlock Text="「跟随全局设置」表示这个实例不单独配置，用「百宝箱」-「内存优化」里的全局开关与时机；其它三项都会覆盖全局设置，只对这个实例生效。"
+                           FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,4,0,8" TextWrapping="Wrap"/>
 
                 <StackPanel x:Name="GraphicsApiPanelDlg" Margin="0,6,0,8" Visibility="Collapsed">
                     <TextBlock Text="游戏内图形 API（Minecraft 26.1 及以上）" FontSize="12" FontWeight="Bold" Margin="0,0,0,4"/>
