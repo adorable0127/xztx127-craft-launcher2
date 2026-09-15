@@ -13,8 +13,15 @@ namespace XCL2.App.Views;
 /// <summary>
 /// 轻量 Markdown 查看器。专门用于 AI 回复，不引入额外 NuGet 包，支持标题、粗体、斜体、
 /// 删除线、行内代码、代码块、无序/有序列表、引用、分隔线与链接。
+///
+/// 渲染宿主是只读 <see cref="RichTextBox"/>（装载一个 <see cref="FlowDocument"/>），
+/// 不是 StackPanel + TextBlock。原因：TextBlock 没有 TextSelection 概念，鼠标在上面拖拽
+/// 不会出现选区，也就没法 Ctrl+C——那是"画出来的文字"，不是"可选中的文字"。RichTextBox/
+/// FlowDocument 这条链路和普通网页文本一样，天生支持鼠标左键拖动连续选中和复制，不需要
+/// 自己实现命中测试或选区绘制。代码块沿用原来的只读 TextBox（TextBoxBase 同样原生支持
+/// 拖选+复制），以 BlockUIContainer 形式嵌入文档流，与正文使用同一套鼠标手势，互不冲突。
 /// </summary>
-public sealed class MarkdownViewer : StackPanel
+public sealed class MarkdownViewer : RichTextBox
 {
     public static readonly DependencyProperty MarkdownProperty = DependencyProperty.Register(
         nameof(Markdown), typeof(string), typeof(MarkdownViewer),
@@ -34,8 +41,24 @@ public sealed class MarkdownViewer : StackPanel
 
     public MarkdownViewer()
     {
-        Orientation = Orientation.Vertical;
+        // 让它看起来（和摸起来）都不像一个输入框：无边框、透明背景、不显示光标、不接收 Tab、
+        // 内部滚动条关闭（外层聊天气泡的 ScrollViewer 负责滚动）。IsReadOnly 只挡编辑，不挡
+        // 选中/复制——这正是我们要的：能选、能拖、能 Ctrl+C，但用户改不了 AI 说的话。
+        IsReadOnly = true;
+        IsReadOnlyCaretVisible = false;
+        IsUndoEnabled = false;
+        AcceptsReturn = true;
+        AcceptsTab = false;
+        BorderThickness = new Thickness(0);
+        Background = Brushes.Transparent;
+        Padding = new Thickness(0);
+        Focusable = true;
+        VerticalScrollBarVisibility = ScrollBarVisibility.Disabled;
+        HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled;
         SnapsToDevicePixels = true;
+        SpellCheck.IsEnabled = false;
+        Document = new FlowDocument { PagePadding = new Thickness(0) };
+        SetResourceReference(ForegroundProperty, "TextPrimaryBrush");
     }
 
     private static void OnMarkdownChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
@@ -46,7 +69,8 @@ public sealed class MarkdownViewer : StackPanel
 
     private void RenderMarkdown(string markdown)
     {
-        Children.Clear();
+        var doc = new FlowDocument { PagePadding = new Thickness(0) };
+        Document = doc;
         if (string.IsNullOrWhiteSpace(markdown))
             return;
 
@@ -75,7 +99,7 @@ public sealed class MarkdownViewer : StackPanel
                 while (i < lines.Length && !lines[i].TrimStart().StartsWith("```", StringComparison.Ordinal))
                     codeLines.Add(lines[i++]);
                 if (i < lines.Length) i++;
-                AddCodeBlock(string.Join(Environment.NewLine, codeLines), lang);
+                AddCodeBlock(doc, string.Join(Environment.NewLine, codeLines), lang);
                 continue;
             }
 
@@ -91,9 +115,9 @@ public sealed class MarkdownViewer : StackPanel
                     4 => 15d,
                     _ => 14d
                 };
-                var block = CreateTextBlock(size, FontWeights.SemiBold, new Thickness(0, 7, 0, 3));
+                var block = CreateParagraph(size, FontWeights.SemiBold, new Thickness(0, 7, 0, 3));
                 AddInlineMarkdown(block, headingText);
-                Children.Add(block);
+                doc.Blocks.Add(block);
                 i++;
                 continue;
             }
@@ -103,7 +127,7 @@ public sealed class MarkdownViewer : StackPanel
             {
                 var line = new Border { Height = 1, Margin = new Thickness(0, 7, 0, 7) };
                 line.SetResourceReference(Border.BackgroundProperty, "DividerBrush");
-                Children.Add(line);
+                doc.Blocks.Add(new BlockUIContainer(line));
                 i++;
                 continue;
             }
@@ -112,19 +136,16 @@ public sealed class MarkdownViewer : StackPanel
             if (trimmed.StartsWith(">", StringComparison.Ordinal))
             {
                 var quoteText = trimmed[1..].TrimStart();
-                var text = CreateTextBlock(12.5, FontWeights.Normal, new Thickness(0));
-                text.FontStyle = FontStyles.Italic;
-                AddInlineMarkdown(text, quoteText);
-                var quote = new Border
-                {
-                    BorderThickness = new Thickness(3, 0, 0, 0),
-                    Padding = new Thickness(8, 3, 4, 3),
-                    Margin = new Thickness(0, 4, 0, 4),
-                    Child = text
-                };
-                quote.SetResourceReference(Border.BorderBrushProperty, "AccentBrush");
-                quote.SetResourceReference(Border.BackgroundProperty, "SideBrush");
-                Children.Add(quote);
+                var quote = CreateParagraph(12.5, FontWeights.Normal, new Thickness(0, 4, 0, 4));
+                quote.FontStyle = FontStyles.Italic;
+                // Block 本身就有 BorderBrush/BorderThickness/Padding，直接当"左侧竖线引用条"用，
+                // 不需要再套一层 Border——这样引用文字依然是文档流里的真正段落，可以被拖选。
+                quote.BorderThickness = new Thickness(3, 0, 0, 0);
+                quote.Padding = new Thickness(8, 3, 4, 3);
+                quote.SetResourceReference(Paragraph.BorderBrushProperty, "AccentBrush");
+                quote.SetResourceReference(Paragraph.BackgroundProperty, "SideBrush");
+                AddInlineMarkdown(quote, quoteText);
+                doc.Blocks.Add(quote);
                 i++;
                 continue;
             }
@@ -132,12 +153,14 @@ public sealed class MarkdownViewer : StackPanel
             // - / * / + 无序列表
             if (IsUnorderedListLine(raw))
             {
+                var list = new List { MarkerStyle = TextMarkerStyle.Disc, Margin = new Thickness(3, 2, 0, 4) };
                 while (i < lines.Length && IsUnorderedListLine(lines[i]))
                 {
                     var content = lines[i].TrimStart()[2..].TrimStart();
-                    AddListRow("•", content);
+                    AddListItem(list, content);
                     i++;
                 }
+                doc.Blocks.Add(list);
                 continue;
             }
 
@@ -145,13 +168,15 @@ public sealed class MarkdownViewer : StackPanel
             var orderedMatch = OrderedListRegex.Match(raw);
             if (orderedMatch.Success)
             {
+                var list = new List { MarkerStyle = TextMarkerStyle.Decimal, Margin = new Thickness(3, 2, 0, 4) };
                 while (i < lines.Length)
                 {
                     var match = OrderedListRegex.Match(lines[i]);
                     if (!match.Success) break;
-                    AddListRow(match.Groups[1].Value + ".", match.Groups[2].Value);
+                    AddListItem(list, match.Groups[2].Value);
                     i++;
                 }
+                doc.Blocks.Add(list);
                 continue;
             }
 
@@ -161,7 +186,7 @@ public sealed class MarkdownViewer : StackPanel
             // 修复"AI 助手回复里用 Markdown 表格格式时不会正常显示"：以前这里完全没有表格分支，
             // 表格的每一行都会落进下面的"普通段落"分支，原样把 | 字符打印出来。
             // GFM 表格的判定标准是"表头行 + 紧跟着的分隔行（只含 -/:/| 和空白）"，只看这两行就够，
-            // 不用管后面数据行是否对齐——对齐交给下面的 Grid 布局自动处理。
+            // 不用管后面数据行是否对齐——对齐交给下面的 Table 布局自动处理。
             if (IsTableRow(raw) && i + 1 < lines.Length && IsTableSeparatorRow(lines[i + 1]))
             {
                 var headerCells = ParseTableRow(raw);
@@ -172,7 +197,7 @@ public sealed class MarkdownViewer : StackPanel
                     dataRows.Add(ParseTableRow(lines[i]));
                     i++;
                 }
-                AddTable(headerCells, dataRows);
+                AddTable(doc, headerCells, dataRows);
                 continue;
             }
 
@@ -185,14 +210,14 @@ public sealed class MarkdownViewer : StackPanel
                 paragraphLines.Add(lines[i++]);
             }
 
-            var paragraph = CreateTextBlock(13, FontWeights.Normal, new Thickness(0, 2, 0, 5));
+            var paragraph = CreateParagraph(13, FontWeights.Normal, new Thickness(0, 2, 0, 5));
             for (int lineIndex = 0; lineIndex < paragraphLines.Count; lineIndex++)
             {
                 AddInlineMarkdown(paragraph, paragraphLines[lineIndex]);
                 if (lineIndex < paragraphLines.Count - 1)
                     paragraph.Inlines.Add(new LineBreak());
             }
-            Children.Add(paragraph);
+            doc.Blocks.Add(paragraph);
         }
     }
 
@@ -282,91 +307,77 @@ public sealed class MarkdownViewer : StackPanel
         return 0;
     }
 
-    private TextBlock CreateTextBlock(double fontSize, FontWeight weight, Thickness margin)
+    private Paragraph CreateParagraph(double fontSize, FontWeight weight, Thickness margin)
     {
-        var tb = new TextBlock
+        var p = new Paragraph
         {
             FontSize = fontSize,
             FontWeight = weight,
-            TextWrapping = TextWrapping.Wrap,
             LineHeight = Math.Max(fontSize * 1.45, 18),
             Margin = margin
         };
-        tb.SetResourceReference(TextBlock.ForegroundProperty, "TextPrimaryBrush");
-        return tb;
+        p.SetResourceReference(Paragraph.ForegroundProperty, "TextPrimaryBrush");
+        return p;
     }
 
-    private void AddListRow(string marker, string content)
+    private void AddListItem(List list, string content)
     {
-        var grid = new Grid { Margin = new Thickness(3, 1, 0, 2) };
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-
-        var markerBlock = CreateTextBlock(12.5, FontWeights.SemiBold, new Thickness(0, 0, 7, 0));
-        markerBlock.Text = marker;
-        markerBlock.SetResourceReference(TextBlock.ForegroundProperty, "AccentBrush");
-
-        var contentBlock = CreateTextBlock(13, FontWeights.Normal, new Thickness(0));
-        AddInlineMarkdown(contentBlock, content);
-        Grid.SetColumn(contentBlock, 1);
-        grid.Children.Add(markerBlock);
-        grid.Children.Add(contentBlock);
-        Children.Add(grid);
+        // ListItem（TextElement）本身没有 Margin，条目间距放在内层 Paragraph 上控制。
+        var p = CreateParagraph(13, FontWeights.Normal, new Thickness(0, 1, 0, 2));
+        AddInlineMarkdown(p, content);
+        list.ListItems.Add(new ListItem(p));
     }
 
-    /// <summary>用 Grid 画一个简单的带边框表格：表头行加粗、浅底色，其余行只画分隔线。
+    /// <summary>用原生 Table 画一个简单的带边框表格：表头行加粗、浅底色，其余行只画分隔线。
     /// 列数取表头和所有数据行里最宽的那一行，缺的单元格补空——AI 输出的表格经常某一行少写
-    /// 一两个 `|`，这里不因为某行列数不一致就整段放弃渲染。</summary>
-    private void AddTable(string[] headerCells, List<string[]> dataRows)
+    /// 一两个 `|`，这里不因为某行列数不一致就整段放弃渲染。用 Documents.Table 而不是
+    /// Grid+TextBlock，是为了让表格文字也留在同一份 FlowDocument 里，可以被拖选和复制。</summary>
+    private void AddTable(FlowDocument doc, string[] headerCells, List<string[]> dataRows)
     {
         int colCount = headerCells.Length;
         foreach (var row in dataRows) colCount = Math.Max(colCount, row.Length);
         if (colCount == 0) return;
 
-        var grid = new Grid { Margin = new Thickness(0, 4, 0, 8) };
+        var table = new Table { Margin = new Thickness(0, 4, 0, 8), CellSpacing = 0 };
         for (int c = 0; c < colCount; c++)
-            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            table.Columns.Add(new TableColumn());
 
-        void AddRow(string[] cells, bool isHeader, int rowIndex)
+        var rowGroup = new TableRowGroup();
+        table.RowGroups.Add(rowGroup);
+
+        void AddRow(string[] cells, bool isHeader)
         {
-            grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            var row = new TableRow();
             for (int c = 0; c < colCount; c++)
             {
                 var text = c < cells.Length ? cells[c] : string.Empty;
-                var cellText = CreateTextBlock(12.5, isHeader ? FontWeights.SemiBold : FontWeights.Normal, new Thickness(0));
-                AddInlineMarkdown(cellText, text);
+                var cellParagraph = CreateParagraph(12.5, isHeader ? FontWeights.SemiBold : FontWeights.Normal, new Thickness(0));
+                AddInlineMarkdown(cellParagraph, text);
 
-                var border = new Border
+                var cell = new TableCell(cellParagraph)
                 {
                     BorderThickness = new Thickness(0, 0, c == colCount - 1 ? 0 : 1, 1),
-                    Padding = new Thickness(9, 6, 9, 6),
-                    Child = cellText
+                    Padding = new Thickness(9, 6, 9, 6)
                 };
-                border.SetResourceReference(Border.BorderBrushProperty, "DividerBrush");
-                if (isHeader) border.SetResourceReference(Border.BackgroundProperty, "SideBrush");
-
-                Grid.SetRow(border, rowIndex);
-                Grid.SetColumn(border, c);
-                grid.Children.Add(border);
+                cell.SetResourceReference(TableCell.BorderBrushProperty, "DividerBrush");
+                if (isHeader) cell.SetResourceReference(TableCell.BackgroundProperty, "SideBrush");
+                row.Cells.Add(cell);
             }
+            rowGroup.Rows.Add(row);
         }
 
-        AddRow(headerCells, true, 0);
-        for (int r = 0; r < dataRows.Count; r++)
-            AddRow(dataRows[r], false, r + 1);
+        AddRow(headerCells, true);
+        foreach (var row in dataRows) AddRow(row, false);
 
-        var outer = new Border
-        {
-            BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(6),
-            Margin = new Thickness(0, 3, 0, 7),
-            Child = grid
-        };
-        outer.SetResourceReference(Border.BorderBrushProperty, "DividerBrush");
-        Children.Add(outer);
+        // 每个单元格已经画了右边框 + 下边框，这里给表格整体补左边框和顶边框，
+        // 拼起来就是一圈闭合的外框（Table 是 Block 不是 UIElement，不能塞进 Border.Child，
+        // 所以不像旧版那样再包一层 Border，直接在 Table 自身画边框即可）。
+        table.BorderThickness = new Thickness(1, 1, 0, 0);
+        table.SetResourceReference(Table.BorderBrushProperty, "DividerBrush");
+        doc.Blocks.Add(table);
     }
 
-    private void AddCodeBlock(string code, string language = "")
+    private void AddCodeBlock(FlowDocument doc, string code, string language = "")
     {
         var box = new TextBox
         {
@@ -386,6 +397,10 @@ public sealed class MarkdownViewer : StackPanel
         box.SetResourceReference(TextBox.ForegroundProperty, "TextPrimaryBrush");
         // IsReadOnly 的 TextBox 本身就是可选中、可 Ctrl+C 的（跟网页上选中一段代码复制的手感
         // 一致），这里不需要额外接线——用户可以直接拖选一部分代码复制，不是"只能整段复制"。
+        // 现在它以 BlockUIContainer 形式嵌在正文所在的同一个 FlowDocument 里：拖拽从正文
+        // 滑进代码块（或反过来）时，鼠标进入 TextBox 的那一刻由 TextBox 自己接管选区，
+        // 和外层 RichTextBox 的选区互不打架——这跟网页里"代码块用 <pre> 单独接管选区"的
+        // 观感是一致的。
 
         // 顶部条：左边语言标签（没写语言就整块不显示，不留一个空标签占地方），
         // 右边一个"复制"按钮，点一下把整段代码复制到剪贴板并给个 Toast 反馈——
@@ -464,10 +479,10 @@ public sealed class MarkdownViewer : StackPanel
         };
         border.SetResourceReference(Border.BackgroundProperty, "SideBrush");
         border.SetResourceReference(Border.BorderBrushProperty, "BorderBrush2");
-        Children.Add(border);
+        doc.Blocks.Add(new BlockUIContainer(border));
     }
 
-    private static void AddInlineMarkdown(TextBlock target, string text)
+    private static void AddInlineMarkdown(Paragraph target, string text)
     {
         if (string.IsNullOrEmpty(text)) return;
 

@@ -209,6 +209,14 @@ public class AppConfig
     /// <summary>false=傻瓜模式（默认，隐藏高级选项，一键完成）；true=高级模式（可自定义 Java 版本/架构/安装方式等）</summary>
     public bool AdvancedMode { get; set; } = false;
 
+    /// <summary>简洁模式：跟 <see cref="AdvancedMode"/> 是完全不同的维度——那个管「下载/启动时
+    /// 要不要展示 Java 版本/架构这类高级选项」，这个管「侧边栏本身要不要精简」。开启后侧边栏
+    /// 只保留 主页/选择版本/下载/账户管理/设置 五个最常用入口，其余功能（联机大厅、Mod 管理、
+    /// 服务器管理、百宝箱、基岩版、鸣谢与帮助、日志、AI 助手、实验性功能）收进新增的「更多」
+    /// 入口下的磁贴页，不是被删掉，只是从常驻侧边栏搬到二级页面，减少新手/轻度用户第一眼
+    /// 看到的按钮数量。见 MainWindow.RefreshSimplifiedModeNavVisibility / Views/MorePage.xaml。</summary>
+    public bool SimplifiedModeEnabled { get; set; } = false;
+
     /// <summary>上次选择的 Java 主版本号（8~25），仅高级模式下由用户修改，傻瓜模式固定使用推荐版本</summary>
     public int PreferredJavaMajorVersion { get; set; } = 21;
 

@@ -188,7 +188,7 @@
                                         BorderBrush="{DynamicResource BorderBrush2}" BorderThickness="1"
                                         Background="{Binding BubbleBrush}">
                                     <StackPanel>
-                                        <Grid>
+                                        <Grid Visibility="{Binding IsNotEditing, Converter={StaticResource BoolToVis}}">
                                             <TextBox Text="{Binding DisplayContent}" TextWrapping="Wrap" FontSize="13"
                                                      IsReadOnly="True" BorderThickness="0" Background="Transparent" Padding="0"
                                                      IsTabStop="False" AcceptsReturn="True"
@@ -196,11 +196,46 @@
                                             <views:MarkdownViewer Markdown="{Binding DisplayContent}"
                                                                   Visibility="{Binding IsAssistantMessage, Converter={StaticResource BoolToVis}}"/>
                                         </Grid>
+
+                                        <!-- “修复”编辑态：把气泡内容换成可编辑输入框 + 分支提示条，仅用户消息可进入。 -->
+                                        <StackPanel Visibility="{Binding IsEditing, Converter={StaticResource BoolToVis}}">
+                                            <TextBox x:Name="EditBox" Text="{Binding EditingText, UpdateSourceTrigger=PropertyChanged}"
+                                                     TextWrapping="Wrap" FontSize="13" AcceptsReturn="True"
+                                                     MinHeight="42" MaxHeight="200" VerticalScrollBarVisibility="Auto"
+                                                     Padding="8,6"
+                                                     Background="{DynamicResource PanelBrush}"
+                                                     BorderBrush="{DynamicResource AccentBrush}" BorderThickness="1.3"/>
+                                            <Border Margin="0,7,0,0" Padding="9,7" CornerRadius="9"
+                                                    Background="{DynamicResource SideBrush}"
+                                                    BorderBrush="{DynamicResource BorderBrush2}" BorderThickness="1">
+                                                <StackPanel>
+                                                    <StackPanel Orientation="Horizontal">
+                                                        <Border Width="15" Height="15" CornerRadius="8" Background="{DynamicResource AccentBrush}"
+                                                                VerticalAlignment="Top" Margin="0,1,6,0">
+                                                            <TextBlock Text="i" FontSize="10" FontWeight="Bold" Foreground="White"
+                                                                       HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                                        </Border>
+                                                        <TextBlock Text="保存修改会基于这条消息创建一个新的对话分支，原有回复不会被覆盖。"
+                                                                   FontSize="10.5" TextWrapping="Wrap" MaxWidth="440"
+                                                                   Foreground="{DynamicResource TextSecondaryBrush}"/>
+                                                    </StackPanel>
+                                                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,8,0,0">
+                                                        <Button Content="取消" FontSize="10.5" Padding="12,4" Margin="0,0,6,0"
+                                                                Style="{StaticResource SecondaryButton}"
+                                                                Click="CancelEditMessage_Click" Tag="{Binding}"/>
+                                                        <Button Content="保存" FontSize="10.5" Padding="12,4"
+                                                                Style="{StaticResource PrimaryButton}"
+                                                                Click="SaveEditMessage_Click" Tag="{Binding}"/>
+                                                    </StackPanel>
+                                                </StackPanel>
+                                            </Border>
+                                        </StackPanel>
+
                                         <TextBlock Text="{Binding SubLabel}" FontSize="9" Margin="0,5,0,0"
                                                    Foreground="{DynamicResource TextSecondaryBrush}"
                                                    Visibility="{Binding SubLabelVisibility}"/>
                                         <StackPanel x:Name="ActionBar" Orientation="Horizontal" Margin="0,7,0,0"
-                                                    Visibility="Collapsed" HorizontalAlignment="Right">
+                                                    Visibility="{Binding IsNotEditing, Converter={StaticResource BoolToVis}}" HorizontalAlignment="Right">
                                             <Button Content="复制" FontSize="10" Padding="8,3" Margin="0,0,4,0"
                                                     Click="CopyMessage_Click" Tag="{Binding}"/>
                                             <Button Content="撤回" FontSize="10" Padding="8,3" Margin="0,0,4,0"

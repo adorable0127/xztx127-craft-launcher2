@@ -305,6 +305,9 @@ public partial class MainWindow : Window
         // 同步一次，并订阅 LanguageChanged，保证用户在运行时切换语言后这个按钮立即跟着
         // 显示/隐藏，不需要重启或切页面才生效。
         RefreshExperimentalNavVisibility();
+        // 简洁模式：构造时按当前配置同步一次侧边栏九个按钮 + 「更多」入口的显隐（见
+        // RefreshSimplifiedModeNavVisibility）。运行时切换不经过这里，走 ApplySimplifiedModeChanged。
+        RefreshSimplifiedModeNavVisibility();
         LocalizationService.LanguageChanged += OnLanguageChanged;
         Closed += (_, _) => LocalizationService.LanguageChanged -= OnLanguageChanged;
 
@@ -723,6 +726,22 @@ public partial class MainWindow : Window
         if (pending.Count == 0) return;
 
         var dialog = new AnnouncementDialog(pending);
+        // 公告里带的行内操作按钮（目前只有"立即开启简洁模式"）在这里统一处理，
+        // 见 AnnouncementDialog.ActionInvoked / AnnouncementService.ActionEnableSimplifiedMode
+        // 上的注释——弹窗本身不知道"简洁模式"具体是什么，只负责转发 ActionKey。
+        dialog.ActionInvoked += key =>
+        {
+            if (key == AnnouncementService.ActionEnableSimplifiedMode)
+            {
+                if (!ConfigService.Config.SimplifiedModeEnabled)
+                {
+                    ConfigService.Config.SimplifiedModeEnabled = true;
+                    ConfigService.Save();
+                    ApplySimplifiedModeChanged();
+                }
+                ToastService.ShowSuccess("简洁模式已开启，随时可以在首页胶囊按钮或「设置」页里关闭");
+            }
+        };
         if (OverlayDialogService.ShowModal(dialog) == true)
         {
             AnnouncementService.MarkSeen(ConfigService.Config, pending);
@@ -750,7 +769,7 @@ public partial class MainWindow : Window
         {
             NavDownloadButton, NavMultiplayerButton, NavModManagerButton, NavServerManagerButton,
             NavToolboxButton, NavBedrockButton, NavAboutHelpButton, NavAccountsButton,
-            NavSettingsButton, NavLogsButton, NavExperimentalButton,
+            NavSettingsButton, NavLogsButton, NavExperimentalButton, NavMoreButton,
         };
         foreach (var btn in gatedButtons)
         {
@@ -1923,6 +1942,13 @@ public partial class MainWindow : Window
 
     private void NavToolbox_Click(object sender, RoutedEventArgs e) => NavigateToToolbox();
 
+    /// <summary>「更多」入口：简洁模式下才会显示（见 RefreshSimplifiedModeNavVisibility），
+    /// 跳到 MorePage——一个磁贴页，把简洁模式从侧边栏收起来的那九个功能重新摆出来，
+    /// 磁贴点击直接转发到各自原有的 NavigateToXxx()，不重复实现导航逻辑，见 MorePage.xaml.cs。</summary>
+    private void NavMore_Click(object sender, RoutedEventArgs e) => NavigateToMore();
+
+    public void NavigateToMore() => NavigateLazy(() => new MorePage(this));
+
     /// <summary>
     /// 供其他页面/窗口调用的公开导航方法，跳转到「百宝箱」页。
     ///
@@ -2187,11 +2213,60 @@ public partial class MainWindow : Window
     /// </summary>
     private void RefreshExperimentalNavVisibility()
     {
+        // 简洁模式开启时「实验性功能」也算在"收进更多"的九个按钮之内（见
+        // RefreshSimplifiedModeNavVisibility），这里额外叠加一个 && 判断，两个门控
+        // 谁都能让它 Collapsed，互不影响对方各自的判断逻辑。
         NavExperimentalButton.Visibility =
-            LocalizationService.CurrentLanguageCode == LocalizationService.ExperimentalFeaturesLanguageGate
+            LocalizationService.CurrentLanguageCode == LocalizationService.ExperimentalFeaturesLanguageGate &&
+            !ConfigService.Config.SimplifiedModeEnabled
                 ? Visibility.Visible
                 : Visibility.Collapsed;
     }
+
+    /// <summary>简洁模式下，从侧边栏隐藏、改为收进「更多」磁贴页的九个导航按钮。
+    /// 「实验性功能」不在这个数组里——它有自己独立的语言门控，见 RefreshExperimentalNavVisibility，
+    /// 两处判断分开写，避免互相踩踏。</summary>
+    private Button[] SimplifiedModeHiddenNavButtons => new[]
+    {
+        NavMultiplayerButton, NavModManagerButton, NavServerManagerButton,
+        NavToolboxButton, NavBedrockButton, NavAboutHelpButton,
+        NavLogsButton, NavAiAssistantButton
+    };
+
+    /// <summary>根据 cfg.SimplifiedModeEnabled 控制侧边栏"精简版"九个按钮（含实验性功能）
+    /// 的显隐，以及「更多」入口本身的显隐。构造函数里调用一次做初始同步；首页胶囊按钮、
+    /// 「设置」页开关、公告里的"立即开启"按钮改动配置后都要调用公开的
+    /// <see cref="ApplySimplifiedModeChanged"/>，不要绕过它直接改 cfg 却不刷新界面。</summary>
+    private void RefreshSimplifiedModeNavVisibility()
+    {
+        var simplified = ConfigService.Config.SimplifiedModeEnabled;
+        var visibility = simplified ? Visibility.Collapsed : Visibility.Visible;
+        foreach (var button in SimplifiedModeHiddenNavButtons)
+            button.Visibility = visibility;
+        NavMoreButton.Visibility = simplified ? Visibility.Visible : Visibility.Collapsed;
+        // 「实验性功能」按钮自己的方法里已经把简洁模式一起算进去了，这里顺带刷新一次，
+        // 保证不管是从哪个入口触发的简洁模式切换，它的显隐都能跟着同步。
+        RefreshExperimentalNavVisibility();
+    }
+
+    /// <summary>简洁模式开关变化后的统一入口：写配置（调用方负责）之后调这一个方法即可，
+    /// 不需要各调用点各自重复"刷新侧边栏 + 处理当前页面"这两步。如果用户当前正停留在
+    /// 一个刚刚被简洁模式隐藏掉的页面（比如正开着「百宝箱」时在设置页把简洁模式打开），
+    /// 顺手跳回首页——不然用户会卡在一个侧边栏上已经找不到入口的页面里，只能靠「更多」
+    /// 重新点进来，体验比直接跳转差。</summary>
+    public void ApplySimplifiedModeChanged()
+    {
+        RefreshSimplifiedModeNavVisibility();
+        if (ConfigService.Config.SimplifiedModeEnabled && CurrentPageIsSimplifiedModeHidden)
+            NavigateToHome();
+    }
+
+    /// <summary>当前 MainContent 里显示的是不是一个"简洁模式下被隐藏"的页面。「实验性功能」
+    /// 没列在里面——它是独立弹窗（OpenExperimentalFeatures），不会占据 MainContent，不需要
+    /// 在这里处理"跳回首页"。</summary>
+    private bool CurrentPageIsSimplifiedModeHidden =>
+        MainContent.Content is MultiplayerPage or ModManagerPage or ServerManagerPage or
+        ToolboxPage or BedrockPage or AboutHelpPage or LogsPage or AiAssistantPanel;
 
     /// <summary>
     /// "实验性功能"统一入口：第一次打开（cfg.ExperimentalFeaturesUnlocked 还是 false）先弹

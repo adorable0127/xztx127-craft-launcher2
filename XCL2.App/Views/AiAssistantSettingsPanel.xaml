@@ -195,6 +195,8 @@
             </Border>
 
             <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                <Button Content="导入配置 JSON" Width="110" Margin="0,0,8,0" Click="ImportConfig_Click" Style="{StaticResource SecondaryButton}"/>
+                <Button Content="导出配置 JSON" Width="110" Margin="0,0,8,0" Click="ExportConfig_Click" Style="{StaticResource SecondaryButton}"/>
                 <Button Content="恢复默认" Width="86" Margin="0,0,8,0" Click="ResetDefaults_Click" Style="{StaticResource SecondaryButton}"/>
                 <Button Content="取消" Width="80" Margin="0,0,8,0" Click="Cancel_Click"/>
                 <Button x:Name="SaveButton" Content="保存" Width="80" Click="Save_Click" IsDefault="True"/>

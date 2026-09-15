@@ -24,7 +24,7 @@
         <TextBlock Grid.Row="0" Text="XCL2 启动器 命令行参数说明" FontSize="18" FontWeight="Bold"
                    Foreground="White" Margin="0,0,0,12"/>
 
-        <Border Grid.Row="1" Background="#12151F" BorderBrush="#33425A6CFF" BorderThickness="1" CornerRadius="6">
+        <Border Grid.Row="1" Background="#12151F" BorderBrush="#33425A6C" BorderThickness="1" CornerRadius="6">
             <TextBox x:Name="HelpTextBox"
                      IsReadOnly="True" IsReadOnlyCaretVisible="True"
                      TextWrapping="NoWrap"

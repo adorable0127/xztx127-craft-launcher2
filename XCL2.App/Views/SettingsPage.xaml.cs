@@ -215,6 +215,12 @@ public partial class SettingsPage : UserControl
         AdvancedModeCheck.IsChecked = cfg.AdvancedMode; // 与主页的"普通模式/高手模式"开关共享同一个配置项，两边保持同步
         UpdateAdvancedVisibility();
 
+        // 与首页右上角的简洁模式开关共享同一个配置项，两边保持同步；用 _simplifiedCheckInitializing
+        // 挡住这里赋值触发的 Checked/Unchecked 事件，避免刚打开设置页就多写一次配置。
+        _simplifiedCheckInitializing = true;
+        SimplifiedModeCheck.IsChecked = cfg.SimplifiedModeEnabled;
+        _simplifiedCheckInitializing = false;
+
         // 窗口与托盘：下拉框选项顺序跟 XAML 里四个 ComboBoxItem 的声明顺序一一对应
         // （DirectClose=0，MinimizeToTray=1，Minimize=2，AskEachTime=3），初始化时按当前
         // 配置选中对应项；用 _isInitializingCloseTraySettings 标记暂时挡住下面
@@ -935,6 +941,24 @@ public partial class SettingsPage : UserControl
 
     /// <summary>见字段声明处注释：挡住初始化赋值触发的事件，避免多余的一次保存。</summary>
     private bool _isInitializingCloseTraySettings;
+
+    /// <summary>挡住 LoadSettingsFromConfig 里赋值 SimplifiedModeCheck.IsChecked 触发的
+    /// Checked/Unchecked 事件，只有用户手动点击才应该写配置。</summary>
+    private bool _simplifiedCheckInitializing;
+
+    /// <summary>
+    /// 简洁模式：跟首页右上角的同款开关是同一个配置项的另一个入口，点击立即写回 + 保存，
+    /// 统一走公开的 _owner.ApplySimplifiedModeChanged() 刷新侧边栏，不直接调用 MainWindow
+    /// 内部的 RefreshSimplifiedModeNavVisibility。
+    /// </summary>
+    private void SimplifiedModeCheck_Changed(object sender, RoutedEventArgs e)
+    {
+        if (_simplifiedCheckInitializing) return;
+
+        _owner.ConfigService.Config.SimplifiedModeEnabled = SimplifiedModeCheck.IsChecked == true;
+        _owner.ConfigService.Save();
+        _owner.ApplySimplifiedModeChanged();
+    }
 
     private void CloseActionCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {

@@ -36,6 +36,12 @@
             <TextBlock x:Name="AdvancedModeHintText" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}"
                        Margin="0,0,0,16" TextWrapping="Wrap"/>
 
+            <!-- 简洁模式：跟首页右上角的同款开关共享同一个配置项（cfg.SimplifiedModeEnabled），
+                 两处操作互相同步。点击立即生效（不遵循本页"点保存设置才生效"的统一策略），
+                 跟 AdvancedMode 在首页/设置页两处入口保持同样的"哪边改都立即写回"的语义。 -->
+            <CheckBox x:Name="SimplifiedModeCheck" Content="简洁模式：侧边栏只保留最常用的几个入口，其余功能收进「更多」"
+                      Margin="0,0,0,16" Checked="SimplifiedModeCheck_Changed" Unchecked="SimplifiedModeCheck_Changed"/>
+
             <!-- 启动器界面语言：跟下面「游戏内语言」是两个独立设置，见 AppConfig.LauncherLanguage
                  和 Resources/Lang/README.md 的说明。这里跟首页顶部的"🌐 语言"按钮打开的是
                  同一个 LanguageSelectDialog，共享同一份切换逻辑，两处操作互相同步。 -->

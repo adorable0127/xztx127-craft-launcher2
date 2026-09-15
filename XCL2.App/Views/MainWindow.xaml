@@ -498,6 +498,20 @@
                                            VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
                             </StackPanel>
                         </Button>
+                        <!-- 「更多」：只在简洁模式下显示（见 MainWindow.RefreshSimplifiedModeNavVisibility），
+                             跳到 MorePage，磁贴形式重新摆出联机大厅/Mod管理/服务器管理/百宝箱/基岩版/
+                             鸣谢与帮助/日志/AI助手/实验性功能这九个被简洁模式从侧边栏收起来的入口。
+                             默认（非简洁模式）Collapsed，构造函数里 RefreshSimplifiedModeNavVisibility()
+                             会按当前配置立即同步一次。 -->
+                        <Button x:Name="NavMoreButton" Style="{StaticResource SideNavButton}" Click="NavMore_Click" Margin="0,4,0,0" Visibility="Collapsed" ToolTip="更多">
+                            <StackPanel x:Name="NavMoreIconRow" Orientation="Horizontal">
+                                <Border x:Name="NavMoreIcon" Style="{StaticResource NavIconBox}">
+                                    <Path Style="{StaticResource NavIconPath}" Data="{StaticResource IconMore}"/>
+                                </Border>
+                                <TextBlock x:Name="NavMoreLabel" Text="更多" Margin="8,0,0,0"
+                                           VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
+                            </StackPanel>
+                        </Button>
                         <Button x:Name="NavLogsButton" Style="{StaticResource SideNavButton}" Click="NavLogs_Click" Margin="0,4,0,0" ToolTip="{DynamicResource Str_Nav_Logs}">
                             <StackPanel x:Name="NavLogsIconRow" Orientation="Horizontal">
                                 <Border x:Name="NavLogsIcon" Style="{StaticResource NavIconBox}">

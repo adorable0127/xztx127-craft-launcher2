@@ -3,9 +3,11 @@ using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Linq;
 using System.IO;
+using System.Text.Json;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
+using Microsoft.Win32;
 using XCL2.App.Models;
 using XCL2.App.Services;
 
@@ -417,7 +419,7 @@ public partial class AiAssistantSettingsPanel : UserControl, IOverlayDialog
     {
         var defaults = new AiAssistantConfig
         {
-            Enabled = false,
+            Enabled = true,
             UseCustomApiKey = false,
             BaseUrl = "https://openrouter.ai/api/v1",
             ApiKey = "",
@@ -434,6 +436,7 @@ public partial class AiAssistantSettingsPanel : UserControl, IOverlayDialog
             PrewarmSystemPromptOnOpen = true,
             EnableDeepThinking = false,
             EnableWebSearch = false,
+            TokenSaverMode = true,
             PanelWidth = _currentConfig.PanelWidth,
             PanelWasOpen = _currentConfig.PanelWasOpen,
             LastSessionId = _currentConfig.LastSessionId
@@ -636,5 +639,228 @@ public partial class AiAssistantSettingsPanel : UserControl, IOverlayDialog
             RoutingMode = AiRoutingMode.SpecificModel,
             SelectedModel = ManualModelCombo.SelectedValue as string ?? AiModelIds.NemotronLightning
         };
+    }
+
+    /// <summary>把当前编辑框里的完整状态（不做校验）整理成一份 AiAssistantConfig，用作导入 JSON 时
+    /// 的"基底"——导入的文件里没提到的字段（比如"不保留密钥"那种导出）保持编辑框里原样，不会被
+    /// 意外清空成默认值。跟 BuildDraftConfigForTest 的区别是这里字段更全，专给导入用。</summary>
+    private AiAssistantConfig CaptureUiAsConfig()
+    {
+        int.TryParse(ThresholdBox.Text, out var threshold);
+        return new AiAssistantConfig
+        {
+            Enabled = EnabledCheck.IsChecked == true,
+            ShowFloatingButton = FloatingButtonCheck.IsChecked == true,
+            UseCustomApiKey = UseCustomKeyCheck.IsChecked == true,
+            BaseUrl = BaseUrlBox.Text?.Trim() ?? "",
+            ApiKey = ApiKeyBox.Password ?? "",
+            WorkingDirectory = string.IsNullOrWhiteSpace(WorkingDirectoryBox.Text) ? null : WorkingDirectoryBox.Text.Trim(),
+            CustomModels = _customModels.Select(m => m.Clone()).ToList(),
+            RoutingMode = GetRoutingMode(),
+            AutoModelRouting = GetRoutingMode() == AiRoutingMode.Auto,
+            NormalModelId = NormalModelCombo.SelectedValue as string ?? AiModelIds.NemotronLightning,
+            ExpertModelId = ExpertModelCombo.SelectedValue as string ?? AiModelIds.Nemotron3Ultra,
+            SelectedModel = ManualModelCombo.SelectedValue as string ?? AiModelIds.NemotronLightning,
+            CompressionTokenThreshold = threshold >= 2000 ? threshold : 18000,
+            AllowCrashLogReading = AllowCrashLogCheck.IsChecked == true,
+            ClearHistoryOnGuestSessionEnd = ClearGuestHistoryCheck.IsChecked == true,
+            PrewarmSystemPromptOnOpen = PrewarmOnOpenCheck.IsChecked == true,
+            EnableDeepThinking = EnableDeepThinkingCheck.IsChecked == true,
+            EnableWebSearch = EnableWebSearchCheck.IsChecked == true,
+            TokenSaverMode = TokenSaverCheck.IsEnabled && TokenSaverCheck.IsChecked == true,
+            AcceptedTermsVersion = _currentConfig.AcceptedTermsVersion,
+            PanelWidth = _currentConfig.PanelWidth,
+            PanelWasOpen = _currentConfig.PanelWasOpen,
+            LastSessionId = _currentConfig.LastSessionId
+        };
+    }
+
+    // ----- 导入配置 JSON：读之前"导出配置 JSON"生成的文件，覆盖到当前编辑框里；不是"保存" -----
+
+    /// <summary>导入一份之前用"导出配置 JSON"生成的文件。因为导出时可以选"不保留密钥/接口/模型表"，
+    /// 这里按 JSON 里实际存在的字段来更新——文件里没有的字段（比如朋友发来的"可分发"版本本来就没有
+    /// 密钥/BaseUrl/模型表）保持编辑框里当前的值不动，不会把已经填好的密钥/自定义模型表冲掉。
+    /// 导入之后还是停在设置页里，需要用户自己点"保存"才会真正生效——跟直接改了几个控件的值等价，
+    /// 给用户留一次检查/反悔的机会。</summary>
+    private void ImportConfig_Click(object sender, RoutedEventArgs e)
+    {
+        var dialog = new OpenFileDialog
+        {
+            Title = "导入 AI 助手配置",
+            Filter = "JSON 文件|*.json|所有文件|*.*"
+        };
+        if (dialog.ShowDialog() != true) return;
+
+        try
+        {
+            var json = File.ReadAllText(dialog.FileName);
+            using var doc = JsonDocument.Parse(json);
+            var root = doc.RootElement;
+
+            var config = CaptureUiAsConfig();
+            bool hadCredentials = false;
+
+            string? GetStr(string key) =>
+                root.TryGetProperty(key, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() : null;
+            bool? GetBool(string key) =>
+                root.TryGetProperty(key, out var v) && (v.ValueKind == JsonValueKind.True || v.ValueKind == JsonValueKind.False) ? v.GetBoolean() : null;
+            int? GetInt(string key) =>
+                root.TryGetProperty(key, out var v) && v.ValueKind == JsonValueKind.Number && v.TryGetInt32(out var n) ? n : null;
+
+            if (GetBool("启用AI助手") is bool enabled) config.Enabled = enabled;
+            if (GetBool("显示悬浮按钮") is bool floating) config.ShowFloatingButton = floating;
+            if (GetStr("默认路由模式") is string modeStr && Enum.TryParse<AiRoutingMode>(modeStr, out var mode))
+            {
+                config.RoutingMode = mode;
+                config.AutoModelRouting = mode == AiRoutingMode.Auto;
+            }
+            if (GetInt("上下文压缩阈值") is int threshold) config.CompressionTokenThreshold = threshold;
+            if (GetBool("默认深度思考") is bool deepThinking) config.EnableDeepThinking = deepThinking;
+            if (GetBool("默认联网搜索") is bool webSearch) config.EnableWebSearch = webSearch;
+            if (GetBool("允许崩溃日志分析") is bool crashLog) config.AllowCrashLogReading = crashLog;
+            if (GetBool("访客会话结束清空历史") is bool clearGuest) config.ClearHistoryOnGuestSessionEnd = clearGuest;
+            if (GetBool("打开页面预热提示词") is bool prewarm) config.PrewarmSystemPromptOnOpen = prewarm;
+            if (GetBool("省Token模式") is bool tokenSaver) config.TokenSaverMode = tokenSaver;
+
+            // 密钥/接口地址/模型表这几项只有导出时选了"保留"才会出现在文件里；出现才覆盖，
+            // 没出现（"可分发"版本）就保留编辑框里已经填好的那份，不做任何改动。
+            if (GetBool("使用自定义API") is bool useCustom) { config.UseCustomApiKey = useCustom; hadCredentials = true; }
+            if (GetStr("接口地址BaseUrl") is string baseUrl) { config.BaseUrl = baseUrl; hadCredentials = true; }
+            if (GetStr("API密钥") is string apiKey) { config.ApiKey = apiKey; hadCredentials = true; }
+            if (GetStr("普通模型ID") is string normalId) { config.NormalModelId = normalId; hadCredentials = true; }
+            if (GetStr("专家模型ID") is string expertId) { config.ExpertModelId = expertId; hadCredentials = true; }
+            if (GetStr("指定模型ID") is string manualId) { config.SelectedModel = manualId; hadCredentials = true; }
+            if (root.TryGetProperty("自定义模型表", out var modelsEl) && modelsEl.ValueKind == JsonValueKind.Array)
+            {
+                var imported = new List<AiModelDefinition>();
+                foreach (var item in modelsEl.EnumerateArray())
+                {
+                    var id = item.TryGetProperty("Id", out var idEl) ? idEl.GetString() : null;
+                    if (string.IsNullOrWhiteSpace(id)) continue;
+                    imported.Add(new AiModelDefinition
+                    {
+                        Id = id.Trim(),
+                        DisplayName = item.TryGetProperty("DisplayName", out var nameEl) ? nameEl.GetString() ?? id.Trim() : id.Trim(),
+                        ProviderBaseUrl = item.TryGetProperty("ProviderBaseUrl", out var pbEl) && pbEl.ValueKind == JsonValueKind.String ? pbEl.GetString() : null,
+                        ProviderApiKey = item.TryGetProperty("ProviderApiKey", out var pkEl) && pkEl.ValueKind == JsonValueKind.String ? pkEl.GetString() : null,
+                        Tier = item.TryGetProperty("Tier", out var tierEl) && Enum.TryParse<AiModelTier>(tierEl.ToString(), true, out var t) ? t : AiModelTier.Normal
+                    });
+                }
+                config.CustomModels = imported;
+                hadCredentials = true;
+            }
+
+            LoadConfig(config);
+
+            ToastService.ShowSuccess(hadCredentials
+                ? "已导入配置（含模型/密钥/接口信息），检查无误后记得点“保存”。"
+                : "已导入配置（不含模型/密钥/接口信息，沿用当前已填写的那份），检查无误后记得点“保存”。");
+        }
+        catch (Exception ex)
+        {
+            MessageBoxDialog.ShowError($"导入失败：{ex.Message}\n\n请确认选择的是本设置页“导出配置 JSON”生成的文件。", "导入配置");
+        }
+    }
+
+    // ----- 导出配置 JSON：仅用于调试/分享排查，不是"保存"，不校验、不落地到正式配置文件 -----
+
+    /// <summary>导出当前编辑框里的设置为一份 JSON 文件，方便调试时发给别人排查（比如群里帮忙看设置）。
+    /// 先问清楚"要不要连模型/密钥/供应商接口信息一起导出"——因为很多人（包括我自己）导出这个文件
+    /// 就是为了让别人看路由/能力这些普通设置，压根不想把自己电脑上已经填好的 API Key 和自定义模型表
+    /// 也一起发出去。选"保留"时，导出的文件里会带明文密钥，明确提示不要拿去分发；选"不保留"时，
+    /// 密钥/接口地址/自定义模型表这些字段直接从 JSON 里去掉，可以放心把文件发给别人。</summary>
+    private void ExportConfig_Click(object sender, RoutedEventArgs e)
+    {
+        var choice = MessageBoxDialog.ShowThreeChoice(
+            "导出的配置里是否包含当前填写的模型列表、API 密钥、供应商接口地址等信息？\n\n" +
+            "选“保留”：这些信息会以明文形式写入导出的 JSON 文件，请不要把这份文件分发给别人。\n" +
+            "选“不保留”：导出的文件不含密钥/接口地址/自定义模型表，可以放心分享给别人用于排查问题。",
+            "导出 AI 助手配置",
+            "取消",
+            "不保留（可分发）",
+            "保留（仅自用，勿分发）");
+
+        bool includeCredentials;
+        switch (choice)
+        {
+            case XclMessageResult.Yes:
+                includeCredentials = true;
+                break;
+            case XclMessageResult.No:
+                includeCredentials = false;
+                break;
+            default:
+                return; // 取消
+        }
+
+        var dialog = new SaveFileDialog
+        {
+            Title = "导出 AI 助手配置",
+            Filter = "JSON 文件|*.json|所有文件|*.*",
+            FileName = $"XCL2_AI设置_{(includeCredentials ? "含密钥_请勿分发" : "可分发")}_{DateTime.Now:yyyyMMdd_HHmmss}.json"
+        };
+        if (dialog.ShowDialog() != true) return;
+
+        try
+        {
+            var export = BuildExportPayload(includeCredentials);
+            var json = JsonSerializer.Serialize(export, new JsonSerializerOptions { WriteIndented = true });
+            File.WriteAllText(dialog.FileName, json);
+
+            if (includeCredentials)
+                MessageBoxDialog.ShowWarning($"配置已导出到：\n{dialog.FileName}\n\n这份文件包含明文 API 密钥，请不要发给别人或上传到公开地方。", "导出成功");
+            else
+                MessageBoxDialog.ShowSuccess($"配置已导出到：\n{dialog.FileName}\n\n已去除密钥/接口地址/自定义模型表，可以放心分享。", "导出成功");
+        }
+        catch (Exception ex)
+        {
+            MessageBoxDialog.ShowError($"导出失败：{ex.Message}");
+        }
+    }
+
+    /// <summary>把当前编辑框里的值整理成一份用于导出的匿名对象。之所以不直接序列化
+    /// AiAssistantConfig 本体，是因为那个类里还混了一堆跟"分享排查用的设置快照"无关的运行时状态
+    /// （LastSessionId、PanelWidth、AcceptedTermsVersion……），这里只挑跟"AI 行为/路由"相关、
+    /// 值得给别人看的字段，順便按 includeCredentials 决定要不要带上密钥类信息。</summary>
+    private object BuildExportPayload(bool includeCredentials)
+    {
+        int.TryParse(ThresholdBox.Text, out var threshold);
+
+        var payload = new Dictionary<string, object?>
+        {
+            ["_说明"] = includeCredentials
+                ? "此文件包含明文 API 密钥/接口地址，请勿分发给他人或上传到公开渠道。"
+                : "此文件已去除密钥/接口地址/自定义模型表，可安全分享给他人用于排查设置问题。",
+            ["启用AI助手"] = EnabledCheck.IsChecked == true,
+            ["显示悬浮按钮"] = FloatingButtonCheck.IsChecked == true,
+            ["使用自定义API"] = UseCustomKeyCheck.IsChecked == true,
+            ["默认路由模式"] = GetRoutingMode().ToString(),
+            ["上下文压缩阈值"] = threshold,
+            ["默认深度思考"] = EnableDeepThinkingCheck.IsChecked == true,
+            ["默认联网搜索"] = EnableWebSearchCheck.IsChecked == true,
+            ["允许崩溃日志分析"] = AllowCrashLogCheck.IsChecked == true,
+            ["访客会话结束清空历史"] = ClearGuestHistoryCheck.IsChecked == true,
+            ["打开页面预热提示词"] = PrewarmOnOpenCheck.IsChecked == true,
+            ["省Token模式"] = TokenSaverCheck.IsEnabled && TokenSaverCheck.IsChecked == true,
+        };
+
+        if (includeCredentials)
+        {
+            payload["接口地址BaseUrl"] = BaseUrlBox.Text?.Trim() ?? "";
+            payload["API密钥"] = ApiKeyBox.Password ?? "";
+            payload["普通模型ID"] = NormalModelCombo.SelectedValue as string;
+            payload["专家模型ID"] = ExpertModelCombo.SelectedValue as string;
+            payload["指定模型ID"] = ManualModelCombo.SelectedValue as string;
+            payload["自定义模型表"] = _customModels.Select(m => new
+            {
+                m.Id,
+                m.DisplayName,
+                m.Tier,
+                m.ProviderBaseUrl,
+                m.ProviderApiKey
+            }).ToList();
+        }
+
+        return payload;
     }
 }

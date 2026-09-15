@@ -568,7 +568,13 @@ private async Task<string> CallChatCompletionAsync(
                             AppendProviderDetail(detail));
                     }
                     if (status == 401)
+                    {
+                        // 内置公共密钥可能已在服务端轮换/失效：本地缓存的旧密钥不会自动感知，
+                        // 这里收到 401 时主动清空缓存，下一次 GetApiKey 会强制重新拉取最新密钥，
+                        // 避免用户被卡死在一个已经失效的本地缓存文件上。
+                        BuiltInAiDefaults.InvalidateCache();
                         throw new AiClientRequestException("AI API Key 无效或已失效（HTTP 401）。请检查 API 密钥是否正确，或到 AI 设置重新填写。" + AppendProviderDetail(detail));
+                    }
                     if (status == 403)
                         throw new AiClientRequestException("AI 接口拒绝访问（HTTP 403）。请检查 API 密钥权限、模型权限或提供商策略。" + AppendProviderDetail(detail));
                     if (status == 404)

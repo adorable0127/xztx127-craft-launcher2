@@ -24,6 +24,7 @@ public partial class HomePage : UserControl
     private bool _darkModeToggleInitializing;
     private bool _autoThemeToggleInitializing;
     private bool _followSystemThemeToggleInitializing;
+    private bool _simplifiedToggleInitializing;
 
     public HomePage(MainWindow owner)
     {
@@ -36,6 +37,10 @@ public partial class HomePage : UserControl
         GuestModeToggle.IsChecked = _owner.ConfigService.Config.GuestModeEnabled;
         UpdateGuestModeToggleText();
         _guestToggleInitializing = false;
+
+        _simplifiedToggleInitializing = true;
+        SimplifiedModeToggle.IsChecked = _owner.ConfigService.Config.SimplifiedModeEnabled;
+        _simplifiedToggleInitializing = false;
 
         RefreshModeToggle();
         RefreshThemeToggles();
@@ -411,6 +416,21 @@ public partial class HomePage : UserControl
     // 磁贴点击：全部转发到 MainWindow 已有的公开导航方法/事件处理方法，不重复实现导航逻辑。
     // "启动游戏"磁贴直接调用 MainWindow.Launch_Click（已改成 public，见 MainWindow.xaml.cs），
     // 复用同一套防手滑冷却状态，跟左下角"启动游戏"按钮完全一致的行为。
+
+    /// <summary>
+    /// 首页右上角简洁模式开关：跟「设置」页里的同款开关共享同一个配置项
+    /// （cfg.SimplifiedModeEnabled），点击立即写回 + 保存，统一走公开的
+    /// _owner.ApplySimplifiedModeChanged() 刷新侧边栏/处理当前页面，不直接调用
+    /// MainWindow 内部的 RefreshSimplifiedModeNavVisibility。
+    /// </summary>
+    private void SimplifiedModeToggle_Changed(object sender, RoutedEventArgs e)
+    {
+        if (_simplifiedToggleInitializing) return;
+
+        _owner.ConfigService.Config.SimplifiedModeEnabled = SimplifiedModeToggle.IsChecked == true;
+        _owner.ConfigService.Save();
+        _owner.ApplySimplifiedModeChanged();
+    }
 
     private void TileLaunch_Click(object sender, RoutedEventArgs e) => _owner.Launch_Click(sender, e);
 

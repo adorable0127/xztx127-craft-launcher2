@@ -41,6 +41,10 @@ public partial class AiAssistantPanel : UserControl
         _owner = Window.GetWindow(this) as MainWindow;
         _owner?.UpdateAiFloatingButtonVisibility(false);
         RememberCurrentSession();
+
+        // 打开 AI 助手页面时预拉一次内置公共密钥并落盘缓存（已有缓存时内部会直接跳过），
+        // 避免后续每次发消息都现拉一次。失败不影响页面正常打开，发消息时会自动兜底重拉。
+        _ = BuiltInAiDefaults.PrefetchAsync();
     }
 
     private void UserControl_Unloaded(object sender, RoutedEventArgs e)
@@ -601,20 +605,68 @@ public partial class AiAssistantPanel : UserControl
         RefreshHistory();
     }
 
-    private async void FixMessage_Click(object sender, RoutedEventArgs e)
+    /// <summary>点击“修复”：不再直接删消息重问，而是让这条用户消息原地进入可编辑状态
+    /// （气泡内容换成输入框 + “会创建新分支”的提示条），具体保存/取消由下面两个处理器负责。</summary>
+    private void FixMessage_Click(object sender, RoutedEventArgs e)
+    {
+        if (_sending || sender is not Button { Tag: BubbleVm vm } || vm.OriginalMessage == null) return;
+        foreach (var b in _bubbles)
+            b.IsEditing = false; // 同一时间只允许编辑一条，避免多个输入框同时开着。
+        vm.EditingText = vm.OriginalMessage.Content;
+        vm.IsEditing = true;
+    }
+
+    private void CancelEditMessage_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is Button { Tag: BubbleVm vm }) vm.IsEditing = false;
+    }
+
+    /// <summary>保存“修复”编辑：不修改/覆盖原会话，而是从这条消息之前的历史克隆出一个新会话
+    /// （即“分支”），分支里用编辑后的文本替换这条消息并重新请求回复，原对话完整保留不受影响。</summary>
+    private async void SaveEditMessage_Click(object sender, RoutedEventArgs e)
     {
         if (_sending || sender is not Button { Tag: BubbleVm vm } || vm.OriginalMessage == null || _service == null) return;
-        int idx = _session.Messages.IndexOf(vm.OriginalMessage);
-        if (idx < 0) return;
+        var newText = (vm.EditingText ?? "").Trim();
+        if (newText.Length == 0) return;
 
-        string originalText = vm.OriginalMessage.Content;
-        int removeCount = 1;
-        if (idx + 1 < _session.Messages.Count && _session.Messages[idx + 1].Role == AiMessageRole.Assistant)
-            removeCount++;
-        _session.Messages.RemoveRange(idx, removeCount);
-        _service.SaveSession(_session);
+        int idx = _session.Messages.IndexOf(vm.OriginalMessage);
+        if (idx < 0) { vm.IsEditing = false; return; }
+
+        var branch = new AiChatSession
+        {
+            Title = BuildBranchTitle(_session.Title),
+            IsGuestSession = _session.IsGuestSession,
+            Messages = _session.Messages.Take(idx).Select(CloneMessage).ToList()
+        };
+        _service.SaveSession(branch);
+
+        vm.IsEditing = false;
+        _session = branch;
+        RememberCurrentSession();
         RebuildBubbles();
-        await GenerateAsync($"请修复/改进以下内容：\n{originalText}", isCrashLogContext: false);
+        RefreshHistory();
+        UpdateRoutingText();
+
+        await GenerateAsync(newText, isCrashLogContext: false);
+    }
+
+    private static AiChatMessage CloneMessage(AiChatMessage m) => new()
+    {
+        Role = m.Role,
+        Content = m.Content,
+        ModelUsed = m.ModelUsed,
+        ModelDisplayName = m.ModelDisplayName,
+        RouteUsed = m.RouteUsed,
+        WasAutoRouted = m.WasAutoRouted,
+        EstimatedTokens = m.EstimatedTokens
+    };
+
+    /// <summary>分支会话标题：延续原标题并加“（分支）”后缀；如果原标题已经带这个后缀
+    /// （比如在一个分支上继续修复出第二个分支），不重复叠加。</summary>
+    private static string BuildBranchTitle(string? title)
+    {
+        var baseTitle = string.IsNullOrWhiteSpace(title) ? "新对话" : title!.Trim();
+        return baseTitle.EndsWith("（分支）", StringComparison.Ordinal) ? baseTitle : baseTitle + "（分支）";
     }
 
     private async void RegenerateMessage_Click(object sender, RoutedEventArgs e)
@@ -644,9 +696,14 @@ public sealed class AiSessionListItemVm
     public AiSessionListItemVm(AiChatSession session) => Session = session;
 }
 
-/// <summary>聊天气泡显示模型。</summary>
-public class BubbleVm
+/// <summary>聊天气泡显示模型。实现 INotifyPropertyChanged 是因为“修复”需要在气泡原地
+/// 切换编辑态（IsEditing）——ObservableCollection 只在增删条目时通知界面，单条目内部属性
+/// 变化必须自己发通知，否则点“修复”后气泡不会变成输入框。</summary>
+public class BubbleVm : System.ComponentModel.INotifyPropertyChanged
 {
+    public event System.ComponentModel.PropertyChangedEventHandler? PropertyChanged;
+    private void Raise(string name) => PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(name));
+
     public string DisplayContent { get; set; } = "";
     public string SubLabel { get; set; } = "";
     public Visibility SubLabelVisibility { get; set; } = Visibility.Collapsed;
@@ -655,6 +712,39 @@ public class BubbleVm
     public bool IsUserMessage => BubbleAlignment == HorizontalAlignment.Right;
     public bool IsAssistantMessage => BubbleAlignment == HorizontalAlignment.Left;
     public AiChatMessage? OriginalMessage { get; set; }
+
+    private bool _isEditing;
+    /// <summary>是否处于“修复”编辑态。只对用户消息气泡有意义，但不额外限制——
+    /// XAML 侧“修复”按钮本身就只在 IsUserMessage 时可见/可点。</summary>
+    public bool IsEditing
+    {
+        get => _isEditing;
+        set
+        {
+            if (_isEditing == value) return;
+            _isEditing = value;
+            Raise(nameof(IsEditing));
+            Raise(nameof(IsNotEditing));
+        }
+    }
+
+    /// <summary>给只需要“非编辑态”的绑定用（正文只读视图、操作按钮栏），避免在 XAML 里
+    /// 写取反转换器。</summary>
+    public bool IsNotEditing => !IsEditing;
+
+    private string _editingText = "";
+    /// <summary>编辑框里的临时文本，跟 DisplayContent 分开：取消编辑时不应该污染原文本，
+    /// 只有点“保存”才会真正拿这个值去创建分支。</summary>
+    public string EditingText
+    {
+        get => _editingText;
+        set
+        {
+            if (_editingText == value) return;
+            _editingText = value;
+            Raise(nameof(EditingText));
+        }
+    }
 
     public static BubbleVm From(AiChatMessage m)
     {

@@ -230,6 +230,9 @@
             <Geometry x:Key="IconLogs">M6 3 H16 L19 6 V21 H6 Z M9 8 H16 M9 12 H16 M9 16 H13</Geometry>
             <Geometry x:Key="IconFlask">M10 3 V9 L5 19 A1.5 1.5 0 0 0 6.5 21 H17.5 A1.5 1.5 0 0 0 19 19 L14 9 V3 M9 3 H15 M7.5 15 H16.5</Geometry>
             <Geometry x:Key="IconMenu">M4 7 H20 M4 12 H20 M4 17 H20</Geometry>
+            <!-- 侧边栏「更多」导航按钮用：三个横向圆点，跟系统里常见的"更多"图标含义一致，
+                 跟其它导航图标（多为线框轮廓）区分开，一眼能认出这不是某个具体功能而是入口集合。 -->
+            <Geometry x:Key="IconMore">M5 12 A1.6 1.6 0 1 1 5 12.01 M12 12 A1.6 1.6 0 1 1 12 12.01 M19 12 A1.6 1.6 0 1 1 19 12.01</Geometry>
             <!-- 自绘标题栏的最小化/最大化/还原/关闭四个按钮图标，风格跟导航图标一致
                  （单色线框、24×24 viewBox），见 MainWindow.xaml 顶部自绘标题栏说明。 -->
             <Geometry x:Key="IconWinMinimize">M5 12 H19</Geometry>

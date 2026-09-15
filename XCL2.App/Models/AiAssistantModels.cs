@@ -291,8 +291,11 @@ public class AiAssistantConfig
     /// 模式跟"省不省 token"没什么关系，不提供这个开关（设置页会把勾选框禁用掉）。
     /// 效果两块：1) 上下文压缩更激进（阈值更低、摘要更短、保留的原始消息更少）；
     /// 2) 遇到 AiQuickAnswers 里能直接答的极简单问题（"MC 官网是什么"这类）不请求 API，
-    /// 本地直接回答。</summary>
-    public bool TokenSaverMode { get; set; } = false;
+    /// 本地直接回答。
+    /// 默认开启：不少模型供应商（尤其是免费/内置那些）对每日请求数做了限制，默认少发点请求
+    /// 更不容易被限流打断正常使用；条件不满足时 EffectiveTokenSaverMode 会自动不生效，
+    /// 不需要用户先手动关掉再手动开。</summary>
+    public bool TokenSaverMode { get; set; } = true;
 
     /// <summary>省 Token 模式的开关是否允许打开（见 TokenSaverMode 注释里的条件）；
     /// UI 和 Service 两边都要判断这个条件，抽成方法避免两处写重复逻辑。</summary>

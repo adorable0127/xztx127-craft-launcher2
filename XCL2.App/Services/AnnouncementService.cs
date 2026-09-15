@@ -17,11 +17,31 @@ namespace XCL2.App.Services;
 /// </summary>
 public static class AnnouncementService
 {
-    public sealed record Announcement(string Id, string Title, string Content);
+    /// <summary>ActionLabel/ActionKey 是可选的——大多数公告只是纯文字通知，留空即可。
+    /// 只有极少数公告需要"读完顺手就能操作"（比如下面的简洁模式公告），才会在正文下面
+    /// 多出一个小按钮，点击后由 AnnouncementDialog.ActionInvoked 事件把 ActionKey 交给
+    /// 调用方（MainWindow）处理，具体做什么由 ActionKey 的字符串常量决定，见
+    /// MainWindow.AnnouncementDialog_ActionInvoked。</summary>
+    public sealed record Announcement(string Id, string Title, string Content, string? ActionLabel = null, string? ActionKey = null);
+
+    /// <summary>"开启简洁模式"这个公告内按钮的 ActionKey 常量，MainWindow 订阅
+    /// AnnouncementDialog.ActionInvoked 时用来识别是不是这一个动作。</summary>
+    public const string ActionEnableSimplifiedMode = "enable-simplified-mode";
 
     /// <summary>当前生效的全部公告，按顺序展示。</summary>
     public static readonly IReadOnlyList<Announcement> All = new[]
     {
+        new Announcement(
+            Id: "2026-09-simplified-mode",
+            Title: "新功能：简洁模式",
+            Content:
+                "新增「简洁模式」：开启后侧边栏只保留 主页 / 选择版本 / 下载 / 账户管理 / 设置 这五个最常用入口，" +
+                "联机大厅、Mod 管理、服务器管理、百宝箱、基岩版等功能不会消失，只是收进侧边栏新增的「更多」入口" +
+                "下面，用磁贴的形式排列，需要时点一下就能找到。\n" +
+                "如果你只是想简单地下载、启动游戏，不需要每次都在一长串侧边栏按钮里找路，可以直接在下面开启；" +
+                "也可以随时在首页右上角的胶囊按钮或「设置」页里再关掉，不影响原有功能。",
+            ActionLabel: "立即开启简洁模式",
+            ActionKey: ActionEnableSimplifiedMode),
         new Announcement(
             Id: "2026-09-openrouter-switch",
             Title: "AI 助手：模型来源变更",

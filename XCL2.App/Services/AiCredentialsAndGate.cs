@@ -12,12 +12,13 @@ namespace XCL2.App.Services;
 /// <summary>
 /// 内置公共 AI 接口（OpenRouter）默认凭据。
 ///
-/// 2.3.0 起加了一层本地缓存：密钥原本每次都要向 <see cref="ApiKeyUrl"/> 发一次请求现拉，
-/// 这个密钥是作者自己的、免费提供给所有用户共用的 OpenRouter 密钥，量一大对作者自己那台
-/// 转发服务器（123-393.pages.dev）压力就很大。现在改成“先看本地有没有缓存，没有才去爬”：
-/// 第一次成功拉到密钥后原样存一份到本地缓存文件，之后的请求直接读本地文件，不再打网站；
-/// 只有本地缓存文件不存在/读取失败/内容为空时，才会退回去访问网站现拉一份并重新写入缓存。
-/// 这样能把大部分重复请求挡在本地，明显降低服务器访问压力。
+/// 缓存策略：不再是"用到时才拉、拉一次存一次"，而是在用户**打开 AI 助手页面**时由
+/// 调用方主动调一次 <see cref="PrefetchAsync"/>，现拉一份密钥落盘到
+/// %APPDATA%\XCL2\ai\1.txt；此后同一进程内 <see cref="GetApiKey"/> 一律直接读这个文件，
+/// 不再重新发请求。这样一次会话里无论发多少条消息，最多只在打开页面那一刻打一次
+/// 转发服务器（123-393.pages.dev），大幅降低服务器压力。
+/// 如果密钥中途失效（收到 401），调用方会调 <see cref="InvalidateCache"/> 清空缓存，
+/// 下次 GetApiKey 找不到缓存时会退回去现拉一份，避免卡死在坏密钥上。
 /// </summary>
 public static class BuiltInAiDefaults
 {
@@ -28,20 +29,45 @@ public static class BuiltInAiDefaults
     private static readonly object CacheLock = new();
     private static string? _memoryCache;
 
-    /// <summary>本地缓存文件路径：%APPDATA%\XCL2\ai_key_cache.txt。跟随全局配置目录，
-    /// 不需要额外单独的目录规则。</summary>
+    /// <summary>本地缓存文件路径：%APPDATA%\XCL2\ai\1.txt。</summary>
     private static string CacheFilePath
     {
         get
         {
             var dir = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "XCL2");
-            return Path.Combine(dir, "ai_key_cache.txt");
+                Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "XCL2", "ai");
+            return Path.Combine(dir, "1.txt");
         }
     }
 
-    /// <summary>取内置公共密钥：优先内存缓存 → 本地缓存文件 → 都没有才访问网站现拉一份，
-    /// 拉到之后立即落盘缓存，供本进程后续调用和下次启动直接复用。</summary>
+    /// <summary>在打开 AI 助手页面时调用：主动现拉一份密钥并落盘缓存，供本次会话期间
+    /// 后续所有 GetApiKey 调用直接读文件复用。已经有有效缓存（内存或磁盘）时直接跳过，
+    /// 不重复请求。拉取失败时静默忽略——GetApiKey 到时候找不到缓存自然会再现拉一次。</summary>
+    public static async Task PrefetchAsync()
+    {
+        lock (CacheLock)
+        {
+            if (!string.IsNullOrWhiteSpace(_memoryCache)) return;
+        }
+        if (!string.IsNullOrWhiteSpace(TryReadCacheFile())) return;
+
+        try
+        {
+            var fetched = (await HttpClient.GetStringAsync(ApiKeyUrl).ConfigureAwait(false)).Trim();
+            if (!string.IsNullOrWhiteSpace(fetched))
+            {
+                lock (CacheLock) { _memoryCache = fetched; }
+                TryWriteCacheFile(fetched);
+            }
+        }
+        catch (Exception ex)
+        {
+            ErrorPresenter.LogFallback("预拉取内置 AI 密钥失败", ex);
+        }
+    }
+
+    /// <summary>取内置公共密钥：优先内存缓存 → 本地缓存文件（即打开页面时 PrefetchAsync
+    /// 写入的那份）→ 都没有（比如 Prefetch 还没跑完/失败了）才现拉一份兜底，避免直接报错。</summary>
     public static string GetApiKey()
     {
         lock (CacheLock)
