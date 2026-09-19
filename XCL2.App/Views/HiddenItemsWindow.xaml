@@ -1,0 +1,129 @@
+<local:OverlayDialogControl x:Class="XCL2.App.Views.HiddenItemsWindow"
+                            xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                            xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                            xmlns:local="clr-namespace:XCL2.App.Views"
+                            MinWidth="860"
+                            MaxWidth="860"
+                            MinHeight="640"
+                            MaxHeight="640">
+    <!--
+        为什么单独开一个弹窗，而不是继续挤在设置页里：
+        「功能隐藏」和「隐藏设置项」两块加起来有上百个勾选框，全部平铺在设置页上时，
+        它们比设置页上真正的设置还长，用户往下翻设置要滚过一大片勾选框——本来是为了让
+        设置页看起来更清爽的功能，结果自己成了设置页最臃肿的一段。挪进独立弹窗后，
+        设置页上只留两个按钮，点开才看到这一大片勾选框。
+
+        两块放在同一个弹窗的两个标签页里，是因为它们回答的是同一个问题（"我不想看到什么"），
+        只是作用对象不同（导航/功能入口 vs 设置页自己的条目）。分成两个弹窗反而要用户记住
+        "我要藏的东西算哪一类"。标签页标题下各有一句话说明两者的区别。
+
+        勾选状态只在这个弹窗里改，点"确定"才回传给设置页；点"取消"或直接关掉弹窗，
+        什么都不变。真正写进配置仍然要在设置页点"保存设置"，跟本项目其它设置的
+        "保存才生效"语义保持一致。
+
+        由独立 Window 迁移为进程内 Overlay 弹窗（见 IOverlayDialog.cs /
+        OverlayDialogService.cs 顶部注释）：不再弹出一个新的系统窗口，而是盖在启动器
+        主窗口上面的一张卡片。Title/WindowStartupLocation/ResizeMode/ShowInTaskbar/
+        Background 这些"窗口级"属性已全部移除，居中、圆角卡片背景、阴影都由
+        MainWindow.xaml 里的 OverlayCard 统一提供。原来的 Width/Height 转成
+        MinWidth/MaxWidth/MinHeight/MaxHeight——固定尺寸，不需要像 WebView2 那样单独
+        操心"*"行塌陷成 0 的问题，因为里面全是普通的 ItemsControl/ScrollViewer，
+        本身就有期望尺寸。
+    -->
+    <Grid Margin="16">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <TextBlock Grid.Row="0" Text="隐藏项目" FontSize="18" FontWeight="Bold"
+                   Foreground="{DynamicResource TextPrimaryBrush}" Margin="0,0,0,10"/>
+
+        <TabControl Grid.Row="1" x:Name="Tabs" Background="Transparent" BorderThickness="0">
+            <TabItem Header="功能隐藏">
+                <DockPanel Margin="0,10,0,0">
+                    <TextBlock DockPanel.Dock="Top" TextWrapping="Wrap" FontSize="11" Margin="0,0,0,10"
+                               Foreground="{DynamicResource TextSecondaryBrush}"
+                               Text="勾选的功能在界面上不再显示（导航按钮 / 子页面按钮 / 特定功能入口）。隐藏只影响显示，不会关闭对应功能。在任意界面按 F12 可以临时把隐藏的功能全部显示出来，再按一次恢复隐藏。"/>
+                    <ScrollViewer VerticalScrollBarVisibility="Auto">
+                        <ItemsControl x:Name="FeatureGroupList">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Border Background="{DynamicResource SideBrush}" CornerRadius="6" Padding="12,10" Margin="0,0,0,8">
+                                        <StackPanel>
+                                            <!-- 大项：IsThreeState 让"部分子项被选中"能显示成中间态方块，
+                                                 而不是骗人地显示成未勾选。IsChecked 双向绑到 VM 的
+                                                 GroupChecked 上，联动逻辑全在 VM 里做（见
+                                                 HiddenItemsWindow.xaml.cs 的 HideGroupViewModel），
+                                                 不再靠遍历可视化树去找子勾选框——旧实现就是因为那个
+                                                 遍历在子项多的时候拿不到全部容器，才会出现"点了大项
+                                                 子项没跟着变""子项多的大项点了没反应"。 -->
+                                            <CheckBox Content="{Binding GroupLabel}" FontWeight="Bold" IsThreeState="True"
+                                                      IsChecked="{Binding GroupChecked, Mode=TwoWay}" Margin="0,0,0,8"/>
+                                            <ItemsControl ItemsSource="{Binding Items}" Margin="18,0,0,0">
+                                                <ItemsControl.ItemsPanel>
+                                                    <ItemsPanelTemplate><WrapPanel/></ItemsPanelTemplate>
+                                                </ItemsControl.ItemsPanel>
+                                                <ItemsControl.ItemTemplate>
+                                                    <DataTemplate>
+                                                        <CheckBox Content="{Binding Label}" Margin="0,0,18,6"
+                                                                  IsChecked="{Binding IsChecked, Mode=TwoWay}"/>
+                                                    </DataTemplate>
+                                                </ItemsControl.ItemTemplate>
+                                            </ItemsControl>
+                                        </StackPanel>
+                                    </Border>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </ScrollViewer>
+                </DockPanel>
+            </TabItem>
+
+            <TabItem Header="隐藏设置项">
+                <DockPanel Margin="0,10,0,0">
+                    <TextBlock DockPanel.Dock="Top" TextWrapping="Wrap" FontSize="11" Margin="0,0,0,10"
+                               Foreground="{DynamicResource TextSecondaryBrush}"
+                               Text="设置页条目太多时，可以把用不到的设置藏起来。勾大项等于把这一类连同它底下的全部设置一起藏掉；也可以只勾其中几条。隐藏只影响设置页的显示，不会关闭功能、也不会改动已经保存的值。在设置页按 F10 可以临时把隐藏的设置项全部显示出来。"/>
+                    <ScrollViewer VerticalScrollBarVisibility="Auto">
+                        <ItemsControl x:Name="SettingGroupList">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Border Background="{DynamicResource SideBrush}" CornerRadius="6" Padding="12,10" Margin="0,0,0,8">
+                                        <StackPanel>
+                                            <CheckBox Content="{Binding GroupLabel}" FontWeight="Bold" IsThreeState="True"
+                                                      IsChecked="{Binding GroupChecked, Mode=TwoWay}" Margin="0,0,0,8"/>
+                                            <ItemsControl ItemsSource="{Binding Items}" Margin="18,0,0,0">
+                                                <ItemsControl.ItemsPanel>
+                                                    <ItemsPanelTemplate><WrapPanel/></ItemsPanelTemplate>
+                                                </ItemsControl.ItemsPanel>
+                                                <ItemsControl.ItemTemplate>
+                                                    <DataTemplate>
+                                                        <CheckBox Content="{Binding Label}" Margin="0,0,18,6"
+                                                                  IsChecked="{Binding IsChecked, Mode=TwoWay}"/>
+                                                    </DataTemplate>
+                                                </ItemsControl.ItemTemplate>
+                                            </ItemsControl>
+                                        </StackPanel>
+                                    </Border>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </ScrollViewer>
+                </DockPanel>
+            </TabItem>
+        </TabControl>
+
+        <DockPanel Grid.Row="2" Margin="0,12,0,0">
+            <TextBlock x:Name="SummaryText" DockPanel.Dock="Left" VerticalAlignment="Center" FontSize="11"
+                       Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap"/>
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                <Button Content="全部取消勾选" Padding="12,7" Margin="0,0,8,0" Click="ClearAll_Click"/>
+                <Button Content="取消" Padding="16,7" Margin="0,0,8,0" Click="Cancel_Click"/>
+                <Button Content="确定" Padding="16,7" Click="Ok_Click" IsDefault="True"
+                        Style="{StaticResource PrimaryButton}"/>
+            </StackPanel>
+        </DockPanel>
+    </Grid>
+</local:OverlayDialogControl>

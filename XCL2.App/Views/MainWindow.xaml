@@ -76,15 +76,29 @@
              Window.Background 会跟 DWM 的 Mica/Acrylic 合成层互相覆盖，尤其 Acrylic 下经常只剩
              系统毛玻璃而看不到用户图片。现在图片先在 WPF 内容树最底层铺满并做轻度模糊，
              上面的主题面板再以半透明画刷覆盖，视觉上就是“图片在毛玻璃下面”。 -->
+        <!-- CacheMode + RenderingBias=Performance：这一层是"整屏尺寸的图片 + 像素着色器模糊"，
+             是整个窗口里单帧成本最高的东西。没有自己的缓存时，窗口每一次尺寸变化（最大化、
+             还原、从任务栏恢复、拖边框）都要按新尺寸把整张图重新模糊一遍，而且这件事恰好
+             发生在原生 WindowState 切换那一帧——这就是"最小化/最大化/从任务栏回来时动画
+             明显卡一下"最主要的来源。
+             给它单独挂一个常驻 BitmapCache：模糊只在图片本身或尺寸真正变化时算一次，之后
+             所有帧都只是拿这张现成位图做合成。这一层本来就是"模糊过的背景"，不参与任何
+             命中测试、也没有文字，用位图缓存不会有任何画质/交互上的代价（跟 RootWindowGrid
+             那种"整棵含文字的树"完全不是一回事，那个才需要小心，见下面 UiAnimationHelper
+             里临时缓存的说明）。RenderAtScale=0.75 进一步降低这张缓存位图的分辨率——反正
+             已经是 16px 半径的模糊，肉眼分辨不出来，但缓存的生成和采样都会更便宜。 -->
         <Image x:Name="CustomBackgroundImageLayer" Grid.Row="0" Grid.RowSpan="2"
                Visibility="Collapsed" IsHitTestVisible="False" Stretch="UniformToFill"
-               Opacity="0" RenderOptions.BitmapScalingMode="HighQuality"
+               Opacity="0" RenderOptions.BitmapScalingMode="LowQuality"
                RenderTransformOrigin="0.5,0.5">
+            <Image.CacheMode>
+                <BitmapCache RenderAtScale="0.75" SnapsToDevicePixels="False"/>
+            </Image.CacheMode>
             <Image.RenderTransform>
                 <ScaleTransform ScaleX="1.06" ScaleY="1.06"/>
             </Image.RenderTransform>
             <Image.Effect>
-                <BlurEffect Radius="16" RenderingBias="Quality"/>
+                <BlurEffect Radius="16" RenderingBias="Performance"/>
             </Image.Effect>
         </Image>
         <Border x:Name="CustomBackgroundTintLayer" Grid.Row="0" Grid.RowSpan="2"

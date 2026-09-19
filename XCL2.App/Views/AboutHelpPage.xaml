@@ -295,9 +295,15 @@
                                             ToolTip="https://github.com/adorable0127/xztx127-craft-launcher2"/>
                                     <Button Content="📦 所有项目的开源仓库" Padding="14,7" Margin="0,0,10,8" Click="OpenAllProjects_Click"
                                             ToolTip="https://github.com/adorable0127"/>
-                                    <Button Content="🚀 项目发布页" Padding="14,7" Margin="0,0,0,8"
+                                    <Button Content="🚀 项目发布页" Padding="14,7" Margin="0,0,10,8"
                                             Click="OpenRelease_Click"
                                             ToolTip="https://github.com/adorable0127/xztx127-craft-launcher2"/>
+                                    <!-- 官方下载页：跟上面的 GitHub 发布页是两个不同的去处——GitHub 面向
+                                         能翻墙/习惯看 Release 的用户，这个下载站是给普通用户直接拿安装包的，
+                                         所以两个按钮都留着，不合并。 -->
+                                    <Button Content="⬇ XCL 官方下载页" Padding="14,7" Margin="0,0,0,8"
+                                            Click="OpenDownloadSite_Click"
+                                            ToolTip="https://xcl.xztx127.dpdns.org"/>
                                 </WrapPanel>
                                 <TextBlock TextWrapping="Wrap" FontSize="12" Margin="0,10,0,0"
                                            Foreground="{DynamicResource TextSecondaryBrush}"

@@ -42,6 +42,22 @@ public enum AutoStartLaunchBehavior
     MinimizeToTray
 }
 
+/// <summary>
+/// 外观项（背景图片 / 配色色系）在"候选池"里的选择方式。两处共用同一个枚举，因为规则
+/// 完全一样：要么用户钉死一个，要么每天自动换下一个。
+///
+/// 为什么不做成一个 bool（EnableRotation）：后面如果再加"每次启动随机""每小时轮换"这类
+/// 模式，bool 就不够用了，而枚举加一个成员即可，旧配置文件里已经存下的数值也不会失效
+/// （显式指定了数值，不依赖成员顺序）。
+/// </summary>
+public enum AppearanceRotationMode
+{
+    /// <summary>固定使用当前选中的那一个，不自动改变。默认值，跟没有这个功能之前的行为一致。</summary>
+    Fixed = 0,
+    /// <summary>每天（按本地自然日）自动切换到候选池里的下一个。候选池不足两个时等同于 Fixed。</summary>
+    Daily = 1
+}
+
 public enum PostGameLaunchAction
 {
     /// <summary>保持不变，默认值——启动器窗口状态不受游戏启动这件事影响。</summary>
@@ -260,6 +276,42 @@ public class AppConfig
     /// <summary>是否在启动游戏时额外弹出一个独立的 CMD 窗口，实时显示游戏控制台输出。
     /// 默认关闭；开启后高手可以直接在命令行里看日志，不需要打开日志面板。</summary>
     public bool EnableGameConsoleWindow { get; set; } = false;
+
+    // ===================== 触屏模式（Windows 平板虚拟按键悬浮层） =====================
+
+    /// <summary>是否启用触屏模式：启动游戏后在游戏窗口上叠加一层虚拟按键悬浮层
+    /// （方向/跳跃/潜行/丢弃 + ESC/F3/DEL 等功能键，排版参考 FCL）。
+    /// **默认关闭 = 键鼠模式**，只有明确需要在平板上不接键鼠玩的用户才打开。</summary>
+    public bool TouchModeEnabled { get; set; } = false;
+
+    /// <summary>是否在每次启动游戏之前弹框询问"这次用键鼠还是触屏"。
+    /// **默认开启**：之前默认关闭导致绝大多数用户从来没见过这个询问框，触屏模式等于藏起来了。
+    /// 现在每次启动都会主动问一次，10 秒内不选就自动按键鼠模式继续，既不会漏掉触屏用户，
+    /// 也不会卡住"点了启动就走开等游戏起来"的人。用户可以在设置里关掉它。</summary>
+    public bool AskInputModeBeforeLaunch { get; set; } = true;
+
+    /// <summary>"启动前询问操作模式"默认值从 false 改成 true 的一次性迁移标记。
+    /// 老用户的 config.json 里已经存着 AskInputModeBeforeLaunch=false（那是旧的默认值，
+    /// 不是他们主动关的），只改上面的默认值对他们完全没用——反序列化会把 false 覆盖回来，
+    /// 于是仍然"每次使用都不弹窗询问"。ConfigService.Load 看到这个标记还是 false 时，
+    /// 就把 AskInputModeBeforeLaunch 强制抬成 true 并把标记置位，此后完全尊重用户的手动设置，
+    /// 绝不会二次覆盖（用户关掉之后不会再被打开）。</summary>
+    public bool InputModeAskDefaultMigrated { get; set; } = false;
+
+    /// <summary>启动前询问操作模式的倒计时秒数：倒数结束仍未选择就自动按"键鼠模式"继续。
+    /// 选键鼠而不是触屏是因为不选的那一边必须是"什么都不改变"的那一边。</summary>
+    public int InputModeAskCountdownSeconds { get; set; } = 10;
+
+    /// <summary>悬浮层整体缩放倍率。平板屏幕物理尺寸差异大，8 寸小平板建议调到 0.8，
+    /// 13 寸 Surface 建议 1.1~1.3。取值范围 0.5~2.0。</summary>
+    public double TouchOverlayButtonScale { get; set; } = 1.0;
+
+    /// <summary>悬浮层不透明度（百分比，20~100）。调低可以少挡游戏画面，但按钮也更难看清。</summary>
+    public double TouchOverlayOpacityPercent { get; set; } = 85;
+
+    /// <summary>视角拖动灵敏度：手指滑动距离换算成鼠标位移的倍率（0.4~4.0）。
+    /// 游戏里也可以直接用顶部的"灵敏±"按钮临时调整，那个调整只对本次生效、不写回配置。</summary>
+    public double TouchOverlayLookSensitivity { get; set; } = 1.4;
 
     /// <summary>是否在下载中心的 Mod 搜索结果列表里显示模组图标（从 Modrinth/CurseForge 抓取的
     /// icon_url/logo）。默认开启；网络较差、或者不喜欢列表里混着图片的用户可以在设置页关闭，
@@ -638,6 +690,59 @@ public class AppConfig
     /// </summary>
     public int CustomBackgroundFrostPercent { get; set; } = 65;
 
+    // ===================== 背景图片「候选池 + 固定/每天轮换」=====================
+    // 设计说明（为什么是"候选池 + 当前值"两个字段，而不是直接把 CustomBackgroundImagePath
+    // 改成一个列表）：
+    // - CustomBackgroundImagePath 在项目里已经有 4 处读取点（MainWindow 启动时套背景、
+    //   SettingsPage 回填/保存、RegistrySyncedFields 注册表同步），它们要的都是"现在到底
+    //   显示哪一张"这一个确定的值。把它保留成"当前生效的那一张"，所有旧代码不用改语义，
+    //   轮换逻辑只负责在合适的时机把它改写成候选池里的另一个元素即可。
+    // - 旧配置文件（只有 CustomBackgroundImagePath、没有候选池）升级上来时，
+    //   DailyRotationService.NormalizeBackgroundCandidates 会自动把这一张并进候选池，
+    //   用户不会发现自己原来的背景"丢了"。
+
+    /// <summary>
+    /// 背景图片候选池：用户导入的全部背景图片的绝对路径（都在 %DataDir%/backgrounds 下）。
+    /// 只有一张时，<see cref="BackgroundRotationMode"/> 选什么都没有意义——轮换的对象只有
+    /// 它自己，界面上会把轮换选项标灰并提示"只有一张背景图片，轮换不生效"，这是需求里
+    /// "如果只有一个背景，就默认选它，然后打开轮换也没有作用"的直接实现。
+    /// </summary>
+    public List<string> CustomBackgroundImageCandidates { get; set; } = new();
+
+    /// <summary>背景图片的选择方式：固定用 <see cref="CustomBackgroundImagePath"/> 那一张，
+    /// 还是每天从候选池里换下一张。默认固定，跟老版本行为一致。</summary>
+    public AppearanceRotationMode BackgroundRotationMode { get; set; } = AppearanceRotationMode.Fixed;
+
+    /// <summary>背景"每天轮换"上一次真正换过的日期（本地时间 yyyy-MM-dd）。用来判断
+    /// "今天是否已经换过了"，保证一天只换一次——不然每次启动启动器都会往后挪一张，
+    /// 一天开关三次启动器就换了三张，跟"每天轮换"的字面意思不符。null 表示从未轮换过
+    /// （刚打开这个开关/旧配置升级上来），此时只把今天记下来、不立即换，避免用户刚打开
+    /// 开关背景就莫名其妙变了一张。</summary>
+    public string? BackgroundRotationLastDate { get; set; }
+
+    /// <summary>背景"每天轮换"当前指向候选池的下标。每跨过一个自然日 +1 并对候选池长度取模，
+    /// 所以是按导入顺序循环、不是随机——随机会出现"连着两天同一张"这种看起来像没生效的情况。</summary>
+    public int BackgroundRotationIndex { get; set; } = 0;
+
+    // ===================== 配色主题「候选池 + 固定/每天轮换」=====================
+    // 跟上面背景图片完全同构：UiSkin 继续表示"当前生效的色系"（所有已有代码照常读它），
+    // 这里只额外存"可以从哪些色系里轮换"和"怎么选"。注意这里轮换的是色系(色相)，
+    // 不碰 IsDarkMode——明暗有它自己独立的自动循环/跟随系统两套机制（见 AutoThemeCycleEnabled
+    // 和 FollowSystemTheme），两者是不同维度，混在一起会互相打架。
+
+    /// <summary>配色候选池：可以参与"每天轮换"的色系 Tag（取值见 ThemeService.AllSkins）。
+    /// 同样地，少于两个时轮换不生效，界面会提示。</summary>
+    public List<string> UiSkinCandidates { get; set; } = new();
+
+    /// <summary>配色的选择方式：固定用 <see cref="UiSkin"/>，还是每天换一个候选色系。默认固定。</summary>
+    public AppearanceRotationMode UiSkinRotationMode { get; set; } = AppearanceRotationMode.Fixed;
+
+    /// <summary>配色"每天轮换"上一次真正换过的日期，语义同 <see cref="BackgroundRotationLastDate"/>。</summary>
+    public string? UiSkinRotationLastDate { get; set; }
+
+    /// <summary>配色"每天轮换"当前指向候选池的下标，语义同 <see cref="BackgroundRotationIndex"/>。</summary>
+    public int UiSkinRotationIndex { get; set; } = 0;
+
     /// <summary>实际使用离线账户启动的累计次数。</summary>
     public int OfflineLaunchCount { get; set; } = 0;
     /// <summary>用户已完成一次捐助后不再提示。</summary>
@@ -803,6 +908,20 @@ public class AppConfig
     /// 只影响当前这一次显示）把它们都显示出来，方便用户自己手滑隐藏后还能找回来改设置。
     /// </summary>
     public List<string> HiddenFeatureKeys { get; set; } = new();
+
+    /// <summary>
+    /// 被隐藏的「设置项」集合，存的是 <see cref="Services.SettingsVisibilityService"/> 里定义的
+    /// 固定 key（大类 key 形如 "SetGroup.Java"，单项 key 形如 "Set.Java.Enforce"）。
+    ///
+    /// 跟 <see cref="HiddenFeatureKeys"/> 是两套完全独立的东西，不要混用：那个管的是
+    /// 「导航按钮/子页面/功能入口」要不要出现（按 F12 临时显示），这个管的是「设置页里
+    /// 某一条设置或某一个大类」要不要出现在设置页上（按 F10 临时显示）。分开存是因为
+    /// 两者的粒度、作用范围、临时显示快捷键都不一样，共用一个集合会让 key 冲突风险和
+    /// 「按哪个键能找回来」的解释成本都变高。
+    ///
+    /// 存 key 不存文案的理由同 <see cref="HiddenFeatureKeys"/>：文案随界面语言变，key 不变。
+    /// </summary>
+    public List<string> HiddenSettingKeys { get; set; } = new();
 
     // ===== 基岩版客户端 =====
 

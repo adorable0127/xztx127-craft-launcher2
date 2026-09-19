@@ -15,6 +15,7 @@
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*"/>
                     <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
                 </Grid.ColumnDefinitions>
                 <Grid Grid.Column="0">
                     <TextBox x:Name="SettingsSearchBox" Padding="8,6"
@@ -25,6 +26,23 @@
                 </Grid>
                 <TextBlock x:Name="SettingsSearchResultText" Grid.Column="1" Margin="10,0,0,0" FontSize="12"
                            Foreground="{DynamicResource TextSecondaryBrush}" VerticalAlignment="Center"/>
+                <!-- 「↑ / ↓」：在所有命中项之间循环跳转。搜索本身只会把第一个命中项滚进视野，
+                     设置页很长、同一个关键词常常命中好几处，没有这两个按钮就只能自己手动往下翻找。
+                     跳转是循环的（到底了再点 ↓ 会回到第一个），当前是第几个/共几个显示在
+                     左边的 SettingsSearchResultText 里，见 SettingsPage.xaml.cs 的
+                     GoToSettingsSearchMatch。没有关键词/没有命中时两个按钮自动禁用。 -->
+                <StackPanel Grid.Column="2" Orientation="Horizontal" Margin="8,0,0,0" VerticalAlignment="Center">
+                    <!-- 用箭头符号而不是"上"/"下"两个汉字：这两个按钮只有 36px 宽，汉字在这个
+                         尺寸下既挤又不如箭头一眼能懂；↑/↓ 也跟浏览器/编辑器里"查找上一个/下一个"
+                         的通行图标一致，不需要认字就知道是干什么的。用 Segoe UI Symbol 里的
+                         U+2191/U+2193，不引外部图标字体，保证在任何 Windows 上都画得出来。 -->
+                    <Button x:Name="SettingsSearchPrevBtn" Content="&#x2191;" FontSize="15" Width="36" Padding="0,2" IsEnabled="False"
+                            ToolTip="跳到上一个包含该关键词的设置项" Click="SettingsSearchPrev_Click"
+                            AutomationProperties.Name="上一个搜索结果"/>
+                    <Button x:Name="SettingsSearchNextBtn" Content="&#x2193;" FontSize="15" Width="36" Padding="0,2" Margin="6,0,0,0" IsEnabled="False"
+                            ToolTip="跳到下一个包含该关键词的设置项" Click="SettingsSearchNext_Click"
+                            AutomationProperties.Name="下一个搜索结果"/>
+                </StackPanel>
             </Grid>
 
 
@@ -52,7 +70,7 @@
                     Style="{StaticResource SecondaryButton}" HorizontalAlignment="Left" Padding="14,8"
                     Margin="0,0,0,20" Click="OpenLanguagePicker_Click"/>
 
-            <Button Content="{DynamicResource Str_Ui_Reopen_Setup_Wizard}" HorizontalAlignment="Left" Padding="10,6" Margin="0,0,0,16"
+            <Button x:Name="ReopenWizardBtn" Content="{DynamicResource Str_Ui_Reopen_Setup_Wizard}" HorizontalAlignment="Left" Padding="10,6" Margin="0,0,0,16"
                     Click="ReopenWizard_Click"/>
 
             <!-- 窗口与托盘：点击标题栏叉号时的默认行为 + 开机自启动。
@@ -257,6 +275,25 @@
             <CheckBox x:Name="GameConsoleWindowCheck" Content="{DynamicResource Str_Ui_Open_A_Separate_Console_Window_On_Launch}"
                       Margin="0,0,0,8"/>
 
+            <!-- ========== 触屏模式（Windows 平板虚拟按键悬浮层） ==========
+                 默认全部关闭 = 键鼠模式，勾上之后启动游戏会在游戏窗口上叠加一层
+                 类似 FCL 的虚拟按键层。详见 Services/TouchOverlayService.cs。 -->
+            <TextBlock Text="触屏模式（平板虚拟按键）" FontWeight="SemiBold" Margin="0,10,0,6"/>
+            <CheckBox x:Name="TouchModeCheck" Content="启用触屏模式：启动后在游戏画面上叠加虚拟按键悬浮层"
+                      Margin="0,0,0,8" Checked="TouchModeCheck_Checked"/>
+            <CheckBox x:Name="AskInputModeCheck" Content="每次启动游戏前询问使用「键鼠模式」还是「触屏模式」（默认开启）"
+                      Margin="0,0,0,2"/>
+            <TextBlock Text="询问框 10 秒内没有选择会自动按「键鼠模式」启动，不会卡住启动流程。"
+                       FontSize="11" Opacity="0.7" TextWrapping="Wrap" Margin="24,0,0,8"/>
+            <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                <TextBlock Text="按钮缩放" VerticalAlignment="Center" Margin="0,0,6,0"/>
+                <TextBox x:Name="TouchScaleBox" Width="60" VerticalAlignment="Center"/>
+                <TextBlock Text="不透明度%" VerticalAlignment="Center" Margin="14,0,6,0"/>
+                <TextBox x:Name="TouchOpacityBox" Width="60" VerticalAlignment="Center"/>
+                <TextBlock Text="视角灵敏度" VerticalAlignment="Center" Margin="14,0,6,0"/>
+                <TextBox x:Name="TouchSensitivityBox" Width="60" VerticalAlignment="Center"/>
+            </StackPanel>
+
             <!-- 下载中心 Mod 搜索结果的图标显示开关：图标从 Modrinth/CurseForge 抓取，
                  默认显示；网络较差或者不喜欢列表里混图片的用户可以关掉，只影响图标渲染，
                  不影响搜索/下载本身。 -->
@@ -421,11 +458,46 @@
             <CheckBox x:Name="WindowTransparencyCheck"
                       Content="启用窗口透明度（侧栏 / 卡片等面板呈现半透明玻璃质感，默认关闭）"
                       Margin="0,0,0,4" Checked="VisualEffectsToggle_Changed" Unchecked="VisualEffectsToggle_Changed"/>
-            <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
-                <TextBlock Text="毛玻璃背景图片" VerticalAlignment="Center" Width="200"/>
-                <TextBox x:Name="CustomBackgroundImagePathBox" Width="180" Padding="6" IsReadOnly="True"/>
-                <Button Content="导入" Margin="8,0,0,0" Padding="10,5" Click="ImportBackgroundImage_Click"/>
-                <Button Content="清除" Margin="8,0,0,0" Padding="10,5" Click="ClearBackgroundImage_Click"/>
+            <!-- 毛玻璃背景图片：从"只能有一张"改成"候选池 + 固定/每天轮换"。
+                 导入支持一次多选；列表里选中哪一条，哪一条就是"固定模式"下实际显示的背景，
+                 选中时立即预览。只有一张候选时，下面的轮换下拉框会被禁用并给出说明——
+                 这时候无论选什么都只有它可显示，禁用比"选了没反应"更诚实。
+                 逻辑见 Services/AppearanceRotationService.cs。 -->
+            <StackPanel x:Name="CustomBackgroundPanel" Margin="0,0,0,10">
+                <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
+                    <TextBlock Text="毛玻璃背景图片" VerticalAlignment="Center" Width="200"/>
+                    <Button Content="导入图片" Padding="10,5" Click="ImportBackgroundImage_Click"
+                            ToolTip="可以按住 Ctrl / Shift 一次选中多张图片，全部加入候选池。"/>
+                    <Button Content="移除选中" Margin="8,0,0,0" Padding="10,5" Click="RemoveBackgroundImage_Click"
+                            ToolTip="把列表里当前选中的那一张从候选池里删掉（同时删除启动器复制的副本，不影响你的原图）。"/>
+                    <Button Content="全部清除" Margin="8,0,0,0" Padding="10,5" Click="ClearBackgroundImage_Click"
+                            ToolTip="清空候选池并恢复成没有背景图片的样子。"/>
+                </StackPanel>
+                <StackPanel Orientation="Horizontal" Margin="200,0,0,6">
+                    <Button Content="重命名选中的图片" Padding="10,5" Click="RenameBackgroundImage_Click"
+                            ToolTip="只改候选池里这一份副本的文件名，不影响你磁盘上的原图。"/>
+                    <Button Content="打开文件所在位置" Margin="8,0,0,0" Padding="10,5" Click="OpenBackgroundImageLocation_Click"
+                            ToolTip="在文件资源管理器里定位并选中这张图片的副本文件。"/>
+                    <Button Content="预览图片" Margin="8,0,0,0" Padding="10,5" Click="PreviewBackgroundImage_Click"
+                            ToolTip="放大看一眼这张图，不会切换当前背景。"/>
+                </StackPanel>
+                <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
+                    <TextBlock Text="背景候选列表" VerticalAlignment="Top" Width="200" Margin="0,6,0,0"/>
+                    <ListBox x:Name="CustomBackgroundCandidateList" Width="300" Height="94" Padding="2"
+                             ScrollViewer.VerticalScrollBarVisibility="Auto"
+                             SelectionChanged="CustomBackgroundCandidateList_SelectionChanged"
+                             ToolTip="点一条即把它设为当前背景（固定模式下长期使用这一张；每天轮换模式下只是立刻预览一下）。"/>
+                </StackPanel>
+                <StackPanel Orientation="Horizontal" Margin="0,0,0,4">
+                    <TextBlock Text="背景选择方式" VerticalAlignment="Center" Width="200"/>
+                    <ComboBox x:Name="BackgroundRotationModeCombo" Style="{StaticResource TallPopupComboBox}"
+                              Width="220" Padding="8" SelectionChanged="BackgroundRotationModeCombo_SelectionChanged">
+                        <ComboBoxItem Content="固定使用选中的这一张" Tag="Fixed"/>
+                        <ComboBoxItem Content="每天自动轮换" Tag="Daily"/>
+                    </ComboBox>
+                </StackPanel>
+                <TextBlock x:Name="BackgroundRotationHintText" Margin="200,0,0,0" FontSize="11"
+                           Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap"/>
             </StackPanel>
             <StackPanel Orientation="Horizontal" Margin="0,0,0,8"
                         ToolTip="25% 接近透明/清晰，100% 为最强磨砂；拖动时立即预览，保存设置后重启仍保持。">
@@ -704,7 +776,32 @@
                 </StackPanel>
             </Border>
             <TextBlock Text="选择预设主题会立即预览对应配色；选择“自定义”只展开下方调色区域，选定颜色后才算真正修改。"
-                       FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,20" TextWrapping="Wrap"/>
+                       FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,12" TextWrapping="Wrap"/>
+
+            <!-- 配色的"固定 / 每天轮换"：跟上面的背景图片是同一套规则（候选池 + 选择方式），
+                 只轮换色系(色相)，不动深浅色——深浅有它自己的「自动循环」和「跟随系统」两套
+                 机制（就在下面那一段），掺在一起会互相覆盖。勾选少于两个候选色系时轮换没有
+                 对象可换，下拉框会被禁用并给出说明。 -->
+            <StackPanel x:Name="UiSkinRotationPanel" Margin="0,0,0,20">
+                <StackPanel Orientation="Horizontal" Margin="0,0,0,4">
+                    <TextBlock Text="配色选择方式" VerticalAlignment="Center" Width="200"/>
+                    <ComboBox x:Name="UiSkinRotationModeCombo" Style="{StaticResource TallPopupComboBox}"
+                              Width="220" Padding="8" SelectionChanged="UiSkinRotationModeCombo_SelectionChanged">
+                        <ComboBoxItem Content="固定使用上面选的配色" Tag="Fixed"/>
+                        <ComboBoxItem Content="每天自动轮换" Tag="Daily"/>
+                    </ComboBox>
+                </StackPanel>
+                <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
+                    <TextBlock Text="参与轮换的配色" VerticalAlignment="Top" Width="200" Margin="0,6,0,0"/>
+                    <ListBox x:Name="UiSkinCandidateList" Width="300" Height="128" Padding="2"
+                             SelectionMode="Multiple"
+                             ScrollViewer.VerticalScrollBarVisibility="Auto"
+                             SelectionChanged="UiSkinCandidateList_SelectionChanged"
+                             ToolTip="按住 Ctrl 多选；至少选两个，每天轮换才有意义。"/>
+                </StackPanel>
+                <TextBlock x:Name="UiSkinRotationHintText" Margin="200,0,0,0" FontSize="11"
+                           Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap"/>
+            </StackPanel>
 
             <!-- 自动循环：开启后由系统时间自动决定深浅色模式，不需要手动点主界面的
                  「模式设置」按钮。这两个小时数只在这里设置，主界面按钮只负责开关这个功能
@@ -840,37 +937,36 @@
                 <ComboBoxItem Content="两者都显示" Tag="2"/>
             </ComboBox>
 
-            <!-- 功能隐藏：勾选的功能项在界面上不再显示（导航按钮/子页面按钮/特定功能入口）。
-                 分组和 key 定义在 Services/FeatureVisibilityService.cs 里，这里用 ItemsControl
-                 动态渲染，不用为每个功能手写一个 CheckBox——新增/删减功能项时只改那边的 C# 数组，
-                 这里的 XAML 不用跟着改。按 F12 可以在任意界面临时把隐藏的功能全部显示出来
-                 （不影响这里的勾选状态，只是"临时看得见"，见 MainWindow 的全局按键处理）。 -->
-            <TextBlock Text="{DynamicResource Str_Ui_Hide_Features}" FontSize="14" FontWeight="Bold" Margin="0,0,0,4"/>
-            <TextBlock Text="{DynamicResource Str_Ui_You_Can_Hide_Pages_You_Don_T_Need_Or_Swi}"
-                       FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,10" TextWrapping="Wrap"/>
-            <ItemsControl x:Name="FeatureHideList" Margin="0,0,0,20">
-                <ItemsControl.ItemTemplate>
-                    <DataTemplate>
-                        <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
-                            <TextBlock Text="{Binding GroupLabel}" Width="110" VerticalAlignment="Top" Margin="0,4,0,0"/>
-                            <ItemsControl ItemsSource="{Binding Items}">
-                                <ItemsControl.ItemsPanel>
-                                    <ItemsPanelTemplate>
-                                        <WrapPanel/>
-                                    </ItemsPanelTemplate>
-                                </ItemsControl.ItemsPanel>
-                                <ItemsControl.ItemTemplate>
-                                    <DataTemplate>
-                                        <CheckBox Content="{Binding Label}" Tag="{Binding Key}"
-                                                  Margin="0,0,16,6" Checked="FeatureHideCheck_Changed"
-                                                  Unchecked="FeatureHideCheck_Changed"/>
-                                    </DataTemplate>
-                                </ItemsControl.ItemTemplate>
-                            </ItemsControl>
-                        </StackPanel>
-                    </DataTemplate>
-                </ItemsControl.ItemTemplate>
-            </ItemsControl>
+            <!-- 隐藏项目：原来这里平铺着「功能隐藏」和「隐藏设置项」两大片勾选框（加起来
+                 上百个），比设置页上真正的设置还长，用户往下翻设置要先滚过一整屏勾选框——
+                 一个为了让设置页清爽的功能，自己成了设置页最臃肿的一段。现在整体搬进
+                 Views/HiddenItemsWindow.xaml 这个独立窗口，这里只留一个入口按钮。
+                 两块的区别、F10/F12 临时显示的说明都写在那个窗口里，这里不再重复一遍。 -->
+            <TextBlock x:Name="SettingsHideSectionTitle" Text="隐藏项目" FontSize="14" FontWeight="Bold" Margin="0,0,0,4"/>
+            <TextBlock Text="把用不到的导航入口、功能按钮或设置条目藏起来，让界面只剩你真正在用的部分。隐藏只影响显示，不会关闭功能、也不会改动已经保存的值。"
+                       FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,8" TextWrapping="Wrap"/>
+            <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
+                <Button x:Name="OpenHiddenItemsButton" Content="打开「隐藏项目」…" Padding="14,8"
+                        Click="OpenHiddenItems_Click"/>
+            </StackPanel>
+            <TextBlock x:Name="SettingsHideStatusText" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}"
+                       Margin="0,0,0,20" TextWrapping="Wrap"/>
+
+            <!-- 更新日志：两个入口分别打开两个**互相独立**的窗口（Views/ChangelogWindow），
+                 可以同时开着对照看，关掉一个不影响另一个。一个指向 XCL 自己的 GitHub
+                 Releases 页，一个指向中文 Minecraft Wiki 的版本列表；具体地址和说明文案
+                 都定义在 ChangelogSource 里，这里只负责把按钮摆出来。 -->
+            <TextBlock Text="更新日志" FontSize="14" FontWeight="Bold" Margin="0,0,0,4"/>
+            <TextBlock Text="查看启动器自己的版本更新内容，或者 Minecraft 各版本的更新说明。两者会在各自独立的窗口里打开，可以同时开着对照。"
+                       FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,8" TextWrapping="Wrap"/>
+            <StackPanel Orientation="Horizontal" Margin="0,0,0,20">
+                <Button x:Name="XclChangelogButton" Content="📋 查看 XCL 更新日志" Padding="14,8"
+                        Click="OpenXclChangelog_Click"
+                        ToolTip="https://github.com/adorable0127/xztx127-craft-launcher2/releases"/>
+                <Button x:Name="MinecraftChangelogButton" Content="🧱 Minecraft 更新日志页" Padding="14,8" Margin="8,0,0,0"
+                        Click="OpenMinecraftChangelog_Click"
+                        ToolTip="中文 Minecraft Wiki 的 Java 版版本列表"/>
+            </StackPanel>
 
             <!-- 协议：只读查看当前协议全文（不影响任何配置），以及"注销应用"——主动放弃已同意的
                  协议状态，下次启动会重新走一遍协议流程。两者都对应 AgreementsWindow/AppConfig 里

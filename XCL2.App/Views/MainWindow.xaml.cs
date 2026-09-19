@@ -62,6 +62,16 @@ public partial class MainWindow : Window
     private bool _closeLifecycleBackupRunning;
     private bool _closeLifecycleBackupCompleted;
     private bool _stickyNoteCloseDecisionHandled;
+
+    /// <summary>触屏模式关闭确认是否已经问过一遍，见 MainWindow_Closing 里的处理——
+    /// 跟便签三选一同一个道理：Closing 事件可能因为备份/收尾动画被重新触发好几次，
+    /// 不加这个标记会导致同一次关闭动作被反复追问"触屏要不要一起关"。</summary>
+    private bool _touchCloseDecisionHandled;
+
+    /// <summary>本次关闭是否选择了"关闭XCL和虚拟按键，但游戏继续单独跑"——用来告诉后面
+    /// 那段"彻底退出顺手清理游戏/服务器子进程"的逻辑这次要绕开，不能把用户明确要保留的
+    /// 游戏进程也杀掉。</summary>
+    private bool _touchCloseKeepGameRunning;
     /// <summary>关闭前的"淡出+下沉"收尾动画只播一次：动画播完的回调里会再调用一次 Close()，
     /// 重新进入 MainWindow_Closing，这时候要能识别出"动画已经放过了"直接放行，不然会
     /// 死循环播放动画。</summary>
@@ -173,7 +183,15 @@ public partial class MainWindow : Window
         // 任何延迟，不影响启动速度。
         Loaded += (_, _) => UiAnimationHelper.FadeInMove(RootWindowGrid, RootWindowMoveTransform);
 
-        ApplyFeatureVisibility();
+        // 注意：这里**不能**调用 ApplyFeatureVisibility()/RefreshSimplifiedModeNavVisibility()。
+        // 那两个方法读的是 ConfigService.Config，而 ConfigService.Load() 要到下面几十行之后
+        // 才执行——在此之前 Config 还是 new AppConfig() 的一套默认值（SimplifiedModeEnabled
+        // 恒为 false、HiddenFeatureKeys 恒为空），按它算出来的显隐一定是"普通模式、什么都不隐藏"。
+        // 这正是"打开了简洁模式，重启之后又变回普通模式主页样式"的根因：首页右上角那个胶囊
+        // 开关是在 ShowHome() 里读配置的（那时候已经 Load 过了，所以显示为已开启），侧边栏却
+        // 停在按默认值算出来的普通模式布局上，两边对不上；用户手动关一次再开一次简洁模式，
+        // 会走 ApplySimplifiedModeChanged 重新按真实配置刷新，于是"又好了"。
+        // 现在统一挪到 ConfigService.Load() 之后调用，见下面 ApplyConfigDrivenVisibility()。
 
         // 愚人节彩蛋：只在 4 月 1 日、且没有被注册表 noyrj 关闭时才会真正抽中/生效，
         // 其余 364 天这行调用直接是空操作。见 AprilFoolsService/AprilFoolsUi 类注释。
@@ -221,6 +239,28 @@ public partial class MainWindow : Window
         {
             if (!UiZoomService.ShouldHandleKey(ConfigService.Config, e.Key)) return;
             UiZoomService.StepZoom(e.Key == Key.Up ? 1 : -1);
+            e.Handled = true;
+        };
+
+        // F10：临时显示被"隐藏设置项"藏起来的设置（大类或单项）。跟 F12 那套「功能隐藏」
+        // 是两回事：F12 管的是导航按钮/功能入口，F10 管的是设置页自己身上的条目。
+        //
+        // 只有"当前正停在设置页"且"确实存在被隐藏的设置项"时才吃掉这次按键——别的页面上
+        // 或者根本没用过这个功能的用户按 F10，事件原样往下走，不会有任何副作用。
+        // 注册位置放在下面 F11 全屏那个处理器之前是刻意的：WPF 里用 += 注册的处理器在
+        // e.Handled 已经为 true 时不会被调用，所以"先注册的先有机会拦截"。
+        PreviewKeyDown += (_, e) =>
+        {
+            var key = e.Key == Key.System ? e.SystemKey : e.Key;
+            if (key != Key.F10) return;
+            if (MainContent.Content is not SettingsPage settingsPage) return;
+            if (!SettingsVisibilityService.HasAnyHidden(ConfigService.Config)) return;
+
+            SettingsVisibilityService.TemporaryRevealActive = !SettingsVisibilityService.TemporaryRevealActive;
+            settingsPage.ApplySettingsItemVisibility();
+            ToastService.ShowInfo(SettingsVisibilityService.TemporaryRevealActive
+                ? "已临时显示被隐藏的设置项，再按一次 F10 恢复隐藏"
+                : "已恢复隐藏");
             e.Handled = true;
         };
 
@@ -304,10 +344,8 @@ public partial class MainWindow : Window
         // LocalizationService.ExperimentalFeaturesLanguageGate 注释）。构造时立即按当前语言
         // 同步一次，并订阅 LanguageChanged，保证用户在运行时切换语言后这个按钮立即跟着
         // 显示/隐藏，不需要重启或切页面才生效。
-        RefreshExperimentalNavVisibility();
-        // 简洁模式：构造时按当前配置同步一次侧边栏九个按钮 + 「更多」入口的显隐（见
-        // RefreshSimplifiedModeNavVisibility）。运行时切换不经过这里，走 ApplySimplifiedModeChanged。
-        RefreshSimplifiedModeNavVisibility();
+        // （实际的首次同步同样挪到 ConfigService.Load() 之后，见 ApplyConfigDrivenVisibility()；
+        //   这里只负责订阅语言切换事件，保证运行时切语言后这个按钮能跟着刷新。）
         LocalizationService.LanguageChanged += OnLanguageChanged;
         Closed += (_, _) => LocalizationService.LanguageChanged -= OnLanguageChanged;
 
@@ -325,6 +363,13 @@ public partial class MainWindow : Window
         ApplySidebarCollapsedState(collapsed: false);
 
         ConfigService.Load();
+
+        // 配置真正读进来之后，才第一次按它同步所有"由配置决定显隐"的界面元素：
+        // 功能隐藏（F12 那套）、简洁模式侧边栏、实验性功能按钮的语言门控。
+        // 顺序上必须紧跟 Load()，且必须在 RefreshSidebar()/ShowHome() 之前——那两个
+        // 会开始按当前显隐状态铺设界面。
+        ApplyConfigDrivenVisibility();
+
         ServerInstanceService.Load();
         _scheduledInstanceBackupService = new ScheduledInstanceBackupService(ConfigService);
         Closed += (_, _) => _scheduledInstanceBackupService?.Dispose();
@@ -335,6 +380,17 @@ public partial class MainWindow : Window
         // 无条件 ApplyCustomAccent，随后 ContentRendered 又切回真实 UiSkin，于是启动/切页时
         // 按钮会肉眼可见地闪成深蓝再恢复。这里只走完整主题入口，绝不单独套自定义强调色。
         var loadedCfg = ConfigService.Config;
+
+        // 「背景图片 / 配色色系」的候选池 + 每日轮换：必须在下面 ApplyForCurrentState 和
+        // SetCustomBackgroundImage 之前解析完，这样窗口首帧出现时看到的就已经是今天该显示的
+        // 那一套，不会先闪一下昨天的配色再被纠正过来（项目里一贯的要求：绝不在窗口可见之后
+        // 再补刷主题）。ResolveXxx 会就地把结果写回 UiSkin / CustomBackgroundImagePath 这两个
+        // "当前值"字段，所以下面的调用方一行都不用改。
+        // 见 Services/AppearanceRotationService.cs 顶部注释。
+        var rotationChanged = AppearanceRotationService.ResolveSkin(loadedCfg, out _);
+        rotationChanged |= AppearanceRotationService.ResolveBackground(loadedCfg, out _);
+        if (rotationChanged) ConfigService.Save();
+
         ThemeService.ApplyForCurrentState(
             loadedCfg.GuestModeEnabled, loadedCfg.UiSkin, loadedCfg.IsDarkMode, loadedCfg.CustomAccentColor);
         ThemeService.ApplyWindowTransparency(loadedCfg.EnableWindowTransparency, loadedCfg.WindowOpacityPercent);
@@ -348,15 +404,26 @@ public partial class MainWindow : Window
         Win11EffectsService.SetEnabled(loadedCfg.EnableWin11VisualEffects, loadedMaterial);
         FrameRateMonitorService.SetEnabled(loadedCfg.EnableHighPerformanceMode);
 
-        if (!string.IsNullOrWhiteSpace(ConfigService.Config.CustomBackgroundImagePath) &&
-            File.Exists(ConfigService.Config.CustomBackgroundImagePath))
+        // 路径已经由上面的 ResolveBackground 选好（固定的那一张，或者今天轮到的那一张），
+        // 这里只负责真正套上去。解码失败时不再简单地把路径清空——那样用户会丢掉这条候选，
+        // 而是把这一张从候选池里剔掉再重新解析一次，让轮换自动退到下一张可用的图片上。
+        if (!SetCustomBackgroundImage(ConfigService.Config.CustomBackgroundImagePath))
         {
-            if (!SetCustomBackgroundImage(ConfigService.Config.CustomBackgroundImagePath))
+            var broken = ConfigService.Config.CustomBackgroundImagePath;
+            if (!string.IsNullOrWhiteSpace(broken))
+            {
+                ConfigService.Config.CustomBackgroundImageCandidates.RemoveAll(
+                    p => string.Equals(p, broken, StringComparison.OrdinalIgnoreCase));
                 ConfigService.Config.CustomBackgroundImagePath = null;
-        }
-        else
-        {
-            SetCustomBackgroundImage(null);
+                AppearanceRotationService.ResolveBackground(ConfigService.Config, out var fallback);
+                ConfigService.Save();
+                if (fallback == null || !SetCustomBackgroundImage(fallback))
+                    SetCustomBackgroundImage(null);
+            }
+            else
+            {
+                SetCustomBackgroundImage(null);
+            }
         }
 
         // 见 ThemeService.CustomBackgroundRefreshRequested / ApplyWindowTransparency 方法体注释：
@@ -506,7 +573,13 @@ public partial class MainWindow : Window
         // 大部分时间是"当前 slot 没变，直接 return"的快速路径，真正切换配色的分支一小时最多
         // 触发一次），一秒级的粒度足够消除上述"感觉卡住不切换"的体验问题，用户不需要再重启。
         _autoThemeCycleTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
-        _autoThemeCycleTimer.Tick += (_, _) => ReevaluateAutoThemeCycle();
+        _autoThemeCycleTimer.Tick += (_, _) =>
+        {
+            ReevaluateAutoThemeCycle();
+            // 背景/配色的"每天轮换"复用同一个定时器，不再单开一个：两者都是"按时间自动改变
+            // 外观"，检查成本同样是常数级的快速返回，多一个 DispatcherTimer 只会多一份调度开销。
+            ReevaluateAppearanceRotation();
+        };
         _autoThemeCycleTimer.Start();
         ReevaluateAutoThemeCycle();
 
@@ -1333,6 +1406,38 @@ public partial class MainWindow : Window
         }
     }
 
+    /// <summary>
+    /// 「背景图片 / 配色色系」每日轮换的复查入口。跟 ReevaluateAutoThemeCycle 一样，
+    /// 由三处触发：(1) 构造函数里启动时先解析一次（那次直接内联在首帧之前，不走这里）；
+    /// (2) _autoThemeCycleTimer 每秒 Tick；(3) 设置页保存/改了候选池之后立即调用一次。
+    ///
+    /// 每秒跑一次的开销可以忽略：AppearanceRotationService 内部绝大多数时候走的是
+    /// "候选池没变、日期没变，直接返回 false"这条快速路径，真正重新套主题/换背景的分支
+    /// 一天最多命中一次。之所以要有定时器而不是只在启动时解析一次，是因为用户完全可能
+    /// 把启动器挂着过夜——跨过零点之后界面应该自己换成新一天的那一套，而不是非得重启一次。
+    /// </summary>
+    public void ReevaluateAppearanceRotation()
+    {
+        var cfg = ConfigService.Config;
+
+        var skinChanged = AppearanceRotationService.ResolveSkin(cfg, out var skin);
+        var bgChanged = AppearanceRotationService.ResolveBackground(cfg, out var bgPath);
+        if (!skinChanged && !bgChanged) return;
+
+        ConfigService.Save();
+
+        if (skinChanged)
+        {
+            ThemeService.ApplyForCurrentState(cfg.GuestModeEnabled, skin, cfg.IsDarkMode, cfg.CustomAccentColor);
+            if (MainContent?.Content is HomePage homePage) homePage.RefreshThemeToggles();
+        }
+
+        if (bgChanged)
+        {
+            if (!SetCustomBackgroundImage(bgPath)) SetCustomBackgroundImage(null);
+        }
+    }
+
     /// <summary>Microsoft.Win32.SystemEvents.UserPreferenceChanged 的回调：事件本身不区分
     /// 具体是哪一类系统偏好变了（背景、强调色、主题模式……都会触发一次 Category=General），
     /// 直接复用 ReevaluateFollowSystemTheme 内部"跟上次应用的系统深浅色状态比对，没变就
@@ -2059,6 +2164,20 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
+    /// 把所有"显隐由 AppConfig 决定"的界面元素按当前配置同步一次。
+    ///
+    /// 这个方法存在的唯一理由是时序：构造函数里这几项原本各自散着调用，而且都排在
+    /// <c>ConfigService.Load()</c> 之前，读到的全是 <c>new AppConfig()</c> 的默认值，
+    /// 导致"配置里开着、界面上没生效"。集中成一个方法、在 Load() 之后调用一次，
+    /// 以后再往里加同类逻辑也不会再踩同一个坑。
+    /// </summary>
+    private void ApplyConfigDrivenVisibility()
+    {
+        ApplyFeatureVisibility();
+        RefreshSimplifiedModeNavVisibility(); // 内部会顺带调 RefreshExperimentalNavVisibility()
+    }
+
+    /// <summary>
     /// 应用"功能隐藏"设置：目前只覆盖主导航栏的下载/设置/工具三个入口（跟设置页
     /// FeatureVisibilityService.Groups 里"主页面"这一组对应）——子页面/特定功能那些
     /// 更细粒度的隐藏项，各自的宿主页面（SettingsPage/ToolboxPage 等）在自己
@@ -2711,6 +2830,33 @@ public partial class MainWindow : Window
             return;
         }
 
+        // 需求：「在游戏下载安装过程中阻止正在下载中的游戏启动」。
+        //
+        // 注意拦的范围只有"当前选中的这个版本正好就是此刻正在被下载/安装的那一个"。
+        // 下载队列跟启动按钮一贯是互不阻塞的（见 DownloadQueueService 类头注释），
+        // 一边装 1.21 一边启动早就装好的 1.20.1 完全没问题，不该被一刀切禁掉；
+        // 真正的问题只在于"启动一个正在被写入、libraries/assets 还缺一半的版本目录"——
+        // 那样起来的游戏必然崩溃，而且弹出的是原生 Java 崩溃窗口，用户根本看不出
+        // 跟"刚才那个下载还没装完"有关系，只会当成启动器坏了。
+        //
+        // 放在这里（账户确认之后、真正开始跑 Java 检测/参数拼装之前）是因为：再往前放会
+        // 在用户还没确认账户时就弹提示，顺序上突兀；再往后放则已经开始下载 Java/补全文件，
+        // 白做一堆功。暂停中的下载同样拦，理由见 FindActiveForVersion 的注释。
+        var installingItem = DownloadQueueService.Instance.FindActiveForVersion(folder.Path, cfg.SelectedVersionId);
+        if (installingItem != null)
+        {
+            var paused = installingItem.Status == DownloadQueueItemStatus.Paused;
+            MessageBoxDialog.ShowInfo(
+                $"版本「{cfg.SelectedVersionId}」" + (paused ? "的安装还没有完成（当前已暂停）。" : "正在下载安装中。") +
+                "\n\n这个版本目录里的文件还不完整，现在启动大概率会直接崩溃。\n" +
+                (paused
+                    ? "请在标题栏的下载列表里点「继续」把它装完，再启动。"
+                    : "请等它装完（进度可以在标题栏的下载列表里看）再启动。") +
+                "\n\n如果只是想先玩别的，可以在「版本选择」里换一个已经装好的版本，那不受影响。",
+                "版本还在安装中");
+            return;
+        }
+
         try
         {
             // 微软账户：若 access token 即将过期，先静默刷新。
@@ -3111,6 +3257,39 @@ public partial class MainWindow : Window
                 return;
             }
 
+            // ===================== 操作模式：键鼠 / 触屏 =====================
+            // 需求："可以在启动之前选择是键鼠模式还是触屏模式，默认键鼠模式。"
+            // 默认路径完全不变：cfg.AskInputModeBeforeLaunch 默认 false、cfg.TouchModeEnabled
+            // 默认 false，所以不做任何设置的用户走到这里就是 useTouchMode=false，行为跟改动前
+            // 一模一样，不会多弹任何框。只有主动打开了"每次启动前询问"的用户才会看到选择框。
+            var useTouchMode = cfg.TouchModeEnabled;
+            if (cfg.AskInputModeBeforeLaunch)
+            {
+                // 内嵌 Overlay 弹窗：ShowDialog() 是 OverlayDialogControl 上的兼容成员
+                // （见 IOverlayDialog.cs 里的 "Window 兼容层" 注释），写法跟原来的独立
+                // Window 一样是同步阻塞等结果，但弹出来的是主窗口内部的遮罩层弹窗，
+                // 不再是带系统标题栏、在任务栏里单独占一格的 Win32 窗口，也不需要 Owner。
+                var modeWindow = new InputModeSelectDialog(cfg.TouchModeEnabled, cfg.InputModeAskCountdownSeconds);
+                modeWindow.ShowDialog();
+                // 直接关掉窗口(UseTouchMode 为 null)按"键鼠"处理——不确定的时候选不会改变
+                // 原有体验的那一边，而不是给用户扣上一层他没要的悬浮层。
+                useTouchMode = modeWindow.UseTouchMode == true;
+
+                // 只有用户真的动手选了才可能写配置。倒计时超时属于"没表态"，这时候即便
+                // 复选框是勾上的也绝不能把它当成长期选择存下去，否则会出现"人走开一次，
+                // 以后就再也不问了"这种用户完全没同意过的结果。
+                if (!modeWindow.TimedOut && modeWindow.RememberChoice)
+                {
+                    cfg.TouchModeEnabled = useTouchMode;
+                    cfg.AskInputModeBeforeLaunch = false;
+                    ConfigService.Save();
+                }
+
+                LauncherLogService.AppendLine(
+                    $"[操作模式] 本次启动使用 {(useTouchMode ? "触屏模式" : "键鼠模式")}" +
+                    (modeWindow.TimedOut ? "（倒计时超时自动选择）" : ""));
+            }
+
             LauncherLogService.AppendLine($"[启动游戏] 账户={account.DisplayLabel} 版本={cfg.SelectedVersionId}");
 
             GameProcessInfo processInfo;
@@ -3178,6 +3357,18 @@ public partial class MainWindow : Window
                 }
             }
             ProcessManager.Register(processInfo);
+
+            // 触屏模式：等游戏窗口出现后贴上虚拟按键悬浮层（内部异步等待，不阻塞这里）。
+            // 纯附加功能，失败只写日志，绝不影响游戏本身运行。见 Services/TouchOverlayService.cs。
+            if (useTouchMode)
+            {
+                try { TouchOverlayService.Attach(processInfo, cfg); }
+                catch (Exception touchEx)
+                {
+                    ErrorPresenter.LogTechnicalDetail($"[触屏悬浮层启动失败，游戏不受影响]\n{touchEx}");
+                }
+            }
+
             RefreshSidebar();
 
             // 需求："游戏崩溃的时候，可以选择查看日志和导出完整日志"——这里覆盖的是"游戏已经
@@ -4053,6 +4244,47 @@ public partial class MainWindow : Window
             }
         }
 
+        // 触屏模式下关闭启动器：悬浮层是贴在 MainWindow 生命周期上的附属层，启动器一关，
+        // 玩家手上还戳着的虚拟按键会直接消失——这跟"点叉号无非是关不关游戏"的心理预期
+        // 差得比较远，必须单独截住问清楚，不能被"点击叉号时的默认操作"悄悄决定。
+        // 同样加一次性标记，避免备份/收尾动画导致 Closing 被重新触发时反复追问。
+        if (!_touchCloseDecisionHandled && TouchOverlayService.HasActive)
+        {
+            var touchChoice = MessageBoxDialog.ShowTouchModeCloseChoice(
+                "当前正在使用触屏模式玩游戏，关闭启动器会导致虚拟按键悬浮层一起消失，触屏操作会直接断开。",
+                "关闭启动器",
+                cancelText: "取消",
+                closeAllText: "关闭所有（包括游戏）",
+                trayText: "返回托盘",
+                closeLauncherOnlyText: "关闭XCL和虚拟按键");
+
+            if (touchChoice == XclTouchCloseChoiceResult.Cancel)
+            {
+                e.Cancel = true;
+                return;
+            }
+
+            _touchCloseDecisionHandled = true;
+
+            if (touchChoice == XclTouchCloseChoiceResult.Tray)
+            {
+                e.Cancel = true;
+                MinimizeToTray();
+                return;
+            }
+
+            if (touchChoice == XclTouchCloseChoiceResult.CloseLauncherAndOverlayOnly)
+            {
+                // 悬浮层立刻摘掉（幂等，TouchOverlayService.CloseAll 后面还会再调一次），
+                // 游戏进程完全不动。真正"不杀游戏"的效果落在下面那段 KillAllGameAndServerProcesses
+                // 的跳过判断上，这里只是记下用户的选择。
+                TouchOverlayService.CloseAll();
+                _touchCloseKeepGameRunning = true;
+            }
+            // CloseAllIncludingGame：什么都不用特殊处理，走到下面默认的"彻底退出"分支
+            // 本来就会把悬浮层和所有游戏/服务器子进程一起清理掉。
+        }
+
         // 第一次关闭时仍保留原来的桌面便签三选一；关闭备份完成后第二次 Close() 不重复打扰。
         if (!_stickyNoteCloseDecisionHandled && Views.StickyNoteWindow.OpenWindows.Count > 0)
         {
@@ -4100,7 +4332,15 @@ public partial class MainWindow : Window
         // 这里不需要知道具体是哪个窗口，只要"关掉 MainWindow 之后 Application.Current.Windows
         // 里还有除 MainWindow 自己以外的窗口"，就用同样的办法：把托盘图标亮出来，让用户能看见
         // "程序还在后台"、能从托盘点回来或者真正退出，而不是变成一个用户毫无感知的幽灵进程。
-        if (Application.Current.Windows.Cast<Window>().Any(w => !ReferenceEquals(w, this)))
+        // 触屏悬浮层(TouchOverlayWindow)不算"用户能看见、需要保留程序在后台"的窗口：
+        // 它是贴在游戏窗口上的附属浮层，没有标题栏、不进任务栏和 Alt-Tab，游戏一退它就自己关。
+        // 如果把它算进来，"开着触屏模式玩着游戏时关闭启动器"就会走进上面那条托盘常驻分支，
+        // 而不是用户预期的彻底退出，正好制造出注释里说的那种"用户毫无感知的幽灵进程"。
+        // 这里先主动收掉所有悬浮层（幂等，没有悬浮层时什么都不做），再做判断。
+        TouchOverlayService.CloseAll();
+
+        if (Application.Current.Windows.Cast<Window>()
+                .Any(w => !ReferenceEquals(w, this) && w is not TouchOverlayWindow))
         {
             _trayIcon?.Show();
         }
@@ -4112,7 +4352,9 @@ public partial class MainWindow : Window
             // 走到这个 else 说明真的没有任何东西要保留——是一次彻底退出，
             // 顺手清理掉还在跑的游戏/服务器子进程，跟托盘"退出"/PerformFullExit 用同一个方法，
             // 不留孤儿进程。
-            KillAllGameAndServerProcesses();
+            // 唯一的例外：触屏模式关闭确认里用户明确选了"关闭XCL和虚拟按键，游戏继续跑"，
+            // 这时候必须跳过，否则用户刚做的选择等于白选——启动器一关游戏照样被杀。
+            if (!_touchCloseKeepGameRunning) KillAllGameAndServerProcesses();
             // 同上，补一道 ScheduleSelfKillFailSafe 兜底：Closing 这条路径最终也是靠
             // WPF 自身"最后一个窗口关闭 -> 进程退出"（ShutdownMode=OnLastWindowClose）
             // 来结束进程的，不是显式调用 Shutdown()，反而更可能因为某个残留的非
@@ -4197,16 +4439,64 @@ public partial class MainWindow : Window
     {
         UpdateMaximizeRestoreIcon();
 
+        // 标题栏的下载列表是一个 AllowsTransparency 的 Popup，也就是一个独立于主窗口的
+        // 顶层窗口。主窗口最小化/最大化/从任务栏恢复时，这个 Popup 不跟着做同样的状态
+        // 切换，会短暂地留在屏幕上、位置也对不上（用户反馈截图里那个"悬在外面、内容一片
+        // 黑的下载列表框"就是这个），而且它自己那层透明合成还要跟着一起重画，白白加重
+        // 切换那一帧的负担。窗口状态一变就直接关掉它，代价只是用户要重新点一下下载图标。
+        if (DownloadQueuePopup != null) DownloadQueuePopup.IsOpen = false;
+
         var previous = _previousWindowStateForAnimation;
         _previousWindowStateForAnimation = WindowState;
 
         if (WindowState == WindowState.Minimized) return;
+        if (previous == WindowState) return;
 
-        if (previous == WindowState.Minimized)
-            UiAnimationHelper.FadeInMove(RootWindowGrid, RootWindowMoveTransform);
-        else if (previous != WindowState)
-            UiAnimationHelper.SettleScale(RootWindowGrid, RootWindowScaleTransform);
+        // 连续快速切换（比如疯狂双击标题栏）时，上一次的收尾动画可能还没播完。再叠一次
+        // 新动画不但看不出效果，还会让 BitmapCache 反复建/拆，是卡顿被放大的常见路径。
+        // 同一时刻只允许有一次窗口级过渡在跑。
+        if (DateTime.UtcNow < _windowTransitionBusyUntil) return;
+        // 用"忙到什么时候"而不是一个 bool 开关：动画的 Completed 回调在动画被别的动画
+        // 打断时不保证触发（例如切换过程中用户又点了托盘还原，那边会直接 BeginAnimation
+        // 覆盖掉当前这条），bool 开关一旦漏了复位就会永久卡住、之后所有窗口过渡都不再播。
+        // 用时间戳则最坏情况下也只是"接下来 600ms 内不再接新的过渡"，自己会恢复。
+        _windowTransitionBusyUntil = DateTime.UtcNow.AddMilliseconds(600);
+
+        var fromMinimized = previous == WindowState.Minimized;
+
+        // 关键改动：不在 StateChanged 里同步启动动画。
+        //
+        // StateChanged 是在原生窗口状态刚切换、WPF 正准备按新尺寸重新 Measure/Arrange 的
+        // 时候触发的。之前在这里直接 BeginAnimation，等于在同一帧里塞进"整树重新布局"
+        // + "为动画建立整树位图缓存" + "第一帧动画合成"三件重活，用户看到的就是切换瞬间
+        // 明显顿一下。改成用 Background 优先级排到布局之后再启动：这时新尺寸下的布局
+        // 已经跑完，建缓存和播动画都在一个干净的帧里进行，观感上动画起步晚了不到一帧，
+        // 但不再有那一下卡顿。
+        Dispatcher.BeginInvoke(new Action(() =>
+        {
+            try
+            {
+                if (fromMinimized)
+                    UiAnimationHelper.FadeInMove(RootWindowGrid, RootWindowMoveTransform,
+                        onCompleted: () => _windowTransitionBusyUntil = DateTime.MinValue);
+                else
+                    UiAnimationHelper.SettleScale(RootWindowGrid, RootWindowScaleTransform,
+                        onCompleted: () => _windowTransitionBusyUntil = DateTime.MinValue);
+            }
+            catch
+            {
+                // 动画只是观感，任何异常都不该让窗口卡在半透明/缩小状态上：兜底把
+                // 三个被动画驱动的属性同步复位，并解除"正在过渡"的锁。
+                RootWindowGrid.Opacity = 1;
+                RootWindowScaleTransform.ScaleX = RootWindowScaleTransform.ScaleY = 1;
+                RootWindowMoveTransform.Y = 0;
+                _windowTransitionBusyUntil = DateTime.MinValue;
+            }
+        }), DispatcherPriority.Background);
     }
+
+    /// <summary>窗口级过渡动画"忙到什么时候为止"，见 MainWindow_StateChanged 里的说明。</summary>
+    private DateTime _windowTransitionBusyUntil = DateTime.MinValue;
 
     /// <summary>
     /// 兼容旧版/补丁叠加后的 MainWindow.xaml：部分版本仍然绑定 SizeChanged="MainWindow_SizeChanged"。
@@ -4218,12 +4508,33 @@ public partial class MainWindow : Window
         UpdateMaximizeRestoreIcon();
     }
 
+    /// <summary>最大化/还原图标的两个 Geometry 只在第一次用到时 FindResource 一次就缓存住。
+    /// 这个方法在 StateChanged 和（历史遗留的）SizeChanged 里都会被调用，而 FindResource
+    /// 要顺着整棵逻辑树一路查到 App.xaml 那个上百 KB 的资源字典，放在尺寸变化路径上属于
+    /// 纯浪费；缓存后每次调用就只是一次引用赋值。_lastMaximizeIconIsRestore 再挡掉
+    /// "状态没变还反复赋值 Data"导致的多余重绘。</summary>
+    private Geometry? _iconWinRestoreCache;
+    private Geometry? _iconWinMaximizeCache;
+    private bool? _lastMaximizeIconIsRestore;
+
     private void UpdateMaximizeRestoreIcon()
     {
         if (MaximizeRestoreIcon == null) return; // 构造函数里 InitializeComponent 之前可能还没生成
-        MaximizeRestoreIcon.Data = WindowState == WindowState.Maximized
-            ? (Geometry)FindResource("IconWinRestore")
-            : (Geometry)FindResource("IconWinMaximize");
+
+        var wantRestore = WindowState == WindowState.Maximized;
+        if (_lastMaximizeIconIsRestore == wantRestore) return;
+        _lastMaximizeIconIsRestore = wantRestore;
+
+        if (wantRestore)
+        {
+            _iconWinRestoreCache ??= (Geometry)FindResource("IconWinRestore");
+            MaximizeRestoreIcon.Data = _iconWinRestoreCache;
+        }
+        else
+        {
+            _iconWinMaximizeCache ??= (Geometry)FindResource("IconWinMaximize");
+            MaximizeRestoreIcon.Data = _iconWinMaximizeCache;
+        }
     }
 
     private void MainWindow_DragOver(object sender, DragEventArgs e)

@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Diagnostics;
 using System.IO;
 using System.Windows;
 using System.Windows.Controls;
@@ -49,6 +50,9 @@ public partial class SettingsPage : UserControl
     // 功能隐藏的编辑副本：用户勾选时只改这里，不提前碰 ConfigService.Config。
     // 这样手动保存模式下不会被其它即时动作的 ConfigService.Save() 顺带持久化。
     private HashSet<string> _pendingHiddenFeatureKeys = new(StringComparer.OrdinalIgnoreCase);
+    // 「隐藏设置项」的编辑副本，跟上面那行同理：勾选先只留在页面里，点"保存设置"时才写回
+    // cfg.HiddenSettingKeys。两个集合各管各的，不要互相赋值（一个是功能入口，一个是设置条目）。
+    private HashSet<string> _pendingHiddenSettingKeys = new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>供 MainWindow.SetMainContent 在切页前查询："当前设置页是否有未保存的改动"。
     /// 只有非自动保存模式下才会变成 true——自动保存模式下每次改动都会立即落盘，
@@ -61,6 +65,7 @@ public partial class SettingsPage : UserControl
         InitializeComponent();
         var cfg = _owner.ConfigService.Config;
         _pendingHiddenFeatureKeys = new HashSet<string>(cfg.HiddenFeatureKeys, StringComparer.OrdinalIgnoreCase);
+        _pendingHiddenSettingKeys = new HashSet<string>(cfg.HiddenSettingKeys, StringComparer.OrdinalIgnoreCase);
 
         // 不在设置页构造/Loaded 阶段重复 ApplyForCurrentState。MainWindow 在首帧前已经把全局
         // 主题资源同步到最终配置；这里再刷一次会重建全窗口样式，反而制造“切到设置页时按钮
@@ -68,7 +73,13 @@ public partial class SettingsPage : UserControl
 
         // 防抖预览定时器属于本页；切走设置页后必须停止，否则用户刚输入颜色就切页时，
         // 300ms 后旧页面的计时器仍会突然改全局主题，看起来像“切页后按钮自己变色”。
-        Unloaded += (_, _) => _accentApplyDebounceTimer?.Stop();
+        Unloaded += (_, _) =>
+        {
+            _accentApplyDebounceTimer?.Stop();
+            // F10 的"临时显示"只对当前这一次停留在设置页有效：切走页面就复位，
+            // 不然用户下次再进设置页会发现明明勾了隐藏却全都还在，以为设置没保存。
+            SettingsVisibilityService.TemporaryRevealActive = false;
+        };
         Loaded += (_, _) =>
         {
             if (_settingsOpenBackupCreated) return;
@@ -122,6 +133,12 @@ public partial class SettingsPage : UserControl
         UpdateLifecycleBackupTargetsUi();
         InjectionScanCheck.IsChecked = cfg.EnableInjectionScan;
         GameConsoleWindowCheck.IsChecked = cfg.EnableGameConsoleWindow;
+        // 触屏模式（默认全关 = 键鼠模式），见 AppConfig 对应字段注释。
+        TouchModeCheck.IsChecked = cfg.TouchModeEnabled;
+        AskInputModeCheck.IsChecked = cfg.AskInputModeBeforeLaunch;
+        TouchScaleBox.Text = cfg.TouchOverlayButtonScale.ToString("0.##");
+        TouchOpacityBox.Text = cfg.TouchOverlayOpacityPercent.ToString("0");
+        TouchSensitivityBox.Text = cfg.TouchOverlayLookSensitivity.ToString("0.##");
         ShowModIconsCheck.IsChecked = cfg.ShowModIcons;
         ShowServerNetworkGuideCheck.IsChecked = cfg.ShowServerNetworkGuideOnStart;
         IsolateVersionsCheck.IsChecked = cfg.IsolateVersionsByDefault;
@@ -143,7 +160,11 @@ public partial class SettingsPage : UserControl
         if (BackdropMaterialCombo.SelectedItem == null) BackdropMaterialCombo.SelectedIndex = 0; // 兜底：旧配置没有这一项时默认选中"云母 Mica"
         BackdropMaterialPanel.IsEnabled = cfg.EnableWin11VisualEffects;
         WindowTransparencyCheck.IsChecked = cfg.EnableWindowTransparency;
-        CustomBackgroundImagePathBox.Text = cfg.CustomBackgroundImagePath ?? "";
+        // 背景候选池 + 选择方式：列表内容和"轮换是否可用"都由当前候选池数量决定，
+        // 统一在 RefreshBackgroundCandidateUi 里算，避免加载/导入/删除三处各写一份判断。
+        SelectComboByTag(BackgroundRotationModeCombo, cfg.BackgroundRotationMode.ToString());
+        if (BackgroundRotationModeCombo.SelectedItem == null) BackgroundRotationModeCombo.SelectedIndex = 0;
+        RefreshBackgroundCandidateUi();
         var frostPercent = Math.Clamp(cfg.CustomBackgroundFrostPercent, 25, 100);
         CustomBackgroundFrostSlider.Value = frostPercent;
         CustomBackgroundFrostValueText.Text = $"{frostPercent}%";
@@ -275,6 +296,24 @@ public partial class SettingsPage : UserControl
         _customThemeSelectionPending = false;
         UpdateCustomThemePanelVisibility();
 
+        // 参与轮换的配色候选：列表项跟上面的下拉框同源（ThemeService.AllSkins），
+        // 但故意排除 Custom——"自定义"不是一个固定色系，它的实际颜色取决于 CustomAccentColor
+        // 这个另存的字段，把它混进每日轮换里只会让用户某天早上打开启动器看到一个自己
+        // 早就忘了当初调的什么颜色，属于"能做但不该做"。
+        UiSkinCandidateList.Items.Clear();
+        foreach (var skin in ThemeService.AllSkins)
+        {
+            if (string.Equals(skin, ThemeService.SkinCustom, StringComparison.Ordinal)) continue;
+            UiSkinCandidateList.Items.Add(new ListBoxItem
+            {
+                Content = ThemeService.GetDisplayName(skin),
+                Tag = skin
+            });
+        }
+        SelectComboByTag(UiSkinRotationModeCombo, cfg.UiSkinRotationMode.ToString());
+        if (UiSkinRotationModeCombo.SelectedItem == null) UiSkinRotationModeCombo.SelectedIndex = 0;
+        RefreshSkinCandidateUi();
+
         // Win11 高级特效开启时锁定为"水"主题（见 ThemeService.SkinAquatic 类注释）：
         // 打开设置页时如果配置里已经是开启状态，这里要在控件刚填充完就立即锁一次，
         // 不然要等用户手动点一下开关才会触发 VisualEffectsToggle_Changed。
@@ -296,11 +335,22 @@ public partial class SettingsPage : UserControl
         UseMachineWideRegistryCheck.IsChecked = cfg.UseMachineWideRegistry;
         RefreshRegistryStatusText();
 
-        // 功能隐藏：绑定分组数据源，再按已保存的 HiddenFeatureKeys 逐个勾选。
-        // 用 Loaded 事件而不是构造函数里直接遍历，是因为此时 ItemsControl 的
-        // 容器（每个 CheckBox）还没真正生成，直接找子控件会全部落空。
-        FeatureHideList.ItemsSource = FeatureVisibilityService.Groups;
-        Loaded += (_, _) => RunWithoutDirtyTracking(() => InitFeatureHideChecks(cfg));
+        // 「功能隐藏」「隐藏设置项」的勾选界面已经整体搬进 Views/HiddenItemsWindow，
+        // 这一页只保留一个入口按钮，以及下面那行状态文字。待生效的勾选先放在
+        // _pendingHiddenFeatureKeys/_pendingHiddenSettingKeys 里，保存时才写进配置。
+        _pendingHiddenFeatureKeys.Clear();
+        foreach (var key in cfg.HiddenFeatureKeys) _pendingHiddenFeatureKeys.Add(key);
+        _pendingHiddenSettingKeys.Clear();
+        foreach (var key in cfg.HiddenSettingKeys) _pendingHiddenSettingKeys.Add(key);
+
+        // ApplySettingsItemVisibility 必须放在 Loaded 之后：构造函数阶段 SettingsRootPanel
+        // 的子元素虽然已经存在，但"整段分区一起收起"要靠遍历它的 Children 找小标题，
+        // 等布局连接完再做最稳。
+        Loaded += (_, _) => RunWithoutDirtyTracking(() =>
+        {
+            RefreshSettingsHideStatusText();
+            ApplySettingsItemVisibility();
+        });
 
         RefreshJavaList();
 
@@ -880,24 +930,230 @@ public partial class SettingsPage : UserControl
     /// 用递归找可视化树而不是给每个 CheckBox 手动 x:Name，是因为这批 CheckBox
     /// 是 ItemsControl 嵌套 ItemsControl 动态生成的，没法在 XAML 里逐个命名。
     /// </summary>
-    private void InitFeatureHideChecks(AppConfig cfg)
+    /// <summary>打开 XCL 自己的更新日志弹窗。每次点击都 new 一个新实例并用 Show()
+    /// （不是 ShowDialog），所以它不会挡住设置页；跟下面那个 Minecraft 日志弹窗各自独立
+    /// （分别对应各自的 ChangelogSource、各自的地址和文案），不会混成同一个东西。
+    /// 已从独立系统窗口迁移为进程内 Overlay 弹窗，盖在启动器主窗口上面，不再新开窗口——
+    /// 详见 ChangelogWindow.xaml 头部注释。</summary>
+    private void OpenXclChangelog_Click(object sender, RoutedEventArgs e)
+        => ShowChangelog(ChangelogSource.Xcl);
+
+    /// <summary>打开 Minecraft 更新日志弹窗，跟上面那个完全独立的实例、独立的数据源。</summary>
+    private void OpenMinecraftChangelog_Click(object sender, RoutedEventArgs e)
+        => ShowChangelog(ChangelogSource.Minecraft);
+
+    private void ShowChangelog(ChangelogSource source)
     {
-        foreach (var checkBox in FindVisualChildren<CheckBox>(FeatureHideList))
+        var window = new ChangelogWindow(source);
+        window.Show();
+    }
+
+    /// <summary>打开「隐藏项目」弹窗（已迁移为进程内 Overlay 弹窗，不再新开窗口）。
+    /// 勾选结果只更新本页待保存的两个集合，真正写进配置仍然要用户点"保存设置"——
+    /// 跟本页其它设置的语义保持一致，也让用户在弹窗里勾错了之后还有"不保存直接切页"
+    /// 这条后悔路。</summary>
+    private void OpenHiddenItems_Click(object sender, RoutedEventArgs e)
+    {
+        var window = new HiddenItemsWindow(_pendingHiddenFeatureKeys, _pendingHiddenSettingKeys);
+        if (window.ShowDialog() != true) return;
+
+        _pendingHiddenFeatureKeys.Clear();
+        foreach (var key in window.ResultFeatureKeys) _pendingHiddenFeatureKeys.Add(key);
+
+        _pendingHiddenSettingKeys.Clear();
+        foreach (var key in window.ResultSettingKeys) _pendingHiddenSettingKeys.Add(key);
+
+        RefreshSettingsHideStatusText();
+        OnSettingsEdited(); // 这两个集合的改动要走正常的"未保存"提示
+    }
+
+    // ===================== 隐藏设置项（大类 / 单项，F10 临时显示） =====================
+    //
+    // 整套东西分三块：
+    //   1) Services/SettingsVisibilityService.cs —— 有哪些大类/单项、各自对应哪些控件名；
+    //   2) 这里 —— 勾选状态的回填/收集，以及"真正把控件收起来"的那段可视化树操作；
+    //   3) MainWindow 的 F10 按键处理 —— 切换 TemporaryRevealActive 并让本页重新应用一次。
+    //
+    // 隐藏只改 Visibility，不动任何配置值：被藏起来的设置仍然按原来保存的值生效，
+    // 只是不在页面上占位置。这一点在面板的说明文字里也写清楚了，避免用户以为"藏起来 =
+    // 关掉这个功能"。
+
+    private void RefreshSettingsHideStatusText()
+    {
+        if (SettingsHideStatusText == null) return;
+        var features = _pendingHiddenFeatureKeys.Count;
+        var settings = _pendingHiddenSettingKeys.Count;
+        SettingsHideStatusText.Text = features == 0 && settings == 0
+            ? "当前没有隐藏任何东西。"
+            : $"当前勾选了功能 {features} 项、设置 {settings} 项要隐藏，保存设置后生效；" +
+              "想临时看回来：在设置页按 F10 显示隐藏的设置项，在任意界面按 F12 显示隐藏的功能。";
+    }
+
+    /// <summary>
+    /// 按 cfg.HiddenSettingKeys（以及 F10 临时显示标记）重新计算设置页上每一项的显隐。
+    /// 公开给 MainWindow 在按下 F10 时调用。
+    ///
+    /// 做法是"先全部显示回来、再逐条隐藏"，而不是增量地改——增量改要额外维护"上一次藏了
+    /// 什么"的状态，一旦某次异常中断就会留下永远显示不回来的控件；全量重算是幂等的，
+    /// 无论调用多少次、从哪个状态调用，结果都只取决于当前配置。
+    /// </summary>
+    public void ApplySettingsItemVisibility()
+    {
+        var cfg = _owner.ConfigService.Config;
+
+        // 1) 先恢复：把上一次被这个功能藏起来的元素全部放回来。只恢复自己藏过的，
+        //    不会误伤别的逻辑（比如高手模式切换）自己控制的 Visibility。
+        foreach (var element in _settingsHiddenElements)
+            element.Visibility = Visibility.Visible;
+        _settingsHiddenElements.Clear();
+
+        // 2) F10 临时显示生效期间，到这里就结束——什么都不藏。
+        if (SettingsVisibilityService.TemporaryRevealActive)
         {
-            if (checkBox.Tag is string key)
-                checkBox.IsChecked = cfg.HiddenFeatureKeys.Contains(key);
+            RefreshSettingsHideRevealHint(revealing: true);
+            return;
+        }
+
+        foreach (var group in SettingsVisibilityService.Groups)
+        {
+            var groupHidden = cfg.HiddenSettingKeys.Contains(group.Key);
+
+            // 整类隐藏：把这一类登记的整段分区（小标题 + 说明 + 分区内全部控件）一起收起来。
+            if (groupHidden)
+            {
+                foreach (var anchor in group.SectionAnchors)
+                    HideWholeSectionOf(anchor);
+            }
+
+            foreach (var item in group.Items)
+            {
+                if (!groupHidden && !cfg.HiddenSettingKeys.Contains(item.Key)) continue;
+                HideSettingItem(item);
+            }
+        }
+
+        RefreshSettingsHideRevealHint(revealing: false);
+    }
+
+    /// <summary>被"隐藏设置项"这个功能主动藏起来的元素。只记录自己动过的，
+    /// 下一次重算时原样恢复，见 ApplySettingsItemVisibility 里的说明。</summary>
+    private readonly List<FrameworkElement> _settingsHiddenElements = new();
+
+    private void RefreshSettingsHideRevealHint(bool revealing)
+    {
+        if (SettingsHideSectionTitle == null) return;
+        SettingsHideSectionTitle.Text = revealing
+            ? "隐藏项目（F10 临时显示中，再按一次 F10 恢复隐藏）"
+            : "隐藏项目";
+    }
+
+    private void HideSettingItem(SettingsVisibilityService.SettingItem item)
+    {
+        foreach (var name in item.Names)
+        {
+            if (FindName(name) is not FrameworkElement element) continue;
+
+            if (item.WholeSection)
+            {
+                HideWholeSectionOf(name);
+                continue;
+            }
+
+            var target = item.HideParentRow ? ResolveTopLevelRow(element) ?? element : element;
+            HideElement(target);
+
+            // 只有当这个控件本身（或它的行容器）就挂在 SettingsRootPanel 下时，才顺带把
+            // 紧挨着它上面的说明/标签文字一起藏掉——嵌在别的容器里的控件（比如一排按钮里的
+            // 某一个）没有"自己的标签行"这个概念，乱扫周围元素只会误伤同排的兄弟控件。
+            if (ReferenceEquals(target.Parent, SettingsRootPanel))
+                HideAdjacentLabels(target);
         }
     }
 
-    /// <summary>功能隐藏面板的勾选只先留在 UI 中；真正写回 HiddenFeatureKeys 统一放在
-    /// PerformSave。这样关闭自动保存时不会在点击“保存设置”之前改动内存配置，也不会因为
-    /// 随后某个无关操作恰好触发 ConfigService.Save() 而把未确认的勾选一起写进磁盘。</summary>
-    private void FeatureHideCheck_Changed(object sender, RoutedEventArgs e)
+    /// <summary>把指定控件所在的整段"分区"收起来：从它上面最近的一个小标题
+    /// （FontWeight=Bold 且字号 ≥ 13.5 的 TextBlock，本页所有分区标题都是这个写法）开始，
+    /// 一直到下一个小标题之前为止。</summary>
+    private void HideWholeSectionOf(string anchorName)
     {
-        if (_suppressDirtyTracking || sender is not CheckBox { Tag: string key } checkBox) return;
-        if (checkBox.IsChecked == true) _pendingHiddenFeatureKeys.Add(key);
-        else _pendingHiddenFeatureKeys.Remove(key);
-        // DirtyTracking 的根级 Checked/Unchecked 路由事件会负责标记修改。
+        if (FindName(anchorName) is not FrameworkElement anchor) return;
+        var row = ResolveTopLevelRow(anchor);
+        if (row == null) return;
+
+        var children = SettingsRootPanel.Children;
+        var index = children.IndexOf(row);
+        if (index < 0) return;
+
+        var start = index;
+        while (start > 0 && !IsSectionHeader(children[start - 1]))
+            start--;
+        // start 现在指向分区内第一个元素；它上面那个如果是小标题，一起藏掉。
+        if (start > 0 && IsSectionHeader(children[start - 1])) start--;
+
+        var end = index;
+        while (end + 1 < children.Count && !IsSectionHeader(children[end + 1]))
+            end++;
+
+        for (var i = start; i <= end; i++)
+        {
+            if (children[i] is FrameworkElement fe) HideElement(fe);
+        }
+    }
+
+    /// <summary>把紧挨在 <paramref name="row"/> 上面的标签文字一起藏掉。
+    /// 遇到小标题（分区标题）就停——那不属于这一条设置；遇到字号 ≤ 11.5 的小字说明也停，
+    /// 因为本页的写法里那种小字是"上一条设置的补充说明"，不是这一条的标签。</summary>
+    private void HideAdjacentLabels(FrameworkElement row)
+    {
+        var children = SettingsRootPanel.Children;
+        var index = children.IndexOf(row);
+        if (index < 0) return;
+
+        for (var i = index - 1; i >= 0; i--)
+        {
+            if (children[i] is not TextBlock tb) break;
+            if (IsSectionHeader(tb)) break;
+            if (!double.IsNaN(tb.FontSize) && tb.FontSize <= 11.5) break;
+            HideElement(tb);
+        }
+
+        // 控件下面紧跟的小字说明（FontSize=11 那种）属于这一条设置，一起藏掉。
+        for (var i = index + 1; i < children.Count; i++)
+        {
+            if (children[i] is not TextBlock tb) break;
+            if (IsSectionHeader(tb)) break;
+            if (double.IsNaN(tb.FontSize) || tb.FontSize > 11.5) break;
+            HideElement(tb);
+        }
+    }
+
+    private static bool IsSectionHeader(object? child)
+        => child is TextBlock tb
+           && tb.FontWeight == FontWeights.Bold
+           && !double.IsNaN(tb.FontSize) && tb.FontSize >= 13.5;
+
+    private void HideElement(FrameworkElement element)
+    {
+        if (element.Visibility == Visibility.Collapsed && !_settingsHiddenElements.Contains(element))
+        {
+            // 本来就是收起状态（例如高手模式下才显示的那批面板），不要记进恢复列表，
+            // 否则下一次重算会把它"恢复"成 Visible，等于越权改了别人管的显隐。
+            return;
+        }
+        element.Visibility = Visibility.Collapsed;
+        if (!_settingsHiddenElements.Contains(element)) _settingsHiddenElements.Add(element);
+    }
+
+    /// <summary>沿可视化/逻辑父级往上找，直到找到"直接挂在 SettingsRootPanel 下"的那一层，
+    /// 也就是这条设置在页面上占的那一整行。找不到（控件不在设置根面板里）返回 null。</summary>
+    private FrameworkElement? ResolveTopLevelRow(FrameworkElement element)
+    {
+        var current = element;
+        for (var depth = 0; depth < 32 && current != null; depth++)
+        {
+            if (ReferenceEquals(current.Parent, SettingsRootPanel)) return current;
+            current = current.Parent as FrameworkElement;
+        }
+        return null;
     }
 
     private static System.Collections.Generic.IEnumerable<T> FindVisualChildren<T>(DependencyObject root) where T : DependencyObject
@@ -1441,29 +1697,97 @@ public partial class SettingsPage : UserControl
     private void RunSettingsSearch(string keyword)
     {
         ClearSettingsSearchHighlight();
+        _searchMatches.Clear();
+        _searchMatchIndex = -1;
 
         if (string.IsNullOrEmpty(keyword))
         {
             SettingsSearchResultText.Text = "";
+            UpdateSearchNavButtons();
             return;
         }
 
-        var matches = new System.Collections.Generic.List<FrameworkElement>();
-        CollectSettingsSearchMatches(SettingsRootPanel, keyword, matches);
+        CollectSettingsSearchMatches(SettingsRootPanel, keyword, _searchMatches);
 
-        if (matches.Count == 0)
+        // 被「隐藏设置项」藏起来的条目不参与跳转：跳过去也是跳到一个 Collapsed 元素上，
+        // 屏幕上什么都不会发生，用户只会觉得"上/下按钮坏了"。F10 临时显示期间它们会
+        // 重新变回 Visible，那时候自然就能搜到了。
+        _searchMatches.RemoveAll(el => !IsElementEffectivelyVisible(el));
+
+        if (_searchMatches.Count == 0)
         {
             SettingsSearchResultText.Text = "没有找到匹配的设置项";
+            UpdateSearchNavButtons();
             return;
         }
 
-        SettingsSearchResultText.Text = $"找到 {matches.Count} 项";
-        foreach (var match in matches)
+        foreach (var match in _searchMatches)
         {
             HighlightSettingsSearchMatch(match);
         }
 
-        matches[0].BringIntoView();
+        // 搜索本身仍然自动定位到第一个命中项，跟以前的行为一致；区别只是现在记住了
+        // "当前是第几个"，后面点「上/下」可以在全部命中项之间来回跳。
+        GoToSettingsSearchMatch(0);
+    }
+
+    /// <summary>当前关键词的全部命中项，以及"现在停在第几个"。两个「上/下」按钮就靠这两个
+    /// 状态在命中项之间循环移动。</summary>
+    private readonly List<FrameworkElement> _searchMatches = new();
+    private int _searchMatchIndex = -1;
+
+    private void SettingsSearchPrev_Click(object sender, RoutedEventArgs e) => StepSettingsSearchMatch(-1);
+
+    private void SettingsSearchNext_Click(object sender, RoutedEventArgs e) => StepSettingsSearchMatch(1);
+
+    /// <summary>在命中项之间移动一格，到头了绕回另一端（跟大多数编辑器里"查找下一个"的
+    /// 循环行为一致，省得用户到底了还要手动滚回顶部再点）。</summary>
+    private void StepSettingsSearchMatch(int delta)
+    {
+        if (_searchMatches.Count == 0) return;
+        var next = _searchMatchIndex + delta;
+        if (next < 0) next = _searchMatches.Count - 1;
+        else if (next >= _searchMatches.Count) next = 0;
+        GoToSettingsSearchMatch(next);
+    }
+
+    private void GoToSettingsSearchMatch(int index)
+    {
+        if (index < 0 || index >= _searchMatches.Count) return;
+        _searchMatchIndex = index;
+
+        var target = _searchMatches[index];
+        target.BringIntoView();
+
+        // 当前这一项额外加粗一点高亮，跟其它同样命中但不是"当前项"的区分开——否则一页上
+        // 好几处都亮着金色，点了"下"之后根本看不出跳到哪了。
+        for (var i = 0; i < _searchMatches.Count; i++)
+            ApplySearchHighlightStrength(_searchMatches[i], isCurrent: i == index);
+
+        SettingsSearchResultText.Text = $"第 {index + 1} / {_searchMatches.Count} 项";
+        UpdateSearchNavButtons();
+    }
+
+    private void UpdateSearchNavButtons()
+    {
+        var enabled = _searchMatches.Count > 1;
+        if (SettingsSearchPrevBtn != null) SettingsSearchPrevBtn.IsEnabled = enabled;
+        if (SettingsSearchNextBtn != null) SettingsSearchNextBtn.IsEnabled = enabled;
+    }
+
+    /// <summary>元素本身以及它的每一层父级都没有被 Collapse/Hidden 掉，才算"屏幕上真的看得见"。
+    /// 不用 IsVisible 属性是因为设置页整页可能还没完成布局（刚打开就搜索），那时候 IsVisible
+    /// 可能仍是 false，会把所有结果都误判成不可见。</summary>
+    private bool IsElementEffectivelyVisible(FrameworkElement element)
+    {
+        DependencyObject? current = element;
+        for (var depth = 0; depth < 64 && current != null; depth++)
+        {
+            if (current is UIElement ui && ui.Visibility != Visibility.Visible) return false;
+            if (ReferenceEquals(current, SettingsRootPanel)) return true;
+            current = (current as FrameworkElement)?.Parent;
+        }
+        return true;
     }
 
     /// <summary>递归遍历可视化树，收集文字内容包含关键字（不区分大小写）的元素。</summary>
@@ -1509,6 +1833,19 @@ public partial class SettingsPage : UserControl
             Opacity = 0.9
         };
         _searchHighlightedElements.Add(element);
+    }
+
+    /// <summary>区分"当前停留的那一个命中项"和"其它命中项"：当前项用更亮更粗的橙色描边，
+    /// 其它项保持原来的淡金色，这样点「上/下」跳转时一眼能看出跳到哪去了。</summary>
+    private static void ApplySearchHighlightStrength(FrameworkElement element, bool isCurrent)
+    {
+        element.Effect = new System.Windows.Media.Effects.DropShadowEffect
+        {
+            Color = isCurrent ? System.Windows.Media.Colors.OrangeRed : System.Windows.Media.Colors.Gold,
+            ShadowDepth = 0,
+            BlurRadius = isCurrent ? 20 : 12,
+            Opacity = isCurrent ? 1.0 : 0.65
+        };
     }
 
     private readonly System.Collections.Generic.List<FrameworkElement> _searchHighlightedElements = new();
@@ -1590,6 +1927,16 @@ public partial class SettingsPage : UserControl
             .ToList();
         cfg.EnableInjectionScan = InjectionScanCheck.IsChecked == true;
         cfg.EnableGameConsoleWindow = GameConsoleWindowCheck.IsChecked == true;
+        cfg.TouchModeEnabled = TouchModeCheck.IsChecked == true;
+        cfg.AskInputModeBeforeLaunch = AskInputModeCheck.IsChecked == true;
+        // 数值框一律做范围钳制 + 解析失败回退默认值：这三个值直接决定悬浮层能不能正常用，
+        // 用户手滑输入 0 或者一个负数不应该导致整层不可见/完全按不动。
+        cfg.TouchOverlayButtonScale = double.TryParse(TouchScaleBox.Text, out var touchScale)
+            ? Math.Clamp(touchScale, 0.5, 2.0) : 1.0;
+        cfg.TouchOverlayOpacityPercent = double.TryParse(TouchOpacityBox.Text, out var touchOpacity)
+            ? Math.Clamp(touchOpacity, 20, 100) : 85;
+        cfg.TouchOverlayLookSensitivity = double.TryParse(TouchSensitivityBox.Text, out var touchSens)
+            ? Math.Clamp(touchSens, 0.4, 4.0) : 1.4;
         cfg.ShowModIcons = ShowModIconsCheck.IsChecked == true;
         cfg.ShowServerNetworkGuideOnStart = ShowServerNetworkGuideCheck.IsChecked == true;
         cfg.IsolateVersionsByDefault = IsolateVersionsCheck.IsChecked == true;
@@ -1606,7 +1953,10 @@ public partial class SettingsPage : UserControl
         cfg.CustomAccentColor = newCustomAccentColor;
         cfg.Win11BackdropMaterial = (BackdropMaterialCombo.SelectedItem as ComboBoxItem)?.Tag as string ?? "Mica";
         cfg.EnableWindowTransparency = WindowTransparencyCheck.IsChecked == true;
-        cfg.CustomBackgroundImagePath = string.IsNullOrWhiteSpace(CustomBackgroundImagePathBox.Text) ? null : CustomBackgroundImagePathBox.Text;
+        // 背景图片：候选池/当前选中的那一张在导入、删除、点列表时就已经即时写进 cfg 并
+        // 落盘了（跟老版本"导入即保存"的行为一致，用户不会导入完忘了点保存就白导）。
+        // 这里只负责保存"选择方式"这个纯设置项，不再从任何控件文本反推路径。
+        cfg.BackgroundRotationMode = ParseRotationMode(BackgroundRotationModeCombo);
         cfg.CustomBackgroundFrostPercent = Math.Clamp((int)CustomBackgroundFrostSlider.Value, 25, 100);
         cfg.WindowOpacityPercent = (int)WindowOpacitySlider.Value;
         // 跟其它设置不同，这两项一保存就应该立刻能在已打开的窗口上看到效果，不用重启/切页——
@@ -1707,6 +2057,13 @@ public partial class SettingsPage : UserControl
         var uiSkinChanged = !string.Equals(cfg.UiSkin, skinToSave, StringComparison.Ordinal);
         cfg.UiSkin = skinToSave;
 
+        // 配色的"固定 / 每天轮换"和候选池。这两项在用户操作控件时其实已经即时写进 cfg 了
+        // （见 UiSkinRotationModeCombo_SelectionChanged / UiSkinCandidateList_SelectionChanged），
+        // 这里再写一次是幂等的兜底：万一某次操作因为 _suppressDirtyTracking 之类的原因被跳过，
+        // 点保存仍然能把界面上看到的状态落盘，不会出现"界面勾着、配置里没有"的不一致。
+        cfg.UiSkinRotationMode = ParseRotationMode(UiSkinRotationModeCombo);
+        cfg.UiSkinCandidates = CollectSelectedSkinCandidates();
+
         var skinApiRoot = SkinApiRootBox.Text?.Trim();
         cfg.SkinApiRoot = string.IsNullOrEmpty(skinApiRoot) ? SkinService.DefaultSkinApiRoot : skinApiRoot;
 
@@ -1746,6 +2103,8 @@ public partial class SettingsPage : UserControl
 
         // 功能隐藏从页面内的编辑副本写回，不依赖 ItemsControl 当前是否已生成全部可视容器。
         cfg.HiddenFeatureKeys = _pendingHiddenFeatureKeys.ToList();
+        // 隐藏设置项同理，两个集合各存各的。
+        cfg.HiddenSettingKeys = _pendingHiddenSettingKeys.ToList();
 
         _owner.ConfigService.Save();
         AutoStartService.Apply(cfg.AutoStartOnBoot);
@@ -1772,8 +2131,29 @@ public partial class SettingsPage : UserControl
         // 新设置的时间段边界两侧、导致该切换的深浅色模式发生变化，会立刻应用，不需要等到
         // 下一次每分钟定时检查。
         _owner.ReevaluateAutoThemeCycle();
+        // 背景/配色的候选池或"选择方式"可能刚被改过，立即按新设置重新解析一次，
+        // 保证"保存后一秒内看到效果"，不用等下一次定时器 Tick、更不用重启启动器。
+        _owner.ReevaluateAppearanceRotation();
+        RunWithoutDirtyTracking(() =>
+        {
+            RefreshBackgroundCandidateUi();
+            RefreshSkinCandidateUi();
+        });
         _owner.RefreshSidebar();
         _owner.ApplyFeatureVisibility(); // 功能隐藏勾选可能变了，立即刷新导航栏对应按钮的显隐
+
+        // 隐藏设置项：保存后立即在当前这一页生效，不用切页/重启。第一次真正藏起东西时
+        // 额外弹一次右下角提示，把"按 F10 能临时看回来"这条路铺给用户——不然用户把某一条
+        // 设置藏掉之后，很容易找不到取消隐藏的入口（虽然面板本身一直在，但页面已经变短、
+        // 观感上像是"设置丢了"）。
+        var hadHiddenBefore = SettingsVisibilityService.TemporaryRevealActive;
+        SettingsVisibilityService.TemporaryRevealActive = false;
+        ApplySettingsItemVisibility();
+        RefreshSettingsHideStatusText();
+        if (cfg.HiddenSettingKeys.Count > 0)
+            ToastService.ShowInfo($"已隐藏 {cfg.HiddenSettingKeys.Count} 项设置，在设置页按 F10 可临时显示出来");
+        else if (hadHiddenBefore)
+            ToastService.ShowInfo("已取消全部设置项隐藏");
 
         RefreshRegistryStatusText();
         StatusText.Text = "设置已保存。";
@@ -2342,89 +2722,333 @@ public partial class SettingsPage : UserControl
         }
     }
 
+    // ===================================================================================
+    // 背景图片候选池 + 「固定 / 每天轮换」
+    //
+    // 这一段的取舍：候选池的增删改是"立即写盘"的，不跟设置页的"保存设置"按钮走。
+    // 原因跟老版本"导入背景 = 立即应用并保存"保持一致——导入/删除图片这件事用户的心智
+    // 是"我刚刚做了一个动作"，不是"我改了一个选项"；如果还要再点一次保存才算数，
+    // 用户很容易导完图直接切页，回来发现图没了。真正属于"选项"的只有下面那个
+    // 「选择方式」下拉框，它按常规设置项处理（改了会标脏，也会在保存时再写一次）。
+    //
+    // 轮换/选中的实际解析逻辑全部在 Services/AppearanceRotationService.cs，
+    // 这里只负责界面和文件操作，不重复实现一份判断规则。
+    // ===================================================================================
+
+    /// <summary>导入一张或多张背景图片。跟老版本相比有两点变化：支持多选，以及导入的图片是
+    /// "追加进候选池"而不是"替换掉唯一的那一张"。</summary>
     private void ImportBackgroundImage_Click(object sender, RoutedEventArgs e)
     {
-        var dialog = new Microsoft.Win32.OpenFileDialog { Filter = "图片文件|*.png;*.jpg;*.jpeg;*.bmp" };
+        var dialog = new Microsoft.Win32.OpenFileDialog
+        {
+            Filter = "图片文件|*.png;*.jpg;*.jpeg;*.bmp",
+            Multiselect = true
+        };
         if (dialog.ShowDialog() != true) return;
 
         var cfg = _owner.ConfigService.Config;
-        var previousPath = cfg.CustomBackgroundImagePath;
-        string? copiedPath = null;
+        var dir = Path.Combine(App.DataDir, "backgrounds");
+        var imported = new List<string>();
+        var failed = new List<string>();
 
-        try
+        foreach (var sourceFile in dialog.FileNames)
         {
-            var dir = Path.Combine(App.DataDir, "backgrounds");
-            Directory.CreateDirectory(dir);
+            string? copiedPath = null;
+            try
+            {
+                Directory.CreateDirectory(dir);
 
-            // 不再覆盖固定 custom.png：旧实现的 BitmapImage 默认 CacheOption=OnDemand，
-            // WPF 会长期持有该文件句柄，下一次 File.Copy(..., overwrite:true) 就会 IOException。
-            // 使用带时间戳的新文件名彻底避开旧版本遗留的文件锁，同时 MainWindow 用 OnLoad 读取，
-            // 新版本自身也不会继续锁住图片。
-            var ext = Path.GetExtension(dialog.FileName).ToLowerInvariant();
-            if (ext is not ".png" and not ".jpg" and not ".jpeg" and not ".bmp") ext = ".png";
-            copiedPath = Path.Combine(dir, $"custom-{DateTime.Now:yyyyMMdd-HHmmss-fff}{ext}");
-            File.Copy(dialog.FileName, copiedPath, overwrite: false);
+                // 不覆盖固定文件名：旧实现用 custom.png 一个名字反复 File.Copy(overwrite:true)，
+                // 而 WPF 的 BitmapImage 默认 CacheOption=OnDemand 会长期持有文件句柄，
+                // 下一次覆盖就 IOException。带时间戳(到毫秒)+序号的唯一文件名彻底绕开这个问题，
+                // 多选一次导入好几张时序号也能保证互不重名。
+                var ext = Path.GetExtension(sourceFile).ToLowerInvariant();
+                if (ext is not ".png" and not ".jpg" and not ".jpeg" and not ".bmp") ext = ".png";
+                copiedPath = Path.Combine(dir, $"custom-{DateTime.Now:yyyyMMdd-HHmmss-fff}-{imported.Count}{ext}");
+                File.Copy(sourceFile, copiedPath, overwrite: false);
 
-            // 先真正加载到主窗口，成功后再更新路径框和配置。旧代码不检查返回值，
-            // SetCustomBackgroundImage 失败时仍然显示“背景图片已导入”，最终就会出现
-            // “路径已经选上，但窗口背景完全没有同步”的假成功状态。
-            if (!ApplyBackgroundImage(copiedPath))
-                throw new InvalidOperationException("图片无法被 WPF 解码或无法应用到主窗口。");
+                // 复制成功不代表 WPF 解码得了（伪装成 png 的文件、损坏的 jpg 等）。
+                // 真正能套到窗口上才算导入成功，否则用户会遇到"列表里躺着一条永远显示不出来
+                // 的候选，轮到它那天背景就空了"这种莫名其妙的状态。
+                if (!ApplyBackgroundImage(copiedPath))
+                    throw new InvalidOperationException("图片无法被 WPF 解码或无法应用到主窗口。");
 
-            // 导入背景属于“立即应用并保存”的操作，所以把当前磨砂度一起落盘，避免
-            // 用户刚调好 25~100 的效果，重启后却回到旧磨砂度。
-            cfg.CustomBackgroundImagePath = copiedPath;
+                imported.Add(copiedPath);
+            }
+            catch (Exception ex)
+            {
+                failed.Add($"{Path.GetFileName(sourceFile)}：{ex.Message}");
+                if (!string.IsNullOrWhiteSpace(copiedPath))
+                {
+                    try { File.Delete(copiedPath); } catch { /* 复制到一半失败，留着下次清理 */ }
+                }
+            }
+        }
+
+        if (imported.Count > 0)
+        {
+            cfg.CustomBackgroundImageCandidates.AddRange(imported);
+            // 多选导入时，最后成功的那一张作为当前显示的背景（上面的循环已经把它套上去了），
+            // 视觉上跟用户的预期一致：刚导完看到的就是刚导进来的图。
+            cfg.CustomBackgroundImagePath = imported[^1];
             cfg.CustomBackgroundFrostPercent = Math.Clamp((int)CustomBackgroundFrostSlider.Value, 25, 100);
             _owner.PreviewCustomBackgroundFrost(cfg.CustomBackgroundFrostPercent);
+
+            AppearanceRotationService.NormalizeBackgroundCandidates(cfg);
             _owner.ConfigService.Save();
-            SetBackgroundPathTextWithoutDirtyTracking(copiedPath);
-
-            CleanupOldImportedBackgrounds(dir, copiedPath);
-            ToastService.ShowSuccess("背景图片已应用并保存");
+            CleanupOrphanBackgrounds(dir, cfg.CustomBackgroundImageCandidates);
+            RunWithoutDirtyTracking(RefreshBackgroundCandidateUi);
         }
-        catch (Exception ex)
-        {
-            // 任一步失败都恢复到导入前状态，确保“主窗口显示 / 路径框 / config.json”
-            // 始终是同一个背景，不留下半成功状态。BitmapImage 使用 OnLoad，不会锁旧文件。
-            cfg.CustomBackgroundImagePath = previousPath;
-            if (!string.IsNullOrWhiteSpace(previousPath) && File.Exists(previousPath))
-                _owner.SetCustomBackgroundImage(previousPath);
-            else
-                _owner.SetCustomBackgroundImage(null);
-            SetBackgroundPathTextWithoutDirtyTracking(previousPath ?? "");
 
-            if (!string.IsNullOrWhiteSpace(copiedPath) &&
-                !string.Equals(copiedPath, previousPath, StringComparison.OrdinalIgnoreCase))
-            {
-                try { File.Delete(copiedPath); } catch { }
-            }
-
-            MessageBoxDialog.ShowError($"导入背景图片失败：{ex.Message}", "背景图片");
-        }
+        if (failed.Count == 0)
+            ToastService.ShowSuccess($"已导入 {imported.Count} 张背景图片");
+        else if (imported.Count > 0)
+            MessageBoxDialog.ShowWarning($"已导入 {imported.Count} 张，另有 {failed.Count} 张失败：\n" + string.Join("\n", failed), "背景图片");
+        else
+            MessageBoxDialog.ShowError("导入背景图片失败：\n" + string.Join("\n", failed), "背景图片");
     }
 
+    /// <summary>把列表里当前选中的那一张从候选池移除，并删掉启动器复制的那份副本
+    /// （用户自己的原图不受影响——候选池里存的都是 %DataDir%/backgrounds 下的副本）。</summary>
+    private void RemoveBackgroundImage_Click(object sender, RoutedEventArgs e)
+    {
+        if (CustomBackgroundCandidateList.SelectedItem is not ListBoxItem { Tag: string path })
+        {
+            MessageBoxDialog.ShowInfo("请先在列表里选中要移除的那一张背景图片。", "提示");
+            return;
+        }
+
+        var cfg = _owner.ConfigService.Config;
+        cfg.CustomBackgroundImageCandidates.RemoveAll(p => string.Equals(p, path, StringComparison.OrdinalIgnoreCase));
+        if (string.Equals(cfg.CustomBackgroundImagePath, path, StringComparison.OrdinalIgnoreCase))
+            cfg.CustomBackgroundImagePath = null; // 让下面的 Resolve 自己挑一张接班
+
+        // 删文件放在移出候选池之后：即使文件此刻还被某个 BitmapImage 占着删不掉，
+        // 候选池里也已经没有它了，界面行为是对的，残留文件下次导入时会被清理掉。
+        try { File.Delete(path); } catch { }
+
+        ApplyResolvedBackground();
+        ToastService.ShowSuccess("已移除这一张背景图片");
+    }
+
+    /// <summary>清空整个候选池，恢复成"没有背景图片"的样子。</summary>
     private void ClearBackgroundImage_Click(object sender, RoutedEventArgs e)
     {
         var cfg = _owner.ConfigService.Config;
-        var previousPath = cfg.CustomBackgroundImagePath;
+        if (cfg.CustomBackgroundImageCandidates.Count == 0 && string.IsNullOrWhiteSpace(cfg.CustomBackgroundImagePath))
+        {
+            ToastService.ShowInfo("当前没有任何背景图片");
+            return;
+        }
+
+        foreach (var path in cfg.CustomBackgroundImageCandidates.ToList())
+        {
+            try { File.Delete(path); } catch { }
+        }
+        cfg.CustomBackgroundImageCandidates.Clear();
+        cfg.CustomBackgroundImagePath = null;
+        cfg.BackgroundRotationLastDate = null;
+        cfg.BackgroundRotationIndex = 0;
+
+        ApplyResolvedBackground();
+        ToastService.ShowSuccess("窗口背景已清除");
+    }
+
+    /// <summary>三个新按钮（重命名/打开位置/预览）共用的"取当前选中的候选图片路径"，
+    /// 没选中任何一条时统一提示，避免三处各写一遍同样的判断。</summary>
+    private string? TryGetSelectedBackgroundPath()
+    {
+        if (CustomBackgroundCandidateList.SelectedItem is ListBoxItem { Tag: string path }) return path;
+        MessageBoxDialog.ShowInfo("请先在列表里选中一张背景图片。", "提示");
+        return null;
+    }
+
+    /// <summary>重命名候选池里选中的这一份副本文件。只改文件名，不改内容、不改扩展名——
+    /// 扩展名决定了 WPF 用哪种解码器，让用户自己在输入框里改扩展名很容易把 .png 敲成 .jpg
+    /// 这种打不开的组合，所以这里把扩展名锁死、只给文件名部分可编辑。</summary>
+    private void RenameBackgroundImage_Click(object sender, RoutedEventArgs e)
+    {
+        var path = TryGetSelectedBackgroundPath();
+        if (path == null) return;
+
+        var dir = Path.GetDirectoryName(path)!;
+        var ext = Path.GetExtension(path);
+        var nameWithoutExt = Path.GetFileNameWithoutExtension(path);
+
+        var dlg = new RenameInstanceDialog(
+            nameWithoutExt,
+            isNameTaken: candidate =>
+                !string.Equals(candidate, nameWithoutExt, StringComparison.OrdinalIgnoreCase) &&
+                File.Exists(Path.Combine(dir, candidate + ext)),
+            title: "重命名背景图片");
+
+        if (OverlayDialogService.ShowModal(dlg) != true) return;
+
+        var invalidChars = Path.GetInvalidFileNameChars();
+        var newNameRaw = dlg.NewName;
+        if (newNameRaw.IndexOfAny(invalidChars) >= 0)
+        {
+            MessageBoxDialog.ShowWarning("文件名不能包含 \\ / : * ? \" < > | 这些字符。", "重命名失败");
+            return;
+        }
+
+        var newPath = Path.Combine(dir, newNameRaw + ext);
+        if (string.Equals(newPath, path, StringComparison.OrdinalIgnoreCase)) return; // 没改名，什么都不用做
 
         try
         {
-            if (!_owner.SetCustomBackgroundImage(null)) return;
+            var cfg = _owner.ConfigService.Config;
+            var wasSelected = string.Equals(cfg.CustomBackgroundImagePath, path, StringComparison.OrdinalIgnoreCase);
 
-            cfg.CustomBackgroundImagePath = null;
+            File.Move(path, newPath);
+
+            var idx = cfg.CustomBackgroundImageCandidates.FindIndex(
+                p => string.Equals(p, path, StringComparison.OrdinalIgnoreCase));
+            if (idx >= 0) cfg.CustomBackgroundImageCandidates[idx] = newPath;
+            if (wasSelected) cfg.CustomBackgroundImagePath = newPath;
+
             _owner.ConfigService.Save();
-            SetBackgroundPathTextWithoutDirtyTracking("");
-            ToastService.ShowSuccess("窗口背景已清除");
+            RunWithoutDirtyTracking(RefreshBackgroundCandidateUi);
+            ToastService.ShowSuccess("已重命名");
         }
         catch (Exception ex)
         {
-            cfg.CustomBackgroundImagePath = previousPath;
-            if (!string.IsNullOrWhiteSpace(previousPath) && File.Exists(previousPath))
-                _owner.SetCustomBackgroundImage(previousPath);
-            SetBackgroundPathTextWithoutDirtyTracking(previousPath ?? "");
-            MessageBoxDialog.ShowError($"清除窗口背景失败：{ex.Message}", "背景图片");
+            // 最常见的失败原因：文件此刻正被某个 BitmapImage 占着（比如它正好是当前背景，
+            // 缓存策略是 OnDemand 而不是 OnLoad）。不强行处理，只是如实告诉用户重试。
+            MessageBoxDialog.ShowError($"重命名失败：{ex.Message}", "背景图片");
         }
+    }
+
+    /// <summary>在文件资源管理器里定位并选中这张图片的副本文件，方便用户确认它到底存在
+    /// 哪个目录、或者想把它复制到别处备份。</summary>
+    private void OpenBackgroundImageLocation_Click(object sender, RoutedEventArgs e)
+    {
+        var path = TryGetSelectedBackgroundPath();
+        if (path == null) return;
+
+        if (!File.Exists(path))
+        {
+            MessageBoxDialog.ShowWarning("这张图片的副本文件已经不存在了，可能被手动删除过。", "背景图片");
+            return;
+        }
+
+        try
+        {
+            // /select, 后面必须是完整路径且不能有多余的引号转义问题：Explorer 对这个参数
+            // 的解析比较挑剔，直接把整个 "/select,\"path\"" 当一个参数传最稳妥。
+            Process.Start(new ProcessStartInfo("explorer.exe", $"/select,\"{path}\"") { UseShellExecute = true });
+        }
+        catch (Exception ex)
+        {
+            ErrorPresenter.LogTechnicalDetail($"[打开背景图片所在位置失败] {path}\n{ex}");
+            MessageBoxDialog.ShowWarning("无法打开文件资源管理器。", "背景图片");
+        }
+    }
+
+    /// <summary>放大预览选中的这张图片，纯粹看图，不会顺带把它切换成当前背景
+    /// （切换背景走的是点列表条目本身，见 CustomBackgroundCandidateList_SelectionChanged）。</summary>
+    private void PreviewBackgroundImage_Click(object sender, RoutedEventArgs e)
+    {
+        var path = TryGetSelectedBackgroundPath();
+        if (path == null) return;
+
+        if (!File.Exists(path))
+        {
+            MessageBoxDialog.ShowWarning("这张图片的副本文件已经不存在了，可能被手动删除过。", "背景图片");
+            return;
+        }
+
+        new ImagePreviewDialog(path).ShowDialog();
+    }
+
+    /// <summary>点列表里的某一条 = 把它设为当前背景。固定模式下这就是"以后长期用这一张"；
+    /// 每天轮换模式下只是立刻预览一下，明天仍然会按顺序轮到下一张。</summary>
+    private void CustomBackgroundCandidateList_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_suppressDirtyTracking) return;
+        if (CustomBackgroundCandidateList.SelectedItem is not ListBoxItem { Tag: string path }) return;
+
+        var cfg = _owner.ConfigService.Config;
+        if (string.Equals(cfg.CustomBackgroundImagePath, path, StringComparison.OrdinalIgnoreCase)) return;
+
+        if (!ApplyBackgroundImage(path))
+        {
+            MessageBoxDialog.ShowWarning("这张背景图片已经无法读取，可能文件被删除或损坏了。", "背景图片");
+            return;
+        }
+
+        cfg.CustomBackgroundImagePath = path;
+        // 轮换下标跟着走，这样"每天轮换"下一次前进是从用户刚点的这一张往后数，
+        // 而不是从一个用户完全看不见的旧下标继续，顺序才符合直觉。
+        var idx = cfg.CustomBackgroundImageCandidates.FindIndex(
+            p => string.Equals(p, path, StringComparison.OrdinalIgnoreCase));
+        if (idx >= 0) cfg.BackgroundRotationIndex = idx;
+        _owner.ConfigService.Save();
+        RunWithoutDirtyTracking(RefreshBackgroundCandidateUi);
+    }
+
+    /// <summary>「背景选择方式」下拉框：改完立即解析并应用一次，不用等点保存——
+    /// 跟项目里「自动循环」「跟随系统」这些自动化开关的一贯行为保持一致。</summary>
+    private void BackgroundRotationModeCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_suppressDirtyTracking) return;
+        var cfg = _owner.ConfigService.Config;
+        var mode = ParseRotationMode(BackgroundRotationModeCombo);
+        if (cfg.BackgroundRotationMode == mode) return;
+
+        cfg.BackgroundRotationMode = mode;
+        // 切换模式等于重新开始计时：清掉"上次换过的日期"，这样 Resolve 会把今天记下来、
+        // 今天不换，从明天开始每天换一张（见 AppearanceRotationService 里的注释）。
+        cfg.BackgroundRotationLastDate = null;
+        // ApplyResolvedBackground 内部已经 Save 过了，这里不再调 OnSettingsEdited 标脏——
+        // 标了会让用户看到"有未保存的更改"，但其实已经写盘了，反而误导。
+        ApplyResolvedBackground();
+    }
+
+    /// <summary>重新解析一次"现在该显示哪张背景"，落盘并套到主窗口上。
+    /// 移除/清空/切换模式三处都要做同样的事，抽出来避免写三遍。</summary>
+    private void ApplyResolvedBackground()
+    {
+        var cfg = _owner.ConfigService.Config;
+        AppearanceRotationService.ResolveBackground(cfg, out var path);
+        _owner.ConfigService.Save();
+        if (path == null || !ApplyBackgroundImage(path))
+            _owner.SetCustomBackgroundImage(null);
+        RunWithoutDirtyTracking(RefreshBackgroundCandidateUi);
+    }
+
+    /// <summary>按当前配置重建候选列表、同步选中项，并根据候选数量决定"选择方式"是否可用。
+    /// 只有一张候选时把下拉框禁用掉（而不是留着让用户选了没反应），这是需求里
+    /// "只有一个背景就默认选它，打开轮换也没有作用"在界面上的诚实表达。</summary>
+    private void RefreshBackgroundCandidateUi()
+    {
+        var cfg = _owner.ConfigService.Config;
+        var candidates = cfg.CustomBackgroundImageCandidates ?? new List<string>();
+
+        CustomBackgroundCandidateList.Items.Clear();
+        foreach (var path in candidates)
+        {
+            var item = new ListBoxItem
+            {
+                Content = Path.GetFileName(path),
+                Tag = path,
+                ToolTip = path
+            };
+            CustomBackgroundCandidateList.Items.Add(item);
+            if (string.Equals(path, cfg.CustomBackgroundImagePath, StringComparison.OrdinalIgnoreCase))
+                CustomBackgroundCandidateList.SelectedItem = item;
+        }
+
+        var canRotate = candidates.Count >= 2;
+        BackgroundRotationModeCombo.IsEnabled = canRotate;
+        BackgroundRotationHintText.Text = candidates.Count switch
+        {
+            0 => "还没有导入任何背景图片。导入后可以选择固定用某一张，或者每天自动换一张。",
+            1 => "只有一张背景图片，会直接使用它；再导入至少一张之后，“每天自动轮换”才有意义。",
+            _ when cfg.BackgroundRotationMode == AppearanceRotationMode.Daily =>
+                $"共 {candidates.Count} 张，每天按列表顺序自动换下一张（跨过零点时自动生效，不用重启启动器）。",
+            _ => $"共 {candidates.Count} 张，固定使用列表里选中的那一张。"
+        };
     }
 
     private bool ApplyBackgroundImage(string path)
@@ -2434,25 +3058,101 @@ public partial class SettingsPage : UserControl
         return false;
     }
 
-    private void SetBackgroundPathTextWithoutDirtyTracking(string text)
+    // ===================================================================================
+    // 配色候选池 + 「固定 / 每天轮换」（跟上面背景那一段完全同构）
+    // ===================================================================================
+
+    /// <summary>多选列表：勾中的色系就是参与每日轮换的候选。</summary>
+    private void UiSkinCandidateList_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        var old = _suppressDirtyTracking;
-        _suppressDirtyTracking = true;
-        try { CustomBackgroundImagePathBox.Text = text; }
-        finally { _suppressDirtyTracking = old; }
+        if (_suppressDirtyTracking) return;
+        var cfg = _owner.ConfigService.Config;
+        cfg.UiSkinCandidates = CollectSelectedSkinCandidates();
+        AppearanceRotationService.NormalizeSkinCandidates(cfg);
+        _owner.ConfigService.Save();
+        RunWithoutDirtyTracking(RefreshSkinCandidateUi);
     }
 
-    private static void CleanupOldImportedBackgrounds(string dir, string currentPath)
+    /// <summary>「配色选择方式」下拉框，语义同背景那一个。</summary>
+    private void UiSkinRotationModeCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_suppressDirtyTracking) return;
+        var cfg = _owner.ConfigService.Config;
+        var mode = ParseRotationMode(UiSkinRotationModeCombo);
+        if (cfg.UiSkinRotationMode == mode) return;
+
+        cfg.UiSkinRotationMode = mode;
+        cfg.UiSkinRotationLastDate = null; // 同背景：切换模式 = 重新开始计时，今天不换
+        _owner.ConfigService.Save();
+        _owner.ReevaluateAppearanceRotation();
+        RunWithoutDirtyTracking(() =>
+        {
+            SelectComboByTag(UiSkinCombo, cfg.UiSkin); // 轮换可能已经改了当前色系，上面的下拉框要跟上
+            RefreshSkinCandidateUi();
+        });
+    }
+
+    /// <summary>从多选列表读出当前勾选的色系 Tag，按列表显示顺序返回（轮换就按这个顺序走）。</summary>
+    private List<string> CollectSelectedSkinCandidates()
+    {
+        var result = new List<string>();
+        foreach (var obj in UiSkinCandidateList.Items)
+        {
+            if (obj is ListBoxItem { Tag: string skin } item && UiSkinCandidateList.SelectedItems.Contains(item))
+                result.Add(skin);
+        }
+        return result;
+    }
+
+    /// <summary>按配置回填多选状态，并根据候选数量决定"选择方式"是否可用。
+    /// 少于两个时禁用下拉框——只有一个色系可换等于没有轮换。</summary>
+    private void RefreshSkinCandidateUi()
+    {
+        var cfg = _owner.ConfigService.Config;
+        var candidates = cfg.UiSkinCandidates ?? new List<string>();
+
+        UiSkinCandidateList.SelectedItems.Clear();
+        foreach (var obj in UiSkinCandidateList.Items)
+        {
+            if (obj is ListBoxItem { Tag: string skin } item &&
+                candidates.Contains(skin, StringComparer.Ordinal))
+            {
+                UiSkinCandidateList.SelectedItems.Add(item);
+            }
+        }
+
+        var canRotate = candidates.Count >= 2;
+        UiSkinRotationModeCombo.IsEnabled = canRotate;
+        UiSkinRotationHintText.Text = candidates.Count switch
+        {
+            0 => "还没有勾选参与轮换的配色。勾选至少两个之后，才能打开“每天自动轮换”。",
+            1 => "只勾了一个配色，没有可以轮换的对象；再勾一个才会真正开始每天换。",
+            _ when cfg.UiSkinRotationMode == AppearanceRotationMode.Daily =>
+                $"共 {candidates.Count} 个配色，每天按列表顺序自动换下一个。只换色系，不影响深浅色（深浅由下面的“自动循环 / 跟随系统”决定）。",
+            _ => $"已勾选 {candidates.Count} 个候选配色，但当前是“固定”模式，暂时不会自动切换。"
+        };
+    }
+
+    /// <summary>把"固定 / 每天轮换"两个下拉框的 Tag 解析成枚举。解析不出来一律当成 Fixed——
+    /// 默认值应该是"什么都不会自己变"，配置坏掉时不能反而让界面开始每天乱换。</summary>
+    private static AppearanceRotationMode ParseRotationMode(ComboBox combo)
+    {
+        var tag = (combo?.SelectedItem as ComboBoxItem)?.Tag as string;
+        return string.Equals(tag, nameof(AppearanceRotationMode.Daily), StringComparison.OrdinalIgnoreCase)
+            ? AppearanceRotationMode.Daily
+            : AppearanceRotationMode.Fixed;
+    }
+
+    /// <summary>清理 backgrounds 目录里已经不在候选池中的历史遗留文件（旧版本的 custom.png、
+    /// 导入到一半失败留下的碎片等）。只删"候选池里没有的"，所以不会误伤用户当前正在用的图。</summary>
+    private static void CleanupOrphanBackgrounds(string dir, IReadOnlyCollection<string> keep)
     {
         try
         {
-            var oldFiles = new DirectoryInfo(dir).GetFiles("custom-*.*")
-                .Where(f => !string.Equals(f.FullName, currentPath, StringComparison.OrdinalIgnoreCase))
-                .OrderByDescending(f => f.LastWriteTimeUtc)
-                .Skip(4);
-            foreach (var file in oldFiles)
+            foreach (var file in new DirectoryInfo(dir).GetFiles("custom*.*"))
             {
-                try { file.Delete(); } catch { /* 旧版可能仍锁着文件，留到下次再清理 */ }
+                if (keep.Any(k => string.Equals(k, file.FullName, StringComparison.OrdinalIgnoreCase))) continue;
+                try { file.Delete(); } catch { /* 旧版本可能仍锁着文件，留到下次再清理 */ }
             }
         }
         catch { }
@@ -2556,5 +3256,23 @@ public partial class SettingsPage : UserControl
         }
         // 不在这里写 cfg；否则即使用户还没点保存，内存配置也已经被改掉，随后任何其它
         // ConfigService.Save() 都可能把这次未确认修改带到磁盘。统一由 PerformSave 处理。
+    }
+
+    /// <summary>触屏模式开关刚被勾上时提个醒：这套虚拟按键悬浮层依赖低级鼠标钩子、
+    /// 窗口 Z 序强制重排这些比较"贴着系统边缘走"的实现方式（见 TouchOverlayWindow /
+    /// TouchMousePromotionFilter 类注释），不同机型、不同 Windows 版本上表现可能不一致，
+    /// 目前还是实验性质，没有经过大规模验证。只在"用户刚把它从关变成开"这一下弹一次，
+    /// 不在设置页每次打开、回显已保存的勾选状态时弹——那样只会显得啰嗦。
+    /// 用的是内嵌的 MessageBoxDialog（应用内浮层），不是另开一个系统窗口，
+    /// 跟设置页其它警告/确认弹窗保持同一套视觉和交互。</summary>
+    private void TouchModeCheck_Checked(object sender, RoutedEventArgs e)
+    {
+        if (_suppressDirtyTracking) return;
+        MessageBoxDialog.ShowWarning(
+            "触屏模式目前是实验性功能，靠底层鼠标钩子和虚拟按键悬浮层模拟键鼠输入，"
+            + "在不同设备、不同 Windows 版本上可能出现视角异常、按键无响应、悬浮层不跟随等问题，"
+            + "还没有经过大规模验证。\n\n如果游戏中出现异常，可以随时回到这里关闭该开关，"
+            + "或使用悬浮层右上角的「隐藏」按钮临时穿透触摸。",
+            "实验性功能提示");
     }
 }

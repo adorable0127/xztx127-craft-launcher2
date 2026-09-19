@@ -111,6 +111,30 @@ public class DownloadService : IDisposable
         return new DownloadService(cfg.Source, threads, cfg.DownloadSpeedLimitKBps, cfg.SmartBandwidthThrottle);
     }
 
+    /// <summary>
+    /// 「一键开始游戏」专用的加速配置：强制走 BMCLAPI 镜像源 + 强制多线程（至少 8 路），
+    /// 不管用户在设置页里选的是官方源还是关掉了多线程。
+    ///
+    /// 为什么只在这一条路径上覆盖用户设置：一键启动的语义就是"我不想操心，给我最快的方式
+    /// 装好然后进游戏"，而官方源在国内的实际下载速度经常是镜像的几十分之一，单线程更是
+    /// 把几百个 libraries/assets 小文件变成几分钟的等待——这正是用户反馈"一键启动特别慢"
+    /// 的来源。设置页里的下载源/线程数偏好继续管着下载中心、Mod 下载等其它所有路径，
+    /// 不会被这里改动，也不会被写回配置（这里只是临时构造一个 DownloadService 实例）。
+    ///
+    /// 限速和智能限速仍然尊重用户设置：那两项是"我家网络就这么点带宽/别把带宽吃光"这类
+    /// 硬约束，属于用户对自己机器的安排，不该被"我想快点"这个意图覆盖掉。
+    /// 镜像源本身也不是单点：GetStringWithFallbackAsync/DownloadFileAsync 里都带官方源兜底，
+    /// 镜像抽风时会自动退回官方，不会因为这里写死镜像就变得更容易失败。
+    /// </summary>
+    public static DownloadService CreateAccelerated(Models.AppConfig cfg)
+    {
+        var configured = cfg.EnableMultiThreadDownload ? Math.Max(1, cfg.MaxDownloadThreads) : 1;
+        // 取用户设置和 8 之间的较大值：用户自己调到 16 就尊重 16，调到 1/关掉多线程也拉到 8。
+        // 上限交给构造函数里的 chunkGateSize 硬顶（16）去兜，不在这里再叠一层限制。
+        var threads = Math.Max(8, configured);
+        return new DownloadService(DownloadSource.BMCLAPI, threads, cfg.DownloadSpeedLimitKBps, cfg.SmartBandwidthThrottle);
+    }
+
     public async Task<VersionManifestRoot> GetVersionManifestAsync(CancellationToken ct = default)
     {
         // 修复：之前这里按 _source 硬选一个 URL，选了镜像源就永远只请求镜像，官方一旦同一时刻

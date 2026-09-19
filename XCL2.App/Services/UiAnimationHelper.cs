@@ -38,30 +38,55 @@ public static class UiAnimationHelper
     private static bool AnimationsEnabled => ConfigService.Active?.Config.EnableUiAnimations ?? true;
 
     /// <summary>
-    /// 修复"最小化/还原/最大化⇄还原动画掉帧且短暂黑屏"的核心手段：动画开始前给
-    /// <paramref name="element"/>（窗口级动画统一挂在 MainWindow 的 RootWindowGrid 上，
-    /// 这一整棵树包含标题栏、主内容、背景图 BlurEffect 毛玻璃层，本身渲染成本就不低）
-    /// 临时打开 BitmapCache：WPF 会把这棵树先光栅化成一张位图，之后动画期间的
-    /// Opacity/ScaleTransform/TranslateTransform 变化只是拿这张现成位图做 GPU 合成层面的
-    /// 缩放/透明度调整，不需要每一帧都重新走一遍布局+重绘+重新计算 BlurEffect 这类昂贵
-    /// 特效——这才是之前掉帧的根因。同时，WindowState 原生切换（最大化/还原/从最小化
-    /// 恢复）本身是瞬间发生的，如果没有缓存，新尺寸下整棵树来不及重新布局渲染完就已经
-    /// 不是旧画面了，中间那一下"还没画完"的空隙正是用户看到的短暂黑屏；打开缓存后，
-    /// 状态切换那一刻手上始终有一张现成位图可以立刻显示，避免露出中间的空白/黑屏帧。
+    /// 动画期间给整棵窗口树临时挂一层 BitmapCache：动画帧只拿这张现成位图做 GPU 合成，
+    /// 不必逐帧重走布局+重绘，也避免 WindowState 切换瞬间露出还没画完的空白帧。
     ///
-    /// 缓存只在动画播放这一小段窗口期临时打开，动画结束（无论正常播完还是被新动画打断）
-    /// 都会调用 <see cref="EndWindowCache"/> 关掉——不常驻挂缓存是为了不影响平时点击/
-    /// 悬停/文字输入等日常交互的渲染质量（BitmapCache 常驻会让文字发糊、且任何跟这棵树
-    /// 相关的重绘都要多一次光栅化开销）。EnableClearType 保持默认 false（跟文档默认值一致，
-    /// 动画期间本来就看不清文字细节，不需要为这几百毫秒专门要求 ClearType 位图）。
+    /// 这里跟旧写法的关键区别是**复用同一个 BitmapCache 实例**，不是每次动画都 new 一个。
+    /// 每 new 一次，WPF 都会把它当成一个全新的缓存节点，必须立刻把整棵树重新光栅化一遍；
+    /// 而窗口级动画恰好总是紧跟在"刚刚改完窗口状态"之后触发，于是那一次全树光栅化就压在
+    /// 切换那一帧上——本来是想消除掉帧，结果自己制造了一次明显的停顿。复用实例后，
+    /// 第二次之后的过渡大多能直接命中已有的缓存节点，省掉这一次重建。
+    ///
+    /// 另外把 SnapsToDevicePixels 显式关掉：动画里元素会被缩放/位移到非整数像素上，
+    /// 打开像素对齐会让 WPF 在每一帧重新做一次对齐计算，对这种纯过渡动画没有意义。
     /// </summary>
+    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<UIElement, BitmapCache> WindowCaches = new();
+
     private static void BeginWindowCache(UIElement element)
     {
-        if (element.CacheMode is not BitmapCache)
-            element.CacheMode = new BitmapCache();
+        if (element.CacheMode is BitmapCache) return;
+        if (!WindowCaches.TryGetValue(element, out var cache))
+        {
+            cache = new BitmapCache();
+            WindowCaches.Add(element, cache);
+        }
+
+        // RenderAtScale 必须跟当前显示器的 DPI 缩放一致，不能写死 1.0。
+        //
+        // 这是"开了动画之后文字会乱晃/发虚"的根因：在 125%/150% 缩放的屏幕上，
+        // RenderAtScale=1.0 意味着整棵窗口树先按 100% 光栅化成一张位图，再被 WPF 放大到
+        // 实际尺寸显示。文字在这一放大过程中会被重采样，笔画粗细和位置都跟非动画状态下
+        // 对不上；动画每一帧的位移又都是非整数像素，于是看起来就是"字在抖"。
+        // 按真实 DPI 光栅化之后，缓存位图和正常渲染是同一个像素网格，字不再重采样。
+        //
+        // SnapsToDevicePixels 也改回不强制关闭（留默认值）：关掉它省下的那点对齐计算，
+        // 远不如文字糊掉的代价大。
+        var scale = 1.0;
+        try
+        {
+            // 元素还没挂到任何 PresentationSource 上时 GetDpi 会抛；那种情况按 1.0 处理即可，
+            // 反正此时也还没有真正显示出来的画面需要保真。
+            var dpi = VisualTreeHelper.GetDpi(element);
+            if (dpi.DpiScaleX > 0) scale = dpi.DpiScaleX;
+        }
+        catch { }
+        if (Math.Abs(cache.RenderAtScale - scale) > 0.001) cache.RenderAtScale = scale;
+
+        element.CacheMode = cache;
     }
 
-    /// <summary>动画播完（或被打断）后关掉临时缓存，恢复日常交互的正常渲染路径。</summary>
+    /// <summary>动画播完（或被打断）后关掉临时缓存，恢复日常交互的正常渲染路径。
+    /// 缓存对象本身留在 <see cref="WindowCaches"/> 里等下次复用，不销毁。</summary>
     private static void EndWindowCache(UIElement element)
     {
         element.CacheMode = null;
@@ -199,13 +224,14 @@ public static class UiAnimationHelper
     /// 生效那一刻)立刻让内容从"稍微缩小+半透明"回弹到正常的 Opacity=1/Scale=1，用短促的
     /// 淡入+缩放收尾衔接住这一下瞬间跳变，观感上从"硬切"变成"切换后有一下回弹落位"，
     /// 不是完整的移动动画，但足以缓解"傻快傻快"的生硬感。</summary>
-    public static void SettleScale(UIElement element, ScaleTransform scale)
+    public static void SettleScale(UIElement element, ScaleTransform scale, Action? onCompleted = null)
     {
         if (!AnimationsEnabled)
         {
             element.Opacity = 1;
             scale.ScaleX = 1;
             scale.ScaleY = 1;
+            onCompleted?.Invoke();
             return;
         }
 
@@ -213,22 +239,25 @@ public static class UiAnimationHelper
         scale.BeginAnimation(ScaleTransform.ScaleXProperty, null);
         scale.BeginAnimation(ScaleTransform.ScaleYProperty, null);
 
-        element.Opacity = 0.55;
-        scale.ScaleX = 0.975;
-        scale.ScaleY = 0.975;
+        // 起始不透明度从 0.55 提到 0.82、缩放从 0.975 提到 0.988：最大化/还原本来就是
+        // "瞬间换尺寸"，这个动画的作用只是给那一下跳变一个收尾缓冲。幅度太大反而会让
+        // 人觉得"整个界面闪了一下又长回来"，在本来就掉帧的机器上尤其明显；收窄幅度后
+        // 需要合成的差异更小，观感更贴近系统原生窗口。
+        element.Opacity = 0.82;
+        scale.ScaleX = 0.988;
+        scale.ScaleY = 0.988;
 
-        // 这里比 FadeInMove/FadeOutMove 更关键：SettleScale 是紧跟在 WindowState 原生切换
-        // 之后立刻播的，此时新尺寸下的整棵树刚刚经历一次同步 Measure/Arrange，如果不缓存，
-        // 这一下回弹动画的每一帧都要在"刚resize完、可能还没完全稳定"的状态上重新走一遍
-        // 布局+重绘+BlurEffect，掉帧和黑屏观感在这个场景最明显。打开缓存后动画帧只消费
-        // 这一刻的位图快照，跟后续可能仍在收尾的布局解耦。
         BeginWindowCache(element);
 
-        var opacityAnim = new DoubleAnimation(0.55, 1, SettleDuration)
+        var opacityAnim = new DoubleAnimation(0.82, 1, SettleDuration)
             { EasingFunction = WindowEaseOut, FillBehavior = FillBehavior.HoldEnd };
-        var scaleAnim = new DoubleAnimation(0.975, 1, SettleDuration)
+        var scaleAnim = new DoubleAnimation(0.988, 1, SettleDuration)
             { EasingFunction = WindowEaseOut, FillBehavior = FillBehavior.HoldEnd };
-        opacityAnim.Completed += (_, _) => EndWindowCache(element);
+        opacityAnim.Completed += (_, _) =>
+        {
+            EndWindowCache(element);
+            onCompleted?.Invoke();
+        };
         element.BeginAnimation(UIElement.OpacityProperty, opacityAnim);
         scale.BeginAnimation(ScaleTransform.ScaleXProperty, scaleAnim);
         scale.BeginAnimation(ScaleTransform.ScaleYProperty, scaleAnim);

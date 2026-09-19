@@ -518,6 +518,12 @@ public partial class App : Application
         // EndSessionAndFlush 内部做了幂等处理，不会因为被调用两次而出问题。
         Exit += (_, _) => LauncherLogService.EndSessionAndFlush();
 
+        // 触屏模式的全局触摸拦截钩子最后一道保险：正常路径下悬浮层关闭时就已经卸载了
+        // （TouchOverlayWindow.Teardown），但万一走了某条没关悬浮层就退出的异常路径，
+        // 钩子跟着进程一起消失之前那段时间里整机触摸都会失灵，这里无条件再摘一次。
+        // Disable 是幂等的，重复调用没有任何副作用。见 TouchMousePromotionFilter 类注释。
+        Exit += (_, _) => TouchMousePromotionFilter.Disable();
+
         // 深色标题栏（修复"顶部白条"，见 WindowChromeService 类注释）：项目里有 20 多个
         // Window（MainWindow + 各种弹窗），逐个在各自构造函数里调用
         // WindowChromeService.HookTitleBarTheme 既繁琐又容易漏改新增窗口。改用 WPF 的
@@ -529,7 +535,8 @@ public partial class App : Application
         EventManager.RegisterClassHandler(typeof(Window), FrameworkElement.LoadedEvent,
             new System.Windows.RoutedEventHandler((sender, _) =>
             {
-                if (sender is Window w) WindowChromeService.ApplyTitleBarTheme(w, ThemeService.CurrentIsDarkMode);
+                if (sender is Window w && !WindowTreatmentPolicy.IsExempt(w))
+                    WindowChromeService.ApplyTitleBarTheme(w, ThemeService.CurrentIsDarkMode);
             }));
 
         // Win11 新视觉效果（云母/亚克力背景 + 圆角）：跟上面标题栏深色模式同一套思路，
@@ -539,7 +546,8 @@ public partial class App : Application
         EventManager.RegisterClassHandler(typeof(Window), FrameworkElement.LoadedEvent,
             new System.Windows.RoutedEventHandler((sender, _) =>
             {
-                if (sender is Window w) Win11EffectsService.Apply(w, Win11EffectsService.CurrentEnabled);
+                if (sender is Window w && !WindowTreatmentPolicy.IsExempt(w))
+                    Win11EffectsService.Apply(w, Win11EffectsService.CurrentEnabled);
             }));
 
         // 全局窗口透明（整窗 Window.Opacity）：跟上面两个类处理器同一套思路，让"当前已存在的
@@ -547,7 +555,8 @@ public partial class App : Application
         EventManager.RegisterClassHandler(typeof(Window), FrameworkElement.LoadedEvent,
             new System.Windows.RoutedEventHandler((sender, _) =>
             {
-                if (sender is Window w) ThemeService.ApplyGlobalOpacityToWindow(w);
+                if (sender is Window w && !WindowTreatmentPolicy.IsExempt(w))
+                    ThemeService.ApplyGlobalOpacityToWindow(w);
             }));
 
         DispatcherUnhandledException += (s, args) =>

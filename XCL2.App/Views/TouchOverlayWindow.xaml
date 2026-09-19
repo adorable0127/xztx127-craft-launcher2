@@ -1,0 +1,221 @@
+﻿<Window x:Class="XCL2.App.Views.TouchOverlayWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="XCL2 触屏悬浮层"
+        WindowStyle="None"
+        AllowsTransparency="True"
+        Background="Transparent"
+        ShowInTaskbar="False"
+        ShowActivated="False"
+        Topmost="True"
+        ResizeMode="NoResize"
+        Focusable="False"
+        Stylus.IsPressAndHoldEnabled="False"
+        Stylus.IsFlicksEnabled="False"
+        Stylus.IsTapFeedbackEnabled="False"
+        Width="1280" Height="720" Left="0" Top="0">
+
+    <!-- 排版参考 FCL(Fold Craft Launcher) 的默认虚拟键盘布局：
+         左下方向摇杆区(WASD)、右下动作区(跳跃/潜行/丢弃/攻击/使用)、
+         顶部功能键条(ESC/F3/DEL...)、底部快捷栏数字条、中间大片区域为视角拖动区。
+         所有控件都不是 WPF 的 Button，而是 Border——Button 自带焦点/点击语义，
+         在"永不激活"的无焦点窗口里反而会带来一堆奇怪行为；这里只需要"按下/抬起"
+         两个时机，Border + 手动处理触摸与鼠标事件最干净，也天然支持多点同时按住
+         （比如一边按 W 一边按跳跃，Button 的点击模型是做不到的）。 -->
+
+    <Window.Resources>
+        <!-- 普通按键外观：半透明深色圆角块 + 白字，跟 FCL 的观感一致，
+             不挡视线，同时在明亮的雪地/沙漠场景下也能看清。 -->
+        <Style x:Key="PadKeyStyle" TargetType="Border">
+            <Setter Property="Background" Value="#66000000"/>
+            <Setter Property="BorderBrush" Value="#80FFFFFF"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="CornerRadius" Value="8"/>
+            <Setter Property="Margin" Value="4"/>
+            <Setter Property="Width" Value="62"/>
+            <Setter Property="Height" Value="62"/>
+            <Setter Property="SnapsToDevicePixels" Value="True"/>
+        </Style>
+
+        <!-- 小号功能键（顶部功能条、快捷栏数字）：同样的观感，尺寸更小，占屏面积更少。 -->
+        <Style x:Key="SmallKeyStyle" TargetType="Border" BasedOn="{StaticResource PadKeyStyle}">
+            <Setter Property="Width" Value="52"/>
+            <Setter Property="Height" Value="38"/>
+            <Setter Property="CornerRadius" Value="6"/>
+            <Setter Property="Margin" Value="3"/>
+        </Style>
+
+        <!-- 主要动作键（跳跃）：做大一圈，方便盲按。 -->
+        <Style x:Key="BigKeyStyle" TargetType="Border" BasedOn="{StaticResource PadKeyStyle}">
+            <Setter Property="Width" Value="80"/>
+            <Setter Property="Height" Value="80"/>
+            <Setter Property="CornerRadius" Value="40"/>
+            <Setter Property="Background" Value="#73000000"/>
+        </Style>
+
+        <Style x:Key="KeyTextStyle" TargetType="TextBlock">
+            <Setter Property="Foreground" Value="White"/>
+            <Setter Property="FontSize" Value="14"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="HorizontalAlignment" Value="Center"/>
+            <Setter Property="VerticalAlignment" Value="Center"/>
+            <Setter Property="TextAlignment" Value="Center"/>
+            <Setter Property="IsHitTestVisible" Value="False"/>
+        </Style>
+
+        <Style x:Key="SmallKeyTextStyle" TargetType="TextBlock" BasedOn="{StaticResource KeyTextStyle}">
+            <Setter Property="FontSize" Value="12"/>
+        </Style>
+    </Window.Resources>
+
+    <!-- LayoutTransform 用来整体缩放悬浮层：平板屏幕物理尺寸差异很大，
+         设置里的"按钮缩放"直接作用在这里，不需要每个按钮单独改尺寸。 -->
+    <Grid x:Name="RootGrid">
+        <Grid.LayoutTransform>
+            <ScaleTransform x:Name="RootScale" ScaleX="1" ScaleY="1"/>
+        </Grid.LayoutTransform>
+
+        <!-- 视角拖动区：铺满整个窗口、放在最底层（后面的控件都盖在它上面）。
+             背景不能是 Transparent 之外的 null——null 不参与命中测试就收不到触摸；
+             这里用 #01000000（几乎完全透明但肉眼不可见）保证既能收到手指拖动，
+             又不会让游戏画面发暗。 -->
+        <Border x:Name="ViewPad" Background="#01000000"/>
+
+        <!-- ============ 顶部左侧：功能键条 ============ -->
+        <WrapPanel HorizontalAlignment="Left" VerticalAlignment="Top" Margin="10,8,0,0" Width="420">
+            <Border Style="{StaticResource SmallKeyStyle}" Tag="TAP:ESC">
+                <TextBlock Style="{StaticResource SmallKeyTextStyle}" Text="ESC"/>
+            </Border>
+            <Border Style="{StaticResource SmallKeyStyle}" Tag="TAP:F3">
+                <TextBlock Style="{StaticResource SmallKeyTextStyle}" Text="F3"/>
+            </Border>
+            <Border Style="{StaticResource SmallKeyStyle}" Tag="TAP:DEL">
+                <TextBlock Style="{StaticResource SmallKeyTextStyle}" Text="DEL"/>
+            </Border>
+            <Border Style="{StaticResource SmallKeyStyle}" Tag="TAP:F5">
+                <TextBlock Style="{StaticResource SmallKeyTextStyle}" Text="F5"/>
+            </Border>
+            <Border Style="{StaticResource SmallKeyStyle}" Tag="TAP:F11">
+                <TextBlock Style="{StaticResource SmallKeyTextStyle}" Text="F11"/>
+            </Border>
+            <Border Style="{StaticResource SmallKeyStyle}" Tag="TAP:T">
+                <TextBlock Style="{StaticResource SmallKeyTextStyle}" Text="聊天"/>
+            </Border>
+            <Border Style="{StaticResource SmallKeyStyle}" Tag="HOLD:TAB">
+                <TextBlock Style="{StaticResource SmallKeyTextStyle}" Text="列表"/>
+            </Border>
+            <Border Style="{StaticResource SmallKeyStyle}" Tag="TAP:F1">
+                <TextBlock Style="{StaticResource SmallKeyTextStyle}" Text="F1"/>
+            </Border>
+        </WrapPanel>
+
+        <!-- ============ 顶部右侧：悬浮层自身的控制（不发给游戏） ============ -->
+        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,8,10,0">
+            <Border Style="{StaticResource SmallKeyStyle}" Tag="UI:SENS-">
+                <TextBlock Style="{StaticResource SmallKeyTextStyle}" Text="灵敏–"/>
+            </Border>
+            <Border Style="{StaticResource SmallKeyStyle}" Tag="UI:SENS+">
+                <TextBlock Style="{StaticResource SmallKeyTextStyle}" Text="灵敏+"/>
+            </Border>
+            <Border Style="{StaticResource SmallKeyStyle}" Tag="UI:GRAB">
+                <TextBlock Style="{StaticResource SmallKeyTextStyle}" Text="聚焦"/>
+            </Border>
+            <Border x:Name="HideKey" Style="{StaticResource SmallKeyStyle}" Tag="UI:HIDE" Background="#7A7A2E00">
+                <TextBlock Style="{StaticResource SmallKeyTextStyle}" Text="隐藏"/>
+            </Border>
+        </StackPanel>
+
+        <!-- ============ 左下：方向键（WASD） ============ -->
+        <Grid HorizontalAlignment="Left" VerticalAlignment="Bottom" Margin="24,0,0,28">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+
+            <Border Grid.Row="0" Grid.Column="1" Style="{StaticResource PadKeyStyle}" Tag="HOLD:W">
+                <TextBlock Style="{StaticResource KeyTextStyle}" Text="W&#10;前"/>
+            </Border>
+            <Border Grid.Row="1" Grid.Column="0" Style="{StaticResource PadKeyStyle}" Tag="HOLD:A">
+                <TextBlock Style="{StaticResource KeyTextStyle}" Text="A&#10;左"/>
+            </Border>
+            <!-- 中间格：疾跑开关。Minecraft 的疾跑是"按住 Ctrl"，触屏上按住不现实，
+                 所以这里做成切换式：点一下按下并保持，再点一下松开（见 ToggleKey 逻辑）。 -->
+            <Border x:Name="SprintKey" Grid.Row="1" Grid.Column="1" Style="{StaticResource PadKeyStyle}" Tag="TOGGLE:CTRL">
+                <TextBlock Style="{StaticResource KeyTextStyle}" Text="疾跑"/>
+            </Border>
+            <Border Grid.Row="1" Grid.Column="2" Style="{StaticResource PadKeyStyle}" Tag="HOLD:D">
+                <TextBlock Style="{StaticResource KeyTextStyle}" Text="D&#10;右"/>
+            </Border>
+            <Border Grid.Row="2" Grid.Column="1" Style="{StaticResource PadKeyStyle}" Tag="HOLD:S">
+                <TextBlock Style="{StaticResource KeyTextStyle}" Text="S&#10;后"/>
+            </Border>
+        </Grid>
+
+        <!-- ============ 右下：动作区 ============ -->
+        <Grid HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="0,0,24,28">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+
+            <Border Grid.Row="0" Grid.Column="0" Style="{StaticResource PadKeyStyle}" Tag="TAP:Q">
+                <TextBlock Style="{StaticResource KeyTextStyle}" Text="丢弃&#10;Q"/>
+            </Border>
+            <Border Grid.Row="0" Grid.Column="1" Style="{StaticResource PadKeyStyle}" Tag="TAP:E">
+                <TextBlock Style="{StaticResource KeyTextStyle}" Text="背包&#10;E"/>
+            </Border>
+            <Border Grid.Row="0" Grid.Column="2" Style="{StaticResource PadKeyStyle}" Tag="TAP:F">
+                <TextBlock Style="{StaticResource KeyTextStyle}" Text="换手&#10;F"/>
+            </Border>
+
+            <Border Grid.Row="1" Grid.Column="0" Style="{StaticResource PadKeyStyle}" Tag="HOLD:MOUSE_L">
+                <TextBlock Style="{StaticResource KeyTextStyle}" Text="攻击&#10;挖掘"/>
+            </Border>
+            <Border Grid.Row="1" Grid.Column="1" Style="{StaticResource PadKeyStyle}" Tag="HOLD:MOUSE_R">
+                <TextBlock Style="{StaticResource KeyTextStyle}" Text="使用&#10;放置"/>
+            </Border>
+            <Border Grid.Row="1" Grid.Column="2" Grid.RowSpan="2" Style="{StaticResource BigKeyStyle}"
+                    Tag="HOLD:SPACE" VerticalAlignment="Center">
+                <TextBlock Style="{StaticResource KeyTextStyle}" Text="跳跃&#10;上浮"/>
+            </Border>
+
+            <!-- 潜行/下潜：跟疾跑同理做成切换式——水里下潜、挖脚下方块时都需要长时间保持。 -->
+            <Border x:Name="SneakKey" Grid.Row="2" Grid.Column="0" Grid.ColumnSpan="2"
+                    Style="{StaticResource PadKeyStyle}" Tag="TOGGLE:SHIFT" Width="128">
+                <TextBlock Style="{StaticResource KeyTextStyle}" Text="潜行 / 下潜（Shift）"/>
+            </Border>
+        </Grid>
+
+        <!-- ============ 底部中间：快捷栏 1-9 ============ -->
+        <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" VerticalAlignment="Bottom" Margin="0,0,0,10">
+            <Border Style="{StaticResource SmallKeyStyle}" Tag="TAP:1"><TextBlock Style="{StaticResource SmallKeyTextStyle}" Text="1"/></Border>
+            <Border Style="{StaticResource SmallKeyStyle}" Tag="TAP:2"><TextBlock Style="{StaticResource SmallKeyTextStyle}" Text="2"/></Border>
+            <Border Style="{StaticResource SmallKeyStyle}" Tag="TAP:3"><TextBlock Style="{StaticResource SmallKeyTextStyle}" Text="3"/></Border>
+            <Border Style="{StaticResource SmallKeyStyle}" Tag="TAP:4"><TextBlock Style="{StaticResource SmallKeyTextStyle}" Text="4"/></Border>
+            <Border Style="{StaticResource SmallKeyStyle}" Tag="TAP:5"><TextBlock Style="{StaticResource SmallKeyTextStyle}" Text="5"/></Border>
+            <Border Style="{StaticResource SmallKeyStyle}" Tag="TAP:6"><TextBlock Style="{StaticResource SmallKeyTextStyle}" Text="6"/></Border>
+            <Border Style="{StaticResource SmallKeyStyle}" Tag="TAP:7"><TextBlock Style="{StaticResource SmallKeyTextStyle}" Text="7"/></Border>
+            <Border Style="{StaticResource SmallKeyStyle}" Tag="TAP:8"><TextBlock Style="{StaticResource SmallKeyTextStyle}" Text="8"/></Border>
+            <Border Style="{StaticResource SmallKeyStyle}" Tag="TAP:9"><TextBlock Style="{StaticResource SmallKeyTextStyle}" Text="9"/></Border>
+        </StackPanel>
+
+        <!-- 隐藏后的复原入口：整层点击穿透时，只留这一个小角标可以点回来。 -->
+        <Border x:Name="RestoreKey" Style="{StaticResource SmallKeyStyle}" Tag="UI:SHOW"
+                HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,8,10,0"
+                Background="#B3000000" Visibility="Collapsed">
+            <TextBlock Style="{StaticResource SmallKeyTextStyle}" Text="显示"/>
+        </Border>
+    </Grid>
+</Window>

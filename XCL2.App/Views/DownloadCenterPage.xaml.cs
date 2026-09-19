@@ -658,6 +658,12 @@ public partial class DownloadCenterPage : UserControl
         if (sender is not Button btn || btn.Tag is not VersionListItem item) return;
         var entry = item.Entry;
 
+        // 「愚人节彩蛋」类头注释里写的是"点击「开始游戏」和「下载」按钮都会被劫持"，
+        // 但原来这个钩子只接在"启动游戏"按钮上（MainWindow/HomePage），版本下载页
+        // 这个真正的"下载安装"按钮反而完全没接——点它今天照常正常安装，跟注释描述的
+        // 效果范围对不上。这里补上，让文档和实际行为一致。
+        if (AprilFoolsUi.TryInterceptLaunchOrDownload(Window.GetWindow(this) ?? _owner)) return;
+
         var folder = _owner.ConfigService.Config.Folders
             .FirstOrDefault(f => f.Path == _owner.ConfigService.Config.SelectedFolderPath)
             ?? _owner.ConfigService.Config.Folders.FirstOrDefault();
@@ -739,7 +745,11 @@ public partial class DownloadCenterPage : UserControl
                 }
                 MessageBoxDialog.ShowSuccess($"{entry.Id} 安装完成" + (folder.Path == _owner.ConfigService.Config.SelectedFolderPath ? "，已自动选中。" : "！"));
             });
-        });
+        },
+        // 登记这次安装的目标版本/文件夹：装到一半的版本目录不能被启动，
+        // MainWindow.LaunchInternalAsync 会据此拦下"启动正在下载中的那个版本"。
+        // 见 DownloadQueueService.FindActiveForVersion 的注释。
+        targetVersionId: entry.Id, targetFolderPath: folder.Path);
     }
 
     /// <summary>右键菜单"在中文 Minecraft Wiki 中查看"（下载中心的"游戏版本"列表）：
@@ -1510,7 +1520,10 @@ public partial class DownloadCenterPage : UserControl
             {
                 try { if (File.Exists(tempMrpackPath)) File.Delete(tempMrpackPath); } catch { /* 临时文件清理失败无需打扰用户 */ }
             }
-        });
+        },
+        // 整合包同样会往一个版本目录里写文件，写到一半的版本目录同样不该被启动。
+        // 见 DownloadQueueService.FindActiveForVersion 的注释。
+        targetVersionId: targetDialog.TargetVersionId, targetFolderPath: folder.Path);
     }
 
     /// <summary>

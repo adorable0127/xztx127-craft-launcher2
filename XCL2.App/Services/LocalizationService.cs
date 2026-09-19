@@ -53,6 +53,27 @@ public static class LocalizationService
         new("sv-SE", "Svenska (Sverige)"),
         new("ja-JP", "日本語（日本）"),
         new("ko-KR", "한국어(대한민국)"),
+        // 新增一批欧洲/拉美/东南亚语言。排序沿用本列表既有的思路：中文族 → 英语族 →
+        // 其余拉丁字母语言 → 西里尔字母 → CJK。这几种放在欧洲语言那一段的后面，
+        // 不插到 ja/ko 前面，避免改动已有条目的相对位置（老用户按位置记忆的肌肉记忆会失效）。
+        new("es-ES", "Español (España)"),
+        new("es-419", "Español (Latinoamérica)"),
+        new("pt-PT", "Português (Portugal)"),
+        new("pt-BR", "Português (Brasil)"),
+        new("pl-PL", "Polski"),
+        new("tr-TR", "Türkçe"),
+        new("id-ID", "Bahasa Indonesia"),
+        new("ru-RU", "Русский"),
+        // 本次新增：乌克兰语紧跟在同为西里尔字母的俄语后面；越南语虽是拉丁字母但读音/
+        // 排版习惯跟东南亚语言更近，放泰语前面；泰语、阿拉伯语各自独立文字系统，放最后。
+        // 阿拉伯语是从右到左书写(RTL)，目前项目里用到文案的几个页面都没有对 FlowDirection
+        // 做适配，选中阿拉伯语后文字内容会翻译正确，但界面排版（对齐方向、图标位置等）
+        // 还是从左到右的——这是已知限制，不是这次翻译文件本身的问题，后续要做完整 RTL
+        // 支持需要额外去改各页面的 FlowDirection/布局，不在这次改动范围内。
+        new("uk-UA", "Українська"),
+        new("vi-VN", "Tiếng Việt"),
+        new("th-TH", "ไทย"),
+        new("ar-SA", "العربية"),
     };
 
     public const string DefaultLanguageCode = "zh-Hans";

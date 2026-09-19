@@ -193,6 +193,11 @@ public static class Win11EffectsService
     /// </summary>
     public static void Apply(Window window, bool enabled)
     {
+        // AllowsTransparency=True 的逐像素透明窗口（触屏悬浮层）跟 DWM 背景材质天生互斥：
+        // DwmExtendFrameIntoClientArea 会在整个客户区铺一层不透明系统背景板，把悬浮层
+        // 变成一块带圆角的灰色方块。详见 WindowTreatmentPolicy 类注释。
+        if (WindowTreatmentPolicy.IsExempt(window)) return;
+
         var hwnd = new WindowInteropHelper(window).Handle;
         if (hwnd == IntPtr.Zero) return;
 

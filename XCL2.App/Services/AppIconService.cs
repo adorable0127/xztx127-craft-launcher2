@@ -1,4 +1,4 @@
-using System.Windows;
+﻿using System.Windows;
 using System.Windows.Media.Imaging;
 
 namespace XCL2.App.Services;
@@ -91,6 +91,10 @@ public static class AppIconService
         if (Application.Current == null) return;
         foreach (Window window in Application.Current.Windows)
         {
+            // 触屏悬浮层没有标题栏、不进任务栏和 Alt-Tab，给它设图标没有意义，
+            // 统一按全局豁免处理，保持"所有全局窗口处理都绕开它"这一条规则不出例外。
+            if (WindowTreatmentPolicy.IsExempt(window)) continue;
+
             ApplyTo(window);
             if (window is Views.MainWindow main) ApplyToTitleBarImage(main, main.TitleBarIconImage);
         }

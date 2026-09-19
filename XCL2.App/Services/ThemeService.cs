@@ -1326,6 +1326,11 @@ public static class ThemeService
     /// </summary>
     public static void ApplyGlobalOpacityToWindow(Window window)
     {
+        // 逐像素透明窗口（触屏悬浮层）必须跳过：它本身就是靠 WS_EX_LAYERED 做透明的，
+        // 下面那套"加/摘 WS_EX_LAYERED + SetLayeredWindowAttributes"会把它的透明机制
+        // 直接破坏掉，表现为整层变成一块不透明灰色方块。详见 WindowTreatmentPolicy 类注释。
+        if (WindowTreatmentPolicy.IsExempt(window)) return;
+
         var hwnd = new System.Windows.Interop.WindowInteropHelper(window).Handle;
         if (hwnd == IntPtr.Zero) return;
         EnsureGlobalOpacityHook(window, hwnd);
@@ -1428,6 +1433,10 @@ public static class ThemeService
 
         foreach (Window window in Application.Current.Windows)
         {
+            // 触屏悬浮层不参与主题刷新：它用的是一套跟主题无关的固定半透明外观，
+            // 而且刷新过程里的标题栏/图标/整窗 alpha 处理都会破坏它的逐像素透明。
+            if (WindowTreatmentPolicy.IsExempt(window)) continue;
+
             RefreshVisualTree(window);
             // 标题栏（原生系统绘制部分，见 WindowChromeService 类注释里"顶部白条"的成因）
             // 不在 WPF 资源系统管辖范围内，普通的画刷刷新逻辑碰不到它，这里单独调一次

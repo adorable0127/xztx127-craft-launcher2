@@ -1,5 +1,6 @@
 ﻿using System.Collections.ObjectModel;
 using System.ComponentModel;
+using System.IO;
 using System.Runtime.CompilerServices;
 using System.Windows;
 using XCL2.App.Models;
@@ -63,6 +64,24 @@ public sealed class DownloadQueueItem : INotifyPropertyChanged
     /// BedrockPage 等发起下载的地方在注册条目时提供，这里不关心具体是"游戏版本"
     /// "整合包""基岩版客户端"还是别的什么类型的下载。</summary>
     internal readonly Func<DownloadQueueItem, CancellationToken, Task> ResumeAction;
+
+    /// <summary>
+    /// 这条下载任务最终会产出/修改的那个游戏版本 ID（比如"安装 1.20.1"就是 1.20.1，
+    /// 整合包安装则是它写入的那个版本目录名）。只有"装完之后会多出一个可启动版本"的任务
+    /// 才会赋值；下载 Mod、下载 Java、下载服务端核心这些不产出可启动版本的任务保持 null。
+    ///
+    /// 存在的唯一目的：让"启动游戏"能判断出**当前选中的这个版本正在被下载/安装**，
+    /// 从而拦下这一次启动（一个只装了一半的版本目录，启动出来的必然是崩溃或者缺文件的
+    /// 半成品，弹个原生 Java 崩溃窗口比直接告诉用户"还在装，等一下"糟糕得多）。
+    /// 注意这**不是**"下载期间禁止启动任何游戏"——跟这条下载无关的其它版本照常可以启动，
+    /// 见本文件下方 FindActiveForVersion 的注释。
+    /// </summary>
+    public string? TargetVersionId { get; init; }
+
+    /// <summary>这条下载任务安装到哪个 .minecraft 文件夹。同一个版本号可以同时存在于多个
+    /// 游戏文件夹里，只比版本 ID 会误伤——用户完全可能一边在 A 文件夹装 1.20.1，
+    /// 一边启动 B 文件夹里早就装好的 1.20.1。为 null 时退化成只比版本 ID。</summary>
+    public string? TargetFolderPath { get; init; }
 
     public DownloadQueueItem(string name, CancellationTokenSource cts, Func<DownloadQueueItem, CancellationToken, Task> resumeAction)
     {
@@ -163,6 +182,13 @@ public sealed class DownloadQueueItem : INotifyPropertyChanged
 /// 暂停/取消这两个操作被明确设计成跟"启动游戏"按钮完全独立——启动游戏走的是
 /// LauncherService 自己的即时补全下载逻辑，不经过这个队列，两者互不阻塞，
 /// 所以"下载中依然可以点启动"这条需求不需要额外加锁，天然成立。
+///
+/// 后来补的一条例外（也只有这一条）：**正在下载/安装中的那个版本本身**不能启动。
+/// 上面那条"互不阻塞"说的是"下载 A 的时候可以启动 B"，这没问题；但如果用户选中的
+/// 恰恰就是此刻正在被写入的那个版本目录，启动出来的必然是缺 libraries/assets 的
+/// 半成品，结果是一个用户看不懂的原生 Java 崩溃窗口。与其让它崩，不如明确告诉用户
+/// "这个版本还在装，装完再启动"。判断入口见 FindActiveForVersion，拦截点在
+/// MainWindow.LaunchInternalAsync。跟这条下载无关的其它版本仍然照常可以启动。
 /// </summary>
 public sealed class DownloadQueueService
 {
@@ -178,6 +204,38 @@ public sealed class DownloadQueueService
 
     public bool HasActive => Items.Any(i => i.Status is DownloadQueueItemStatus.Downloading or DownloadQueueItemStatus.Paused);
 
+    /// <summary>
+    /// 找出"正在下载/安装 <paramref name="versionId"/> 这个版本"的队列条目，没有就返回 null。
+    ///
+    /// 为什么 Paused 也算：本项目的"暂停"在实现上是取消当前这次下载、保留已装好的文件
+    /// （见 DownloadQueueItem 类头注释），所以暂停中的版本目录同样是不完整的半成品，
+    /// 启动它跟启动一个下载中的版本一样会崩。Completed/Failed/Canceled 则不拦——
+    /// 失败/取消的那次安装用户自己看得到状态，要不要冒险启动是他的选择，不该由启动器替他否决。
+    ///
+    /// 文件夹为空时退化成只比版本 ID：宁可在这种少见情况下多拦一次（提示里会写清楚原因，
+    /// 用户等几秒就好），也不要漏拦导致真的启动了一个装了一半的版本。
+    /// </summary>
+    public DownloadQueueItem? FindActiveForVersion(string? folderPath, string? versionId)
+    {
+        if (string.IsNullOrWhiteSpace(versionId)) return null;
+
+        return Items.FirstOrDefault(i =>
+            i.Status is DownloadQueueItemStatus.Downloading or DownloadQueueItemStatus.Paused &&
+            !string.IsNullOrWhiteSpace(i.TargetVersionId) &&
+            string.Equals(i.TargetVersionId, versionId, StringComparison.OrdinalIgnoreCase) &&
+            (string.IsNullOrWhiteSpace(i.TargetFolderPath) || string.IsNullOrWhiteSpace(folderPath) ||
+             string.Equals(NormalizeFolder(i.TargetFolderPath), NormalizeFolder(folderPath), StringComparison.OrdinalIgnoreCase)));
+    }
+
+    /// <summary>把路径归一成可比较的形式（去掉结尾分隔符、转成绝对路径）。
+    /// 下载登记方拿到的路径和 cfg.SelectedFolderPath 可能一个带结尾反斜杠一个不带，
+    /// 直接字符串比会漏判，那样拦截就形同虚设。</summary>
+    private static string NormalizeFolder(string path)
+    {
+        try { return Path.GetFullPath(path).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar); }
+        catch { return path.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar); }
+    }
+
     private DownloadQueueService() { }
 
     /// <summary>登记一个新的下载条目并立即开始跑。调用方只需要把"怎么下载"包成
@@ -191,10 +249,15 @@ public sealed class DownloadQueueService
     /// 复用 ShowCompletionNotification 已经在用的 ToastService，跟"下载完成"提示
     /// 是同一套右下角气泡组件、视觉上连贯；用 Info 类型（不是 Success）跟"已完成"
     /// 区分开，避免用户扫一眼颜色就以为下载已经结束了。</summary>
-    public DownloadQueueItem StartNew(string name, Func<DownloadQueueItem, CancellationToken, Task> resumeAction)
+    public DownloadQueueItem StartNew(string name, Func<DownloadQueueItem, CancellationToken, Task> resumeAction,
+        string? targetVersionId = null, string? targetFolderPath = null)
     {
         var cts = new CancellationTokenSource();
-        var item = new DownloadQueueItem(name, cts, resumeAction);
+        var item = new DownloadQueueItem(name, cts, resumeAction)
+        {
+            TargetVersionId = string.IsNullOrWhiteSpace(targetVersionId) ? null : targetVersionId,
+            TargetFolderPath = string.IsNullOrWhiteSpace(targetFolderPath) ? null : targetFolderPath
+        };
         RunOnUi(() =>
         {
             Items.Add(item);

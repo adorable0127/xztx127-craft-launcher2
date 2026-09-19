@@ -1,0 +1,19 @@
+<local:OverlayDialogControl x:Class="XCL2.App.Views.ImagePreviewDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="clr-namespace:XCL2.App.Views"
+        MaxWidth="640" MaxHeight="520">
+    <!-- 背景候选池"预览图片"按钮专用：只是把选中的那张图放大看一眼，不做任何编辑。
+         MaxWidth/MaxHeight 卡住尺寸——用户导入的原图可能是几千像素的壁纸，
+         不设上限的话弹窗会撑得比屏幕还大。图片本身按比例缩放到这个框里，不裁剪、不变形。 -->
+    <StackPanel Margin="16">
+        <TextBlock x:Name="FileNameText" FontWeight="SemiBold" FontSize="13"
+                   TextTrimming="CharacterEllipsis" Margin="0,0,0,10"/>
+        <Border BorderThickness="1" BorderBrush="{DynamicResource BorderBrush2}" CornerRadius="4">
+            <Image x:Name="PreviewImage" Stretch="Uniform"
+                   MaxWidth="600" MaxHeight="420" SnapsToDevicePixels="True"/>
+        </Border>
+        <Button Content="关闭" HorizontalAlignment="Right" Margin="0,14,0,0"
+                Padding="18,6" Click="Close_Click" IsDefault="True" IsCancel="True"/>
+    </StackPanel>
+</local:OverlayDialogControl>

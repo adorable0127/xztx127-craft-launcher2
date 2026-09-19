@@ -94,22 +94,28 @@ public static class AprilFoolsUi
 
         if (!AprilFoolsService.IsActive) return;
 
+        // 10 秒提醒：需求原话是"如果用户 10 秒内没有关闭这个彩蛋，就会弹窗提示点击右下角
+        // 小白旗来关闭彩蛋"——所以这条提醒必须明确指向小白旗，不能只说 F1（F1 是额外补的
+        // 紧急恢复键，按钮点不到时的兜底，但不是用户被告知的主要恢复方式）。
         _recoveryNotificationTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(10) };
         _recoveryNotificationTimer.Tick += (_, _) =>
         {
             _recoveryNotificationTimer?.Stop();
             if (AprilFoolsService.IsActive)
-                ToastService.ShowSystemNotification("按不到按钮？F1即可恢复！", "XCL2 愚人节彩蛋");
+                MessageBoxDialog.ShowInfo("点击右下角的白旗🏳️就可以关闭这个彩蛋，恢复正常啦。\n\n（如果按钮一直点不到，按 F1 也能立刻恢复。）", "愚人节彩蛋");
         };
         _recoveryNotificationTimer.Start();
 
+        // 60 秒兜底：万一 10 秒那次提醒被用户不小心划走/没注意到，用系统原生 MessageBox
+        // 再提醒一次——用原生弹窗而不是启动器自己皮肤化的对话框，是为了在"3/5/8 号效果
+        // 正在乱窜/乱跳"的极端情况下，这条提醒本身也不会被牵连着一起变得点不到。
         _recoveryWin32Timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(60) };
         _recoveryWin32Timer.Tick += (_, _) =>
         {
             _recoveryWin32Timer?.Stop();
             if (!AprilFoolsService.IsActive) return;
             System.Windows.MessageBox.Show(
-                "按不到按钮？F1即可恢复！",
+                "点击右下角的白旗就可以关闭这个彩蛋，恢复正常。按不到的话，按 F1 也可以。",
                 "XCL2 愚人节彩蛋",
                 MessageBoxButton.OK,
                 MessageBoxImage.Information);

@@ -76,6 +76,21 @@ public class ClientLoaderInstallService : IDisposable
         _vanillaDownloader = DownloadService.CreateFromConfig(cfg);
     }
 
+    /// <summary>
+    /// 「一键开始游戏」用的加速构造：内部的原版底座下载器强制走镜像源 + 多线程，
+    /// 理由见 <see cref="DownloadService.CreateAccelerated"/>。<paramref name="accelerate"/>
+    /// 为 false 时行为跟上面那个构造完全一致，方便调用方用一个布尔量开关，
+    /// 不用在两个构造之间写 if/else。
+    /// </summary>
+    public ClientLoaderInstallService(AppConfig cfg, bool accelerate)
+        : this(accelerate ? DownloadSource.BMCLAPI : cfg.Source)
+    {
+        _vanillaDownloader.Dispose();
+        _vanillaDownloader = accelerate
+            ? DownloadService.CreateAccelerated(cfg)
+            : DownloadService.CreateFromConfig(cfg);
+    }
+
     /// <summary>沿用旧签名：只传 DownloadSource，内部退化为单线程不限速的 DownloadService
     /// （等价于以前的行为）。保留这个构造是为了不强迫所有调用方立刻改成传完整 AppConfig。</summary>
     public ClientLoaderInstallService(DownloadSource source)

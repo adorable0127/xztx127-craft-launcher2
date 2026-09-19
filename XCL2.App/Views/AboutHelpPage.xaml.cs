@@ -26,6 +26,10 @@ public partial class AboutHelpPage : UserControl
     private const string ContactAuthorUrl = "https://xztx127.dpdns.org/arcade#contact";
     private const string AllProjectsUrl = "https://github.com/adorable0127";
 
+    /// <summary>XCL 官方下载站（安装包直链）。刻意跟 GitHub 仓库/发布页分开列，
+    /// 不复用 GitHubRepoUrl——这两个是面向不同用户群的两个入口。</summary>
+    private const string DownloadSiteUrl = "https://xcl.xztx127.dpdns.org";
+
     // 滚动同步 Tab 选中态时，用这个标记避免"代码触发的 RadioButton.Checked"
     // 反过来又调用一次滚动定位，造成两边来回打架、抖动。
     private bool _suppressScrollSync;
@@ -129,6 +133,10 @@ public partial class AboutHelpPage : UserControl
     private void OpenContact_Click(object sender, RoutedEventArgs e) => OpenUrl(ContactAuthorUrl);
 
     private void OpenAllProjects_Click(object sender, RoutedEventArgs e) => OpenUrl(AllProjectsUrl);
+
+    /// <summary>XCL 官方下载站。跟 GitHub 发布页并列而不是二选一：GitHub 面向能访问它、
+    /// 习惯看 Release 列表的用户，这个站点是给普通用户直接拿安装包的。</summary>
+    private void OpenDownloadSite_Click(object sender, RoutedEventArgs e) => OpenUrl(DownloadSiteUrl);
 
     /// <summary>
     /// 统一的"用系统默认浏览器打开链接"入口，跟项目里其它地方（VersionSelectPage 等）

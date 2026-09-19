@@ -164,6 +164,23 @@ public class ConfigService
                 ErrorPresenter.LogFallback("所有配置副本均无法读取，已使用默认配置", lastConfigReadError);
         }
 
+        var inputModeMigrated = false;
+
+        // ===== 一次性迁移：把"每次启动前询问操作模式"抬成默认开启 =====
+        // 问题现象：用户反馈"每次使用时并没有弹出窗口主动询问"。根因不在弹窗代码，而在这里——
+        // 旧版本 AskInputModeBeforeLaunch 的默认值是 false，只要启动器保存过一次配置，
+        // config.json 里就固化了 false；后来把 C# 属性初始值改成 true 也没有任何作用，
+        // 因为反序列化会拿磁盘上的 false 覆盖掉初始值。结果就是升级之后照样一次都不弹。
+        // 这里用一个独立的迁移标记做且只做一次抬升：标记为 false 说明这份配置还是旧默认值
+        // 时代写出来的，把询问开关打开；标记置位之后就完全听用户的，用户在设置里关掉之后
+        // 不会被再次强行打开（迁移只跑一次，这是它和"每次启动都强制置 true"的关键区别）。
+        if (!Config.InputModeAskDefaultMigrated)
+        {
+            Config.InputModeAskDefaultMigrated = true;
+            Config.AskInputModeBeforeLaunch = true;
+            inputModeMigrated = true; // 真正落盘放到 Load 末尾，避免在配置还没规范化完就写出去
+        }
+
         RegistryFeatureEnabled = Config.RegistryFeatureEnabled;
 
         // AppData JSON 是主存储：只要任意 JSON 副本成功加载，就绝不再用注册表覆盖它。
@@ -266,6 +283,15 @@ public class ConfigService
             // 不能只因为 File.Exists=true 就一直让以后每次启动都先撞一次坏主文件再回退。
             try { Save(); }
             catch (Exception ex) { ErrorPresenter.LogFallback($"恢复配置到 AppData 主副本失败：{ConfigPath}", ex); }
+            inputModeMigrated = false; // 上面这次 Save 已经把迁移结果一起写进去了
+        }
+
+        // 把上面那次一次性迁移的结果落盘。写失败也不影响本次会话（本次内存里已经是开启状态），
+        // 只是下次启动会再迁移一遍，行为仍然正确。
+        if (inputModeMigrated)
+        {
+            try { Save(); }
+            catch (Exception ex) { ErrorPresenter.LogFallback("保存\"启动前询问操作模式\"迁移结果失败", ex); }
         }
     }
 

@@ -297,8 +297,21 @@
                                         <TextBlock Text="{Binding Id}" FontSize="15"/>
                                         <TextBlock Text="{Binding ReleaseTime}" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}"/>
                                     </StackPanel>
-                                    <Button Grid.Column="1" Content="{Binding FavoriteLabel}" Margin="0,0,8,0" Padding="10,6"
-                                            Style="{StaticResource SideNavButton}" Tag="{Binding}" Click="FavoriteVersion_Click"/>
+                                    <!-- 第 1 列放成一排：「MC中文wiki」+「收藏」。
+                                         「MC中文wiki」原来只藏在右键菜单里，几乎没人会去右键一个版本行，
+                                         等于白做；提到行内做成常驻按钮，点了直接跳到这个版本在中文
+                                         Minecraft Wiki 上的条目。点击处理跟右键菜单共用
+                                         ViewVersionOnWiki_Click，右键菜单也保留（习惯右键的用户不用改习惯）。
+                                         两个按钮必须包在 StackPanel 里而不是各占一个 Grid.Column——
+                                         同一列放两个控件会直接重叠。 -->
+                                    <StackPanel Grid.Column="1" Orientation="Horizontal">
+                                        <Button Content="MC中文wiki" Margin="0,0,8,0" Padding="10,6"
+                                                Style="{StaticResource SideNavButton}" Tag="{Binding}"
+                                                Click="ViewVersionOnWiki_Click"
+                                                ToolTip="在中文 Minecraft Wiki 上查看这个版本的介绍和更新内容"/>
+                                        <Button Content="{Binding FavoriteLabel}" Margin="0,0,8,0" Padding="10,6"
+                                                Style="{StaticResource SideNavButton}" Tag="{Binding}" Click="FavoriteVersion_Click"/>
+                                    </StackPanel>
                                     <Button Grid.Column="2" Content="{DynamicResource Str_Ui_Download_Install}" Style="{StaticResource PrimaryButton}"
                                             Tag="{Binding}" Click="InstallVersion_Click"
                                             ToolTip="{DynamicResource Str_Ui_Click_To_Choose_Between_Vanilla_And_The_}"/>

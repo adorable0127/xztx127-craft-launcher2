@@ -1,0 +1,83 @@
+<local:OverlayDialogControl x:Class="XCL2.App.Views.ChangelogWindow"
+                            xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                            xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                            xmlns:local="clr-namespace:XCL2.App.Views"
+                            xmlns:wv2="clr-namespace:Microsoft.Web.WebView2.Wpf;assembly=Microsoft.Web.WebView2.Wpf"
+                            MinWidth="900"
+                            MaxWidth="900"
+                            MinHeight="640"
+                            MaxHeight="640">
+    <!--
+        「查看 XCL 更新日志」和「Minecraft 更新日志」共用这一个弹窗类，但**每次打开都是
+        一个全新的实例**，两者互不影响——区别只在构造时传进来的 ChangelogSource：标题、
+        要访问的地址、失败时的提示文案都由它决定，弹窗本身不认识"XCL"或"Minecraft"这两个
+        概念。
+
+        由独立 Window 迁移为进程内 Overlay 弹窗（见 IOverlayDialog.cs /
+        OverlayDialogService.cs 顶部注释）：不再弹出一个新的系统窗口，而是盖在启动器
+        主窗口上面的一张卡片，跟"功能隐藏"弹窗、微软登录弹窗是同一套机制。
+        Title/WindowStartupLocation/ResizeMode/Background 这些"窗口级"属性已全部移除，
+        居中、圆角卡片背景、阴影都由 MainWindow.xaml 里的 OverlayCard 统一提供。
+        原来的 Width/Height 转成 MinWidth/MaxWidth/MinHeight/MaxHeight：Overlay 是按内容
+        自适应的，只写 Width/Height 不生效，而且下面的 WebView2 没有任何期望尺寸，
+        不给 MinHeight 会直接测量成 0（一片空白），这是这次迁移最容易踩的坑，见
+        MicrosoftLoginWindow.xaml 同样的注释。
+
+        内容改用 WebView2（Edge/Chromium 内核）直接加载对应网页，不再用旧的 WebBrowser
+        控件（IE11 内核）：
+        - 之前用 WebBrowser 时，无论是 GitHub Releases 页还是中文 Minecraft Wiki 页，
+          只要页面里嵌了用现代 JS 写的脚本（哪怕只是一个 YouTube 视频嵌入），IE11 引擎
+          解析不了就会弹出系统级的"脚本错误"对话框（行113/Char125/"缺少标识符"那种），
+          糊在启动器窗口正中间，看起来像启动器自己坏了，其实是网页的锅、控件太老背不动；
+        - WebView2 是现代浏览器内核，不会有这个问题，两边页面的排版结构还是会持续变化，
+          仍然不打算自己解析 HTML 再排版，直接整页加载最省维护成本。
+        - 少数机器上没装 WebView2 Runtime：探测失败就直接显示下面的提示层，不去尝试
+          初始化一个注定失败的控件，跟 Web2BrowserTool/MicrosoftLoginWindow 的降级方式
+          一致；导航失败（没网/对方站点挂了）时显示同一条提示层，并留"用浏览器打开"的
+          兜底按钮。
+    -->
+    <Grid Margin="14">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <DockPanel Grid.Row="0" Margin="0,0,0,10">
+            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                <Button x:Name="ReloadBtn" Content="⟳ 重新加载" Padding="12,6" Margin="0,0,8,0" Click="Reload_Click"/>
+                <Button x:Name="OpenInBrowserBtn" Content="🌐 用浏览器打开" Padding="12,6" Click="OpenInBrowser_Click"/>
+            </StackPanel>
+            <StackPanel>
+                <TextBlock x:Name="TitleText" FontSize="18" FontWeight="Bold"
+                           Foreground="{DynamicResource TextPrimaryBrush}"/>
+                <TextBlock x:Name="SubtitleText" FontSize="11" Margin="0,2,0,0" TextWrapping="Wrap"
+                           Foreground="{DynamicResource TextSecondaryBrush}"/>
+            </StackPanel>
+        </DockPanel>
+
+        <Border Grid.Row="1" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" CornerRadius="6">
+            <Grid>
+                <wv2:WebView2 x:Name="Browser" MinHeight="460"/>
+                <!-- 加载失败/运行时不可用时盖在上面的提示层。用 Border 盖住而不是把
+                     WebView2 换掉，是因为它跟旧的 WebBrowser 一样是原生控件宿主，
+                     反复增删会闪烁。 -->
+                <Border x:Name="ErrorOverlay" Visibility="Collapsed"
+                        Background="{DynamicResource BgBrush}">
+                    <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" MaxWidth="420">
+                        <TextBlock x:Name="ErrorText" TextWrapping="Wrap" TextAlignment="Center"
+                                   Foreground="{DynamicResource TextSecondaryBrush}"/>
+                        <Button Content="用浏览器打开" Padding="14,7" Margin="0,14,0,0"
+                                HorizontalAlignment="Center" Click="OpenInBrowser_Click"/>
+                    </StackPanel>
+                </Border>
+            </Grid>
+        </Border>
+
+        <DockPanel Grid.Row="2" Margin="0,10,0,0">
+            <TextBlock x:Name="UrlText" VerticalAlignment="Center" FontSize="11"
+                       Foreground="{DynamicResource TextSecondaryBrush}" TextTrimming="CharacterEllipsis"/>
+            <Button Content="关闭" Padding="16,7" HorizontalAlignment="Right" Click="Close_Click"/>
+        </DockPanel>
+    </Grid>
+</local:OverlayDialogControl>

@@ -25,7 +25,15 @@
 简体中文(zh-Hans，默认)、繁体中文(zh-Hant)、英语-美国(en-US)、英语-英国(en-GB)、
 德语(de-DE)、法语(fr-FR)、意大利语(it-IT)、瑞典语(sv-SE)、日语(ja-JP)、韩语(ko-KR)、
 粤语(yue-Hant，用繁体字书写，这是目前 Windows/主流系统对粤语书面语的通行处理方式)、
-藏文(bo-CN，བོད་ཡིག)。
+藏文(bo-CN，བོད་ཡིག)、
+西班牙语-西班牙(es-ES)、西班牙语-拉美(es-419)、葡萄牙语-葡萄牙(pt-PT)、
+葡萄牙语-巴西(pt-BR)、波兰语(pl-PL)、土耳其语(tr-TR)、印尼语(id-ID)、俄语(ru-RU)、
+乌克兰语(uk-UA)、越南语(vi-VN)、泰语(th-TH)、阿拉伯语(ar-SA，注意：从右到左书写，
+目前项目未做 FlowDirection 适配，文案会翻译正确但界面排版仍是从左到右)。
+
+> 跟 en-US / en-GB 拆两份同理，es-ES / es-419 和 pt-PT / pt-BR 也各自是独立文件：
+> 拉美西语和欧洲西语、巴西葡语和欧洲葡语在用词和动词变位上差异明显（ordenador/computadora、
+> ecrã/tela 等），共用一份会让其中一边的用户处处别扭。
 
 ### en-US 和 en-GB 是两份独立文件，不要合并
 

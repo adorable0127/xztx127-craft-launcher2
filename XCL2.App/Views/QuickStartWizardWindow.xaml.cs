@@ -1,4 +1,4 @@
-using System.Collections.ObjectModel;
+﻿using System.Collections.ObjectModel;
 using System.IO;
 using System.Windows;
 using System.Windows.Controls;
@@ -467,8 +467,11 @@ public partial class QuickStartWizardWindow : OverlayDialogControl
         if (dialog.ShowDialog(Window.GetWindow(this)) == true) FolderPathBox.Text = dialog.FolderName;
     }
 
+    /// <summary>加速版：一键启动里装的原版底座/加载器统一走镜像 + 多线程，见
+    /// DownloadService.CreateAccelerated 的说明。查版本列表那几个方法不受影响
+    /// （它们打的是 Fabric/Forge 自己的 meta 接口，跟下载源无关）。</summary>
     private ClientLoaderInstallService GetLoaderService()
-        => _loaderService ??= new ClientLoaderInstallService(_owner.ConfigService.Config);
+        => _loaderService ??= new ClientLoaderInstallService(_owner.ConfigService.Config, accelerate: true);
 
     private async void LoaderType_Checked(object sender, RoutedEventArgs e)
     {
@@ -988,24 +991,47 @@ public partial class QuickStartWizardWindow : OverlayDialogControl
                     javaPath = await EnsureJavaReadyAsync(mcVersion, stageOffset: 5, stageWeight: 15);
                 }
 
-                var progress = new Progress<ProgressInfo>(p =>
-                    ReportRun(p.Stage, p.CurrentFile, 20 + (p.Total > 0 ? (double)p.Done / p.Total * 30 : 0)));
+                // 下载进度改走标题栏的下载列表（DownloadQueueService），不再自己在向导里
+                // 一格一格推进度条。三个理由：
+                // 1) 这是本项目里所有其它下载（下载中心的游戏版本、整合包、基岩版客户端）
+                //    早就统一在用的那条路，一键启动之前是唯一的例外，用户点开下载列表看到
+                //    "暂无下载任务"会以为根本没在下；
+                // 2) 下载列表那套 UI 本来就带暂停/继续/取消、速度与剩余时间，比向导里
+                //    一个光秃秃的进度条信息量大得多；
+                // 3) 向导原来的 ReportRun 每收到一次进度回调就同步改三个控件并触发布局，
+                //    而 libraries/assets 阶段的回调是按文件个数来的、非常密集，这部分
+                //    UI 开销直接压在下载线程的回调路径上。交给下载列表之后，向导这边只在
+                //    阶段切换时更新一次文字，实测体感"快得多"主要就来自这里。
+                var installStageName = $"安装 {mcVersion}"
+                    + (_selectedLoaderType == ServerCoreType.Vanilla ? "" : $"（{_selectedLoaderType}）");
+                ReportRun("下载游戏", $"「{installStageName}」已加入标题栏下载列表，可在那里查看速度/暂停/取消。", 20);
 
                 try
                 {
                     if (_selectedLoaderType == ServerCoreType.Vanilla)
                     {
-                        using var downloader = DownloadService.CreateFromConfig(cfg);
-                        var manifest = await downloader.GetVersionManifestAsync();
-                        var entry = manifest.Versions.FirstOrDefault(v => v.Id == mcVersion)
-                            ?? throw new InvalidOperationException($"在版本清单中找不到 {mcVersion}。");
-                        await downloader.InstallVersionAsync(folderPath, entry, progress);
-                        versionId = mcVersion;
+                        versionId = await RunInDownloadQueueAsync(installStageName, async (item, ct) =>
+                        {
+                            // 一键启动强制镜像源 + 多线程，理由见 DownloadService.CreateAccelerated。
+                            using var downloader = DownloadService.CreateAccelerated(cfg);
+                            var manifest = await downloader.GetVersionManifestAsync(ct);
+                            var entry = manifest.Versions.FirstOrDefault(v => v.Id == mcVersion)
+                                ?? throw new InvalidOperationException($"在版本清单中找不到 {mcVersion}。");
+                            await downloader.InstallVersionAsync(folderPath, entry, item.CreateProgress(), ct);
+                            return mcVersion;
+                        },
+                        // 安装期间的版本目录名就是 mcVersion（自定义实例名是装完之后才重命名的），
+                        // 登记上去，"启动正在下载中的版本"才拦得住。加载器分支的最终目录名要等
+                        // 安装器跑完才知道，拿不到就不登记——宁可漏登记，也不要登记一个错的版本号
+                        // 去误拦用户本来可以正常启动的另一个版本。
+                        targetVersionId: mcVersion, targetFolderPath: folderPath);
 
                         // 原版没有独立的"安装时指定目标目录名"入口（entry.Id 就是 mcVersion，
                         // 目录名由版本清单决定），只能跟 InstallClientLoaderWindow 一样，装完后
                         // 原地重命名——复用同一个 TryRenameInstalledInstance，保证"物理文件夹名 +
                         // json 内部 id + 主 jar/json 文件名"三者一起同步更新。
+                        // 重命名放在下载队列任务之外做：它是纯本地文件操作，不属于"下载"，
+                        // 放进去只会让下载列表里那一条在已经 100% 之后又多挂一会儿。
                         if (!string.IsNullOrWhiteSpace(customInstanceName))
                         {
                             var renamed = ClientLoaderInstallService.TryRenameInstalledInstance(
@@ -1018,9 +1044,10 @@ public partial class QuickStartWizardWindow : OverlayDialogControl
                     {
                         var buildVersion = (BuildVersionCombo.SelectedItem as ServerCoreBuild)?.DisplayVersion
                             ?? throw new InvalidOperationException("没有选中 Fabric Loader 版本。");
-                        versionId = await GetLoaderService().InstallFabricClientAsync(folderPath, mcVersion, buildVersion,
-                            progress, installFabricApi: InstallFabricApiCheck.IsChecked == true,
-                            customInstanceName: customInstanceName);
+                        versionId = await RunInDownloadQueueAsync(installStageName, async (item, ct) =>
+                            await GetLoaderService().InstallFabricClientAsync(folderPath, mcVersion, buildVersion,
+                                item.CreateProgress(), ct, installFabricApi: InstallFabricApiCheck.IsChecked == true,
+                                customInstanceName: customInstanceName));
                     }
                     else
                     {
@@ -1029,10 +1056,19 @@ public partial class QuickStartWizardWindow : OverlayDialogControl
                             ? mcVersion
                             : (BuildVersionCombo.SelectedItem as ServerCoreBuild)?.DisplayVersion
                                 ?? throw new InvalidOperationException("没有选中安装器版本。");
-                        versionId = await GetLoaderService().InstallForgeOrNeoForgeClientAsync(
-                            folderPath, _selectedLoaderType, fullVersion, javaPath, progress,
-                            customInstanceName: customInstanceName);
+                        var javaForInstaller = javaPath!;
+                        versionId = await RunInDownloadQueueAsync(installStageName, async (item, ct) =>
+                            await GetLoaderService().InstallForgeOrNeoForgeClientAsync(
+                                folderPath, _selectedLoaderType, fullVersion, javaForInstaller, item.CreateProgress(),
+                                ct, customInstanceName: customInstanceName));
                     }
+                }
+                catch (OperationCanceledException)
+                {
+                    // 用户主动在下载列表里暂停/取消，不是"安装失败"，原样往上抛给
+                    // StartAll_Click 里专门的 OperationCanceledException 分支处理，
+                    // 不要被下面那条包装成"安装版本/加载器 失败"弹个错误框吓唬用户。
+                    throw;
                 }
                 catch (Exception ex) when (ex is not CriticalStepFailedException)
                 {
@@ -1071,6 +1107,10 @@ public partial class QuickStartWizardWindow : OverlayDialogControl
                 javaFinal = await EnsureJavaReadyAsync(_importedModpack ? null : McVersionCombo.SelectedItem as string,
                     stageOffset: 88, stageWeight: 8, minecraftDirForVersion: finalMinecraftDir, versionIdForJava: versionId);
             }
+            catch (OperationCanceledException)
+            {
+                throw; // 同上：下载列表里的暂停/取消不算安装失败
+            }
             catch (Exception ex)
             {
                 throw new CriticalStepFailedException("安装 Java", ex);
@@ -1100,8 +1140,8 @@ public partial class QuickStartWizardWindow : OverlayDialogControl
 
             _owner.ConfigService.Save();
 
-            ReportRun("全部就绪，正在启动游戏...", "", 100);
-            await Task.Delay(400);
+            ReportRun("全部就绪", "", 100);
+            await Task.Delay(200);
 
             // 7) 启动游戏：MainWindow.Launch_Click 是 public，专门为跨窗口复用改过。
             // 修复"选择账户"弹窗点不了的问题：Launch_Click 内部在需要用户选择账户时会
@@ -1118,7 +1158,33 @@ public partial class QuickStartWizardWindow : OverlayDialogControl
             // 当前已选中的账户启动。
             _owner.RefreshSidebar();
             CloseWith(null);
+
+            // 需求：下载走完之后不再无条件直接启动，而是先问一句。
+            // 原因很实际——下载现在交给了标题栏下载列表，用户完全可以在等下载的这几分钟里
+            // 去干别的（切页面、看 Mod、甚至先玩另一个已装好的版本）。等下载终于完成时，
+            // 直接把游戏拉起来会打断他正在做的事；而且下载耗时不确定，人可能根本已经离开
+            // 电脑了。问一句"要不要现在就启动"，两种情况都照顾到了。
+            //
+            // 弹窗必须放在 CloseWith(null) 之后：这个确认框跟向导一样是挂在 MainWindow 上的
+            // Overlay，向导还没关掉的时候它会被向导整个盖住，用户看得见却点不到
+            // （跟下面 Launch_Click 里账户选择框那个老问题是同一个坑）。
+            var launchNow = MessageBoxDialog.ShowConfirm(
+                $"你选择了一键启动游戏，是否立刻启动刚才下载的游戏？\n\n版本：{versionId}",
+                "下载完成");
+            if (!launchNow)
+            {
+                ToastService.ShowSuccess($"「{versionId}」已经装好并设为当前版本，随时可以从主界面点「启动游戏」进入。");
+                return;
+            }
+
             _owner.Launch_Click(this, new RoutedEventArgs(), skipAccountConfirm: true);
+        }
+        catch (OperationCanceledException)
+        {
+            // 用户在下载列表里点了暂停/取消，见 RunInDownloadQueueAsync 的注释。
+            // 已经下载到一半的文件不会被删，用户随时可以在下载列表里点"继续"把它装完，
+            // 所以这里不算失败，只提示一声，不弹错误框。
+            ToastService.ShowInfo("一键启动已取消（下载被暂停或取消）。已下载的部分保留，可在标题栏下载列表里继续。");
         }
         catch (CriticalStepFailedException ex)
         {
@@ -1176,18 +1242,62 @@ public partial class QuickStartWizardWindow : OverlayDialogControl
             return found;
         }
 
-        ReportRun("下载 Java 运行时", "本机没有匹配的 Java，正在自动下载...", stageOffset);
-        var progress = new Progress<ProgressInfo>(p =>
-        {
-            var pct = stageOffset + (p.Total > 0 ? (double)p.Done / p.Total * stageWeight : 0);
-            ReportRun("下载 Java 运行时", p.CurrentFile, pct);
-        });
+        var targetMajor = JavaService.GetDownloadTargetMajorVersion(preferMajor ?? 21);
+        ReportRun("下载 Java 运行时", $"本机没有匹配的 Java，已把「Java {targetMajor}」加入标题栏下载列表。", stageOffset);
 
         var request = new JavaDownloadRequest(
-            JavaService.GetDownloadTargetMajorVersion(preferMajor ?? 21),
+            targetMajor,
             Environment.Is64BitOperatingSystem ? "x64" : "x86",
             JavaInstallMode.Portable);
-        return await _javaService.DownloadJavaAsync(request, progress);
+
+        // 跟上面装游戏版本同样的处理：Java 运行时也登记进标题栏下载列表，不再自己推进度条。
+        // 之前这里是向导独占地把进度画在自己那条 RunBar 上，用户既看不到速度，也没法暂停，
+        // 更不知道"卡住的是网络还是程序死了"。
+        return await RunInDownloadQueueAsync($"下载 Java {targetMajor} 运行时", async (item, ct) =>
+            await _javaService.DownloadJavaAsync(request, item.CreateProgress(), ct));
+    }
+
+    /// <summary>
+    /// 把一次下载交给标题栏的下载列表（<see cref="DownloadQueueService"/>）去跑，并等它跑完、
+    /// 把结果值带回来。
+    ///
+    /// DownloadQueueService.StartNew 本身是"发射后不管"的（它只负责登记条目、更新进度、
+    /// 完成后从列表里摘掉），而一键启动需要等这一步真的装完才能继续往下走（装 Java、写配置、
+    /// 启动游戏），所以这里用一个 TaskCompletionSource 把"队列任务的结束"桥接成一个可 await
+    /// 的 Task。
+    ///
+    /// 关于暂停/取消：下载列表里的"暂停"在实现上就是取消当前这次下载（见 DownloadQueueItem
+    /// 类头注释），会让这里抛 OperationCanceledException。对一键启动来说，暂停/取消等于
+    /// "这次一键启动不继续了"，所以直接把取消往外抛，由 StartAll_Click 统一按"用户取消"处理，
+    /// 不会卡在这里永远等下去。用户随后在下载列表里点"继续"仍然能把这个版本装完（下载队列
+    /// 自己会重跑 resumeAction），只是装完之后不会再自动进游戏——那时候从主界面点启动即可。
+    /// </summary>
+    private static async Task<T> RunInDownloadQueueAsync<T>(string name,
+        Func<DownloadQueueItem, CancellationToken, Task<T>> work,
+        string? targetVersionId = null, string? targetFolderPath = null)
+    {
+        var tcs = new TaskCompletionSource<T>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        DownloadQueueService.Instance.StartNew(name, async (item, ct) =>
+        {
+            try
+            {
+                var result = await work(item, ct);
+                tcs.TrySetResult(result);
+            }
+            catch (OperationCanceledException)
+            {
+                tcs.TrySetCanceled();
+                throw; // 继续往上抛，让下载队列把这一条标成"已暂停/已取消"
+            }
+            catch (Exception ex)
+            {
+                tcs.TrySetException(ex);
+                throw; // 同上，让下载队列把失败原因显示在条目上
+            }
+        }, targetVersionId, targetFolderPath);
+
+        return await tcs.Task;
     }
 
     /// <summary>

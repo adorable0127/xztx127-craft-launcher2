@@ -1,4 +1,4 @@
-using System.Windows;
+﻿using System.Windows;
 using System.Windows.Controls;
 using XCL2.App.Services;
 
@@ -50,6 +50,18 @@ public enum XclFourChoiceResult
     Close,
     Minimize,
     Tray,
+}
+
+/// <summary>触屏模式下关闭启动器的专用四选一结果，见 MessageBoxDialog.ShowTouchModeCloseChoice。
+/// 之所以不复用 XclFourChoiceResult：那一套的"关闭/最小化/托盘"语义是给"下载/启动中"场景
+/// 设计的，跟触屏模式这里"关闭全部游戏 / 只摘掉悬浮层留游戏在跑"的选项含义完全不同，
+/// 硬凑同一个枚举会让调用方看着名字猜不出这次到底是哪种关闭。</summary>
+public enum XclTouchCloseChoiceResult
+{
+    Cancel,
+    CloseAllIncludingGame,
+    Tray,
+    CloseLauncherAndOverlayOnly,
 }
 
 /// <summary>“千万别点那按钮”专用四选一结果：取消 + 三个同名“确定”。</summary>
@@ -105,6 +117,9 @@ public partial class MessageBoxDialog : OverlayDialogControl
 
     /// <summary>“千万别点那按钮”专用结果。</summary>
     public XclDangerFourChoiceResult DangerResult4 { get; private set; } = XclDangerFourChoiceResult.Cancel;
+
+    /// <summary>触屏模式关闭确认专用结果，见 ShowTouchModeCloseChoice。</summary>
+    public XclTouchCloseChoiceResult TouchCloseResult { get; private set; } = XclTouchCloseChoiceResult.Cancel;
 
     private MessageBoxDialog(string message, string title, XclMessageKind kind, XclMessageButtons buttons)
     {
@@ -319,6 +334,49 @@ public partial class MessageBoxDialog : OverlayDialogControl
         dlg.ButtonPanel.Children.Add(dlg.MakeButton4(closeText, XclFourChoiceResult.Close, isPrimary: true, isDefault: true));
         OverlayDialogService.ShowModal(dlg);
         return dlg.Result4;
+    }
+
+    /// <summary>触屏模式下点关闭按钮的专用四选一提示：正在用触屏模式玩游戏时关闭启动器，
+    /// 悬浮层会跟着启动器一起消失，玩家手上一秒还能戳的虚拟按键下一秒就没了——这跟平时
+    /// "点叉号无非是关不关游戏"的心理预期差得比较远，所以单独截住，不走 DefaultCloseAction
+    /// 那套默认行为，每次都明确问一遍。
+    ///
+    /// 四个选项对应四种完全不同的后果：
+    /// 取消 —— 什么都不做，回到刚才的状态。
+    /// 关闭所有(包括游戏) —— 启动器、悬浮层、游戏进程一起结束，最干净的退出方式。
+    /// 返回托盘 —— 启动器、悬浮层、游戏全部继续在后台/前台跑，只是把主窗口藏进系统托盘，
+    ///           触屏操作不受任何影响。
+    /// 关闭XCL和虚拟按键 —— 只结束启动器进程和悬浮层，游戏本身继续单独运行；代价是虚拟按键
+    ///           消失了，触屏没法再操作，只有接了实体键鼠才能继续玩。</summary>
+    public static XclTouchCloseChoiceResult ShowTouchModeCloseChoice(string message, string title,
+        string cancelText, string closeAllText, string trayText, string closeLauncherOnlyText)
+    {
+        var dlg = new MessageBoxDialog(message, title, XclMessageKind.Warning, XclMessageButtons.OK);
+        dlg.ButtonPanel.Children.Clear();
+        dlg.ButtonPanel.Children.Add(dlg.MakeTouchCloseButton(cancelText, XclTouchCloseChoiceResult.Cancel, isPrimary: false, isDefault: false));
+        dlg.ButtonPanel.Children.Add(dlg.MakeTouchCloseButton(closeLauncherOnlyText, XclTouchCloseChoiceResult.CloseLauncherAndOverlayOnly, isPrimary: false, isDefault: false));
+        dlg.ButtonPanel.Children.Add(dlg.MakeTouchCloseButton(trayText, XclTouchCloseChoiceResult.Tray, isPrimary: false, isDefault: false));
+        dlg.ButtonPanel.Children.Add(dlg.MakeTouchCloseButton(closeAllText, XclTouchCloseChoiceResult.CloseAllIncludingGame, isPrimary: true, isDefault: true));
+        OverlayDialogService.ShowModal(dlg);
+        return dlg.TouchCloseResult;
+    }
+
+    private Button MakeTouchCloseButton(string content, XclTouchCloseChoiceResult result, bool isPrimary, bool isDefault)
+    {
+        var btn = new Button
+        {
+            Content = content,
+            Padding = new Thickness(16, 8, 16, 8),
+            Margin = new Thickness(6, 0, 0, 0),
+            IsDefault = isDefault,
+            Style = isPrimary ? (Style)FindResource("PrimaryButton") : (Style)FindResource("SecondaryButton"),
+        };
+        btn.Click += (_, _) =>
+        {
+            TouchCloseResult = result;
+            CloseWith(null);
+        };
+        return btn;
     }
 
     /// <summary>“千万别点那按钮”专用四选一风险提示。前三个按钮（取消、确定、确定）
