@@ -1,4 +1,4 @@
-﻿namespace XCL2.App.Models;
+namespace XCL2.App.Models;
 
 public enum DownloadSource
 {
@@ -55,7 +55,31 @@ public enum AppearanceRotationMode
     /// <summary>固定使用当前选中的那一个，不自动改变。默认值，跟没有这个功能之前的行为一致。</summary>
     Fixed = 0,
     /// <summary>每天（按本地自然日）自动切换到候选池里的下一个。候选池不足两个时等同于 Fixed。</summary>
-    Daily = 1
+    Daily = 1,
+    /// <summary>每隔一分钟自动切换到候选池里的下一个（背景图片/视频专用，色系轮换不提供这一档）。</summary>
+    Minutely = 2,
+    /// <summary>每隔一小时自动切换到候选池里的下一个。</summary>
+    Hourly = 3,
+    /// <summary>按用户自定义的分钟数（<see cref="AppConfig.BackgroundRotationIntervalMinutes"/>）自动切换。</summary>
+    CustomInterval = 4,
+    /// <summary>每天到达用户指定的固定时刻（<see cref="AppConfig.BackgroundRotationFixedTime"/>，"HH:mm"）
+    /// 才切换到候选池里的下一个，一天只会在那一刻换一次。</summary>
+    FixedTime = 5
+}
+
+/// <summary>
+/// 视频壁纸的缩放/裁剪方式，对应 WPF MediaElement.Stretch。显式指定数值，加新成员或者
+/// 旧配置文件已经存过的值都不会因为顺序变化而错位。
+/// </summary>
+public enum VideoBackgroundFitMode
+{
+    /// <summary>自动裁剪：保持视频原始宽高比缩放到刚好铺满整个窗口，超出部分裁掉（Stretch.UniformToFill）。
+    /// 默认值，跟这个功能上线之前唯一的行为一致，不会有人升级后背景突然变形或者出现黑边。</summary>
+    Crop = 0,
+    /// <summary>自动全屏：直接拉伸铺满整个窗口，不保留原始宽高比，视频跟窗口比例不一致时画面会变形（Stretch.Fill）。</summary>
+    Fill = 1,
+    /// <summary>适应比例缩放：保持原始宽高比，整段视频完整显示在窗口内，比例不一致时上下或左右会露出背景色/黑边（Stretch.Uniform）。</summary>
+    Fit = 2
 }
 
 public enum PostGameLaunchAction
@@ -114,6 +138,25 @@ public class AppConfig
     public List<GameFolder> Folders { get; set; } = new();
     public string? SelectedFolderPath { get; set; }
     public string? SelectedVersionId { get; set; }
+
+    /// <summary>
+    /// 用户自己设置的第三方认证服务器（皮肤站）API 地址。为空/null 时，登录页的皮肤站地址框
+    /// 会自动填充最常用的 littleskin.cn，用户改过之后就会保存成这里的值，下次直接用用户自己的。
+    /// </summary>
+    public string? DefaultAuthServerApiRoot { get; set; }
+
+    /// <summary>
+    /// 视频壁纸是否带声音播放。默认 false（静音），跟以前行为一致；用户在「设置」页勾选后
+    /// 才会给 CustomBackgroundVideoLayer 一个非零音量。只影响视频壁纸本身，跟游戏内音效、
+    /// 启动器其它音效（如果以后加的话）完全独立。
+    /// </summary>
+    public bool CustomBackgroundVideoSoundEnabled { get; set; } = false;
+
+    /// <summary>
+    /// 视频壁纸的缩放/裁剪方式，见 VideoBackgroundFitMode 各成员注释。默认 Crop，
+    /// 跟这个设置项加入之前 MediaElement 写死 Stretch="UniformToFill" 的效果完全一样。
+    /// </summary>
+    public VideoBackgroundFitMode CustomBackgroundVideoFitMode { get; set; } = VideoBackgroundFitMode.Crop;
 
     /// <summary>
     /// 启动前完整性检查的严格程度。null 表示用户还没选过——首次触发检查时会弹一个
@@ -232,6 +275,13 @@ public class AppConfig
     /// 入口下的磁贴页，不是被删掉，只是从常驻侧边栏搬到二级页面，减少新手/轻度用户第一眼
     /// 看到的按钮数量。见 MainWindow.RefreshSimplifiedModeNavVisibility / Views/MorePage.xaml。</summary>
     public bool SimplifiedModeEnabled { get; set; } = false;
+
+    /// <summary>工具箱快捷入口：Tab 索引，顺序由用户管理。
+    /// 0=成就图片（默认第一个，百宝箱打开时也是默认停留的 Tab——TabControl 没显式设置
+    /// SelectedIndex，WPF 默认选中第一个 TabItem，所以两处口径天然一致，不需要额外同步）。
+    /// 33=数据包互转、35=下载正版账户皮肤 是这次新加进默认置顶列表的两项。</summary>
+    public List<int> ToolboxPinnedTabOrder { get; set; } = new() { 0, 1, 2, 3, 33, 35 };
+    public int ToolboxVisibleCount { get; set; } = 6;
 
     /// <summary>上次选择的 Java 主版本号（8~25），仅高级模式下由用户修改，傻瓜模式固定使用推荐版本</summary>
     public int PreferredJavaMajorVersion { get; set; } = 21;
@@ -472,6 +522,13 @@ public class AppConfig
     /// 是否弹一条"Esc 可以关闭"的小提示 Toast。默认开启；用户点了 Toast 上的
     /// "以后不再提示"或者在设置页关掉这个开关后变成 false，见 OverlayDialogService.Push。</summary>
     public bool ShowEscCloseHint { get; set; } = true;
+
+    /// <summary>启动器自动更新完成、重启回来的那一次是否弹出内嵌「这次更新了什么」变更日志弹窗
+    /// （UpdateChangelogPopup，内容取自 GitHub Releases 当前版本的日志）。默认开启；
+    /// 用户在弹窗里点了"以后就不要弹出来打扰我了"，或者在设置页关掉这个开关后变成 false。
+    /// 跟「XCL 更新日志」入口（ChangelogWindow）是否可用完全无关——那个入口任何时候都能手动打开，
+    /// 这个开关只管"更新完之后要不要自动弹一次"。</summary>
+    public bool ShowUpdateChangelogPopup { get; set; } = true;
 
     /// <summary>是否开机自启动（写入 HKCU\Software\Microsoft\Windows\CurrentVersion\Run，
     /// 不需要管理员权限，只影响当前登录用户）。默认关闭。</summary>
@@ -721,8 +778,32 @@ public class AppConfig
     public string? BackgroundRotationLastDate { get; set; }
 
     /// <summary>背景"每天轮换"当前指向候选池的下标。每跨过一个自然日 +1 并对候选池长度取模，
-    /// 所以是按导入顺序循环、不是随机——随机会出现"连着两天同一张"这种看起来像没生效的情况。</summary>
+    /// 所以是按导入顺序循环、不是随机——随机会出现"连着两天同一张"这种看起来像没生效的情况。
+    /// <see cref="AppearanceRotationMode.Minutely"/>/<see cref="AppearanceRotationMode.Hourly"/>/
+    /// <see cref="AppearanceRotationMode.CustomInterval"/>/<see cref="AppearanceRotationMode.FixedTime"/>
+    /// 这四档也共用这个下标字段，语义不变，只是"隔多久 +1"的判断方式不同（见下面几个字段）。</summary>
     public int BackgroundRotationIndex { get; set; } = 0;
+
+    /// <summary>
+    /// <see cref="AppearanceRotationMode.CustomInterval"/> 模式下，"隔一段时间"具体是多少分钟。
+    /// 默认 30 分钟；最小值由设置页限制为 1（等同于 Minutely），避免用户填 0 造成每次 Tick 都换。
+    /// </summary>
+    public int BackgroundRotationIntervalMinutes { get; set; } = 30;
+
+    /// <summary>
+    /// <see cref="AppearanceRotationMode.FixedTime"/> 模式下，每天固定几点几分切换，格式 "HH:mm"
+    /// （24 小时制，本地时间）。默认 00:00，即每天零点换下一张。
+    /// </summary>
+    public string BackgroundRotationFixedTime { get; set; } = "00:00";
+
+    /// <summary>
+    /// Minutely / Hourly / CustomInterval 三档"隔一段时间"轮换上一次真正换过的时间点
+    /// （本地时间，"yyyy-MM-dd HH:mm:ss"）。跟 <see cref="BackgroundRotationLastDate"/>（按自然日）
+    /// 不是一回事——这几档是按"经过了多久"而不是"跨过了几个零点"来判断，所以需要精确到秒的
+    /// 时间戳，而不是日期字符串。null 表示从未轮换过，此时只记下当前时间、不立即换，跟
+    /// Daily/FixedTime 的"打开开关不立刻变"保持一致的体感。
+    /// </summary>
+    public string? BackgroundRotationLastTimestamp { get; set; }
 
     // ===================== 配色主题「候选池 + 固定/每天轮换」=====================
     // 跟上面背景图片完全同构：UiSkin 继续表示"当前生效的色系"（所有已有代码照常读它），

@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Text;
+using System.Threading;
 
 namespace XCL2.App.Models;
 
@@ -20,6 +21,10 @@ public class GameProcessInfo
 
     public event Action<string>? OutputReceived;
 
+    private readonly TaskCompletionSource<bool> _stdoutClosed = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly TaskCompletionSource<bool> _stderrClosed = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private int _exitNotificationClaimed;
+
     /// <summary>用户是否已手动标记这个进程为"无响应"，标记后才允许使用"关闭未响应的游戏"按钮。</summary>
     public bool ManuallyMarkedUnresponsive { get; set; }
 
@@ -27,6 +32,11 @@ public class GameProcessInfo
     /// 用来区分"用户主动结束游戏"和"游戏自己意外退出/崩溃"——只有后者才需要弹崩溃提示，
     /// 前者是用户自己的操作，不应该被当成崩溃打扰用户。见 <see cref="Close"/>/<see cref="ForceKill"/>。</summary>
     public bool UserRequestedClose { get; private set; }
+
+    /// <summary>同一个进程的退出只能交给一处 UI 处理。启动阶段和 Exited 事件都可能几乎同时观察到退出，
+    /// 用这个原子标记保证最多只弹一次退出/崩溃提示。</summary>
+    public bool TryClaimExitNotification()
+        => Interlocked.Exchange(ref _exitNotificationClaimed, 1) == 0;
 
     public bool HasExited
     {
@@ -53,8 +63,16 @@ public class GameProcessInfo
         AccountLabel = accountLabel;
         GameDir = gameDir;
 
-        process.OutputDataReceived += (_, e) => AppendLine(e.Data);
-        process.ErrorDataReceived += (_, e) => AppendLine(e.Data);
+        process.OutputDataReceived += (_, e) =>
+        {
+            if (e.Data == null) { _stdoutClosed.TrySetResult(true); return; }
+            AppendLine(e.Data);
+        };
+        process.ErrorDataReceived += (_, e) =>
+        {
+            if (e.Data == null) { _stderrClosed.TrySetResult(true); return; }
+            AppendLine(e.Data);
+        };
     }
 
     private void AppendLine(string? line)
@@ -68,6 +86,24 @@ public class GameProcessInfo
                 OutputBuffer.Remove(0, OutputBuffer.Length - 400_000);
         }
         OutputReceived?.Invoke(line);
+    }
+
+    /// <summary>等待重定向的 stdout/stderr 把进程退出前已经写进管道的数据尽量读完。
+    /// Process.Exited 可能先于最后几条异步 DataReceived 到达；不等这一小段时间会把“日志还没读完”
+    /// 当成“日志只有一半”，甚至错过真正的异常行。</summary>
+    public async Task WaitForOutputDrainAsync(TimeSpan timeout)
+    {
+        try
+        {
+            var allClosed = Task.WhenAll(_stdoutClosed.Task, _stderrClosed.Task);
+            await Task.WhenAny(allClosed, Task.Delay(timeout));
+        }
+        catch { /* 退出判定不能因为日志收尾失败而中断 */ }
+    }
+
+    public string GetOutputSnapshot()
+    {
+        lock (OutputBuffer) return OutputBuffer.ToString();
     }
 
     public void BeginReadOutput()

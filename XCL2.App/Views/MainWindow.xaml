@@ -1,4 +1,4 @@
-﻿<Window x:Class="XCL2.App.Views.MainWindow"
+<Window x:Class="XCL2.App.Views.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:services="clr-namespace:XCL2.App.Services"
@@ -87,6 +87,10 @@
              那种"整棵含文字的树"完全不是一回事，那个才需要小心，见下面 UiAnimationHelper
              里临时缓存的说明）。RenderAtScale=0.75 进一步降低这张缓存位图的分辨率——反正
              已经是 16px 半径的模糊，肉眼分辨不出来，但缓存的生成和采样都会更便宜。 -->
+        <MediaElement x:Name="CustomBackgroundVideoLayer" Grid.Row="0" Grid.RowSpan="2"
+                      Visibility="Collapsed" IsHitTestVisible="False"
+                      LoadedBehavior="Manual" UnloadedBehavior="Stop" Volume="0" IsMuted="True"
+                      MediaEnded="CustomBackgroundVideoLayer_MediaEnded" MediaFailed="CustomBackgroundVideoLayer_MediaFailed"/>
         <Image x:Name="CustomBackgroundImageLayer" Grid.Row="0" Grid.RowSpan="2"
                Visibility="Collapsed" IsHitTestVisible="False" Stretch="UniformToFill"
                Opacity="0" RenderOptions.BitmapScalingMode="LowQuality"

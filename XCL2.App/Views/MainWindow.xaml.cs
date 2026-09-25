@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.IO;
 using System.Diagnostics;
 using System.Linq;
@@ -195,6 +195,7 @@ public partial class MainWindow : Window
 
         // 愚人节彩蛋：只在 4 月 1 日、且没有被注册表 noyrj 关闭时才会真正抽中/生效，
         // 其余 364 天这行调用直接是空操作。见 AprilFoolsService/AprilFoolsUi 类注释。
+        if (App.StartupArgs.DebugAprilFools) AprilFoolsService.EnableDebugAprilFools();
         AprilFoolsService.EnsureTodaysStateLoaded();
         AprilFoolsUi.Attach(this);
 
@@ -881,12 +882,38 @@ public partial class MainWindow : Window
     /// 位于标题栏/侧栏/页面卡片下面，配合 ThemeService 的半透明面板就能稳定看到图片。
     /// BitmapCacheOption.OnLoad 保证文件在读取完成后立即释放，继续避免导入同名图片时的文件锁。
     /// </summary>
+    private DispatcherTimer? _animatedBackgroundTimer;
+    private System.Collections.Generic.IReadOnlyList<System.Windows.Media.Imaging.BitmapFrame>? _backgroundGifFrames;
+    private int _backgroundGifFrameIndex;
+
+    private void StopAnimatedBackground()
+    {
+        _animatedBackgroundTimer?.Stop();
+        _animatedBackgroundTimer = null;
+        _backgroundGifFrames = null;
+        CustomBackgroundVideoLayer.Stop();
+        CustomBackgroundVideoLayer.Source = null;
+        CustomBackgroundVideoLayer.Visibility = Visibility.Collapsed;
+    }
+
+    private void CustomBackgroundVideoLayer_MediaEnded(object sender, RoutedEventArgs e)
+    {
+        CustomBackgroundVideoLayer.Position = TimeSpan.Zero;
+        CustomBackgroundVideoLayer.Play();
+    }
+    private void CustomBackgroundVideoLayer_MediaFailed(object sender, ExceptionRoutedEventArgs e)
+    {
+        LauncherLogService.AppendLine("[视频背景] 播放失败：" + e.ErrorException?.Message);
+        SetCustomBackgroundImage(null);
+    }
+
     public bool SetCustomBackgroundImage(string? path)
     {
         if (CustomBackgroundImageLayer == null || CustomBackgroundTintLayer == null) return false;
 
         if (string.IsNullOrWhiteSpace(path))
         {
+            StopAnimatedBackground();
             CustomBackgroundImageLayer.Source = null;
             CustomBackgroundImageLayer.Visibility = Visibility.Collapsed;
             CustomBackgroundImageLayer.Opacity = 0;
@@ -898,6 +925,50 @@ public partial class MainWindow : Window
         try
         {
             if (!File.Exists(path)) return false;
+            string ext = Path.GetExtension(path).ToLowerInvariant();
+            if (ext is ".mp4" or ".wmv" or ".webm" or ".avi")
+            {
+                StopAnimatedBackground();
+                CustomBackgroundImageLayer.Source = null;
+                CustomBackgroundImageLayer.Visibility = Visibility.Collapsed;
+                CustomBackgroundVideoLayer.Source = new Uri(Path.GetFullPath(path));
+                CustomBackgroundVideoLayer.Visibility = Visibility.Visible;
+                CustomBackgroundTintLayer.Visibility = Visibility.Visible;
+                ApplyCustomBackgroundVideoSound();
+                ApplyCustomBackgroundVideoFitMode();
+                CustomBackgroundVideoLayer.Play();
+                ThemeService.SetCustomBackgroundActive(true);
+                return true;
+            }
+            if (ext == ".gif")
+            {
+                // 限制 GIF 体积与帧数，避免导入动画时无限预解码耗尽内存。
+                if (new FileInfo(path).Length > 30 * 1024 * 1024)
+                    throw new InvalidOperationException("GIF 动图超过 30 MB，出于内存保护未启用。");
+                using var stream = File.OpenRead(path);
+                var decoder = new System.Windows.Media.Imaging.GifBitmapDecoder(stream,
+                    System.Windows.Media.Imaging.BitmapCreateOptions.None,
+                    System.Windows.Media.Imaging.BitmapCacheOption.OnLoad);
+                if (decoder.Frames.Count == 0 || decoder.Frames.Count > 200)
+                    throw new InvalidOperationException("GIF 动图帧数无效或超过 200 帧，请压缩后重试。");
+                var frames = decoder.Frames.ToArray();
+                StopAnimatedBackground();
+                _backgroundGifFrames = frames;
+                _backgroundGifFrameIndex = 0;
+                CustomBackgroundImageLayer.Source = frames[0];
+                CustomBackgroundImageLayer.Visibility = Visibility.Visible;
+                CustomBackgroundTintLayer.Visibility = Visibility.Visible;
+                _animatedBackgroundTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(100) };
+                _animatedBackgroundTimer.Tick += (_, _) =>
+                {
+                    if (_backgroundGifFrames == null || _backgroundGifFrames.Count == 0) return;
+                    _backgroundGifFrameIndex = (_backgroundGifFrameIndex + 1) % _backgroundGifFrames.Count;
+                    CustomBackgroundImageLayer.Source = _backgroundGifFrames[_backgroundGifFrameIndex];
+                };
+                _animatedBackgroundTimer.Start();
+                RefreshCustomBackgroundVisualEffect();
+                return true;
+            }
             // 这里故意回到旧版已经验证过的 UriSource 解码路径，但保留 OnLoad：
             // 上一版为了绕过 WPF 图片缓存，组合使用了 IgnoreImageCache + StreamSource。
             // BitmapImage 在这种组合下 UriSource 为 null，FinalizeCreation() 仍会尝试按 URI
@@ -915,6 +986,7 @@ public partial class MainWindow : Window
             image.EndInit();
             image.Freeze();
 
+            StopAnimatedBackground();
             CustomBackgroundImageLayer.Source = image;
             CustomBackgroundImageLayer.Visibility = Visibility.Visible;
             CustomBackgroundTintLayer.Visibility = Visibility.Visible;
@@ -945,13 +1017,41 @@ public partial class MainWindow : Window
     public void RefreshCustomBackgroundVisualEffect()
         => ApplyCustomBackgroundFrost(ConfigService.Config.CustomBackgroundFrostPercent);
 
+    /// <summary>
+    /// 视频壁纸的静音/有声开关：跟磨砂度一样，「设置」页勾选后立即生效、不用重启，
+    /// 也在每次重新设置视频壁纸(SetCustomBackgroundImage)时统一走这里，只有一处真相来源。
+    /// 没有视频壁纸在播放时调用也是安全的，CustomBackgroundVideoLayer 一直存在只是没有 Source。
+    /// </summary>
+    public void ApplyCustomBackgroundVideoSound()
+    {
+        if (CustomBackgroundVideoLayer == null) return;
+        CustomBackgroundVideoLayer.IsMuted = !ConfigService.Config.CustomBackgroundVideoSoundEnabled;
+        CustomBackgroundVideoLayer.Volume = ConfigService.Config.CustomBackgroundVideoSoundEnabled ? 1.0 : 0.0;
+    }
+
+    /// <summary>
+    /// 视频壁纸的缩放/裁剪方式：跟声音开关同理，「设置」页切换下拉框立即生效，不用重新选一次
+    /// 背景或重启。三选一直接映射到 MediaElement.Stretch，具体每个值的效果见
+    /// VideoBackgroundFitMode 各成员注释。没有视频在播放时调用也是安全的。
+    /// </summary>
+    public void ApplyCustomBackgroundVideoFitMode()
+    {
+        if (CustomBackgroundVideoLayer == null) return;
+        CustomBackgroundVideoLayer.Stretch = ConfigService.Config.CustomBackgroundVideoFitMode switch
+        {
+            VideoBackgroundFitMode.Fill => Stretch.Fill,
+            VideoBackgroundFitMode.Fit => Stretch.Uniform,
+            _ => Stretch.UniformToFill
+        };
+    }
+
     /// <summary>设置页拖动磨砂度时的实时预览入口；不写配置，保存逻辑仍由 SettingsPage 统一处理。</summary>
     public void PreviewCustomBackgroundFrost(int frostPercent)
         => ApplyCustomBackgroundFrost(frostPercent);
 
     private void ApplyCustomBackgroundFrost(int frostPercent)
     {
-        if (CustomBackgroundImageLayer?.Source == null || CustomBackgroundTintLayer == null) return;
+        if ((CustomBackgroundImageLayer?.Source == null && CustomBackgroundVideoLayer?.Source == null) || CustomBackgroundTintLayer == null) return;
 
         var lowPerformance = ConfigService.Config.LowPerformanceMode;
         var percent = Math.Clamp(frostPercent, 25, 100);
@@ -959,9 +1059,13 @@ public partial class MainWindow : Window
 
         // 25%：几乎不糊、图片接近原始亮度、只保留很淡的主题色蒙层。
         // 100%：明显磨砂、背景被压低并增加主题色蒙层，文字/卡片可读性更稳定。
-        if (CustomBackgroundImageLayer.Effect is System.Windows.Media.Effects.BlurEffect blur)
+        // 注意：上面第 1024 行的判断只保证"图片层或视频层至少一个有 Source"，
+        // 如果这次是视频层在用（CustomBackgroundImageLayer 本身仍是 null），
+        // 下面直接点 .Effect 就会真的空引用，不只是编译器误报，这里补上判空。
+        if (CustomBackgroundImageLayer?.Effect is System.Windows.Media.Effects.BlurEffect blur)
             blur.Radius = lowPerformance ? 0 : Lerp(2, 34, t);
-        CustomBackgroundImageLayer.Opacity = Lerp(0.98, 0.76, t);
+        if (CustomBackgroundImageLayer != null)
+            CustomBackgroundImageLayer.Opacity = Lerp(0.98, 0.76, t);
         CustomBackgroundTintLayer.Opacity = Lerp(0.04, 0.30, t);
 
         // 自定义背景存在时始终让上层主题面板具备一定透感。磨砂度越高，面板越“实”，
@@ -1675,6 +1779,13 @@ public partial class MainWindow : Window
     {
         try
         {
+            // 更新完成自动重启回来的这一次：弹一次"这次更新了什么"，跟下面 EnterGuestMode/
+            // LaunchGame 等命令行动作互不冲突，所以不 return，走完继续往下判断其它参数。
+            if (args.JustUpdated && ConfigService.Config.ShowUpdateChangelogPopup)
+            {
+                new UpdateChangelogPopup(this).Show();
+            }
+
             if (args.EnterGuestMode)
             {
                 EnterGuestModeFromCommandLine();
@@ -3122,6 +3233,45 @@ public partial class MainWindow : Window
             // 只有离线账户主动选了"自定义皮肤"，或者本来就是皮肤站(AuthServer)账户，才需要这个补丁。
             // 1.16.5 "多人游戏被禁用"是 Minecraft 客户端自己在线校验假 accessToken 失败导致的，
             // 跟皮肤补丁无关，这里不再用"顺带修掉这个"作为强制下载的理由。
+            // 离线账户还没设置过任何皮肤（SkinType.None：既没选史蒂夫/艾利克斯，也没上传自定义
+            // 皮肤）时，先按用户名试着查一次是否存在同名的正版账户——如果有，默认就用这个正版
+            // 账户当前的皮肤来启动，而不是本地的史蒂夫/艾利克斯占位骨架，效果上更接近"这本来就
+            // 是我的正版角色，只是用离线模式登录"。只做一次尝试，查不到（多数离线账户用的是
+            // 随手起的名字，本来就不对应任何正版玩家）就静默放弃，不打扰用户、也不阻塞启动——
+            // 成功匹配到之后会把结果落盘成这个账户的 SkinType=Custom，以后启动直接复用本地文件，
+            // 不用每次启动都重新联网查一遍。
+            // 跟百宝箱「下载正版账户皮肤」Tab（ToolboxPage.StandaloneOfficialSkinDownload_Click）
+            // 用的是同一个 OfficialSkinFetchService、同一套查询-下载逻辑，这里是"启动离线账户时
+            // 自动做一遍"，那边是"用户自己主动手动做一遍"，两处不重复实现，行为/报错口径一致。
+            if (account.Type == AccountType.Offline && account.SkinType == OfflineSkinType.None
+                && string.IsNullOrWhiteSpace(account.CustomSkinPath))
+            {
+                try
+                {
+                    var skinServiceForLookup = new SkinService();
+                    using var officialSkinService = new OfficialSkinFetchService();
+                    var info = await officialSkinService.LookupAsync(account.Username, cancelToken);
+                    var skinBytes = await officialSkinService.DownloadSkinBytesAsync(info, cancelToken);
+                    Directory.CreateDirectory(skinServiceForLookup.SkinsDir);
+                    var savedPath = Path.Combine(skinServiceForLookup.SkinsDir, $"{account.Id}.png");
+                    await File.WriteAllBytesAsync(savedPath, skinBytes, cancelToken);
+
+                    account.SkinType = OfflineSkinType.Custom;
+                    account.CustomSkinPath = savedPath;
+                    account.CustomSkinSlim = info.IsSlimModel;
+                    ConfigService.AddOrUpdateAccount(account);
+                    ConfigService.Save();
+                }
+                catch
+                {
+                    // 查无此正版玩家 / 网络问题 / 接口变更，都不应该打断启动流程——
+                    // 静默回退到原来"史蒂夫/艾利克斯默认骨架、不挂皮肤补丁"的行为。
+                }
+            }
+
+            // 自定义皮肤(含上面刚自动匹配到的同名正版皮肤)/认证服务器(AuthServer)账户都需要
+            // "万能皮肤补丁"(authlib-injector) 才能在客户端里正确显示皮肤、通过对应服务器的
+            // 会话校验。史蒂夫/艾利克斯这种内置骨架不需要，见下面注释。
             List<string>? skinJvmArgs = null;
             var needsAuthlibInjector =
                 (account.Type == AccountType.Offline && account.SkinType == OfflineSkinType.Custom) ||
@@ -3132,21 +3282,39 @@ public partial class MainWindow : Window
                 var skinService = new SkinService();
                 if (!File.Exists(skinService.AuthlibInjectorPath))
                 {
-                    var skinProgressWin = new ProgressDialog("正在下载万能皮肤补丁...");
-                    // 同上：ProgressDialog 现在是 Overlay 弹窗，没有 Owner 属性了。
-                    skinProgressWin.Show();
-                    try
+                    // 需求：离线账户下载这个补丁前要先问一下用户，而不是像认证服务器账户那样
+                    // 直接静默下载——认证服务器账户没有这个补丁根本没法用（皮肤/会话校验都要
+                    // 靠它转发），是必需项；离线账户则纯粹是"锦上添花"（有了才能显示自定义/
+                    // 正版同名皮肤，没有也能正常进游戏，只是显示史蒂夫/艾利克斯），不应该在用户
+                    // 不知情的情况下就悄悄联网下载一个文件。弹窗 10 秒内没人搭理就按"取消"
+                    // （不下载）处理，不会无限期卡住启动流程。
+                    var shouldDownload = true;
+                    if (account.Type == AccountType.Offline)
                     {
-                        await skinService.EnsureAuthlibInjectorAsync(skinProgressWin.Progress);
+                        shouldDownload = await MessageBoxDialog.ShowConfirmWithTimeoutAsync(
+                            $"离线账户「{account.Username}」需要下载「万能皮肤补丁」(authlib-injector) 才能显示自定义/正版同名皮肤，并修复部分版本下多人游戏按钮被禁用的问题。\n\n是否现在下载？不下载也可以正常启动游戏，只是会显示默认的史蒂夫/艾利克斯外观。",
+                            "是否下载万能皮肤补丁",
+                            10, false);
                     }
-                    catch (Exception skinEx)
+
+                    if (shouldDownload)
                     {
-                        var hint = account.Type == AccountType.AuthServer
-                            ? "下载万能皮肤补丁失败，本次将无法通过认证服务器的皮肤/会话校验：\n"
-                            : "下载万能皮肤补丁失败，本次可能无法正常使用多人游戏（部分版本会因此禁用多人游戏按钮）、自定义皮肤也不会生效：\n";
-                        MessageBoxDialog.ShowWarning(hint + skinEx.Message, Loc.T("Str_Cs_Failed_To_Download_The_Skin_Patch", "皮肤补丁下载失败"));
+                        var skinProgressWin = new ProgressDialog("正在下载万能皮肤补丁...");
+                        // 同上：ProgressDialog 现在是 Overlay 弹窗，没有 Owner 属性了。
+                        skinProgressWin.Show();
+                        try
+                        {
+                            await skinService.EnsureAuthlibInjectorAsync(skinProgressWin.Progress);
+                        }
+                        catch (Exception skinEx)
+                        {
+                            var hint = account.Type == AccountType.AuthServer
+                                ? "下载万能皮肤补丁失败，本次将无法通过认证服务器的皮肤/会话校验：\n"
+                                : "下载万能皮肤补丁失败，本次可能无法正常使用多人游戏（部分版本会因此禁用多人游戏按钮）、自定义皮肤也不会生效：\n";
+                            MessageBoxDialog.ShowWarning(hint + skinEx.Message, Loc.T("Str_Cs_Failed_To_Download_The_Skin_Patch", "皮肤补丁下载失败"));
+                        }
+                        finally { skinProgressWin.Close(); }
                     }
-                    finally { skinProgressWin.Close(); }
                 }
                 skinJvmArgs = skinService.BuildSkinJvmArgs(account, cfg.SkinApiRoot);
             }
@@ -3371,28 +3539,10 @@ public partial class MainWindow : Window
 
             RefreshSidebar();
 
-            // 需求："游戏崩溃的时候，可以选择查看日志和导出完整日志"——这里覆盖的是"游戏已经
-            // 正常运行了一段时间之后才意外退出"的场景（跟下面 exitedEarly 覆盖的"刚启动就
-            // 退出"是两种不同的时机，两处都要接）。判定标准：
-            //   1. 不是用户自己点"关闭游戏"/"关闭未响应的游戏"（UserRequestedClose）；
-            //   2. 退出码不是 0（Minecraft 正常从游戏内菜单退出时退出码是 0）。
-            // 只有同时满足才弹崩溃提示，避免用户正常退出游戏时被无意义地打扰。
-            processInfo.Process.Exited += (_, _) =>
-            {
-                Dispatcher.Invoke(() =>
-                {
-                    if (processInfo.UserRequestedClose) return;
-                    var exitCode = -1;
-                    try { exitCode = processInfo.Process.ExitCode; } catch { /* 忽略 */ }
-                    if (exitCode == 0) return;
-
-                    LauncherLogService.AppendLine($"[游戏崩溃] {processInfo.AccountLabel} - {processInfo.VersionId}，退出码 {exitCode}");
-                    EnsureVisibleForDialog();
-                    CrashReportDialog.Show(this,
-                        $"游戏「{processInfo.VersionId}」意外退出了（退出码 {exitCode}），可能是崩溃了。",
-                        processInfo);
-                });
-            };
+            // 退出/崩溃提示不在这里直接挂 Process.Exited：启动阶段本身也会观察“提前退出”，
+            // 两套入口同时存在会让同一次 OpenGL/Java 启动失败弹两次。启动阶段先独占处理提前退出；
+            // 只有确认进程已经进入正常运行分支后，下面才挂长期退出监视。GameProcessInfo 里还有
+            // 原子的一次性标记兜底，覆盖“刚挂事件就正好退出”的竞态。
 
             // 独立 CMD 日志窗口：可选功能，弹出后实时镜像游戏控制台输出，方便命令行党直接查看。
             if (options.ShowConsoleWindow)
@@ -3502,22 +3652,9 @@ public partial class MainWindow : Window
 
             if (exitedEarly)
             {
-                string output;
-                lock (processInfo.OutputBuffer) output = processInfo.OutputBuffer.ToString();
-                var tail = output.Length > 3000 ? output[^3000..] : output;
-                var exitCode = -1;
-                try { exitCode = processInfo.Process.ExitCode; } catch { /* 忽略 */ }
-
-                LauncherLogService.AppendLine($"[游戏崩溃] {account.DisplayLabel} - {cfg.SelectedVersionId}，退出码 {exitCode}");
-
-                // 需求："游戏崩溃的时候，可以选择查看日志和导出完整日志"。这里用专门的
-                // CrashReportDialog 替代原来只读的 MessageBoxDialog.ShowWarning——多了
-                // "查看日志"（跳转日志页）和"导出完整日志"（合并启动器日志+崩溃前输出+
-                // 游戏日志文件另存为一份文本）两个动作，其余提示文案基本保持不变。
-                CrashReportDialog.Show(this,
-                    $"游戏进程刚启动就退出了（退出码 {exitCode}），大概率没有正常运行起来。\n\n" +
-                    Loc.T("Str_Cs_Recent_Console_Output_N", "最近的控制台输出：\n") + (string.IsNullOrWhiteSpace(tail) ? "(没有捕获到任何输出，可能是 Java 本身启动失败)" : tail),
-                    processInfo);
+                // 统一走同一套退出分类：正常退出/用户主动关闭绝不能写成崩溃；
+                // 日志明显被强行截成半行且没有明确崩溃证据时，只显示“可能是用户手动关闭了游戏”。
+                await HandleGameProcessExitAsync(processInfo, exitedDuringStartup: true);
             }
             else
             {
@@ -3545,6 +3682,10 @@ public partial class MainWindow : Window
                 {
                     ToastService.ShowSuccess($"游戏进程仍在运行（尚未检测到窗口）：{account.DisplayLabel} - {cfg.SelectedVersionId}");
                 }
+
+                // 已经越过“刚启动就退出”的观察阶段，现在才挂长期退出监视，避免与 exitedEarly
+                // 对同一次退出重复报错。若恰好在挂事件前一瞬间退出，AttachGameExitMonitor 会立即补查。
+                AttachGameExitMonitor(processInfo);
             }
         }
         catch (Exception ex)
@@ -3556,6 +3697,80 @@ public partial class MainWindow : Window
             // 不管走成功/崩溃/异常哪条分支，等待过程结束后都要把状态提示收起来，
             // 不能让"等待游戏窗口出现…"这行字永久挂在侧边栏上。
             HideLaunchStatus();
+        }
+    }
+
+    /// <summary>游戏已经进入运行阶段后，安装唯一的长期退出监视。
+    /// 事件订阅与 HasExited 补查之间存在一个极短竞态，GameProcessInfo.TryClaimExitNotification
+    /// 会保证无论两边谁先看到退出，最终最多只处理一次。</summary>
+    private void AttachGameExitMonitor(GameProcessInfo processInfo)
+    {
+        EventHandler? handler = null;
+        handler = (_, _) =>
+        {
+            if (handler != null) processInfo.Process.Exited -= handler;
+            _ = HandleGameProcessExitAsync(processInfo, exitedDuringStartup: false);
+        };
+        processInfo.Process.Exited += handler;
+
+        if (processInfo.HasExited)
+        {
+            processInfo.Process.Exited -= handler;
+            _ = HandleGameProcessExitAsync(processInfo, exitedDuringStartup: false);
+        }
+    }
+
+    /// <summary>统一处理游戏进程退出。正常退出与用户主动关闭只记普通退出日志，不显示崩溃弹窗。
+    /// 对疑似“外部强制关闭导致 latest.log 停在半行”的情况，正文严格只显示一行
+    /// “可能是用户手动关闭了游戏”，也不会再跑 OpenGL/崩溃自动分析。</summary>
+    private async Task HandleGameProcessExitAsync(GameProcessInfo processInfo, bool exitedDuringStartup)
+    {
+        if (!processInfo.TryClaimExitNotification()) return;
+
+        // Exited 会比重定向 stdout/stderr 的最后几个 DataReceived 回调更早到达。先给管道一点时间收尾，
+        // 再做证据判断，否则真正的异常最后几行可能还没进缓冲区，就会被误判成“日志被截断”。
+        await processInfo.WaitForOutputDrainAsync(TimeSpan.FromMilliseconds(900));
+
+        var exitCode = -1;
+        try { exitCode = processInfo.Process.ExitCode; } catch { /* 进程句柄极端情况下已不可读 */ }
+
+        var assessment = GameExitClassifier.Assess(processInfo, exitCode);
+        switch (assessment.Kind)
+        {
+            case GameExitKind.UserRequested:
+                LauncherLogService.AppendLine($"[游戏退出] {processInfo.AccountLabel} - {processInfo.VersionId}，用户主动关闭");
+                return;
+
+            case GameExitKind.Normal:
+                LauncherLogService.AppendLine($"[游戏退出] {processInfo.AccountLabel} - {processInfo.VersionId}，正常退出，退出码 {exitCode}");
+                return;
+
+            case GameExitKind.PossiblyManualClose:
+                LauncherLogService.AppendLine($"[游戏退出] {processInfo.AccountLabel} - {processInfo.VersionId}，退出码 {exitCode}；日志疑似被强行截断，可能是用户手动关闭");
+                await Dispatcher.InvokeAsync(() =>
+                {
+                    EnsureVisibleForDialog();
+                    CrashReportDialog.ShowPossibleManualClose(this, processInfo);
+                });
+                return;
+
+            case GameExitKind.Crash:
+            default:
+                LauncherLogService.AppendLine($"[游戏崩溃] {processInfo.AccountLabel} - {processInfo.VersionId}，退出码 {exitCode}");
+                var output = processInfo.GetOutputSnapshot();
+                var tail = output.Length > 3000 ? output[^3000..] : output;
+                var message = exitedDuringStartup
+                    ? $"游戏进程刚启动就退出了（退出码 {exitCode}），大概率没有正常运行起来。\n\n" +
+                      Loc.T("Str_Cs_Recent_Console_Output_N", "最近的控制台输出：\n") +
+                      (string.IsNullOrWhiteSpace(tail) ? "(没有捕获到任何输出，可能是 Java 本身启动失败)" : tail)
+                    : $"游戏「{processInfo.VersionId}」意外退出了（退出码 {exitCode}），可能是崩溃了。";
+
+                await Dispatcher.InvokeAsync(() =>
+                {
+                    EnsureVisibleForDialog();
+                    CrashReportDialog.Show(this, message, processInfo);
+                });
+                return;
         }
     }
 

@@ -187,7 +187,18 @@ public partial class BedrockPage : UserControl
         {
             var cooling = IsBedrockLaunchCoolingDown;
             var hasLocal = GetLaunchableLocalClientDir() != null;
-            BedrockLaunchBtn.IsEnabled = !cooling && (_bedrockStoreLaunchAvailable || hasLocal);
+
+            // 顶部「启动基岩版」按钮：只有「已安装客户端实例」列表（cfg.BedrockClients，
+            // 即用户手动导入或通过本页下载安装过的基岩版）里确实有至少一个时才允许点亮。
+            // 没有任何记录时直接置灰，不管本机是否检测到了 Microsoft Store 版
+            // Minecraft for Windows——避免用户明明什么都没往列表里加，却看到一个能点的
+            // 按钮，点了之后又唤起一个他没有主动选过的系统级安装，行为上莫名其妙。
+            var hasAnyInList = _owner.ConfigService.Config.BedrockClients.Count > 0;
+            BedrockLaunchBtn.IsEnabled = hasAnyInList && !cooling && (_bedrockStoreLaunchAvailable || hasLocal);
+            BedrockLaunchBtn.ToolTip = hasAnyInList
+                ? null
+                : "还没有在下面的「已安装客户端实例」列表里添加任何基岩版。请先点「手动导入已有基岩版」，或在下方下载安装一个。";
+
             BedrockClientLaunchDownloadedBtn.IsEnabled = !cooling && !string.IsNullOrWhiteSpace(_selectedBedrockClientDir);
         }
         catch

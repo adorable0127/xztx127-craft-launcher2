@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Linq;
 using System.Windows.Controls;
 using System.Windows;
@@ -25,6 +25,9 @@ public partial class HomePage : UserControl
     private bool _autoThemeToggleInitializing;
     private bool _followSystemThemeToggleInitializing;
     private bool _simplifiedToggleInitializing;
+    private Action? _onLanguageChanged;
+    private bool _previewToggleSyncing;
+    private ExperimentalPreviewWindow? _previewWindow;
 
     public HomePage(MainWindow owner)
     {
@@ -47,7 +50,12 @@ public partial class HomePage : UserControl
         ApplyRestrictedModeGating(_owner.ConfigService.Config.RestrictedMode);
 
         UpdateLanguageEntryButtonText();
-        LocalizationService.LanguageChanged += () => UpdateLanguageEntryButtonText();
+        // LocalizationService.LanguageChanged 是静态事件：每 new 一次 HomePage 就多挂一个订阅，
+        // 之前没有对应的 -= 会一直泄漏下去（比如新界面预览关掉之后，这个委托还挂在静态事件上，
+        // 指向一个已经没有可视化树的实例）。现在存成具名委托，在 Unloaded 时摘掉。
+        _onLanguageChanged = () => UpdateLanguageEntryButtonText();
+        LocalizationService.LanguageChanged += _onLanguageChanged;
+        Unloaded += (_, _) => LocalizationService.LanguageChanged -= _onLanguageChanged;
 
         // 愚人节彩蛋 3 号（鼠标靠近就乱窜）+ 8 号（磁贴乱跳）：平时（非 4 月 1 日）这个调用
         // 内部全部是空操作，见 AprilFoolsUi 类注释。
@@ -423,6 +431,70 @@ public partial class HomePage : UserControl
     /// _owner.ApplySimplifiedModeChanged() 刷新侧边栏/处理当前页面，不直接调用
     /// MainWindow 内部的 RefreshSimplifiedModeNavVisibility。
     /// </summary>
+    private void OpenExperimentalPreview_Checked(object sender, RoutedEventArgs e)
+    {
+        if (_previewToggleSyncing) return;
+
+        if (!MessageBoxDialog.ShowConfirm(
+            "新预览界面是实验性功能，可能存在显示、交互或稳定性问题。预览窗口为圆角窗口，不支持全屏或最大化。是否打开？",
+            "实验性功能"))
+        {
+            // 用户取消确认框：按钮不应该停在"已开启"（蓝色）状态，改回浅色但不能再触发
+            // 一次 Unchecked 里的关窗口逻辑（本来就没开窗口），用 _previewToggleSyncing 屏蔽掉。
+            _previewToggleSyncing = true;
+            PreviewToggle.IsChecked = false;
+            _previewToggleSyncing = false;
+            return;
+        }
+
+        _previewWindow = new ExperimentalPreviewWindow(_owner);
+        // 预览窗口被用户用自己的关闭按钮/Alt+F4 关掉时，按钮要同步跳回浅色，
+        // 不能只在这里点按钮的路径下才变浅色。
+        _previewWindow.Closed += (_, _) =>
+        {
+            _previewWindow = null;
+            if (PreviewToggle.IsChecked == true)
+            {
+                _previewToggleSyncing = true;
+                PreviewToggle.IsChecked = false;
+                _previewToggleSyncing = false;
+            }
+        };
+        _previewWindow.Show();
+    }
+
+    private void OpenExperimentalPreview_Unchecked(object sender, RoutedEventArgs e)
+    {
+        if (_previewToggleSyncing) return;
+        _previewWindow?.Close();
+    }
+
+    /// <summary>
+    /// 供 ExperimentalPreviewWindow 在把这个 HomePage 实例塞进自己内容区之后调用一次。
+    ///
+    /// 根因：预览窗口内部是一份全新的 HomePage 实例，它自己的 PreviewToggle 默认是未选中——
+    /// 但此时"新界面预览"其实已经真正打开了（就是承载它的这个预览窗口本身）。之前没有同步
+    /// 这个状态，会出现两个问题：
+    /// 1. 按钮显示状态不对："已经打开了"却显示成"没打开"，容易误导用户再点一次；
+    /// 2. 更严重的是，如果用户真的点了这个内层按钮，会再触发一次
+    ///    OpenExperimentalPreview_Checked：确认框走的是 OverlayDialogService，只认全局唯一的
+    ///    MainWindow 宿主——而这个内层 HomePage 挂在一个盖在 MainWindow 上面的独立预览窗口里，
+    ///    确认框会渲染到被预览窗口挡住的 MainWindow 上，用户看不见也点不到，
+    ///    DispatcherFrame 局部消息泵却在等它关闭，界面就"卡住"了，表现为必须关掉整个启动器
+    ///    重新启动才能恢复——这正是套娃（预览里再开一层预览）导致的假死。
+    ///
+    /// 修复方式：把内层按钮直接锁定成"已选中且不可再点"，从根上让套娃这条路径永远走不到，
+    /// 而不是等它触发了再补救。
+    /// </summary>
+    public void ConfigureAsEmbeddedPreview()
+    {
+        _previewToggleSyncing = true;
+        PreviewToggle.IsChecked = true;
+        _previewToggleSyncing = false;
+        PreviewToggle.IsEnabled = false;
+        PreviewToggle.ToolTip = "当前正处于新界面预览窗口中，无法在预览里再次打开预览";
+    }
+
     private void SimplifiedModeToggle_Changed(object sender, RoutedEventArgs e)
     {
         if (_simplifiedToggleInitializing) return;

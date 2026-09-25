@@ -80,15 +80,23 @@ public static class AppearanceRotationService
     }
 
     /// <summary>
-    /// 算出"现在应该显示哪一张背景"，并把结果写回 <see cref="AppConfig.CustomBackgroundImagePath"/>。
-    /// 返回 true 表示 cfg 被改动过（需要 Save），<paramref name="path"/> 是最终生效的路径
-    /// （没有任何候选时为 null，调用方按"清除背景"处理）。
+    /// 算出"现在应该显示哪一张背景（图片或视频）"，并把结果写回
+    /// <see cref="AppConfig.CustomBackgroundImagePath"/>。返回 true 表示 cfg 被改动过（需要
+    /// Save），<paramref name="path"/> 是最终生效的路径（没有任何候选时为 null，调用方按
+    /// "清除背景"处理）。图片和视频共用这一个候选池、这一套轮换规则——轮换只关心"候选池里
+    /// 的下一项是谁"，至于那一项到底是图片还是视频，由 MainWindow 按扩展名分派渲染，
+    /// 跟这里的调度逻辑无关。
     ///
     /// 规则：
     ///   候选池为空        → null；
-    ///   候选池只有一张    → 永远是它，此时 Daily 模式不做任何轮换（需求点 2）；
+    ///   候选池只有一张    → 永远是它，任何轮换模式都不做任何轮换（需求点 2）；
     ///   Fixed             → 当前路径仍在候选池里就继续用它，否则回退到候选池第一张；
-    ///   Daily             → 跨过一个自然日才前进一格，同一天内保持不变。
+    ///   Daily             → 跨过一个自然日才前进一格，同一天内保持不变；
+    ///   FixedTime         → 每天到达用户指定的 HH:mm 那一刻才前进一格，一天只换一次；
+    ///   Minutely/Hourly/
+    ///   CustomInterval    → 距离上一次真正换过去的时间达到对应间隔（1 分钟 / 1 小时 /
+    ///                       自定义分钟数）才前进一格，用挂钟时间差判断，不受启动器
+    ///                       启动/退出影响——挂着不关和频繁重启换到的张数应该是一样的。
     /// </summary>
     public static bool ResolveBackground(AppConfig cfg, out string? path)
     {
@@ -105,35 +113,32 @@ public static class AppearanceRotationService
         int index;
         if (candidates.Count == 1)
         {
-            // 需求点 2：只有一张时直接默认选它，"每天轮换"开着也没有任何作用——
-            // 这里连 LastDate 都不去动，避免用户之后又导入第二张时，因为"今天已经换过了"
-            // 而白白多等一天才看到轮换真正开始工作。
+            // 需求点 2：只有一张时直接默认选它，任何轮换模式开着也没有任何作用——
+            // 这里连 LastDate/LastTimestamp 都不去动，避免用户之后又导入第二张时，因为
+            // "这一轮已经换过了"而白白多等一个周期才看到轮换真正开始工作。
             index = 0;
         }
         else if (cfg.BackgroundRotationMode == AppearanceRotationMode.Daily)
         {
-            var today = TodayKey;
-            index = cfg.BackgroundRotationIndex;
-            if (string.IsNullOrEmpty(cfg.BackgroundRotationLastDate))
+            index = AdvanceByCalendarDay(cfg, candidates.Count, ref changed);
+        }
+        else if (cfg.BackgroundRotationMode == AppearanceRotationMode.FixedTime)
+        {
+            index = AdvanceByFixedTimeOfDay(cfg, candidates.Count, ref changed);
+        }
+        else if (cfg.BackgroundRotationMode is AppearanceRotationMode.Minutely
+                 or AppearanceRotationMode.Hourly
+                 or AppearanceRotationMode.CustomInterval)
+        {
+            var intervalMinutes = cfg.BackgroundRotationMode switch
             {
-                // 刚打开轮换：只记下今天，今天仍然显示用户现在看到的这一张，从明天开始才换。
-                // 一勾选就立刻换图会让用户以为自己误触了别的设置。
-                var currentIdx = candidates.FindIndex(p =>
-                    string.Equals(p, cfg.CustomBackgroundImagePath, StringComparison.OrdinalIgnoreCase));
-                index = currentIdx >= 0 ? currentIdx : 0;
-                cfg.BackgroundRotationIndex = index;
-                cfg.BackgroundRotationLastDate = today;
-                changed = true;
-            }
-            else if (!string.Equals(cfg.BackgroundRotationLastDate, today, StringComparison.Ordinal))
-            {
-                index = (index + 1) % candidates.Count;
-                cfg.BackgroundRotationIndex = index;
-                cfg.BackgroundRotationLastDate = today;
-                changed = true;
-            }
-
-            if (index < 0 || index >= candidates.Count) index = 0;
+                AppearanceRotationMode.Minutely => 1,
+                AppearanceRotationMode.Hourly => 60,
+                // 用户可能手填 0 或负数；下限钉在 1 分钟，否则每秒 Tick 都会命中，
+                // 相当于变成"每次重绘都换一张"，跟设置项的字面意思不符。
+                _ => Math.Max(1, cfg.BackgroundRotationIntervalMinutes)
+            };
+            index = AdvanceByElapsedInterval(cfg, candidates.Count, intervalMinutes, ref changed);
         }
         else
         {
@@ -151,6 +156,132 @@ public static class AppearanceRotationService
         }
         return changed;
     }
+
+    /// <summary>Daily 模式：跨过一个自然日才 +1，同一天内多次调用保持不变。</summary>
+    private static int AdvanceByCalendarDay(AppConfig cfg, int candidateCount, ref bool changed)
+    {
+        var today = TodayKey;
+        var index = cfg.BackgroundRotationIndex;
+        if (string.IsNullOrEmpty(cfg.BackgroundRotationLastDate))
+        {
+            // 刚打开轮换：只记下今天，今天仍然显示用户现在看到的这一张，从明天开始才换。
+            // 一勾选就立刻换图会让用户以为自己误触了别的设置。
+            var currentIdx = FindCurrentIndex(cfg, candidateCount);
+            index = currentIdx;
+            cfg.BackgroundRotationIndex = index;
+            cfg.BackgroundRotationLastDate = today;
+            changed = true;
+        }
+        else if (!string.Equals(cfg.BackgroundRotationLastDate, today, StringComparison.Ordinal))
+        {
+            index = (index + 1) % candidateCount;
+            cfg.BackgroundRotationIndex = index;
+            cfg.BackgroundRotationLastDate = today;
+            changed = true;
+        }
+
+        return Clamp(index, candidateCount);
+    }
+
+    /// <summary>FixedTime 模式：每天到达用户指定的 HH:mm 那一刻（且当天还没换过）才 +1。
+    /// 用日期字符串去重，跟 Daily 一样保证一天最多换一次；不同的是"该不该换"还要额外看
+    /// 当前时间是否已经过了那个钟点——没到点之前，即使跨了天也先不换，等真正到点那一秒才换，
+    /// 这样"固定时间轮换"才名副其实。</summary>
+    private static int AdvanceByFixedTimeOfDay(AppConfig cfg, int candidateCount, ref bool changed)
+    {
+        var today = TodayKey;
+        var index = cfg.BackgroundRotationIndex;
+        var alreadyRotatedToday = string.Equals(cfg.BackgroundRotationLastDate, today, StringComparison.Ordinal);
+
+        if (string.IsNullOrEmpty(cfg.BackgroundRotationLastDate))
+        {
+            // 刚打开轮换：先认领"今天"，但不代表"今天已经换过"——如果打开的时候已经过了
+            // 设定的钟点，仍然应该在下面的判断里正常触发一次，而不是白白等到明天。
+            // 这里不预先写 LastDate，让下面统一走"是否到点"的判断。
+            index = FindCurrentIndex(cfg, candidateCount);
+            cfg.BackgroundRotationIndex = index;
+            changed = true;
+        }
+
+        if (!alreadyRotatedToday && HasPassedTimeOfDay(cfg.BackgroundRotationFixedTime))
+        {
+            // 避免"刚打开轮换、当天已经过点"这一帧就立刻往后跳一张——首次记录的这一刻只
+            // 认领日期，真正的换图从下一次真正跨过这个点开始。跟 Daily/Minutely 等其它
+            // 模式"打开开关不立刻变"的体感保持一致。
+            if (string.IsNullOrEmpty(cfg.BackgroundRotationLastDate))
+            {
+                cfg.BackgroundRotationLastDate = today;
+                changed = true;
+            }
+            else
+            {
+                index = (index + 1) % candidateCount;
+                cfg.BackgroundRotationIndex = index;
+                cfg.BackgroundRotationLastDate = today;
+                changed = true;
+            }
+        }
+
+        return Clamp(index, candidateCount);
+    }
+
+    /// <summary>Minutely / Hourly / CustomInterval 共用：距上一次真正换过去的挂钟时间达到
+    /// <paramref name="intervalMinutes"/> 才 +1。用绝对时间戳而不是"计数器"，是因为启动器可能
+    /// 被最小化到托盘挂一整晚——用户预期的是"真的过了这么久就该换"，不是"我今天开了几次
+    /// 启动器就换几次"。</summary>
+    private static int AdvanceByElapsedInterval(AppConfig cfg, int candidateCount, int intervalMinutes, ref bool changed)
+    {
+        var now = DateTime.Now;
+        var index = cfg.BackgroundRotationIndex;
+
+        if (string.IsNullOrEmpty(cfg.BackgroundRotationLastTimestamp) ||
+            !DateTime.TryParse(cfg.BackgroundRotationLastTimestamp, out var lastTime))
+        {
+            // 刚打开轮换（或时间戳格式被手改坏了）：只记下"现在"作为计时起点，本次不换，
+            // 从下一个完整周期开始才真正轮换——跟其它几档"打开开关不立刻变"的体感一致。
+            index = FindCurrentIndex(cfg, candidateCount);
+            cfg.BackgroundRotationIndex = index;
+            cfg.BackgroundRotationLastTimestamp = now.ToString("yyyy-MM-dd HH:mm:ss");
+            changed = true;
+            return Clamp(index, candidateCount);
+        }
+
+        var elapsedMinutes = (now - lastTime).TotalMinutes;
+        if (elapsedMinutes >= intervalMinutes)
+        {
+            // 如果启动器休眠/被挂起了很久（比如挂了一晚上，隔了 8 小时），只当作换了一张，
+            // 不会一次性把积压的周期数全部补上——不然用户开机唤醒的瞬间背景会疯狂闪一圈，
+            // 而且候选池就那么几张，补多少圈最后落点都一样，没有意义。
+            index = (index + 1) % candidateCount;
+            cfg.BackgroundRotationIndex = index;
+            cfg.BackgroundRotationLastTimestamp = now.ToString("yyyy-MM-dd HH:mm:ss");
+            changed = true;
+        }
+
+        return Clamp(index, candidateCount);
+    }
+
+    /// <summary>把 "HH:mm" 解析成今天的具体时刻，判断现在的挂钟时间是否已经过了它。
+    /// 解析失败（用户手改配置文件填了非法字符串）时按"00:00"处理，即等同于 Daily。</summary>
+    private static bool HasPassedTimeOfDay(string? hhmm)
+    {
+        var now = DateTime.Now;
+        if (!TimeSpan.TryParse(hhmm, out var timeOfDay))
+            timeOfDay = TimeSpan.Zero;
+        return now.TimeOfDay >= timeOfDay;
+    }
+
+    /// <summary>找到候选池里当前正在显示的那一张的下标；找不到（比如刚导入、还没选过任何一张）
+    /// 就退回第一张。三种"打开轮换开关的那一瞬间"共用这段逻辑。</summary>
+    private static int FindCurrentIndex(AppConfig cfg, int candidateCount)
+    {
+        var candidates = cfg.CustomBackgroundImageCandidates;
+        var idx = candidates.FindIndex(p => string.Equals(p, cfg.CustomBackgroundImagePath, StringComparison.OrdinalIgnoreCase));
+        return Clamp(idx >= 0 ? idx : 0, candidateCount);
+    }
+
+    private static int Clamp(int index, int candidateCount)
+        => index < 0 || index >= candidateCount ? 0 : index;
 
     // ======================= 配色色系 =======================
 

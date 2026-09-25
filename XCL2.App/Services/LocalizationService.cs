@@ -62,6 +62,19 @@ public static class LocalizationService
         new("pt-BR", "Português (Brasil)"),
         new("pl-PL", "Polski"),
         new("tr-TR", "Türkçe"),
+        // 本次新增第二批欧洲语言 + 印地语：跟上面 es/pt/pl/tr 一样是拉丁字母语言，紧跟着放在
+        // 同一段里；印地语（天城文）单独放这一小段最后，不搀进拉丁字母那几个中间，
+        // 理由跟 ar-SA 放最后一致——自成一套文字系统，且目前项目未对它做 FlowDirection/
+        // 字体覆盖之外的排版适配（天城文是从左到右书写，不需要 RTL，但连字/组合字符渲染
+        // 依赖系统字体，Windows 默认字体基本都带，一般不需要额外处理）。
+        new("nl-NL", "Nederlands"),
+        new("cs-CZ", "Čeština"),
+        new("hu-HU", "Magyar"),
+        new("ro-RO", "Română"),
+        new("da-DK", "Dansk"),
+        new("nb-NO", "Norsk bokmål"),
+        new("fi-FI", "Suomi"),
+        new("hi-IN", "हिन्दी"),
         new("id-ID", "Bahasa Indonesia"),
         new("ru-RU", "Русский"),
         // 本次新增：乌克兰语紧跟在同为西里尔字母的俄语后面；越南语虽是拉丁字母但读音/

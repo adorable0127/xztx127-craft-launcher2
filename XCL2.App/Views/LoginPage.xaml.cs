@@ -18,7 +18,15 @@ public partial class LoginPage : UserControl
         InitializeComponent();
         AccountListBox.ItemsSource = _accounts;
         Reload();
+
+        // 皮肤站地址默认填最常用的 littleskin.cn；如果用户之前登录时自己填过别的地址，
+        // 会记住那个地址并优先用它，而不是每次都被强制改回 littleskin。
+        AuthServerRootBox.Text = string.IsNullOrWhiteSpace(_owner.ConfigService.Config.DefaultAuthServerApiRoot)
+            ? DefaultLittleSkinApiRoot
+            : _owner.ConfigService.Config.DefaultAuthServerApiRoot;
     }
+
+    private const string DefaultLittleSkinApiRoot = "https://littleskin.cn/api/yggdrasil";
 
     private void Reload()
     {
@@ -217,6 +225,18 @@ public partial class LoginPage : UserControl
             Reload();
             _owner.RefreshSidebar();
 
+            // 记住用户自己填的皮肤站地址：跟默认的 littleskin 不一样才存，方便下次自动带出用户自己的皮肤站，
+            // 而不是每次都要重新覆盖成 littleskin；如果用户就是在用 littleskin，则不写自定义值，
+            // 保持“未设置=自动用最常用的 littleskin”的默认行为。
+            var normalizedForCompare = apiRoot.TrimEnd('/');
+            if (!string.IsNullOrWhiteSpace(apiRoot)
+                && !normalizedForCompare.Equals(DefaultLittleSkinApiRoot.TrimEnd('/'), StringComparison.OrdinalIgnoreCase)
+                && !normalizedForCompare.Equals("https://littleskin.cn", StringComparison.OrdinalIgnoreCase))
+            {
+                _owner.ConfigService.Config.DefaultAuthServerApiRoot = apiRoot;
+                _owner.ConfigService.Save();
+            }
+
             // 登录成功后清空密码框：密码框本身就不该长期停留敏感内容，且账户已经保存好了，
             // 不需要用户手动清空再进行下一步操作。用户名/服务器地址保留，方便下次直接改密码重登，
             // 或者用同一个服务器再登另一个账号。
@@ -271,6 +291,12 @@ public partial class LoginPage : UserControl
         catch { StatusText.Text = "打开账户页面失败。"; }
     }
 
+    private void SkinModel_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { Tag: Account account }) return;
+        new SkinModelViewerDialog(account).ShowDialog();
+    }
+
     private void Skin_Click(object sender, RoutedEventArgs e)
     {
         if (sender is not Button { Tag: Account acc }) return;
@@ -284,6 +310,55 @@ public partial class LoginPage : UserControl
             Reload();
             StatusText.Text = $"已更新账户 {acc.Username} 的皮肤设置。";
         }
+    }
+
+    /// <summary>
+    /// 导入头像照片：跟"皮肤"完全独立的一套 —— 这里选的是任意一张图片文件，只用来替换
+    /// 账户列表最左边显示的那一小张头像，不会写进 Minecraft 皮肤、不影响游戏内实际外观。
+    /// 任何账户类型（离线/微软/认证服务器）都可以设置，因为它跟游戏内皮肤托管方式无关。
+    /// </summary>
+    private void ImportAvatarPhoto_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { Tag: Account acc }) return;
+
+        var dialog = new Microsoft.Win32.OpenFileDialog
+        {
+            Title = "选择一张头像照片",
+            Filter = "图片文件|*.png;*.jpg;*.jpeg;*.bmp;*.webp;*.gif",
+            CheckFileExists = true
+        };
+        if (dialog.ShowDialog() != true) return;
+
+        try
+        {
+            var skinService = new SkinService();
+            acc.AvatarPhotoPath = skinService.SaveAvatarPhoto(acc.Id, dialog.FileName);
+            _owner.ConfigService.AddOrUpdateAccount(acc);
+            Reload();
+            StatusText.Text = $"已为账户 {acc.Username} 设置头像照片。";
+        }
+        catch (Exception ex)
+        {
+            ErrorPresenter.LogFallback("导入头像照片失败", ex);
+            StatusText.Text = "导入头像照片失败，请确认文件没有被其它程序占用后重试。";
+        }
+    }
+
+    /// <summary>清除头像照片：删掉本地存档，账户头像退回"皮肤正脸 / 史蒂夫默认头像"。</summary>
+    private void ClearAvatarPhoto_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { Tag: Account acc }) return;
+        if (string.IsNullOrWhiteSpace(acc.AvatarPhotoPath))
+        {
+            StatusText.Text = $"账户 {acc.Username} 目前没有设置头像照片。";
+            return;
+        }
+
+        new SkinService().RemoveAvatarPhoto(acc.Id);
+        acc.AvatarPhotoPath = null;
+        _owner.ConfigService.AddOrUpdateAccount(acc);
+        Reload();
+        StatusText.Text = $"已清除账户 {acc.Username} 的头像照片。";
     }
 
     /// <summary>

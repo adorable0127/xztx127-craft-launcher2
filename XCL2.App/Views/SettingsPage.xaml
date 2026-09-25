@@ -1,4 +1,4 @@
-﻿<UserControl x:Class="XCL2.App.Views.SettingsPage"
+<UserControl x:Class="XCL2.App.Views.SettingsPage"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:services="clr-namespace:XCL2.App.Services">
@@ -306,6 +306,12 @@
             <CheckBox x:Name="ShowServerNetworkGuideCheck" Content="{DynamicResource Str_Ui_Show_The_Opening_Your_Server_To_The_Inte}"
                       Margin="0,0,0,8"/>
 
+            <!-- 更新完成自动弹出"这次更新了什么"变更日志开关：默认开启，用户也可以在
+                 UpdateChangelogPopup 弹窗里点"以后就不要弹出来打扰我了"达到同样效果，
+                 两处改的是同一个配置项 AppConfig.ShowUpdateChangelogPopup。 -->
+            <CheckBox x:Name="ShowUpdateChangelogPopupCheck" Content="更新完成后自动弹出本次更新日志"
+                      Margin="0,0,0,8"/>
+
             <CheckBox x:Name="IsolateVersionsCheck" Content="{DynamicResource Str_Ui_Keep_Mods_Resource_Packs_Data_Packs_And_}"
                       Margin="0,0,0,8"/>
 
@@ -494,10 +500,52 @@
                               Width="220" Padding="8" SelectionChanged="BackgroundRotationModeCombo_SelectionChanged">
                         <ComboBoxItem Content="固定使用选中的这一张" Tag="Fixed"/>
                         <ComboBoxItem Content="每天自动轮换" Tag="Daily"/>
+                        <ComboBoxItem Content="每分钟自动轮换" Tag="Minutely"/>
+                        <ComboBoxItem Content="每小时自动轮换" Tag="Hourly"/>
+                        <ComboBoxItem Content="隔一段时间自动轮换（自定义分钟数）" Tag="CustomInterval"/>
+                        <ComboBoxItem Content="每天固定时间自动轮换" Tag="FixedTime"/>
                     </ComboBox>
+                </StackPanel>
+                <!-- 自定义分钟数：只在选中"隔一段时间自动轮换"时显示/可用。 -->
+                <StackPanel x:Name="BackgroundRotationIntervalPanel" Orientation="Horizontal" Margin="200,4,0,0" Visibility="Collapsed">
+                    <TextBlock Text="每隔" VerticalAlignment="Center"/>
+                    <TextBox x:Name="BackgroundRotationIntervalBox" Width="60" Margin="6,0" Padding="4,3"
+                             HorizontalContentAlignment="Right"
+                             PreviewTextInput="BackgroundRotationIntervalBox_PreviewTextInput"
+                             LostFocus="BackgroundRotationIntervalBox_LostFocus"
+                             ToolTip="填入分钟数，最小 1 分钟。"/>
+                    <TextBlock Text="分钟轮换一次" VerticalAlignment="Center"/>
+                </StackPanel>
+                <!-- 固定时刻：只在选中"每天固定时间自动轮换"时显示/可用。 -->
+                <StackPanel x:Name="BackgroundRotationFixedTimePanel" Orientation="Horizontal" Margin="200,4,0,0" Visibility="Collapsed">
+                    <TextBlock Text="每天" VerticalAlignment="Center"/>
+                    <TextBox x:Name="BackgroundRotationFixedTimeBox" Width="70" Margin="6,0" Padding="4,3"
+                             HorizontalContentAlignment="Center"
+                             LostFocus="BackgroundRotationFixedTimeBox_LostFocus"
+                             ToolTip="24 小时制，格式 HH:mm，例如 08:30。"/>
+                    <TextBlock Text="切换到候选池里的下一张" VerticalAlignment="Center"/>
                 </StackPanel>
                 <TextBlock x:Name="BackgroundRotationHintText" Margin="200,0,0,0" FontSize="11"
                            Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap"/>
+                <!-- 视频壁纸声音开关：只有当前背景确实是视频文件时才有意义，图片/GIF 壁纸
+                     没有声轨，这个勾选框会在 RefreshCustomBackgroundVideoSoundVisibility 里
+                     根据当前候选是不是视频动态显示/隐藏，避免用户对着一张图片的设置项疑惑。
+                     默认不勾选=静音，跟以前唯一的行为保持兼容，不会有老用户升级后突然被放声音。 -->
+                <CheckBox x:Name="CustomBackgroundVideoSoundCheck" Margin="200,4,0,0"
+                          Content="视频壁纸播放声音" Checked="CustomBackgroundVideoSoundCheck_Changed"
+                          Unchecked="CustomBackgroundVideoSoundCheck_Changed"
+                          ToolTip="开启后视频壁纸会带上它自己的原始音轨播放；关闭则跟以前一样静音循环播放。"/>
+                <!-- 视频壁纸缩放方式：跟声音开关同理，只有当前背景是视频时才有意义。
+                     三个选项直接对应 MediaElement.Stretch 的三种效果，见 VideoBackgroundFitMode 注释。 -->
+                <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
+                    <TextBlock Text="视频壁纸缩放方式" VerticalAlignment="Center" Width="200"/>
+                    <ComboBox x:Name="CustomBackgroundVideoFitModeCombo" Style="{StaticResource TallPopupComboBox}"
+                              Width="220" Padding="8" SelectionChanged="CustomBackgroundVideoFitModeCombo_SelectionChanged">
+                        <ComboBoxItem Content="自动裁剪（铺满，超出部分裁掉）" Tag="Crop"/>
+                        <ComboBoxItem Content="自动全屏（拉伸铺满，可能变形）" Tag="Fill"/>
+                        <ComboBoxItem Content="适应比例缩放（完整显示，可能留边）" Tag="Fit"/>
+                    </ComboBox>
+                </StackPanel>
             </StackPanel>
             <StackPanel Orientation="Horizontal" Margin="0,0,0,8"
                         ToolTip="25% 接近透明/清晰，100% 为最强磨砂；拖动时立即预览，保存设置后重启仍保持。">
@@ -951,6 +999,16 @@
             </StackPanel>
             <TextBlock x:Name="SettingsHideStatusText" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}"
                        Margin="0,0,0,20" TextWrapping="Wrap"/>
+
+            <TextBlock Text="百宝箱布局" FontSize="14" FontWeight="Bold" Margin="0,0,0,6"/>
+            <Button Content="设置默认显示的工具、顺序和个数…" HorizontalAlignment="Left" Padding="12,8"
+                    Click="OpenToolboxPreferences_Click" Margin="0,0,0,20"/>
+
+            <TextBlock Text="OpenGL / 显卡驱动" FontSize="14" FontWeight="Bold" Margin="0,0,0,6"/>
+            <TextBlock Text="如果游戏提示 OpenGL 版本过低，可通过 Windows Update 查找与本机硬件匹配的显示驱动。硬件不支持的 OpenGL 版本无法仅靠驱动升级获得。"
+                       TextWrapping="Wrap" FontSize="11" Margin="0,0,0,8"/>
+            <Button Content="一键尝试安装 OpenGL 显卡驱动" HorizontalAlignment="Left" Padding="12,8"
+                    Click="InstallDisplayDriver_Click" Margin="0,0,0,20"/>
 
             <!-- 更新日志：两个入口分别打开两个**互相独立**的窗口（Views/ChangelogWindow），
                  可以同时开着对照看，关掉一个不影响另一个。一个指向 XCL 自己的 GitHub

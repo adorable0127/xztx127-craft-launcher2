@@ -1,0 +1,28 @@
+<Window x:Class="XCL2.App.Views.ExperimentalPreviewWindow"
+ xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+ xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+ Title="XCL2 · 新界面预览（实验性）" Width="920" Height="590"
+ WindowStartupLocation="CenterOwner" WindowStyle="None" ResizeMode="NoResize"
+ AllowsTransparency="True" Background="Transparent" ShowInTaskbar="False">
+ <Border Margin="10" CornerRadius="20" BorderThickness="1" BorderBrush="{DynamicResource DividerBrush}"
+         Background="{DynamicResource PanelBrush}" ClipToBounds="True">
+  <Grid><Grid.RowDefinitions><RowDefinition Height="44"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+   <Border Background="{DynamicResource SideBrush}" CornerRadius="20,20,0,0" MouseLeftButtonDown="Title_MouseLeftButtonDown">
+    <DockPanel Margin="16,0,8,0" LastChildFill="True">
+     <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+      <Button x:Name="MinimizeButton" Style="{StaticResource CaptionButton}" Width="40" Height="32"
+              Click="Minimize_Click" ToolTip="{DynamicResource Str_Ui_Minimize}">
+       <Path Style="{StaticResource CaptionIconPath}" Data="{StaticResource IconWinMinimize}"/>
+      </Button>
+      <Button x:Name="CloseButton" Style="{StaticResource CaptionCloseButton}" Width="40" Height="32"
+              Click="Close_Click" ToolTip="关闭预览">
+       <Path Style="{StaticResource CaptionCloseIconPath}" Data="{StaticResource IconWinClose}"/>
+      </Button>
+     </StackPanel>
+     <TextBlock Text="✦  新界面预览 · 实验性功能" FontSize="14" FontWeight="Bold" VerticalAlignment="Center"/>
+    </DockPanel>
+   </Border>
+   <ContentControl x:Name="PreviewContent" Grid.Row="1" Margin="16"/>
+  </Grid>
+ </Border>
+</Window>

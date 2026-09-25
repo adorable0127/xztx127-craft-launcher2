@@ -39,8 +39,19 @@ public class OfficialSkinFetchService : IDisposable
 
         var uuid = idProp.GetString()!;
 
+        return await LookupByUuidAsync(uuid, playerName.Trim(), ct);
+    }
+
+    /// <summary>直接按 UUID 读取该正版档案当前公开皮肤。3D 纸娃娃优先走这个接口，
+    /// 这样即使玩家刚改过名字，也不会因为旧用户名查不到而退回默认模型。</summary>
+    public async Task<OfficialSkinInfo> LookupByUuidAsync(string uuid, string? playerName = null, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(uuid))
+            throw new ArgumentException("UUID 不能为空。", nameof(uuid));
+
+        var compactUuid = uuid.Replace("-", "", StringComparison.Ordinal).Trim();
         var sessionJson = await _http.GetStringAsync(
-            $"https://sessionserver.mojang.com/session/minecraft/profile/{uuid}", ct);
+            $"https://sessionserver.mojang.com/session/minecraft/profile/{Uri.EscapeDataString(compactUuid)}", ct);
         using var sessionDoc = JsonDocument.Parse(sessionJson);
 
         var texturesB64 = sessionDoc.RootElement.GetProperty("properties")
@@ -57,8 +68,56 @@ public class OfficialSkinFetchService : IDisposable
                      && metadata.TryGetProperty("model", out var model)
                      && model.GetString() == "slim";
 
-        return new OfficialSkinInfo(playerName.Trim(), uuid, skinUrl, isSlim);
+        var resolvedName = string.IsNullOrWhiteSpace(playerName)
+            ? (sessionDoc.RootElement.TryGetProperty("name", out var n) ? n.GetString() ?? compactUuid : compactUuid)
+            : playerName.Trim();
+        return new OfficialSkinInfo(resolvedName, compactUuid, skinUrl, isSlim);
     }
+
+    /// <summary>跟 <see cref="LookupByUuidAsync(string,string?,CancellationToken)"/> 是同一套
+    /// Yggdrasil 标准查询逻辑，唯一区别是 sessionserver 的 Host 换成调用方传入的认证服务器
+    /// （皮肤站）apiRoot，而不是写死的 Mojang 官方地址。authlib-injector 生态的皮肤站在
+    /// {apiRoot}/sessionserver/session/minecraft/profile/{uuid} 上实现了跟 Mojang 完全相同的
+    /// 响应格式（这是 Yggdrasil 协议本身的约定，不是皮肤站自己发明的），所以直接复用同一套
+    /// base64 解码 + textures.SKIN.url 解析代码，不需要另外写一套。
+    /// 用于「3D 皮肤纸娃娃」在皮肤站(AuthServer)账户下也能拉取到该账户在皮肤站上当前生效的
+    /// 皮肤，而不是永远回退到本地占位模型。</summary>
+    public async Task<OfficialSkinInfo> LookupByUuidFromYggdrasilAsync(string apiRoot, string uuid, string? playerName = null, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(apiRoot))
+            throw new ArgumentException("皮肤站 API Root 不能为空。", nameof(apiRoot));
+        if (string.IsNullOrWhiteSpace(uuid))
+            throw new ArgumentException("UUID 不能为空。", nameof(uuid));
+
+        var compactUuid = uuid.Replace("-", "", StringComparison.Ordinal).Trim();
+        var root = apiRoot.TrimEnd('/');
+        var sessionJson = await _http.GetStringAsync(
+            $"{root}/sessionserver/session/minecraft/profile/{Uri.EscapeDataString(compactUuid)}", ct);
+        using var sessionDoc = JsonDocument.Parse(sessionJson);
+
+        var texturesB64 = sessionDoc.RootElement.GetProperty("properties")
+            .EnumerateArray()
+            .First(p => p.GetProperty("name").GetString() == "textures")
+            .GetProperty("value").GetString()!;
+
+        var texturesJson = System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(texturesB64));
+        using var texturesDoc = JsonDocument.Parse(texturesJson);
+        var skinElement = texturesDoc.RootElement.GetProperty("textures").GetProperty("SKIN");
+        var skinUrl = skinElement.GetProperty("url").GetString()!;
+
+        var isSlim = skinElement.TryGetProperty("metadata", out var metadata)
+                     && metadata.TryGetProperty("model", out var model)
+                     && model.GetString() == "slim";
+
+        var resolvedName = string.IsNullOrWhiteSpace(playerName)
+            ? (sessionDoc.RootElement.TryGetProperty("name", out var n) ? n.GetString() ?? compactUuid : compactUuid)
+            : playerName.Trim();
+        return new OfficialSkinInfo(resolvedName, compactUuid, skinUrl, isSlim);
+    }
+
+    /// <summary>只下载皮肤 PNG 字节，供内存中的 2D/3D 预览直接使用，不强制落盘。</summary>
+    public Task<byte[]> DownloadSkinBytesAsync(OfficialSkinInfo info, CancellationToken ct = default)
+        => _http.GetByteArrayAsync(info.SkinUrl, ct);
 
     /// <summary>下载皮肤 PNG 到指定目录，文件名为 "{玩家名}.png"，返回保存路径。</summary>
     public async Task<string> DownloadSkinAsync(OfficialSkinInfo info, string saveDir, CancellationToken ct = default)

@@ -163,6 +163,15 @@
             </Grid>
 
             <WrapPanel Grid.Row="0" HorizontalAlignment="Right" VerticalAlignment="Top">
+                <ToggleButton x:Name="PreviewToggle" Margin="0,0,10,10"
+                              Style="{StaticResource GuestModeToggleStyle}"
+                              Checked="OpenExperimentalPreview_Checked" Unchecked="OpenExperimentalPreview_Unchecked"
+                              ToolTip="实验性界面预览，不支持最大化">
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Text="&#10022;" FontSize="13" Margin="0,0,6,0"/>
+                        <TextBlock Text="新界面预览" FontSize="13"/>
+                    </StackPanel>
+                </ToggleButton>
                 <!-- 「简洁模式」开关：放在整条按钮带最左边（WrapPanel 从左到右排列）。
                      开启后侧边栏只保留主页/下载/选择版本/账户管理/设置，其余功能收进
                      新增的「更多」磁贴页，见 MainWindow.RefreshSimplifiedModeNavVisibility。

@@ -7,6 +7,7 @@
         <Grid>
             <Grid.RowDefinitions>
                 <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
                 <RowDefinition Height="*"/>
                 <RowDefinition Height="Auto"/>
             </Grid.RowDefinitions>
@@ -17,7 +18,26 @@
                            Foreground="{DynamicResource TextSecondaryBrush}" VerticalAlignment="Center"/>
             </StackPanel>
 
-            <TabControl x:Name="ToolboxTabControl" Grid.Row="1" SelectionChanged="ToolboxTabControl_SelectionChanged">
+            <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="0,0,0,10">
+                <StackPanel x:Name="PinnedToolboxButtons" Orientation="Horizontal"/>
+                <Button x:Name="ToolboxMoreButton" Content="⋯" FontSize="19" Padding="12,2" Click="ToolboxMore_Click"
+                        ToolTip="全部工具"/>
+                <Popup x:Name="ToolboxMorePopup" PlacementTarget="{Binding ElementName=ToolboxMoreButton}"
+                       Placement="Bottom" StaysOpen="False" AllowsTransparency="True">
+                    <Border CornerRadius="8" Padding="6" BorderThickness="1" BorderBrush="{DynamicResource DividerBrush}"
+                            Background="{DynamicResource PanelBrush}">
+                        <ListBox x:Name="AllToolboxItems" Width="290" MaxHeight="360" MouseLeftButtonUp="AllToolboxItems_MouseLeftButtonUp"/>
+                    </Border>
+                </Popup>
+            </StackPanel>
+            <TabControl x:Name="ToolboxTabControl" Grid.Row="2" SelectionChanged="ToolboxTabControl_SelectionChanged">
+                <TabControl.Template>
+                    <ControlTemplate TargetType="TabControl">
+                        <Border Background="Transparent">
+                            <ContentPresenter x:Name="PART_SelectedContentHost" ContentSource="SelectedContent"/>
+                        </Border>
+                    </ControlTemplate>
+                </TabControl.Template>
 
                 <!-- ===== Tab 1：成就图片生成器 ===== -->
                 <TabItem Header="{DynamicResource Str_Ui_Advancement_Image}">
@@ -970,11 +990,35 @@
                      NavBedrockButton 的注释。这里不再保留这个 Tab，避免同一个功能出现在
                      两个地方、显示口径可能不一致。 -->
 
+                <!-- ===== Tab 35：下载正版账户皮肤（独立入口） =====
+                     跟 Tab 3「文件下载」里那个"正版皮肤下载"是同一个 OfficialSkinFetchService，
+                     这里单独开一个 Tab，是因为这个动作本身经常单独被用到（换季/换号想直接
+                     拉一次正版皮肤），不想每次都要先翻到"文件下载"页面里找。两处共用同一套
+                     Service，行为、报错文案保持一致，不是重新实现一遍。 -->
+                <TabItem Header="下载正版账户皮肤">
+                    <ScrollViewer VerticalScrollBarVisibility="Auto" services:ScrollWheelBehavior.EnableFastWheel="True">
+                        <StackPanel Margin="4,12,4,4" MaxWidth="680" HorizontalAlignment="Left">
+                            <TextBlock Text="下载正版账户皮肤" FontWeight="Bold" Margin="0,0,0,4"/>
+                            <TextBlock Text="输入正版玩家的用户名，从微软/Mojang 官方接口查询该玩家当前生效的皮肤并下载到本地，可用于给离线账户配一个同款外观。不涉及登录、不需要密码或令牌。"
+                                       TextWrapping="Wrap" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,14"/>
+
+                            <TextBlock Text="正版用户名" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4"/>
+                            <TextBox x:Name="StandaloneOfficialSkinNameBox" Margin="0,0,0,10" Padding="6,5"/>
+
+                            <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                                <Button Content="查询并下载" Style="{StaticResource PrimaryButton}" Padding="14,7" Margin="0,0,10,0" Click="StandaloneOfficialSkinDownload_Click"/>
+                                <Button Content="打开保存目录" Padding="14,7" Click="StandaloneOfficialSkinOpenFolder_Click"/>
+                            </StackPanel>
+                            <TextBlock x:Name="StandaloneOfficialSkinStatusText" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap"/>
+                        </StackPanel>
+                    </ScrollViewer>
+                </TabItem>
+
             </TabControl>
 
             <!-- 百宝箱页右下角的隐藏彩蛋入口。点击后只先展示风险确认框；
                  真正的跳转行为由 ToolboxPage.xaml.cs 按用户选中的三个“确定”处理。 -->
-            <Button Grid.Row="2" Content="千万别点" HorizontalAlignment="Right"
+            <Button Grid.Row="3" Content="千万别点" HorizontalAlignment="Right"
                     Margin="0,12,0,0" Padding="14,7" Click="DoNotClickButton_Click"
                     Background="#D32F2F" BorderBrush="#D32F2F" Foreground="White"/>
         </Grid>

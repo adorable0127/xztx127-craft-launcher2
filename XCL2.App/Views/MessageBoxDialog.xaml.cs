@@ -1,5 +1,6 @@
 ﻿using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Threading;
 using XCL2.App.Services;
 
 namespace XCL2.App.Views;
@@ -436,5 +437,50 @@ public partial class MessageBoxDialog : OverlayDialogControl
     {
         var dlg = new MessageBoxDialog(message, title, kind, buttons);
         return OverlayDialogService.ShowModalAsync(dlg);
+    }
+
+    /// <summary>
+    /// 限时确认弹窗：跟 ShowConfirm 语义一样（true=用户点了"确定"），但多了一个
+    /// "用户不搭理就自动按默认选项处理"的行为——专门给"要不要联网下载万能皮肤补丁"这类
+    /// 场景用：这不是一个必须做的操作（不下载也能启动游戏，只是没有自定义皮肤/皮肤站校验），
+    /// 不应该无限期卡住整个启动流程等用户点一下。
+    /// timeoutSeconds 秒之后如果用户还没点任何按钮，自动按 defaultResult 关闭弹窗，
+    /// 效果等价于用户自己点了对应的按钮；倒计时数字实时显示在消息文本末尾，让用户清楚看到
+    /// "再不选就会用默认选项"，不是静默在后台倒数。用户在倒计时结束前正常点击 确定/取消/
+    /// Esc/点遮罩 都会立即按各自的语义关闭，不用等满 timeoutSeconds。</summary>
+    public static async Task<bool> ShowConfirmWithTimeoutAsync(string message, string title, int timeoutSeconds, bool defaultResult)
+    {
+        var dlg = new MessageBoxDialog(message, title, XclMessageKind.Warning, XclMessageButtons.OKCancel);
+        var remaining = timeoutSeconds;
+        string ComposeText() => $"{message}\n\n（{remaining} 秒内未选择，将自动按“{(defaultResult ? "确定" : "取消")}”处理）";
+        dlg.MessageText.Text = ComposeText();
+
+        var timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
+        timer.Tick += (_, _) =>
+        {
+            remaining--;
+            if (remaining <= 0)
+            {
+                timer.Stop();
+                dlg.Result = defaultResult;
+                dlg.CloseWith(defaultResult); // 等价于用户自己点了默认对应的那个按钮
+            }
+            else
+            {
+                dlg.MessageText.Text = ComposeText();
+            }
+        };
+        timer.Start();
+        try
+        {
+            var result = await OverlayDialogService.ShowModalAsync(dlg);
+            // 用户主动按 Esc/点遮罩关闭（没点任何按钮）时 result 是 null，同样落到默认选项，
+            // 跟"用户没有明确选择"这件事在语义上是一致的，不需要单独判断。
+            return result ?? defaultResult;
+        }
+        finally
+        {
+            timer.Stop();
+        }
     }
 }

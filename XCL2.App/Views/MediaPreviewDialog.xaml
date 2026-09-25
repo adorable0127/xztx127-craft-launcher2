@@ -1,0 +1,38 @@
+<local:OverlayDialogControl x:Class="XCL2.App.Views.MediaPreviewDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="clr-namespace:XCL2.App.Views"
+        MaxWidth="720" MaxHeight="560">
+    <!-- 背景候选池"预览图片"按钮里，动图(GIF)和视频专用的轻量预览：
+         跟 ImagePreviewDialog 用的是同一套 Overlay 弹窗机制（进程内嵌 UserControl，
+         不是独立 Window），本身就没有额外开窗口/额外合成的开销。
+         播放器统一走 WPF 自带的两条最轻的路径，不引入 WebView2/第三方播放器这类重量级依赖：
+           GIF  → GifBitmapDecoder 解出全部帧 + DispatcherTimer 逐帧切 Image.Source，
+                  跟主窗口背景层里 GIF 动图完全同一套实现（见 MainWindow.SetCustomBackgroundImage）。
+           视频 → 系统自带的 MediaElement，本质是对 Windows Media Foundation 的轻量封装，
+                  硬件解码交给系统，不会比背景层播放视频更卡。
+         两种媒体二选一显示，用 Visibility 切换，同一时间只有一个在真正解码/播放。 -->
+    <StackPanel Margin="16">
+        <TextBlock x:Name="FileNameText" FontWeight="SemiBold" FontSize="13"
+                   TextTrimming="CharacterEllipsis" Margin="0,0,0,10"/>
+        <Border BorderThickness="1" BorderBrush="{DynamicResource BorderBrush2}" CornerRadius="4"
+                Background="Black">
+            <Grid>
+                <Image x:Name="PreviewImage" Stretch="Uniform"
+                       MaxWidth="680" MaxHeight="420" SnapsToDevicePixels="True"/>
+                <MediaElement x:Name="PreviewVideo" Stretch="Uniform"
+                              MaxWidth="680" MaxHeight="420" Visibility="Collapsed"
+                              LoadedBehavior="Manual" UnloadedBehavior="Stop"
+                              MediaEnded="PreviewVideo_MediaEnded" MediaFailed="PreviewVideo_MediaFailed"/>
+            </Grid>
+        </Border>
+        <StackPanel Orientation="Horizontal" Margin="0,10,0,0">
+            <TextBlock x:Name="HintText" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}"
+                       VerticalAlignment="Center"/>
+            <Button x:Name="MuteToggleButton" Content="静音" Margin="10,0,0,0" Padding="10,4"
+                    Visibility="Collapsed" Click="MuteToggle_Click"/>
+        </StackPanel>
+        <Button Content="关闭" HorizontalAlignment="Right" Margin="0,10,0,0"
+                Padding="18,6" Click="Close_Click" IsDefault="True" IsCancel="True"/>
+    </StackPanel>
+</local:OverlayDialogControl>

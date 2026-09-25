@@ -65,6 +65,7 @@ public partial class ToolboxPage : UserControl
         InitializeComponent();
 
         _lastNonStickyToolboxTab = ToolboxTabControl.SelectedItem as TabItem;
+        InitializeToolboxNavigation();
 
         _dlHttp.DefaultRequestHeaders.UserAgent.ParseAdd("XCL2-Launcher-Toolbox/1.0");
 
@@ -141,6 +142,47 @@ public partial class ToolboxPage : UserControl
 
         // ===== Tab 32：附魔台书架数量对照 =====
         BookshelfCountBox_TextChanged(this, null!);
+    }
+
+    private static string ToolboxTitle(TabItem item)
+        => item.Header?.ToString() ?? "工具";
+
+    private void InitializeToolboxNavigation()
+    {
+        var tabs = ToolboxTabControl.Items.OfType<TabItem>().ToArray();
+        var cfg = _owner.ConfigService.Config;
+        var ordered = (cfg.ToolboxPinnedTabOrder ?? new List<int>()).Where(i => i >= 0 && i < tabs.Length).Distinct().ToList();
+        ordered.AddRange(Enumerable.Range(0, tabs.Length).Except(ordered));
+        PinnedToolboxButtons.Children.Clear();
+        foreach (int idx in ordered.Take(Math.Clamp(cfg.ToolboxVisibleCount, 1, 8)))
+        {
+            var button = new Button
+            {
+                Content = $"{ToolboxIcon(idx)} {ToolboxTitle(tabs[idx])}",
+                Tag = idx, Margin = new Thickness(0, 0, 7, 0), Padding = new Thickness(10, 5, 10, 5)
+            };
+            button.Click += (_, _) => ToolboxTabControl.SelectedIndex = (int)button.Tag;
+            PinnedToolboxButtons.Children.Add(button);
+        }
+        AllToolboxItems.Items.Clear();
+        for (int i = 0; i < tabs.Length; i++)
+            AllToolboxItems.Items.Add(new ListBoxItem { Content = $"{ToolboxIcon(i)} {ToolboxTitle(tabs[i])}", Tag = i });
+    }
+
+    public static string ToolboxIcon(int index) => index switch
+    {
+        0 => "🏆", 1 => "👤", 2 => "⬇", 3 => "🧩", 4 => "⚙", 5 => "🧮", 6 => "🧹",
+        7 => "📡", 8 => "🧭", 9 => "🎨", 10 => "📊", 11 => "🔑", 35 => "🎭", _ => "🔧"
+    };
+
+    private void ToolboxMore_Click(object sender, RoutedEventArgs e) => ToolboxMorePopup.IsOpen = !ToolboxMorePopup.IsOpen;
+
+    private void AllToolboxItems_MouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+    {
+        if (AllToolboxItems.SelectedItem is not ListBoxItem { Tag: int index }) return;
+        ToolboxMorePopup.IsOpen = false;
+        ToolboxTabControl.SelectedIndex = index;
+        AllToolboxItems.SelectedIndex = -1;
     }
 
     // ============================================================
@@ -1376,6 +1418,52 @@ public partial class ToolboxPage : UserControl
         catch (Exception ex)
         {
             OfficialSkinStatusText.Text = $"获取失败：{ex.Message}";
+        }
+    }
+
+    // ============================================================
+    // Tab 35：下载正版账户皮肤（独立入口）
+    // 跟上面 OfficialSkinSave_Click 是同一个 _officialSkinService/同一套查询-下载逻辑，
+    // 只是单独开了一个 Tab、单独一套控件名，方便被"置顶工具"直接跳转，不用先切到
+    // 「文件下载」Tab 再往下滚才能找到这个入口。
+    // ============================================================
+
+    private static string StandaloneOfficialSkinSaveDir => Path.Combine(AppContext.BaseDirectory, "Skins");
+
+    private async void StandaloneOfficialSkinDownload_Click(object sender, RoutedEventArgs e)
+    {
+        var playerName = StandaloneOfficialSkinNameBox.Text?.Trim();
+        if (string.IsNullOrWhiteSpace(playerName))
+        {
+            MessageBoxDialog.ShowWarning("请输入正版玩家名。");
+            return;
+        }
+
+        StandaloneOfficialSkinStatusText.Text = "正在查询玩家信息...";
+        try
+        {
+            var info = await _officialSkinService.LookupAsync(playerName);
+            StandaloneOfficialSkinStatusText.Text = $"已找到玩家 {info.PlayerName}（UUID: {info.Uuid}），正在下载皮肤...";
+
+            var savedPath = await _officialSkinService.DownloadSkinAsync(info, StandaloneOfficialSkinSaveDir);
+            StandaloneOfficialSkinStatusText.Text = $"已保存到：{savedPath}";
+        }
+        catch (Exception ex)
+        {
+            StandaloneOfficialSkinStatusText.Text = $"获取失败：{ex.Message}";
+        }
+    }
+
+    private void StandaloneOfficialSkinOpenFolder_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            Directory.CreateDirectory(StandaloneOfficialSkinSaveDir);
+            Process.Start(new ProcessStartInfo(StandaloneOfficialSkinSaveDir) { UseShellExecute = true });
+        }
+        catch (Exception ex)
+        {
+            MessageBoxDialog.ShowError($"打开目录失败：{ex.Message}");
         }
     }
 

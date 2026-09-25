@@ -38,6 +38,11 @@
                         <Button x:Name="BedrockLaunchBtn" Content="{DynamicResource Str_Ui_Launch_Bedrock}" Padding="14,7"
                                 Style="{StaticResource PrimaryButton}"
                                 Click="BedrockLaunch_Click" IsEnabled="False"/>
+                        <!-- BedrockLaunchBtn 的可点击状态见 RefreshBedrockLaunchButtonState：
+                             下面「已安装客户端实例」列表（cfg.BedrockClients）一个都没有时，
+                             这个按钮会被强制置灰，不管本机是否检测到 Microsoft Store 版
+                             Minecraft for Windows——需要用户先通过“手动导入已有基岩版”或
+                             下载安装往列表里加一个之后才能点亮。 -->
                         <Button Content="{DynamicResource Str_Ui_Re_Detect}" Padding="14,7" Margin="10,0,0,0"
                                 Click="BedrockDetect_Click"/>
                         <Button Content="{DynamicResource Str_Ui_Open_Data_Folder}" Padding="14,7" Margin="10,0,0,0"

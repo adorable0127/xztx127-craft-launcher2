@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Diagnostics;
 using System.Windows;
 using Microsoft.Web.WebView2.Core;
@@ -64,6 +64,26 @@ public partial class ChangelogWindow : OverlayDialogControl
     private async void Navigate()
     {
         ErrorOverlay.Visibility = Visibility.Collapsed;
+        if (_source == ChangelogSource.Xcl)
+        {
+            Browser.Visibility = Visibility.Collapsed;
+            ApiNotesPanel.Visibility = Visibility.Visible;
+            LatestReleaseNotes.Text = "正在从 GitHub API 获取最新版本日志…";
+            CurrentReleaseNotes.Text = "";
+            try
+            {
+                var notes = await GitHubReleaseNotesService.FetchAsync();
+                LatestReleaseNotes.Text = notes.Latest;
+                CurrentReleaseNotes.Text = notes.Current;
+            }
+            catch (Exception ex)
+            {
+                LatestReleaseNotes.Text = "获取失败，请检查网络或 GitHub API 访问限制：" + ex.Message;
+                CurrentReleaseNotes.Text = "可通过下方按钮打开 GitHub Releases 发布页面。";
+            }
+            return;
+        }
+        ApiNotesPanel.Visibility = Visibility.Collapsed;
 
         if (!WebView2RuntimeDetector.IsAvailable())
         {
@@ -95,6 +115,28 @@ public partial class ChangelogWindow : OverlayDialogControl
             // 内嵌浏览器控件在某些精简版系统上可能直接不可用。这不是关键功能，
             // 不让它把弹窗连带弄崩——盖上提示层，用户仍然可以用外部浏览器打开。
             ErrorOverlay.Visibility = Visibility.Visible;
+        }
+    }
+
+    private bool _historyLoaded;
+
+    /// <summary>历史版本更新日志展开：只在第一次展开时真正发一次请求，重复展开/折叠不重复拉取。</summary>
+    private async void HistoryExpander_Expanded(object sender, RoutedEventArgs e)
+    {
+        if (_historyLoaded) return;
+        _historyLoaded = true;
+        try
+        {
+            var history = await GitHubReleaseNotesService.FetchHistoryAsync();
+            HistoryList.ItemsSource = history;
+            HistoryStatusText.Text = history.Count == 0 ? "没有找到历史发布记录。" : "";
+            HistoryStatusText.Visibility = history.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+        }
+        catch (Exception ex)
+        {
+            _historyLoaded = false; // 失败允许下次展开重试
+            HistoryStatusText.Text = "获取历史版本日志失败，请检查网络：" + ex.Message;
+            HistoryStatusText.Visibility = Visibility.Visible;
         }
     }
 

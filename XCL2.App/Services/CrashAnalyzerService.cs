@@ -140,6 +140,9 @@ public class CrashAnalyzerService
         var result = new List<CrashFinding>();
         if (string.IsNullOrWhiteSpace(text)) return result;
 
+        if (OpenGlTroubleshooter.IsOpenGlFailure(text))
+            result.Add(new CrashFinding("OpenGL 初始化/版本要求失败。" + OpenGlTroubleshooter.RepairSteps,
+                                        CrashConfidence.Certain));
         result.AddRange(RunDependencyRules(text));
         result.AddRange(RunExitCodeRules(text));
         result.AddRange(RunModuleSystemRules(text));

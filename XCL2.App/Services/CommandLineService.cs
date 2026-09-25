@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 
@@ -83,6 +83,7 @@ public static class CommandLineService
         public bool SafeMode;
         /// <summary>--debug-console：额外弹出一个调试控制台窗口，显示启动器内部日志输出。</summary>
         public bool ShowDebugConsole;
+        public bool DebugAprilFools;
         /// <summary>--config-path &lt;path&gt;：使用指定路径的配置文件而非默认 AppData 路径（多实例/测试用）。</summary>
         public string? ConfigPathOverride;
         /// <summary>--instance-dir &lt;path&gt;：使用指定目录作为实例（.minecraft）根目录。</summary>
@@ -111,9 +112,15 @@ public static class CommandLineService
         /// <summary>--verbose：本次启动打印更详细的启动器日志（不影响写盘日志级别，只影响调试控制台）。</summary>
         public bool VerboseLogging;
 
+        /// <summary>隐藏参数 --just-updated：只由 UpdateCheckService 生成的重启脚本自动带上，
+        /// 标记\"这次启动是自动更新流程重启回来的那一次\"，不写进帮助文本、也不建议用户手动使用。
+        /// MainWindow 首帧后据此决定是否弹出「这次更新了什么」的内嵌变更日志弹窗，见
+        /// MainWindow.ApplyStartupArgs 和 AppConfig.ShowUpdateChangelogPopup。</summary>
+        public bool JustUpdated;
+
         /// <summary>是否解析出了任何一个需要 MainWindow 首帧后处理的有效动作。</summary>
         public bool HasAnyAction => ShowHelp || LaunchGame || GuiPage != null || OpenDownload || EnterGuestMode ||
-            StartedByAutoStart || CheckUpdateOnly || ClearCacheOnStart || ExportLogsPath != null;
+            StartedByAutoStart || CheckUpdateOnly || ClearCacheOnStart || ExportLogsPath != null || JustUpdated;
     }
 
     public const string HelpText =
@@ -142,6 +149,7 @@ public static class CommandLineService
         "  --no-animation                         关闭界面动效\n" +
         "  --safe-mode                            安全模式启动，跳过公告/AI 悬浮球等增强功能\n" +
         "  --debug-console                        额外弹出调试控制台窗口\n" +
+        "  --debug -yrj                          本次会话无视日期开启愚人节彩蛋（仍尊重 noyrj 禁用）\n" +
         "  --verbose                              调试控制台输出更详细日志\n" +
         "  --config-path <路径>                    使用指定配置文件路径\n" +
         "  --instance-dir <路径>                   使用指定实例（.minecraft）根目录\n" +
@@ -195,6 +203,9 @@ public static class CommandLineService
 
             return null;
         }
+
+        result.DebugAprilFools = args.Any(a => a.Equals("--debug", StringComparison.OrdinalIgnoreCase)) &&
+                                 args.Any(a => a.Equals("-yrj", StringComparison.OrdinalIgnoreCase));
 
         foreach (var raw in args)
         {
@@ -271,6 +282,11 @@ public static class CommandLineService
             else if (string.Equals(raw, "--verbose", StringComparison.OrdinalIgnoreCase))
             {
                 result.VerboseLogging = true;
+            }
+            else if (string.Equals(raw, "--just-updated", StringComparison.OrdinalIgnoreCase))
+            {
+                // 隐藏参数，不写进 HelpText：只有 UpdateCheckService 生成的重启脚本会带上它。
+                result.JustUpdated = true;
             }
             else if (string.Equals(raw, "--fullscreen", StringComparison.OrdinalIgnoreCase))
             {

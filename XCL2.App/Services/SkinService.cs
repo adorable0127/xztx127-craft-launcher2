@@ -23,6 +23,11 @@ public class SkinService
 
     public string SkinsDir { get; } = Path.Combine(App.DataDir, "skins");
 
+    /// <summary>用户导入的"头像照片"存放目录，跟 Minecraft 皮肤（SkinsDir）分开存放——
+    /// 头像照片是任意图片格式（jpg/png/bmp/webp 都行），不需要满足皮肤的尺寸规范，
+    /// 混在一起容易让人以为它们是同一种东西。</summary>
+    public string AvatarsDir { get; } = Path.Combine(App.DataDir, "avatars");
+
     /// <summary>authlib-injector jar 的本地缓存路径（下载一次后长期复用，不用每次启动都重新下载）。</summary>
     public string AuthlibInjectorPath { get; } = Path.Combine(App.DataDir, "authlib-injector.jar");
 
@@ -52,6 +57,35 @@ public class SkinService
         var path = Path.Combine(SkinsDir, $"{accountId}.png");
         try { if (File.Exists(path)) File.Delete(path); }
         catch { /* 删除失败不影响主流程，残留一个文件不会造成功能性问题 */ }
+    }
+
+    /// <summary>
+    /// 保存一张用户导入的头像照片，复制进 xcl2/avatars/&lt;accountId&gt;.&lt;原始扩展名&gt;。
+    /// 跟 SaveCustomSkin 同理，不做格式/尺寸校验——WPF 的 BitmapImage 能直接解码常见格式，
+    /// 显示时按控件尺寸拉伸铺满即可，不需要启动器自己裁剪/缩放。换一张新照片会先删掉这个
+    /// 账户名下所有旧扩展名的文件，避免用户来回换 png/jpg 时旧文件一直堆在目录里。
+    /// </summary>
+    public string SaveAvatarPhoto(string accountId, string sourceImagePath)
+    {
+        Directory.CreateDirectory(AvatarsDir);
+        RemoveAvatarPhoto(accountId);
+        var ext = Path.GetExtension(sourceImagePath);
+        if (string.IsNullOrWhiteSpace(ext)) ext = ".png";
+        var destPath = Path.Combine(AvatarsDir, $"{accountId}{ext}");
+        File.Copy(sourceImagePath, destPath, overwrite: true);
+        return destPath;
+    }
+
+    /// <summary>删除一个账户已保存的头像照片（不管之前保存的是什么扩展名都一并清掉）。</summary>
+    public void RemoveAvatarPhoto(string accountId)
+    {
+        try
+        {
+            if (!Directory.Exists(AvatarsDir)) return;
+            foreach (var file in Directory.GetFiles(AvatarsDir, $"{accountId}.*"))
+                File.Delete(file);
+        }
+        catch { /* 删除失败不影响主流程，残留文件不会造成功能性问题 */ }
     }
 
     /// <summary>

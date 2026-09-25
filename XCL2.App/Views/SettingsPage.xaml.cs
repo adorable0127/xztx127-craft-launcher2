@@ -1,9 +1,11 @@
-﻿using System;
+using System;
 using System.Diagnostics;
 using System.IO;
+using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
+using System.Windows.Input;
 using System.Windows.Threading;
 using Microsoft.Win32;
 using XCL2.App.Models;
@@ -23,6 +25,19 @@ public class JavaListItem
 
 public partial class SettingsPage : UserControl
 {
+    private void InstallDisplayDriver_Click(object sender, RoutedEventArgs e)
+        => WindowsDisplayDriverInstallService.StartWithConfirmation();
+
+    private void OpenToolboxPreferences_Click(object sender, RoutedEventArgs e)
+    {
+        var dlg = new ToolboxPreferencesDialog(_owner.ConfigService.Config);
+        if (OverlayDialogService.ShowModal(dlg) == true)
+        {
+            _owner.ConfigService.Save();
+            ToastService.ShowSuccess("百宝箱布局已保存，重新打开百宝箱即可看到新顺序。");
+        }
+    }
+
     private readonly MainWindow _owner;
 
     /// <summary>设置页"编辑追踪/自动保存气泡"相关状态，见 HookDirtyTracking / OnSettingsEdited 注释。
@@ -141,6 +156,7 @@ public partial class SettingsPage : UserControl
         TouchSensitivityBox.Text = cfg.TouchOverlayLookSensitivity.ToString("0.##");
         ShowModIconsCheck.IsChecked = cfg.ShowModIcons;
         ShowServerNetworkGuideCheck.IsChecked = cfg.ShowServerNetworkGuideOnStart;
+        ShowUpdateChangelogPopupCheck.IsChecked = cfg.ShowUpdateChangelogPopup;
         IsolateVersionsCheck.IsChecked = cfg.IsolateVersionsByDefault;
 
         // 外观与视觉效果：Win11 新光效 + 窗口透明度，均默认关闭，见 AppConfig 对应字段注释。
@@ -1939,6 +1955,7 @@ public partial class SettingsPage : UserControl
             ? Math.Clamp(touchSens, 0.4, 4.0) : 1.4;
         cfg.ShowModIcons = ShowModIconsCheck.IsChecked == true;
         cfg.ShowServerNetworkGuideOnStart = ShowServerNetworkGuideCheck.IsChecked == true;
+        cfg.ShowUpdateChangelogPopup = ShowUpdateChangelogPopupCheck.IsChecked == true;
         cfg.IsolateVersionsByDefault = IsolateVersionsCheck.IsChecked == true;
 
         cfg.EnableWin11VisualEffects = Win11EffectsCheck.IsChecked == true;
@@ -2741,10 +2758,14 @@ public partial class SettingsPage : UserControl
     {
         var dialog = new Microsoft.Win32.OpenFileDialog
         {
-            Filter = "图片文件|*.png;*.jpg;*.jpeg;*.bmp",
+            Filter = "图片、GIF 或视频|*.png;*.jpg;*.jpeg;*.bmp;*.gif;*.mp4;*.wmv;*.webm;*.avi",
             Multiselect = true
         };
         if (dialog.ShowDialog() != true) return;
+        if (dialog.FileNames.Any(p => new[] { ".gif", ".mp4", ".wmv", ".webm", ".avi" }.Contains(Path.GetExtension(p).ToLowerInvariant())) &&
+            !MessageBoxDialog.ShowConfirm(
+                "GIF 动图和视频背景属于实验性功能，可能不稳定，也会增加启动器内存占用。一般不建议启用它。是否启动？",
+                "实验性功能")) return;
 
         var cfg = _owner.ConfigService.Config;
         var dir = Path.Combine(App.DataDir, "backgrounds");
@@ -2763,7 +2784,8 @@ public partial class SettingsPage : UserControl
                 // 下一次覆盖就 IOException。带时间戳(到毫秒)+序号的唯一文件名彻底绕开这个问题，
                 // 多选一次导入好几张时序号也能保证互不重名。
                 var ext = Path.GetExtension(sourceFile).ToLowerInvariant();
-                if (ext is not ".png" and not ".jpg" and not ".jpeg" and not ".bmp") ext = ".png";
+                if (ext is not ".png" and not ".jpg" and not ".jpeg" and not ".bmp" and not ".gif" and not ".mp4" and not ".wmv" and not ".webm" and not ".avi")
+                    throw new InvalidOperationException("不支持的图片或视频文件格式。");
                 copiedPath = Path.Combine(dir, $"custom-{DateTime.Now:yyyyMMdd-HHmmss-fff}-{imported.Count}{ext}");
                 File.Copy(sourceFile, copiedPath, overwrite: false);
 
@@ -2958,7 +2980,9 @@ public partial class SettingsPage : UserControl
             return;
         }
 
-        new ImagePreviewDialog(path).ShowDialog();
+        if (new[] { ".gif", ".mp4", ".wmv", ".webm", ".avi" }.Contains(Path.GetExtension(path).ToLowerInvariant()))
+            new MediaPreviewDialog(path).ShowDialog();
+        else new ImagePreviewDialog(path).ShowDialog();
     }
 
     /// <summary>点列表里的某一条 = 把它设为当前背景。固定模式下这就是"以后长期用这一张"；
@@ -2997,11 +3021,80 @@ public partial class SettingsPage : UserControl
         if (cfg.BackgroundRotationMode == mode) return;
 
         cfg.BackgroundRotationMode = mode;
-        // 切换模式等于重新开始计时：清掉"上次换过的日期"，这样 Resolve 会把今天记下来、
-        // 今天不换，从明天开始每天换一张（见 AppearanceRotationService 里的注释）。
+        // 切换模式等于重新开始计时：把三种计时依据（自然日、挂钟时间戳）都清掉，这样
+        // Resolve 会重新认领"现在"作为起点、本次不换，从下一个完整周期开始才真正轮换
+        // （见 AppearanceRotationService 里的注释），不管新模式是按天、按固定时刻还是
+        // 按分钟/小时/自定义间隔计时。
         cfg.BackgroundRotationLastDate = null;
+        cfg.BackgroundRotationLastTimestamp = null;
+        RefreshBackgroundRotationExtraPanels();
         // ApplyResolvedBackground 内部已经 Save 过了，这里不再调 OnSettingsEdited 标脏——
         // 标了会让用户看到"有未保存的更改"，但其实已经写盘了，反而误导。
+        ApplyResolvedBackground();
+    }
+
+    /// <summary>根据当前选中的"背景选择方式"，显示/隐藏"自定义分钟数"或"固定时刻"这两个
+    /// 附加输入框，并把输入框的初始值同步成当前配置——下拉框一切换就该看到对应的输入项，
+    /// 不用等保存。</summary>
+    private void RefreshBackgroundRotationExtraPanels()
+    {
+        var cfg = _owner.ConfigService.Config;
+        var mode = cfg.BackgroundRotationMode;
+
+        BackgroundRotationIntervalPanel.Visibility = mode == AppearanceRotationMode.CustomInterval
+            ? Visibility.Visible : Visibility.Collapsed;
+        BackgroundRotationFixedTimePanel.Visibility = mode == AppearanceRotationMode.FixedTime
+            ? Visibility.Visible : Visibility.Collapsed;
+
+        RunWithoutDirtyTracking(() =>
+        {
+            BackgroundRotationIntervalBox.Text = Math.Max(1, cfg.BackgroundRotationIntervalMinutes).ToString();
+            BackgroundRotationFixedTimeBox.Text = string.IsNullOrWhiteSpace(cfg.BackgroundRotationFixedTime)
+                ? "00:00" : cfg.BackgroundRotationFixedTime;
+        });
+    }
+
+    /// <summary>自定义分钟数输入框：只允许数字，跟项目里其它纯数字输入框（比如内存大小）
+    /// 的处理方式一致，避免用户输入非数字之后解析失败还要额外弹提示。</summary>
+    private void BackgroundRotationIntervalBox_PreviewTextInput(object sender, TextCompositionEventArgs e)
+    {
+        e.Handled = !e.Text.All(char.IsDigit);
+    }
+
+    /// <summary>失焦时才真正落盘并重新解析一次——跟着每个字符敲击都存一遍没有必要，
+    /// 而且用户删空重打的中间状态（比如从"30"删成""）不应该被当成有效值存下去。</summary>
+    private void BackgroundRotationIntervalBox_LostFocus(object sender, RoutedEventArgs e)
+    {
+        if (_suppressDirtyTracking) return;
+        var cfg = _owner.ConfigService.Config;
+        if (!int.TryParse(BackgroundRotationIntervalBox.Text, out var minutes) || minutes < 1)
+            minutes = 1;
+        if (cfg.BackgroundRotationIntervalMinutes == minutes)
+        {
+            RunWithoutDirtyTracking(() => BackgroundRotationIntervalBox.Text = minutes.ToString());
+            return;
+        }
+        cfg.BackgroundRotationIntervalMinutes = minutes;
+        RunWithoutDirtyTracking(() => BackgroundRotationIntervalBox.Text = minutes.ToString());
+        ApplyResolvedBackground();
+    }
+
+    /// <summary>固定时刻输入框失焦时校验并落盘。校验不通过（格式不对）就原样退回上一个
+    /// 合法值——不弹错误对话框打断用户，静默纠正即可，反正输入框会立刻显示纠正后的样子。</summary>
+    private void BackgroundRotationFixedTimeBox_LostFocus(object sender, RoutedEventArgs e)
+    {
+        if (_suppressDirtyTracking) return;
+        var cfg = _owner.ConfigService.Config;
+        var text = BackgroundRotationFixedTimeBox.Text?.Trim() ?? "";
+        if (!TimeSpan.TryParseExact(text, "hh\\:mm", null, out var parsed) &&
+            !TimeSpan.TryParse(text, out parsed))
+        {
+            parsed = TimeSpan.TryParse(cfg.BackgroundRotationFixedTime, out var fallback) ? fallback : TimeSpan.Zero;
+        }
+        var normalized = $"{(int)parsed.TotalHours:D2}:{parsed.Minutes:D2}";
+        RunWithoutDirtyTracking(() => BackgroundRotationFixedTimeBox.Text = normalized);
+        if (string.Equals(cfg.BackgroundRotationFixedTime, normalized, StringComparison.Ordinal)) return;
+        cfg.BackgroundRotationFixedTime = normalized;
         ApplyResolvedBackground();
     }
 
@@ -3041,14 +3134,68 @@ public partial class SettingsPage : UserControl
 
         var canRotate = candidates.Count >= 2;
         BackgroundRotationModeCombo.IsEnabled = canRotate;
+        BackgroundRotationIntervalPanel.IsEnabled = canRotate;
+        BackgroundRotationFixedTimePanel.IsEnabled = canRotate;
         BackgroundRotationHintText.Text = candidates.Count switch
         {
-            0 => "还没有导入任何背景图片。导入后可以选择固定用某一张，或者每天自动换一张。",
-            1 => "只有一张背景图片，会直接使用它；再导入至少一张之后，“每天自动轮换”才有意义。",
-            _ when cfg.BackgroundRotationMode == AppearanceRotationMode.Daily =>
-                $"共 {candidates.Count} 张，每天按列表顺序自动换下一张（跨过零点时自动生效，不用重启启动器）。",
-            _ => $"共 {candidates.Count} 张，固定使用列表里选中的那一张。"
+            0 => "还没有导入任何背景图片/视频。导入后可以选择固定用某一个，或者按时间自动轮换。",
+            1 => "只有一个背景（图片或视频），会直接使用它；再导入至少一个之后，自动轮换才有意义。",
+            _ => cfg.BackgroundRotationMode switch
+            {
+                AppearanceRotationMode.Daily =>
+                    $"共 {candidates.Count} 个，每天按列表顺序自动换下一个（跨过零点时自动生效，不用重启启动器）。",
+                AppearanceRotationMode.Minutely =>
+                    $"共 {candidates.Count} 个，每隔 1 分钟自动换下一个。",
+                AppearanceRotationMode.Hourly =>
+                    $"共 {candidates.Count} 个，每隔 1 小时自动换下一个。",
+                AppearanceRotationMode.CustomInterval =>
+                    $"共 {candidates.Count} 个，每隔 {Math.Max(1, cfg.BackgroundRotationIntervalMinutes)} 分钟自动换下一个。",
+                AppearanceRotationMode.FixedTime =>
+                    $"共 {candidates.Count} 个，每天 {(string.IsNullOrWhiteSpace(cfg.BackgroundRotationFixedTime) ? "00:00" : cfg.BackgroundRotationFixedTime)} 自动换下一个。",
+                _ => $"共 {candidates.Count} 个，固定使用列表里选中的那一个。"
+            }
         };
+        RefreshBackgroundRotationExtraPanels();
+
+        // 视频壁纸声音勾选框：只有当前实际生效的背景是视频文件时才有意义（图片/GIF 没有
+        // 声轨），其它情况直接禁用并说明原因，避免用户对着一张图片纳闷"怎么勾了没反应"。
+        var isCurrentVideo = !string.IsNullOrWhiteSpace(cfg.CustomBackgroundImagePath)
+            && new[] { ".mp4", ".wmv", ".webm", ".avi" }.Contains(Path.GetExtension(cfg.CustomBackgroundImagePath).ToLowerInvariant());
+        CustomBackgroundVideoSoundCheck.IsEnabled = isCurrentVideo;
+        CustomBackgroundVideoSoundCheck.IsChecked = cfg.CustomBackgroundVideoSoundEnabled;
+        CustomBackgroundVideoSoundCheck.ToolTip = isCurrentVideo
+            ? "开启后视频壁纸会带上它自己的原始音轨播放；关闭则跟以前一样静音循环播放。"
+            : "当前背景不是视频文件，这个开关暂时用不上；选中一个视频壁纸后即可开启声音。";
+
+        // 缩放方式下拉框同理：先按当前配置选中对应项，再决定是否可用。
+        RunWithoutDirtyTracking(() => SelectComboByTag(CustomBackgroundVideoFitModeCombo, cfg.CustomBackgroundVideoFitMode.ToString()));
+        if (CustomBackgroundVideoFitModeCombo.SelectedItem == null) CustomBackgroundVideoFitModeCombo.SelectedIndex = 0;
+        CustomBackgroundVideoFitModeCombo.IsEnabled = isCurrentVideo;
+    }
+
+    /// <summary>视频壁纸声音开关：立即写回配置并让主窗口当前正在播放的视频同步生效，
+    /// 不用重启、也不用重新选一次背景。</summary>
+    private void CustomBackgroundVideoSoundCheck_Changed(object sender, RoutedEventArgs e)
+    {
+        if (_suppressDirtyTracking) return;
+        var cfg = _owner.ConfigService.Config;
+        cfg.CustomBackgroundVideoSoundEnabled = CustomBackgroundVideoSoundCheck.IsChecked == true;
+        _owner.ConfigService.Save();
+        _owner.ApplyCustomBackgroundVideoSound();
+    }
+
+    /// <summary>视频壁纸缩放方式：同样立即写回 + 立即让当前正在播放的视频同步生效。</summary>
+    private void CustomBackgroundVideoFitModeCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_suppressDirtyTracking) return;
+        if (CustomBackgroundVideoFitModeCombo.SelectedItem is not ComboBoxItem { Tag: string tag }) return;
+        if (!Enum.TryParse<VideoBackgroundFitMode>(tag, out var mode)) return;
+
+        var cfg = _owner.ConfigService.Config;
+        if (cfg.CustomBackgroundVideoFitMode == mode) return;
+        cfg.CustomBackgroundVideoFitMode = mode;
+        _owner.ConfigService.Save();
+        _owner.ApplyCustomBackgroundVideoFitMode();
     }
 
     private bool ApplyBackgroundImage(string path)
@@ -3133,13 +3280,16 @@ public partial class SettingsPage : UserControl
         };
     }
 
-    /// <summary>把"固定 / 每天轮换"两个下拉框的 Tag 解析成枚举。解析不出来一律当成 Fixed——
-    /// 默认值应该是"什么都不会自己变"，配置坏掉时不能反而让界面开始每天乱换。</summary>
+    /// <summary>把"选择方式"下拉框（背景图片/视频、配色）的 Tag 解析成枚举。解析不出来
+    /// 一律当成 Fixed——默认值应该是"什么都不会自己变"，配置坏掉时不能反而让界面开始
+    /// 自己乱换。用 Enum.TryParse 而不是逐个 if：背景那边的下拉框比配色多出
+    /// Minutely/Hourly/CustomInterval/FixedTime 四档，配色下拉框的 XAML 里压根没有这几个
+    /// ComboBoxItem，天然不会解析出来，不用在这里额外区分"这是背景框还是配色框"。</summary>
     private static AppearanceRotationMode ParseRotationMode(ComboBox combo)
     {
         var tag = (combo?.SelectedItem as ComboBoxItem)?.Tag as string;
-        return string.Equals(tag, nameof(AppearanceRotationMode.Daily), StringComparison.OrdinalIgnoreCase)
-            ? AppearanceRotationMode.Daily
+        return Enum.TryParse<AppearanceRotationMode>(tag, ignoreCase: true, out var mode)
+            ? mode
             : AppearanceRotationMode.Fixed;
     }
 

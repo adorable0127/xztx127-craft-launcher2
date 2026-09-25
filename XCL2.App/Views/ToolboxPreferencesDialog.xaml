@@ -1,0 +1,27 @@
+<local:OverlayDialogControl x:Class="XCL2.App.Views.ToolboxPreferencesDialog"
+ xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+ xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+ xmlns:local="clr-namespace:XCL2.App.Views" MinWidth="440" MaxWidth="540">
+ <StackPanel Margin="24">
+  <TextBlock Text="百宝箱快捷入口" FontSize="18" FontWeight="Bold" Margin="0,0,0,8"/>
+  <TextBlock Text="设置首页显示的工具数量和排列顺序。省略号始终可以打开全部工具。" TextWrapping="Wrap" Margin="0,0,0,12"/>
+  <StackPanel Orientation="Horizontal" Margin="0,0,0,12">
+   <TextBlock Text="显示数量" VerticalAlignment="Center" Margin="0,0,10,0"/>
+   <ComboBox x:Name="VisibleCountCombo" Width="110" SelectedIndex="3">
+    <ComboBoxItem Content="1"/><ComboBoxItem Content="2"/><ComboBoxItem Content="3"/><ComboBoxItem Content="4"/>
+    <ComboBoxItem Content="5"/><ComboBoxItem Content="6"/><ComboBoxItem Content="7"/><ComboBoxItem Content="8"/>
+   </ComboBox>
+  </StackPanel>
+  <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+   <ListBox x:Name="ToolOrderList" MaxHeight="300" MinHeight="250"/>
+   <StackPanel Grid.Column="1" Margin="10,0,0,0" VerticalAlignment="Center">
+    <Button Content="上移 ↑" Padding="12,8" Margin="0,0,0,8" Click="MoveUp_Click"/>
+    <Button Content="下移 ↓" Padding="12,8" Click="MoveDown_Click"/>
+   </StackPanel>
+  </Grid>
+  <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,18,0,0">
+   <Button Content="取消" Padding="18,8" Click="Cancel_Click"/>
+   <Button Content="保存" Padding="18,8" Margin="8,0,0,0" Click="Save_Click"/>
+  </StackPanel>
+ </StackPanel>
+</local:OverlayDialogControl>

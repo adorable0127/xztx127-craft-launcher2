@@ -26,8 +26,4 @@
   https://developer.microsoft.com/microsoft-edge/webview2/ 下载安装，或者改用
   「浏览器登录」按钮（效果一样，只是登录过程发生在系统默认浏览器里，不需要 WebView2）。
 - WebView2 组件只有在真正点击「内嵌登录」时才会被加载，不会拖慢程序启动或占用主界面的资源。
-
-## 已知限制
-
-- 启动 1.16 及更早版本的 Minecraft 时，程序会自动匹配到 Java 8（Mojang 官方对这些
-  版本的最低 Java 版本要求），无需手动指定；如果本机没有 Java 8，会提示自动下载便携版。
+                                                               Refined by xztx127

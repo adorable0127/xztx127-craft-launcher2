@@ -626,8 +626,10 @@ public class ConfigService
     {
         Accounts.RemoveAll(a => a.Id == accountId);
         SaveAccounts();
-        // 顺手清理这个账户可能保存过的自定义皮肤文件，避免残留孤儿文件。
-        new SkinService().RemoveCustomSkin(accountId);
+        // 顺手清理这个账户可能保存过的自定义皮肤文件/头像照片，避免残留孤儿文件。
+        var skinService = new SkinService();
+        skinService.RemoveCustomSkin(accountId);
+        skinService.RemoveAvatarPhoto(accountId);
     }
 
     // ===================== 危险操作：需要业务层先做 "xztx127" 二次确认 =====================

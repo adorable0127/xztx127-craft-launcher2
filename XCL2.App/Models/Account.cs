@@ -104,6 +104,14 @@ public class Account
     /// </summary>
     public bool CustomSkinSlim { get; set; }
 
+    /// <summary>
+    /// 用户自己导入的一张头像照片（跟 Minecraft 皮肤完全无关，可以是任意图片：自拍、
+    /// 头像图、表情包……），存放在 xcl2/avatars/&lt;accountId&gt;.&lt;ext&gt;。设置了这个字段之后，
+    /// 「账户」页和「选择账户启动」弹窗里这个账户前面显示的头像会优先用这张照片，
+    /// 而不是皮肤正脸渲染或史蒂夫默认头像——见 AccountAvatarConverter 的优先级说明。
+    /// </summary>
+    public string? AvatarPhotoPath { get; set; }
+
     public string DisplayLabel => Type switch
     {
         AccountType.Microsoft => $"{Username} (微软账户)",

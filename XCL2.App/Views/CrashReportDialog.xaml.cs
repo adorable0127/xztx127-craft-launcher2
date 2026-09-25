@@ -20,13 +20,27 @@ public partial class CrashReportDialog : OverlayDialogControl
     private readonly MainWindow _owner;
     private readonly GameProcessInfo? _processInfo;
 
-    private CrashReportDialog(MainWindow owner, string message, GameProcessInfo? processInfo)
+    private CrashReportDialog(MainWindow owner, string message, GameProcessInfo? processInfo, bool suppressAutomaticAnalysis = false, string? title = null)
     {
         InitializeComponent();
         _owner = owner;
         _processInfo = processInfo;
         MessageText.Text = message;
-        RunInlineAnalysis();
+        if (!string.IsNullOrWhiteSpace(title)) TitleText.Text = title;
+        if (!suppressAutomaticAnalysis && processInfo != null)
+        {
+            var evidence = OpenGlTroubleshooter.ReadCurrentIncidentEvidence(processInfo);
+            if (OpenGlTroubleshooter.IsOpenGlFailure(evidence))
+            {
+                TitleText.Text = "OpenGL 初始化失败";
+                MessageText.Text = "游戏没有成功创建所需的图形环境。已识别本次日志的 OpenGL 错误，请优先尝试下方修复步骤，无需直接提交崩溃报告。";
+                OpenGlRepairMessage.Text = OpenGlTroubleshooter.RepairSteps;
+                var logPath = OpenGlTroubleshooter.CaptureIncident(processInfo, evidence);
+                OpenGlEvidencePath.Text = logPath == null ? "保存诊断日志失败，可通过下方按钮导出完整日志。" : "本次 OpenGL 诊断日志：" + logPath;
+                OpenGlRepairSection.Visibility = Visibility.Visible;
+            }
+        }
+        if (!suppressAutomaticAnalysis) RunInlineAnalysis();
     }
 
     /// <summary>需求：把「日志分析」直接嵌进这个崩溃弹窗，不用再点"查看日志"跳去日志页找。
@@ -82,6 +96,19 @@ public partial class CrashReportDialog : OverlayDialogControl
         var dlg = new CrashReportDialog(owner, message, processInfo);
         OverlayDialogService.ShowNonModal(dlg);
     }
+
+    /// <summary>日志只留下半截、又没有明确异常证据时，不把它包装成“游戏崩溃”。
+    /// 正文严格只显示用户要求的一行，同时关闭 OpenGL/自动崩溃分析，避免下面又冒出一堆
+    /// 与“可能是手动关闭”互相矛盾的诊断结论。</summary>
+    public static void ShowPossibleManualClose(MainWindow owner, GameProcessInfo processInfo)
+    {
+        var dlg = new CrashReportDialog(owner, "可能是用户手动关闭了游戏", processInfo,
+            suppressAutomaticAnalysis: true, title: "游戏已退出");
+        OverlayDialogService.ShowNonModal(dlg);
+    }
+
+    private void InstallOpenGlDriver_Click(object sender, RoutedEventArgs e)
+        => WindowsDisplayDriverInstallService.StartWithConfirmation();
 
     private void ViewLog_Click(object sender, RoutedEventArgs e)
     {

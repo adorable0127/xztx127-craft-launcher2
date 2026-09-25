@@ -37,6 +37,13 @@ public static class AprilFoolsService
     // “千万别点”第三个确定可在任意日期临时触发一次愚人节效果。
     // 这两个字段只存在于当前进程内，绝不写 state.json，因此重启启动器后必定消失。
     private static Effect _sessionEffects = Effect.None;
+    private static bool _forceAprilForSession;
+
+    public static void EnableDebugAprilFools()
+    {
+        if (IsDisabledByRegistry()) return;
+        _forceAprilForSession = true;
+    }
     private static bool _sessionEffectsDismissed;
 
     /// <summary>某个整蛊效果被启用/恢复时触发，UI 层（MainWindow/HomePage）订阅它来
@@ -91,7 +98,7 @@ public static class AprilFoolsService
     public static bool IsActive => DateEffectsActive || SessionEffectsActive;
 
     private static bool DateEffectsActive =>
-        IsAprilFoolsDate() && !IsDisabledByRegistry() && _state is { FlagClicked: false } && _state.Effects != Effect.None;
+        (IsAprilFoolsDate() || _forceAprilForSession) && !IsDisabledByRegistry() && _state is { FlagClicked: false } && _state.Effects != Effect.None;
 
     private static bool SessionEffectsActive => !_sessionEffectsDismissed && _sessionEffects != Effect.None;
 
@@ -123,16 +130,18 @@ public static class AprilFoolsService
     /// 就随机抽一组效果并落盘；已经抽过就读回旧状态（可能是"已抽中"也可能是"今天已点过白旗"）。</summary>
     public static void EnsureTodaysStateLoaded()
     {
-        if (!IsAprilFoolsDate() || IsDisabledByRegistry())
+        if ((!IsAprilFoolsDate() && !_forceAprilForSession) || IsDisabledByRegistry())
         {
             _state = null;
             StateChanged?.Invoke();
             return;
         }
 
-        LoadState();
+        // 调试会话内保持同一组效果；重复刷新 UI 不应重新随机或复活已关闭的彩蛋。
+        if (_forceAprilForSession && _state?.SelectedDate != new DateTime(2000, 4, 1)) _state = null;
+        else LoadState();
 
-        var today = DateTime.Now.Date;
+        var today = _forceAprilForSession ? new DateTime(2000, 4, 1) : DateTime.Now.Date;
         if (_state == null || _state.SelectedDate != today)
         {
             _state = new AprilFoolsState
@@ -141,8 +150,11 @@ public static class AprilFoolsService
                 Effects = RollRandomEffects(),
                 FlagClicked = false,
             };
-            SaveState();
-            PersistTriggeredDescriptions(_state.Effects);
+            if (!_forceAprilForSession)
+            {
+                SaveState();
+                PersistTriggeredDescriptions(_state.Effects);
+            }
         }
 
         StateChanged?.Invoke();
@@ -233,10 +245,10 @@ public static class AprilFoolsService
     public static void DismissForToday()
     {
         // 真实 4 月 1 日状态照旧落盘，保证当天重启后不再出现。
-        if (_state != null && IsAprilFoolsDate())
+        if (_state != null && (IsAprilFoolsDate() || _forceAprilForSession))
         {
             _state.FlagClicked = true;
-            SaveState();
+            if (!_forceAprilForSession) SaveState();
         }
 
         // “千万别点”触发的状态只改内存，不做任何持久化。

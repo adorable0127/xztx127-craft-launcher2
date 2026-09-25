@@ -120,14 +120,28 @@ public static class UpdateCheckService
             return;
         }
 
+        // 发布更新提醒也展示 GitHub API 上当前安装版本对应的 Release 日志；
+        // 若仓库未发布同标签的版本或 API 暂时不可访问，不影响原有更新流程。
         var changelog = string.IsNullOrWhiteSpace(release.Body) ? "（作者未填写更新日志）" : release.Body!.Trim();
-        if (changelog.Length > 600) changelog = changelog[..600] + "\n……（更新日志过长，已截断）";
+        string currentReleaseNotes;
+        try
+        {
+            var notes = await GitHubReleaseNotesService.FetchAsync();
+            currentReleaseNotes = notes.Current;
+        }
+        catch (Exception ex)
+        {
+            currentReleaseNotes = "GitHub 当前安装版本的更新日志获取失败：" + ex.Message +
+                                  "\n可在「更新日志」窗口查看发布页面并重试。";
+        }
 
         var confirmed = false;
         Application.Current.Dispatcher.Invoke(() =>
         {
             confirmed = MessageBoxDialog.ShowConfirm(
-                $"发现新版本 v{FormatVersion(remoteVersion)}（当前 v{FormatVersion(localVersion)}）：\n\n{changelog}\n\n是否现在下载并更新？\n" +
+                $"发现新版本 v{FormatVersion(remoteVersion)}（当前 v{FormatVersion(localVersion)}）：\n\n" +
+                $"【GitHub 最新版本发布日志】\n{changelog}\n\n【GitHub 当前安装版本发布日志】\n{currentReleaseNotes}\n\n" +
+                "是否现在下载并更新？\n" +
                 "（如果选择「否」，下次启动检测到更新版本时还会继续提示。）",
                 "发现新版本");
         });
@@ -370,7 +384,11 @@ public static class UpdateCheckService
         }
 
         sb.AppendLine(">>\"%LOG%\" echo [%date% %time%] 重新启动程序...");
-        sb.AppendLine("start \"\" \"%TARGETEXE%\"");
+        // 带上隐藏参数 --just-updated：让重启回来的这个新进程知道\"自己是刚更新完重启的
+        // 那一次\"，首帧渲染后据此弹出一次「这次更新了什么」的内嵌变更日志（见
+        // CommandLineService.ParsedArgs.JustUpdated / MainWindow.ApplyStartupArgs）。
+        // 只在这一条重启路径上加，用户手动双击 exe 启动不会带这个参数，不影响正常使用。
+        sb.AppendLine("start \"\" \"%TARGETEXE%\" --just-updated");
         sb.AppendLine("rmdir /s /q \"%TEMPROOT%\" >nul 2>nul");
         sb.AppendLine(">>\"%LOG%\" echo [%date% %time%] 更新流程结束。");
         sb.AppendLine("(goto) 2>nul & del \"%~f0\"");
