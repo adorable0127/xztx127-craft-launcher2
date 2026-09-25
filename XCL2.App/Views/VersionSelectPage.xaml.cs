@@ -298,14 +298,36 @@ public partial class VersionSelectPage : UserControl
         OpenMinecraftWiki(v.Id);
     }
 
-    /// <summary>打开系统默认浏览器访问中文 Minecraft Wiki 对给定关键词的搜索结果。
+    /// <summary>
+    /// 判断一个版本号是否是"正式版"命名格式（只由数字和点号组成，如 "1.20.4"、"26.3"）。
+    /// 中文 Minecraft Wiki 给正式版开的条目统一是 "Java版&lt;版本号&gt;" 这个固定格式
+    /// （例如 https://zh.minecraft.wiki/w/Java%E7%89%8826.3 ，对应"Java版26.3"），
+    /// 可以直接拼直链；快照/预发布/候选版/愚人节版本命名不规律，没有这个规律，仍然走搜索兜底。
+    /// </summary>
+    private static bool LooksLikeReleaseId(string id)
+    {
+        if (string.IsNullOrEmpty(id)) return false;
+        foreach (var c in id)
+        {
+            if (!char.IsDigit(c) && c != '.') return false;
+        }
+        return true;
+    }
+
+    /// <summary>打开系统默认浏览器访问中文 Minecraft Wiki 对给定版本号的页面：
+    /// 正式版（纯数字+点号，如 "26.3"）直接拼 "Java版&lt;版本号&gt;" 条目直链；
+    /// 其余命名不规律的版本（快照/预发布/候选版/愚人节版本等）退回 Special:Search，
+    /// 命中时 MediaWiki 会自动跳到唯一匹配的条目，没命中也能看到搜索结果页而不是 404，
+    /// 比强行拼一个可能拼错的条目直链更稳妥。
     /// 用 Process.Start 的 UseShellExecute 方式打开 URL（不直接拼 Process.Start(url) 是因为
     /// .NET 默认不会把 url 当可执行文件处理，需要显式声明走 Shell 关联程序）。</summary>
     internal static void OpenMinecraftWiki(string keyword)
     {
         try
         {
-            var url = "https://zh.minecraft.wiki/?search=" + Uri.EscapeDataString(keyword);
+            var url = LooksLikeReleaseId(keyword)
+                ? "https://zh.minecraft.wiki/w/" + Uri.EscapeDataString("Java版" + keyword)
+                : "https://zh.minecraft.wiki/?search=" + Uri.EscapeDataString(keyword);
             System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(url) { UseShellExecute = true });
         }
         catch (Exception ex)

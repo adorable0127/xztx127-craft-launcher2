@@ -756,7 +756,10 @@ public partial class DownloadCenterPage : UserControl
     /// 复用 VersionSelectPage.OpenMinecraftWiki 的跳转逻辑，两处右键菜单行为保持一致。</summary>
     private void ViewVersionOnWiki_Click(object sender, RoutedEventArgs e)
     {
-        if (sender is not MenuItem { Tag: VersionListItem item }) return;
+        // 这个处理器同时挂在右键菜单(MenuItem)和行内常驻按钮(Button)上，
+        // 两者都把当前行的 VersionListItem 放在 Tag 里，取 FrameworkElement.Tag 统一处理，
+        // 而不是只认 MenuItem——之前只判断 MenuItem 导致点按钮完全没反应。
+        if (sender is not FrameworkElement { Tag: VersionListItem item }) return;
         VersionSelectPage.OpenMinecraftWiki(item.Id);
     }
 
