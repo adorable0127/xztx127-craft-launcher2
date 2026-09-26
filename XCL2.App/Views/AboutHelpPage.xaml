@@ -308,6 +308,16 @@
                                 <TextBlock TextWrapping="Wrap" FontSize="12" Margin="0,10,0,0"
                                            Foreground="{DynamicResource TextSecondaryBrush}"
                                            Text="个人开发的第三方 Minecraft Java 版启动器，接入 Modrinth / CurseForge 模组平台，支持离线登录。开源地址：github.com/adorable0127/xztx127-craft-launcher2"/>
+
+                                <!-- 当前构建版本 + 编译时间：BuildInfo.g.cs 由 csproj 里的
+                                     XCL2GenerateBuildInfo 编译期目标自动生成，两个值都写死在
+                                     生成的常量里，这里 code-behind 只是原样读出来拼成一行文字，
+                                     不做运行时计算——保证显示的确实是"这次编译"的版本和编译
+                                     时间，而不是运行时临时算出来的值。放在作者信息卡片内部、
+                                     紧跟开源地址下面，跟"这个启动器是谁在什么时候编出来的"
+                                     这条信息放在一起，比单独摆在鸣谢板块最下面更符合语境。 -->
+                                <TextBlock x:Name="BuildInfoText" TextWrapping="Wrap" FontSize="11" Margin="0,6,0,0"
+                                           Foreground="{DynamicResource TextSecondaryBrush}"/>
                             </StackPanel>
                         </Border>
 

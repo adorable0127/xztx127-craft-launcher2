@@ -145,7 +145,37 @@ public partial class ToolboxPage : UserControl
     }
 
     private static string ToolboxTitle(TabItem item)
-        => item.Header?.ToString() ?? "工具";
+        => StripLeadingIconGlyph(item.Header?.ToString() ?? "工具");
+
+    /// <summary>
+    /// 部分 Tab 的 Header 语言资源字符串本身就带了图标前缀（比如
+    /// Str_Ui_Advancement_Image = "🏆 成就图片"），而 InitializeToolboxNavigation
+    /// 拼装按钮/"更多"列表文字时又统一加了一次 ToolboxIcon(idx) 前缀，两者叠在一起
+    /// 就是"有些工具会出现两个图标"这个 bug 的根因——只有 Header 资源本身带图标的那几个
+    /// 工具会踩中，其余工具只有 ToolboxIcon 这一个前缀所以看起来正常。
+    /// 这里在拼接图标之前，先把 Header 文字开头那个"看起来像图标"的字符（连同紧跟着的
+    /// 一个空格）剥掉，保证不管语言资源里写没写图标前缀，最终显示的图标都只有
+    /// ToolboxIcon(idx) 这一份，不做"猜测"式的字符串匹配，按 Unicode 类别判断更稳。
+    /// </summary>
+    private static string StripLeadingIconGlyph(string text)
+    {
+        if (string.IsNullOrEmpty(text)) return text;
+
+        int elementLength = System.Globalization.StringInfo.GetNextTextElementLength(text);
+        if (elementLength <= 0 || elementLength >= text.Length) return text;
+
+        int codepoint = char.ConvertToUtf32(text, 0);
+        var category = System.Globalization.CharUnicodeInfo.GetUnicodeCategory(text, 0);
+        // 表情/符号类图标绝大多数落在 U+2100 以上（杂项符号、表情符号等平面），
+        // 正常的中文/英文标题文字码位都远低于这个范围，用码位 + Unicode 类别双重判断，
+        // 避免把标题本身第一个汉字/字母误判成图标。
+        bool looksLikeIconGlyph = codepoint > 0x2100
+            || category == System.Globalization.UnicodeCategory.OtherSymbol
+            || category == System.Globalization.UnicodeCategory.ModifierSymbol;
+        if (!looksLikeIconGlyph) return text;
+
+        return text.Substring(elementLength).TrimStart(' ', '\u200d');
+    }
 
     private void InitializeToolboxNavigation()
     {

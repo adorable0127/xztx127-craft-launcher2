@@ -32,6 +32,34 @@ public partial class LoginPage : UserControl
     {
         _accounts.Clear();
         foreach (var a in _owner.ConfigService.Accounts) _accounts.Add(a);
+        RefreshOnlineAvatarsInBackground();
+    }
+
+    /// <summary>
+    /// 皮肤站/正版/设置过皮肤的离线账户，头像不该只看本地一次性绑定的文件——服务器端皮肤
+    /// 随时可能被玩家自己换掉。每次刷新账户列表时，为符合条件的账户各发起一次后台查询/
+    /// 下载（见 AccountAvatarCacheService），查到新皮肤后把该账户在 _accounts 里"移除再
+    /// 原地插回"来触发 ListBox 重新生成容器、重新走一遍 AccountAvatarConverter——Account
+    /// 本身没有实现 INotifyPropertyChanged，仅仅改字段不会让已经生成的 ListBoxItem 刷新，
+    /// 这是在不改动 Account 模型的前提下让绑定重新求值最简单的办法。全程静默，查询失败
+    /// 不提示、不影响账户列表本身的正常显示。
+    /// </summary>
+    private void RefreshOnlineAvatarsInBackground()
+    {
+        foreach (var account in _accounts.ToArray())
+        {
+            if (!AccountAvatarCacheService.ShouldFetch(account)) continue;
+            _ = AccountAvatarCacheService.RefreshAsync(account, () =>
+            {
+                Dispatcher.Invoke(() =>
+                {
+                    int idx = _accounts.IndexOf(account);
+                    if (idx < 0) return; // 期间账户被删除/列表已经变化，不用再刷新
+                    _accounts.RemoveAt(idx);
+                    _accounts.Insert(idx, account);
+                });
+            });
+        }
     }
 
     private void AddOffline_Click(object sender, RoutedEventArgs e)
@@ -294,6 +322,26 @@ public partial class LoginPage : UserControl
     private void SkinModel_Click(object sender, RoutedEventArgs e)
     {
         if (sender is not Button { Tag: Account account }) return;
+
+        // 3D 纸娃娃同样是实验性功能，两层确认后才真正放行：
+        // 第一层"好吧好吧"是主按钮（默认更安全的退出项）；选了"我偏要试试"才会看到
+        // 第二层更明确的警告，第二层"怕了"仍是主按钮，只有"爷们儿继续干"才真正进入。
+        var stillWants = MessageBoxDialog.ShowCustomYesNo(
+            "3D 纸娃娃是实验性功能，经过实测存在一些比较抽象的 bug，作者也不会修，建议不要打开。",
+            "3D 纸娃娃提醒",
+            leftText: "我偏要试试",
+            rightText: "好吧好吧",
+            rightIsPrimary: true);
+        if (!stillWants) return;
+
+        var reallyEnter = MessageBoxDialog.ShowCustomYesNo(
+            "这个实验性功能真的不稳定，出了 bug 不要往外提交反馈——作者也在努力修。",
+            "再确认一下",
+            leftText: "爷们儿继续干",
+            rightText: "怕了",
+            rightIsPrimary: true);
+        if (!reallyEnter) return;
+
         new SkinModelViewerDialog(account).ShowDialog();
     }
 

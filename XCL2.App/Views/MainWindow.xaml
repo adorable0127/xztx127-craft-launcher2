@@ -614,7 +614,22 @@
                  卡片观感（圆角+PanelBrush 背景+阴影），弹窗自己的 XAML 不需要重复写这些。 -->
             <Border x:Name="OverlayCard" Background="Transparent" CornerRadius="8"
                     HorizontalAlignment="Center" VerticalAlignment="Center"
-                    BorderBrush="{DynamicResource DividerBrush}" BorderThickness="1">
+                    BorderBrush="{DynamicResource DividerBrush}" BorderThickness="1"
+                    CacheMode="BitmapCache">
+                <!-- CacheMode="BitmapCache" 加在这一层（补丁前只加在了 SkinModelViewerDialog
+                     自己的 Border/Viewport3D 上，还不够）：DropShadowEffect 挂在 OverlayCard
+                     自己身上，是 OverlayContentHost（弹窗内容，包括 3D 纸娃娃）的直接祖先——
+                     只要祖先链上还有一层"活的" Effect 没有被缓存成位图，WPF 合成的时候仍然要把
+                     "内部某处混了 Viewport3D 硬件表面"这棵子树跟外层 Effect 的中间表面强行合并，
+                     纸娃娃子树自己缓不缓存都不能完全绕开这一步，这正是加了 SkinModelViewerDialog
+                     内部那次 CacheMode 之后花屏依然复现的原因。现在把 OverlayCard 本身也整体
+                     栅格化：从这里往下（阴影 + 磨砂背景层 + 弹窗内容，含 3D 纸娃娃）先合成好一张
+                     位图，再拿这张位图去跟外层做阴影合成，Viewport3D 就不再需要跟任何"活的"
+                     Effect 表面直接打交道。CacheMode 只是渲染合成方式的提示，WPF 仍然会在内容
+                     变化（弹窗切换、控件交互、动画）时自动重新生成缓存位图，不影响弹窗本身的
+                     交互性/实时性，也不需要跟 UiAnimationHelper.BeginWindowCache 那样手动
+                     开关——这块子树只在有弹窗显示时才存在，不是常驻在主窗口每次点击/悬停的
+                     路径上，不会有那份注释里提到的"平时所有交互都变慢"的顾虑。 -->
                 <Border.Effect>
                     <DropShadowEffect Color="Black" Opacity="0.35" BlurRadius="24" ShadowDepth="4"/>
                 </Border.Effect>
@@ -628,8 +643,10 @@
                      里装载的弹窗文字/控件——跟 MainWindow.ApplyCustomBackgroundFrost 里
                      "背景图层单独模糊、文字/卡片层保持清晰"是同一个思路，只是背景层这里没有
                      图片，磨砂效果体现在半透明度叠加而不是纹理模糊。也不需要改任何一个具体
-                     弹窗 UserControl 内部已经写好的 XAML（见 ThemeService.ApplyPopupAppearance）。 -->
-                <Grid ClipToBounds="True">
+                     弹窗 UserControl 内部已经写好的 XAML（见 ThemeService.ApplyPopupAppearance）。
+                     这一层同样补 CacheMode：跟上面 OverlayCard 是同一个道理，PopupBlurEffect
+                     也是一个"活的" Effect，不缓存的话它自己也会重新引入同一类问题。 -->
+                <Grid ClipToBounds="True" CacheMode="BitmapCache">
                     <Border x:Name="OverlayCardBackgroundLayer" CornerRadius="7"
                             Background="{DynamicResource PopupPanelBrush}" Effect="{DynamicResource PopupBlurEffect}"/>
                     <ContentControl x:Name="OverlayContentHost" Focusable="False"/>

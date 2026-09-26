@@ -42,6 +42,12 @@ public static class CommandLineService
         public bool GuestModeRelaunchRequested;
         /// <summary>隐藏参数：当前这个进程就是一次性访客会话，不再二次重启。</summary>
         public bool EnterGuestMode;
+
+        /// <summary>隐藏参数 --preview-session：仅由 MainWindow.RequestPreviewModeRestart 生成的重启
+        /// 进程带上，标记"这次启动只用来展示新界面预览"。跟 --guest-session 同一套模式：磁盘配置
+        /// 永远不记录这个状态，只影响当次进程——正常双击启动、或者用户在预览里点"关闭预览"触发的
+        /// 下一次重启都不会再带这个参数，从而回到原有默认界面，不会重新进入/停留在预览里。</summary>
+        public bool EnterPreviewMode;
         /// <summary>隐藏参数：开机 Run 项启动，用来应用“弹出/最小化/托盘”行为。</summary>
         public bool StartedByAutoStart;
         /// <summary>隐藏参数：重启接力时等待旧进程 PID 退出，避免误撞多开检测。</summary>
@@ -120,7 +126,7 @@ public static class CommandLineService
 
         /// <summary>是否解析出了任何一个需要 MainWindow 首帧后处理的有效动作。</summary>
         public bool HasAnyAction => ShowHelp || LaunchGame || GuiPage != null || OpenDownload || EnterGuestMode ||
-            StartedByAutoStart || CheckUpdateOnly || ClearCacheOnStart || ExportLogsPath != null || JustUpdated;
+            EnterPreviewMode || StartedByAutoStart || CheckUpdateOnly || ClearCacheOnStart || ExportLogsPath != null || JustUpdated;
     }
 
     public const string HelpText =
@@ -230,6 +236,10 @@ public static class CommandLineService
             else if (string.Equals(raw, "--guest-session", StringComparison.OrdinalIgnoreCase))
             {
                 result.EnterGuestMode = true;
+            }
+            else if (string.Equals(raw, "--preview-session", StringComparison.OrdinalIgnoreCase))
+            {
+                result.EnterPreviewMode = true;
             }
             else if (string.Equals(raw, "--autostart", StringComparison.OrdinalIgnoreCase))
             {

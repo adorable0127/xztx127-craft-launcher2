@@ -123,6 +123,7 @@ public partial class SettingsPage : UserControl
         SourceCombo.SelectedIndex = cfg.Source == DownloadSource.Official ? 1 : 0;
         SelectComboByTag(GameLanguageCombo, cfg.GameLanguage);
         GameVersionTypeLabelBox.Text = cfg.GameVersionTypeLabel;
+        CustomWindowTitleTextBox.Text = cfg.CustomWindowTitleText;
         PageAnimationsCheck.IsChecked = cfg.EnablePageAnimations;
         WindowAnimationsCheck.IsChecked = cfg.EnableUiAnimations;
         LowPerformanceModeCheck.IsChecked = cfg.LowPerformanceMode;
@@ -1271,6 +1272,14 @@ public partial class SettingsPage : UserControl
         OverlayDialogService.ShowModal(dlg);
     }
 
+    /// <summary>「恢复默认」：只清空这一个输入框（不影响其它设置项），保存后立即生效——
+    /// 跟 GameVersionTypeLabelBox 那种"留空即兜底"不同，这里没有让用户自己手动删空
+    /// 文字这一步，因为大多数人不会知道"留空 = 恢复默认"这个隐藏规则，直接给个按钮更直观。</summary>
+    private void ResetWindowTitleButton_Click(object sender, RoutedEventArgs e)
+    {
+        CustomWindowTitleTextBox.Text = "";
+    }
+
     private void ReopenWizard_Click(object sender, RoutedEventArgs e)
     {
         var wizard = new FirstRunWizardWindow(_owner);
@@ -1279,6 +1288,7 @@ public partial class SettingsPage : UserControl
         // 避免用户看到的还是打开向导之前的旧值。
         SelectComboByTag(GameLanguageCombo, _owner.ConfigService.Config.GameLanguage);
         GameVersionTypeLabelBox.Text = _owner.ConfigService.Config.GameVersionTypeLabel;
+        CustomWindowTitleTextBox.Text = _owner.ConfigService.Config.CustomWindowTitleText;
         StatusText.Text = Loc.T("Str_Cs_Setup_Is_Complete_And_The_Related_Settin", "新手引导已完成，相关设置已自动刷新。");
     }
 
@@ -1641,6 +1651,7 @@ public partial class SettingsPage : UserControl
         cfg.Source = DownloadSource.Official;
         cfg.GameLanguage = "zh_cn";
         cfg.GameVersionTypeLabel = "XCL2";
+        cfg.CustomWindowTitleText = null;
         cfg.EnablePageAnimations = true;
         cfg.LowPerformanceMode = false;
         cfg.AlwaysOnTop = false;
@@ -1668,6 +1679,7 @@ public partial class SettingsPage : UserControl
         
         // 保存配置
         _owner.ConfigService.Save();
+        _owner.ApplyWindowTitle();
         
         // 刷新界面反映默认值
         _owner.NavigateToSettings();
@@ -1923,6 +1935,8 @@ public partial class SettingsPage : UserControl
         cfg.Source = SourceCombo.SelectedIndex == 1 ? DownloadSource.Official : DownloadSource.BMCLAPI;
         if ((GameLanguageCombo.SelectedItem as ComboBoxItem)?.Tag is string lang) cfg.GameLanguage = lang;
         cfg.GameVersionTypeLabel = GameVersionTypeLabelBox.Text?.Trim() ?? "";
+        cfg.CustomWindowTitleText = string.IsNullOrWhiteSpace(CustomWindowTitleTextBox.Text) ? null : CustomWindowTitleTextBox.Text.Trim();
+        _owner.ApplyWindowTitle();
         cfg.EnablePageAnimations = PageAnimationsCheck.IsChecked == true;
         cfg.EnableUiAnimations = WindowAnimationsCheck.IsChecked == true;
         cfg.LowPerformanceMode = LowPerformanceModeCheck.IsChecked == true;

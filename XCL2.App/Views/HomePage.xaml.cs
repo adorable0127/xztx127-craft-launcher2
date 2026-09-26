@@ -27,7 +27,15 @@ public partial class HomePage : UserControl
     private bool _simplifiedToggleInitializing;
     private Action? _onLanguageChanged;
     private bool _previewToggleSyncing;
-    private ExperimentalPreviewWindow? _previewWindow;
+
+    /// <summary>
+    /// 标记这份 HomePage 实例是不是"重启进入的新界面预览"那一次——也就是 MainWindow 本身
+    /// 就是用 --preview-session 启动、把这份 HomePage 直接当成首页放进 MainContent 的那种，
+    /// 跟旧版"套一层独立浮动窗口"承载预览的方案是两回事：这种情况下侧边栏、标题栏都是
+    /// MainWindow 本来就有的那一套，天然可点、天然有侧边栏，不需要也不应该再额外禁用/锁定
+    /// PreviewToggle。见 MainWindow.RequestPreviewModeRestart / ShowExperimentalPreview。
+    /// </summary>
+    private bool _isMainWindowPreviewSession;
 
     public HomePage(MainWindow owner)
     {
@@ -435,38 +443,79 @@ public partial class HomePage : UserControl
     {
         if (_previewToggleSyncing) return;
 
+        // 已经处在"重启进入的新界面预览"会话里：这个开关本来就是靠 MarkAsMainWindowPreviewSession
+        // 同步成选中状态的，不是用户点出来的，不应该再弹一次确认框/再重启一次。
+        if (_isMainWindowPreviewSession) return;
+
         if (!MessageBoxDialog.ShowConfirm(
-            "新预览界面是实验性功能，可能存在显示、交互或稳定性问题。预览窗口为圆角窗口，不支持全屏或最大化。是否打开？",
+            "新界面预览是实验性功能，可能存在显示、交互或稳定性问题。开启后会重启启动器，" +
+            "重启后的新窗口会直接进入新界面预览，同时保留完整侧边栏，所有按钮都可以正常点击、正常导航。" +
+            "是否重启并打开？",
             "实验性功能"))
         {
             // 用户取消确认框：按钮不应该停在"已开启"（蓝色）状态，改回浅色但不能再触发
-            // 一次 Unchecked 里的关窗口逻辑（本来就没开窗口），用 _previewToggleSyncing 屏蔽掉。
+            // 一次 Unchecked 里的重启逻辑（本来就没真正开启），用 _previewToggleSyncing 屏蔽掉。
             _previewToggleSyncing = true;
             PreviewToggle.IsChecked = false;
             _previewToggleSyncing = false;
             return;
         }
 
-        _previewWindow = new ExperimentalPreviewWindow(_owner);
-        // 预览窗口被用户用自己的关闭按钮/Alt+F4 关掉时，按钮要同步跳回浅色，
-        // 不能只在这里点按钮的路径下才变浅色。
-        _previewWindow.Closed += (_, _) =>
+        // 不再套一层独立的浮动预览窗口（没有侧边栏、按钮点不动、容易套娃假死）：
+        // 直接重启整个启动器，新进程的 MainWindow 用完整的自身（侧边栏 + 所有导航按钮都在）
+        // 直接展示新界面预览，见 MainWindow.RequestPreviewModeRestart。重启失败时把开关
+        // 复位回浅色，避免停在"看起来已开启但其实什么都没发生"的状态。
+        if (!_owner.RequestPreviewModeRestart())
         {
-            _previewWindow = null;
-            if (PreviewToggle.IsChecked == true)
-            {
-                _previewToggleSyncing = true;
-                PreviewToggle.IsChecked = false;
-                _previewToggleSyncing = false;
-            }
-        };
-        _previewWindow.Show();
+            _previewToggleSyncing = true;
+            PreviewToggle.IsChecked = false;
+            _previewToggleSyncing = false;
+        }
     }
 
     private void OpenExperimentalPreview_Unchecked(object sender, RoutedEventArgs e)
     {
         if (_previewToggleSyncing) return;
-        _previewWindow?.Close();
+
+        if (_isMainWindowPreviewSession)
+        {
+            // 关闭预览：同样走重启，而不是简单地在当前进程里切回默认首页——保证"关闭后"
+            // 跟"从来没开过预览"是完全一致的干净状态（不带任何预览相关的隐藏启动参数），
+            // 新窗口只会打开原有默认界面，不会再打开新界面或其它界面。重启失败时把开关
+            // 复位回"已选中"，因为预览会话其实还在继续，没有真的退出。
+            if (!_owner.RequestExitPreviewModeRestart())
+            {
+                _previewToggleSyncing = true;
+                PreviewToggle.IsChecked = true;
+                _previewToggleSyncing = false;
+            }
+            return;
+        }
+
+        // 走到这里说明：当前不在"MainWindow 直接展示预览"的会话里，且不是代码同步触发的
+        // Unchecked（前面已经 return 掉了）——也就是这份 HomePage 本身处于正常模式，
+        // 但它的开关却被以某种方式取消选中。正常模式下开关默认就是未选中，点开时走的是
+        // 上面 OpenExperimentalPreview_Checked（要么重启进入预览、要么弹确认框取消后复位），
+        // 不会有"正常模式下开关先被选中、再单独触发一次 Unchecked"这条路径，所以这里
+        // 不需要做任何事——历史上这里曾经维护一个指向旧版独立浮动预览窗口的引用并在此关闭它，
+        // 那个方案已经被上面"整个进程重启"的方案取代，浮动窗口那条代码路径本身也早就没有
+        // 地方会走到了，直接删掉，不留一个永远是 null、只会产生"从未赋值"编译警告的死字段。
+    }
+
+    /// <summary>
+    /// 供 MainWindow.ShowExperimentalPreview 在"以 --preview-session 重启后的这次启动"里，
+    /// 把首页直接当成新界面预览展示时调用一次：只是把开关同步成"已选中"，侧边栏、标题栏、
+    /// 每一个导航按钮都还是 MainWindow 原生的那一套，天然可点，不做任何禁用。
+    /// 跟 <see cref="ConfigureAsEmbeddedPreview"/>（旧的浮动窗口套娃场景）刻意区分开，
+    /// 那边需要锁死按钮防止再套一层，这边完全不需要。
+    /// </summary>
+    public void MarkAsMainWindowPreviewSession()
+    {
+        _isMainWindowPreviewSession = true;
+        _previewToggleSyncing = true;
+        PreviewToggle.IsChecked = true;
+        _previewToggleSyncing = false;
+        PreviewToggle.ToolTip = "点击关闭新界面预览（会重启启动器回到默认界面）";
     }
 
     /// <summary>

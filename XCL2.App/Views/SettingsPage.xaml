@@ -263,6 +263,17 @@
             <TextBlock Text="{DynamicResource Str_Ui_In_Game_Watermark_Text_Shown_In_The_Bott}" Margin="0,0,0,4"/>
             <TextBox x:Name="GameVersionTypeLabelBox" Width="220" HorizontalAlignment="Left" Margin="0,0,0,20"/>
 
+            <!-- 启动器"标题栏"（自绘标题栏左上角文字）/"任务栏、Alt-Tab"显示的文字：
+                 两处其实是同一个 Win32 Title，改这一项同时生效，见 AppConfig.CustomWindowTitleText
+                 和 MainWindow.ApplyWindowTitle 注释。留空 = 沿用默认（当前就是这样，随界面语言
+                 自动切换），填了任意文字之后固定显示这段文字，不再随语言切换改变。 -->
+            <TextBlock Text="{DynamicResource Str_Ui_Window_Title_Bar_And_Taskbar_Text}" Margin="0,0,0,4"/>
+            <StackPanel Orientation="Horizontal" Margin="0,0,0,20">
+                <TextBox x:Name="CustomWindowTitleTextBox" Width="220" HorizontalAlignment="Left"/>
+                <Button x:Name="ResetWindowTitleButton" Content="{DynamicResource Str_Ui_Restore_Default}"
+                        Padding="10,4" Margin="10,0,0,0" Click="ResetWindowTitleButton_Click"/>
+            </StackPanel>
+
             <!-- 界面切换动画开关：控制左侧导航栏切页时右侧内容区的淡入过渡效果。
                  默认开启；觉得切页慢/动画多余的用户可以关掉，关闭后切页恢复瞬间直接替换，
                  不跑任何动画。见 MainWindow.SetMainContent。 -->

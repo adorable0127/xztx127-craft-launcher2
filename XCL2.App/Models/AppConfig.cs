@@ -219,6 +219,17 @@ public class AppConfig
     /// 之后启动器不会再自动弹出，但用户仍可在设置页手动"重新打开新手引导"。</summary>
     public bool FirstRunWizardCompleted { get; set; } = false;
 
+    /// <summary>
+    /// 启动器主窗口"标题栏"（自绘标题栏左上角文字）以及"任务栏/Alt-Tab"显示的文字
+    /// （这两处其实是同一个 Win32 Title：MainWindow.xaml 里自绘标题栏的 TitleBarText
+    /// 是绑定 Window.Title 本身画出来的，任务栏/Alt-Tab 也是读同一个 Title，只是两个
+    /// 不同"展示位置"，不是两份独立文字，改一个设置项同时管两处）。
+    /// null/空字符串表示"没有自定义过"，沿用跟这个设置项加入之前完全一样的默认行为——
+    /// 显示当前界面语言对应的 Str_Main_WindowTitlePrefix 资源字符串（并且会随语言切换
+    /// 自动刷新）；一旦用户填了非空文字，之后固定显示用户填的这段文字，不再随语言切换
+    /// 改变（见 MainWindow.ApplyWindowTitle）。</summary>
+    public string? CustomWindowTitleText { get; set; }
+
     /// <summary>是否已经逐页阅读并同意过首次启动展示的三份协议（用户协议 / 隐私协议 / 开源协议）。
     /// 默认 false：首次启动必须先看完三页协议并点「同意并继续」才能进入新手引导与主界面——
     /// 前两页（用户协议、隐私协议）按钮强制阅读 5 秒后才可以点击，第三页（开源协议）
@@ -615,6 +626,14 @@ public class AppConfig
     /// 默认关闭。见 <see cref="Services.GuestModeService"/> 与 ConfigService.Save()。
     /// </summary>
     public bool GuestModeEnabled { get; set; } = false;
+
+    /// <summary>
+    /// "新界面预览"开关：跟 GuestModeEnabled 刻意相反——这个要落盘持久化，下次正常双击
+    /// 启动（不带任何隐藏命令行参数）也要记住用户上次选的是"预览"还是"默认界面"，
+    /// 不能每次都要求用户重新点一次开关。见 MainWindow 构造函数里对这个字段的判断
+    /// （取代了原来只认 --preview-session 命令行参数的逻辑）。
+    /// </summary>
+    public bool PreviewModeEnabled { get; set; } = false;
 
     /// <summary>
     /// 界面配色"色系"：内置色系或 Custom 自定义主题（Dark 作为独立色系保留兼容旧配置，

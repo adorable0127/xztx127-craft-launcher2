@@ -86,8 +86,26 @@ public class AiAssistantService
         return score;
     }
 
-    /// <summary>不对用户显示的系统提示词。内容即 XCL2 助手的角色设定、功能知识库和能力边界。</summary>
-    public string SystemPrompt { get; set; } = DefaultSystemPrompt.Text;
+    /// <summary>
+    /// 不对用户显示的系统提示词。内容即 XCL2 助手的角色设定、功能知识库和能力边界，
+    /// 外加"当前运行状态"这一段——之前 DefaultSystemPrompt.Text 是一次性赋值的静态常量，
+    /// 从来没有把用户在 AI 设置里实际配置的工作目录状态告诉过模型：哪怕用户已经选好并
+    /// 批准了一个文件夹，模型收到的系统提示词里也完全看不出这件事，只能死守提示词里
+    /// "未配置工作目录时应直接说明"这条兜底话术，表现出来就是"明明批准了，AI 却detect不到"。
+    /// 这里改成按当前 _config.WorkingDirectory 动态拼一段状态说明，每次实际发请求（见
+    /// BuildContextMessages / WarmUpAsync）都会重新取这个属性，所以设置一保存、这次
+    /// 对话往后的每一条消息就能立刻反映最新的工作目录状态，不需要重开会话/重启助手。
+    /// </summary>
+    public string SystemPrompt => DefaultSystemPrompt.Text + "\n\n" + BuildWorkspaceStatusSection();
+
+    private string BuildWorkspaceStatusSection()
+    {
+        var dir = _config.WorkingDirectory;
+        var status = string.IsNullOrWhiteSpace(dir)
+            ? "当前【未配置】AI 工作目录。此时不能发起 list_workspace / read_workspace_file / write_workspace_file 请求，遇到相关需求应直接告诉用户先去「AI 设置」里选择一个工作目录，不要猜测磁盘内容、也不要声称目录已经就绪。"
+            : $"当前【已配置】AI 工作目录：{dir}\n用户已经在「AI 设置」里选定并批准了这个目录，工具已就绪：可以在这个目录范围内正常发起 list_workspace / read_workspace_file / write_workspace_file 请求；每次请求仍会由启动器弹窗询问用户，只有用户当场明确同意才会真正执行，不代表可以跳过确认。";
+        return "============================\n【当前运行状态——以此为准，不要凭历史对话内容判断是否已配置工作目录】\n============================\n" + status;
+    }
 
     /// <summary>
     /// UI 层（AiAssistantPanel）注入的确认框回调：AI 请求读取日志/查看或修改配置时，

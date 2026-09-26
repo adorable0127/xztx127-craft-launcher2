@@ -341,6 +341,58 @@
                 </Style.Triggers>
             </Style>
 
+            <!-- PCL 风格圆形标题栏按钮：只在"新界面预览"会话里换用，不是全局默认样式
+                 （不影响正常模式下的 MainWindow / 其它窗口，见 MainWindow.xaml.cs 里
+                 ApplyPreviewSessionTitleBarStyle 对这三个按钮 Style 的按需切换）。
+                 平时完全透明看不出轮廓，只有悬停/按下时整块填充成一个实心圆，关闭按钮
+                 悬停变红——这才是 PCL 标题栏按钮的观感，而不是常驻画一圈描边空心圆。 -->
+            <Style TargetType="Button" x:Key="PreviewRoundCaptionButton">
+                <Setter Property="Background" Value="Transparent"/>
+                <Setter Property="BorderThickness" Value="0"/>
+                <Setter Property="Width" Value="30"/>
+                <Setter Property="Height" Value="30"/>
+                <Setter Property="Margin" Value="3,1"/>
+                <Setter Property="Cursor" Value="Arrow"/>
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="Button">
+                            <!-- 宽高必须相等（30×30）+ CornerRadius 恰好等于半径(15)才是正圆，
+                                 不是随手写个大数字就行。 -->
+                            <Border x:Name="bd" CornerRadius="15" Background="{TemplateBinding Background}">
+                                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                            </Border>
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="IsMouseOver" Value="True">
+                                    <Setter TargetName="bd" Property="Background" Value="{DynamicResource GlowSoftBrush}"/>
+                                </Trigger>
+                                <Trigger Property="IsPressed" Value="True">
+                                    <Setter TargetName="bd" Property="Opacity" Value="0.7"/>
+                                </Trigger>
+                            </ControlTemplate.Triggers>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+            </Style>
+            <Style TargetType="Button" x:Key="PreviewRoundCaptionCloseButton" BasedOn="{StaticResource PreviewRoundCaptionButton}">
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="Button">
+                            <Border x:Name="bd" CornerRadius="15" Background="{TemplateBinding Background}">
+                                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                            </Border>
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="IsMouseOver" Value="True">
+                                    <Setter TargetName="bd" Property="Background" Value="#E81123"/>
+                                </Trigger>
+                                <Trigger Property="IsPressed" Value="True">
+                                    <Setter TargetName="bd" Property="Opacity" Value="0.7"/>
+                                </Trigger>
+                            </ControlTemplate.Triggers>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+            </Style>
+
             <!-- 修复"深色模式字体没跟着反转"：全项目 418 个 TextBlock 里有 271 个没有显式写
                  Foreground，WPF 对没设置 Foreground 的 TextBlock 默认用 Brushes.Black，这批文字
                  在深色皮肤下依然是黑的，糊在深色背景（PanelBrush/SideBrush）上完全看不清。
@@ -1415,17 +1467,28 @@
                  皮肤的 PanelBrush/TextPrimaryBrush/BorderBrush2/GlowSoftBrush，跟随 ThemeService
                  切换皮肤时自动刷新，不需要 code-behind 那边做任何改动——纯代码 new 出来的
                  ContextMenu/MenuItem 只要没有显式设置 Style，就会自动应用这里的隐式类型样式。 -->
+            <!-- 右键菜单（含 TextBox/RichTextBox/PasswordBox 编辑文字时系统自动弹出的
+                 "剪切/复制/粘贴"菜单——这些也是普通 ContextMenu+MenuItem，同样吃这份隐式样式）：
+                 之前的版本只转发了 Header，没处理 Icon 和 InputGestureText（Ctrl+X 这类快捷键提示），
+                 WPF 会在没有对应视觉呈现的情况下退化成很难看的默认灰底样式，跟其它自绘控件的
+                 圆角卡片风格格格不入。这里统一用 Grid 分栏（图标 / 文字 / 快捷键 / 子菜单箭头），
+                 圆角、间距、配色都跟应用其它弹层（下拉框、Popup 卡片）保持一致，且完全走
+                 DynamicResource，跟随 ThemeService 切皮肤自动刷新。 -->
             <Style TargetType="ContextMenu">
                 <Setter Property="Background" Value="{DynamicResource PanelBrush}"/>
                 <Setter Property="BorderBrush" Value="{DynamicResource BorderBrush2}"/>
                 <Setter Property="BorderThickness" Value="1"/>
-                <Setter Property="Padding" Value="4"/>
+                <Setter Property="Padding" Value="5"/>
                 <Setter Property="HasDropShadow" Value="True"/>
                 <Setter Property="Template">
                     <Setter.Value>
                         <ControlTemplate TargetType="ContextMenu">
                             <Border Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}"
-                                    BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="6" Padding="{TemplateBinding Padding}">
+                                    BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="10"
+                                    Padding="{TemplateBinding Padding}" MinWidth="132">
+                                <Border.Effect>
+                                    <DropShadowEffect Color="Black" Opacity="0.28" BlurRadius="18" ShadowDepth="3" Direction="270"/>
+                                </Border.Effect>
                                 <StackPanel IsItemsHost="True" KeyboardNavigation.DirectionalNavigation="Cycle"/>
                             </Border>
                         </ControlTemplate>
@@ -1434,23 +1497,52 @@
             </Style>
 
             <!-- 同样的 Popup 继承截断问题（见上面 ComboBoxItem 处注释）也发生在右键菜单：
-                 ContextMenu 本身就是 Popup 承载的，MenuItem 的 Header 内容通过 ContentPresenter
-                 显示，之前没有显式转发 Foreground，深色皮肤下右键菜单文字同样会变成看不清的黑字。 -->
+                 ContextMenu 本身就是 Popup 承载的，MenuItem 的 Header/图标/快捷键提示都通过
+                 ContentPresenter 显示，之前没有显式转发 Foreground，深色皮肤下右键菜单文字同样会
+                 变成看不清的黑字；也没有呈现 Icon 和 InputGestureText，导致"复制(C)  Ctrl+C"这类
+                 系统自动生成的项在这里直接丢字/挤成一坨。 -->
             <Style TargetType="MenuItem">
                 <Setter Property="Background" Value="Transparent"/>
                 <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}"/>
-                <Setter Property="Padding" Value="12,7"/>
+                <Setter Property="Padding" Value="10,7"/>
                 <Setter Property="FontSize" Value="13"/>
                 <Setter Property="Template">
                     <Setter.Value>
                         <ControlTemplate TargetType="MenuItem">
-                            <Border x:Name="bd" Background="{TemplateBinding Background}" CornerRadius="4" Padding="{TemplateBinding Padding}">
-                                <ContentPresenter ContentSource="Header" RecognizesAccessKey="True"
-                                                   HorizontalAlignment="Left" VerticalAlignment="Center"
-                                                   TextBlock.Foreground="{TemplateBinding Foreground}"
-                                                   TextElement.Foreground="{TemplateBinding Foreground}"/>
+                            <Border x:Name="bd" Background="{TemplateBinding Background}" CornerRadius="6"
+                                    Padding="{TemplateBinding Padding}" Margin="0,1">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <ContentPresenter x:Name="iconPresenter" Grid.Column="0" ContentSource="Icon"
+                                                       Width="15" Height="15" Margin="0,0,8,0"
+                                                       HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                    <ContentPresenter Grid.Column="1" ContentSource="Header" RecognizesAccessKey="True"
+                                                       HorizontalAlignment="Left" VerticalAlignment="Center"
+                                                       TextBlock.Foreground="{TemplateBinding Foreground}"
+                                                       TextElement.Foreground="{TemplateBinding Foreground}"/>
+                                    <TextBlock x:Name="gestureText" Grid.Column="2" Text="{TemplateBinding InputGestureText}"
+                                               Margin="22,0,0,0" VerticalAlignment="Center" FontSize="11"
+                                               Foreground="{DynamicResource TextSecondaryBrush}" Opacity="0.75"/>
+                                    <Path x:Name="arrow" Grid.Column="3" Width="6" Height="9" Margin="12,0,0,0"
+                                          VerticalAlignment="Center" Stretch="Uniform" Visibility="Collapsed"
+                                          Data="M0,0 L1,0.5 L0,1" Stroke="{TemplateBinding Foreground}"
+                                          StrokeThickness="1.6" StrokeStartLineCap="Round" StrokeEndLineCap="Round"/>
+                                </Grid>
                             </Border>
                             <ControlTemplate.Triggers>
+                                <!-- 只有真正带了 Icon 内容的菜单项才腾出图标列，普通的
+                                     "剪切/复制/粘贴"没有图标时，不留一块空白挤占文字。 -->
+                                <Trigger Property="Icon" Value="{x:Null}">
+                                    <Setter TargetName="iconPresenter" Property="Visibility" Value="Collapsed"/>
+                                </Trigger>
+                                <Trigger Property="Role" Value="SubmenuHeader">
+                                    <Setter TargetName="arrow" Property="Visibility" Value="Visible"/>
+                                </Trigger>
                                 <Trigger Property="IsHighlighted" Value="True">
                                     <Setter TargetName="bd" Property="Background" Value="{DynamicResource GlowSoftBrush}"/>
                                 </Trigger>
@@ -1465,11 +1557,12 @@
             </Style>
 
             <!-- ContextMenu 里的 Separator：默认系统样式是一条几乎看不见的浅灰细线(在深色皮肤下
-                 更是完全隐形)，改成跟随皮肤的 DividerBrush，保证分组间隔在任何色系下都清晰可辨。 -->
+                 更是完全隐形)，改成跟随皮肤的 DividerBrush，两端留出跟 MenuItem 对齐的内边距，
+                 保证分组间隔在任何色系下都清晰可辨、观感上也不再是硬邦邦贴边的一条线。 -->
             <Style TargetType="Separator">
                 <Setter Property="Background" Value="{DynamicResource DividerBrush}"/>
                 <Setter Property="Height" Value="1"/>
-                <Setter Property="Margin" Value="4,4"/>
+                <Setter Property="Margin" Value="8,5"/>
                 <Setter Property="Template">
                     <Setter.Value>
                         <ControlTemplate TargetType="Separator">

@@ -135,6 +135,25 @@ public partial class MainWindow : Window
     /// <summary>当前是否处于"取消启动"可点击状态（即已经在启动流程中，按钮显示为取消）。</summary>
     private bool _isCancelLaunchState;
 
+    /// <summary>
+    /// 本次进程运行期间是否处于"新界面预览"会话：只在构造函数里由 --preview-session 隐藏参数
+    /// 或落盘配置 ConfigService.Config.PreviewModeEnabled 判定一次，此后整个进程生命周期内不变
+    /// （开关本身开启/关闭预览都是走 RequestPreviewModeRestart / RequestExitPreviewModeRestart
+    /// 整个重启启动器，不存在"同一个进程里中途切换"的情况，所以不需要运行期间重新赋值）。
+    ///
+    /// 单独存这一份、而不是每次都现读 ConfigService.Config.PreviewModeEnabled 的原因：要覆盖
+    /// "命令行/快捷方式手动带了 --preview-session，但磁盘配置这次没有同步为 true"这种兼容场景——
+    /// 只要本次会话已经判定成预览，之后每一次 ShowHome() 都必须保持一致，不能因为单独看配置项
+    /// 又得到不一样的结果。
+    ///
+    /// 用途：每次 ShowHome() 新建 HomePage 实例（首页首次展示、以及之后点侧边栏"首页"或其它
+    /// 途径导航回首页产生的全新实例）时，都用这个字段去同步 HomePage 上"新界面预览"开关的
+    /// 亮起状态，修复"已经处于预览会话、界面也确实是预览样式，但切换几次页面回到首页后开关
+    /// 又变回熄灭"的问题——根因是每次导航都会 new 一个全新的 HomePage，之前只有启动那一次
+    /// 调用了 MarkAsMainWindowPreviewSession()，后续新建的实例都停在 XAML 里的默认未选中状态。
+    /// </summary>
+    private bool _isPreviewSession;
+
     /// <summary>记录窗口最近一次处于"非最小化"状态时的 WindowState(Normal 或 Maximized)。
     /// 修复"启动/下载成功弹窗出现时启动器窗口会自动最小化"：如果窗口在弹窗前已经被系统
     /// (或前台焦点被刚拉起的游戏进程抢走)意外最小化，简单粗暴地把 WindowState 设成
@@ -365,6 +384,18 @@ public partial class MainWindow : Window
 
         ConfigService.Load();
 
+        // 标题栏（自绘标题栏左上角文字，见 TitleBarText）/任务栏/Alt-Tab 显示的文字：
+        // 必须紧跟 ConfigService.Load() 之后应用一次，保证窗口首帧出现之前任务栏图标上
+        // 就已经是用户自定义好的文字，不会先闪一下默认标题再被纠正。
+        // LanguageChanged：用户没有自定义过（CustomWindowTitleText 为空）时，标题文字
+        // 来源是 Str_Main_WindowTitlePrefix 这条语言资源——一旦下面 ApplyWindowTitle 用
+        // 代码给 Title 赋过值，XAML 里原来那条 DynamicResource 绑定就被替换掉了，语言切换
+        // 不会再自动刷新 Title，所以要订阅 LanguageChanged 自己重新取一次，跟类注释里
+        // "code-behind 缓存过资源字符串就该订阅这个事件"的约定一致。
+        ApplyWindowTitle();
+        LocalizationService.LanguageChanged += ApplyWindowTitle;
+        Closed += (_, _) => LocalizationService.LanguageChanged -= ApplyWindowTitle;
+
         // 配置真正读进来之后，才第一次按它同步所有"由配置决定显隐"的界面元素：
         // 功能隐藏（F12 那套）、简洁模式侧边栏、实验性功能按钮的语言门控。
         // 顺序上必须紧跟 Load()，且必须在 RefreshSidebar()/ShowHome() 之前——那两个
@@ -485,7 +516,26 @@ public partial class MainWindow : Window
         RefreshGuestModeState();
 
         RefreshSidebar();
-        ShowHome();
+
+        // 隐藏参数 --preview-session（只由 RequestPreviewModeRestart 重启生成，磁盘配置永远不
+        // 记录这个状态）：这次启动只展示新界面预览，直接顶替默认的 ShowHome()，而不是先显示
+        // 默认首页再切换——避免用户先看到一闪而过的默认界面。侧边栏依然是上面 RefreshSidebar()
+        // 刷新出来的那一套完整侧边栏，跟平时完全一样，每个导航按钮都能正常点击/正常导航。
+        // "新界面预览"现在是落盘配置（ConfigService.Config.PreviewModeEnabled），不再只靠
+        // 一次性的 --preview-session 隐藏参数：正常双击启动也会读到上次保存的选择。
+        // 命令行参数继续兼容保留（比如脚本/快捷方式里手动加的场景）。
+        // 这里判定出来的结果存进 _isPreviewSession，后面每一次 ShowHome() 都要用它，
+        // 不能只在这一次启动时判断——否则用户导航离开首页再回来，新建出来的 HomePage
+        // 实例会读不到"其实还在预览会话里"这件事。
+        _isPreviewSession = App.StartupArgs.EnterPreviewMode || ConfigService.Config.PreviewModeEnabled;
+        if (_isPreviewSession)
+        {
+            ShowExperimentalPreview();
+        }
+        else
+        {
+            ShowHome();
+        }
 
         // 启动时自动扫描本机的 .minecraft 文件夹（AppData + 每个磁盘 1/2/3 级目录），
         // 找到新的就自动加入"版本选择"页的文件夹列表，不需要用户手动一个个"添加文件夹"。
@@ -1423,6 +1473,40 @@ public partial class MainWindow : Window
         var fadeIn = new DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(highPerf ? 260 : 260)) { EasingFunction = new QuadraticEase { EasingMode = EasingMode.EaseOut } };
         var slideUp = new DoubleAnimation(highPerf ? 22 : 14, 0, duration) { EasingFunction = easeOut };
 
+        // 修复"开启新视效（页面切换动画）之后，再切一次页面，内容变成熄灭（透明度卡在 0）
+        // 看不见"：上面几行是先把 MainContent.Opacity 显式置 0，再 BeginAnimation 播放
+        // 0→1 的淡入。如果这次动画在播放过程中被打断（比如用户在 260ms 内又快速点了一次
+        // 导航，下一次 SetMainContent 会先 BeginAnimation(..., null) 停掉它），停掉动画后
+        // WPF 会让属性退回"本地值"——而本地值正是切页开始时设的那个 0，不是动画播到一半的
+        // 值，也不是目标值 1。这里显式挂 Completed 回调，在动画正常播完时把 Opacity/Y 的
+        // 本地值也同步更新成终点值 1/0，这样"停动画"这一步不管发生在什么时机，退回去的
+        // 本地值都已经是可见状态，不会停留在刚开始那一帧的透明/偏移状态上。
+        fadeIn.Completed += (_, _) => MainContent.Opacity = 1;
+        slideUp.Completed += (_, _) => MainContentTransform.Y = 0;
+
+        // 上面的 Completed 回调只在动画"正常播完"时触发——如果这次动画在播放期间被
+        // 后续导航打断（BeginAnimation(prop, null) 停掉），Completed 根本不会触发，
+        // 停牌之后属性退回的本地值到底是不是可见状态，取决于打断发生的那个精确时刻，
+        // 不能保证。这里再加一层跟具体页面绑定的保险：动画时长过后，如果 MainContent
+        // 当前显示的还是这一次 SetMainContent 传进来的 page（没有被更新的导航取代），
+        // 就强制把 Opacity/位移/缩放钉死为终点状态——不管前面动画链路上发生过什么打断，
+        // 这一下都能保证内容最终一定是完全不透明、可交互的，不会停留在切页当下那一帧
+        // 半透明/看起来"熄灭"的状态上。
+        var settleTimer = new System.Windows.Threading.DispatcherTimer
+        {
+            Interval = duration + TimeSpan.FromMilliseconds(80)
+        };
+        settleTimer.Tick += (_, _) =>
+        {
+            settleTimer.Stop();
+            if (!ReferenceEquals(MainContent.Content, page)) return;
+            MainContent.Opacity = 1;
+            MainContentTransform.Y = 0;
+            MainContentScaleTransform.ScaleX = 1;
+            MainContentScaleTransform.ScaleY = 1;
+        };
+        settleTimer.Start();
+
         MainContent.BeginAnimation(OpacityProperty, fadeIn);
         MainContentTransform.BeginAnimation(System.Windows.Media.TranslateTransform.YProperty, slideUp);
 
@@ -1431,6 +1515,11 @@ public partial class MainWindow : Window
             MainContentScaleTransform.BeginAnimation(System.Windows.Media.ScaleTransform.ScaleXProperty, null);
             MainContentScaleTransform.BeginAnimation(System.Windows.Media.ScaleTransform.ScaleYProperty, null);
             var scaleAnim = new DoubleAnimation(0.96, 1, duration) { EasingFunction = easeOut };
+            scaleAnim.Completed += (_, _) =>
+            {
+                MainContentScaleTransform.ScaleX = 1;
+                MainContentScaleTransform.ScaleY = 1;
+            };
             MainContentScaleTransform.BeginAnimation(System.Windows.Media.ScaleTransform.ScaleXProperty, scaleAnim);
             MainContentScaleTransform.BeginAnimation(System.Windows.Media.ScaleTransform.ScaleYProperty, scaleAnim);
         }
@@ -1441,10 +1530,149 @@ public partial class MainWindow : Window
         }
     }
 
+    /// <summary>
+    /// 首页的唯一创建入口：不管是启动时第一次展示，还是之后点侧边栏"首页"、或者其它任何
+    /// 途径导航回首页（NavigateToHome/NavHome_Click 等最终都会走到这里），每次都会 new 一个
+    /// 全新的 HomePage 实例。
+    ///
+    /// 只要本次进程处于"新界面预览"会话（_isPreviewSession），就要把每一份新建出来的实例都
+    /// 同步成 MarkAsMainWindowPreviewSession——否则"新界面预览"开关只有启动那一次是亮的，
+    /// 用户随便切换几次页面回到首页，界面样式（标题栏圆角按钮、禁止最大化等）明明还在预览
+    /// 状态，开关却会因为读到全新实例的默认值而"熄灭"，跟实际状态对不上。
+    /// </summary>
     private void ShowHome()
     {
         var page = new HomePage(this);
+        if (_isPreviewSession)
+        {
+            page.MarkAsMainWindowPreviewSession();
+        }
         SetMainContent(page);
+    }
+
+    /// <summary>
+    /// 以 --preview-session 重启后的这次启动专用：直接把新界面预览放进 MainContent，
+    /// 复用的是 MainWindow 本来就有的完整侧边栏 + 标题栏，不再像旧版那样另外弹一个没有
+    /// 侧边栏、按钮点不动的独立浮动窗口。见 HomePage.MarkAsMainWindowPreviewSession 的注释。
+    ///
+    /// 标题栏圆角按钮样式只需要在这一次启动时应用一次（属于窗口级别的状态，不挂在
+    /// MainContent 上，之后不管 ShowHome() 被调用多少次都不会被重置），首页本身的创建
+    /// 和"开关同步成已选中"统一交给 ShowHome()，避免这里跟 ShowHome() 各写一份、以后
+    /// 两边改了一边忘了改另一边。
+    /// </summary>
+    private void ShowExperimentalPreview()
+    {
+        ApplyPreviewSessionTitleBarStyle();
+        ShowHome();
+    }
+
+    /// <summary>
+    /// 只在"新界面预览"会话里，把标题栏最小化/最大化/关闭三个按钮换成 PCL 风格的圆形按钮
+    /// （见 App.xaml 里 PreviewRoundCaptionButton / PreviewRoundCaptionCloseButton），
+    /// 正常模式下这三个按钮维持原来 Windows 风格的方形样式，不受影响——这是预览会话
+    /// 专属的皮肤，不是改全局默认样式。
+    /// </summary>
+    private void ApplyPreviewSessionTitleBarStyle()
+    {
+        MinimizeButton.Style = (Style)FindResource("PreviewRoundCaptionButton");
+        MaximizeRestoreButton.Style = (Style)FindResource("PreviewRoundCaptionButton");
+        CloseButton.Style = (Style)FindResource("PreviewRoundCaptionCloseButton");
+
+        // 需求：预览会话下不能全屏/最大化，只能最小化+关闭；普通模式（ShowHome 那条路径
+        // 完全不调用这个方法）不受影响，还是原来能拖拽缩放、能最大化的正常窗口。
+        // ResizeMode=CanMinimize 这一个设置就同时关掉了：拖边框缩放、双击标题栏最大化、
+        // 拖到屏幕顶部/Win+上 的贴边最大化——这些都是 WindowChrome 按 ResizeMode 判断要
+        // 不要响应的系统级手势，不用逐个手动拦截。自绘的最大化按钮本身也直接隐藏掉，
+        // 避免留一个点了没反应的按钮。
+        ResizeMode = ResizeMode.CanMinimize;
+        MaximizeRestoreButton.Visibility = Visibility.Collapsed;
+    }
+
+    /// <summary>
+    /// 首页"新界面预览"开关被打开时调用：重启整个启动器，新进程带上隐藏参数
+    /// --preview-session，让新窗口的 MainWindow 直接展示新界面预览（见构造函数里对
+    /// App.StartupArgs.EnterPreviewMode 的判断 + ShowExperimentalPreview），同时保留
+    /// 完整侧边栏、所有导航按钮都能正常点击——不是旧版那种关掉侧边栏的独立浮动窗口。
+    /// 跟 RequestGuestModeRestart 是同一套重启模式：磁盘配置永远不记录这个状态，
+    /// 只由这一次性的隐藏参数决定，正常双击/下次启动不会带这个参数。
+    /// </summary>
+    public bool RequestPreviewModeRestart()
+    {
+        try
+        {
+            // 现在要落盘：跟访客模式相反，这个状态需要在磁盘配置里持久化，下次正常启动
+            // （不带任何命令行参数）也要记住。先保存再重启，新进程读配置就能拿到。
+            ConfigService.Config.PreviewModeEnabled = true;
+            ConfigService.Save();
+
+            var exe = Environment.ProcessPath;
+            if (string.IsNullOrWhiteSpace(exe))
+            {
+                MessageBoxDialog.ShowWarning("无法确定启动器程序路径，因此暂时不能重启进入新界面预览。", "新界面预览");
+                return false;
+            }
+
+            var psi = new ProcessStartInfo(exe)
+            {
+                UseShellExecute = true,
+                WorkingDirectory = AppContext.BaseDirectory
+            };
+            psi.ArgumentList.Add("--preview-session");
+            psi.ArgumentList.Add("--wait-pid");
+            psi.ArgumentList.Add(Environment.ProcessId.ToString());
+            Process.Start(psi);
+            Application.Current.Shutdown();
+            return true;
+        }
+        catch (Exception ex)
+        {
+            // 重启没成功，磁盘上不能留一个"已开启"但其实这次并没有真正进入预览的状态。
+            ConfigService.Config.PreviewModeEnabled = false;
+            ConfigService.Save();
+            LauncherLogService.AppendLine($"[新界面预览] 重启失败：{ex}");
+            MessageBoxDialog.ShowWarning($"新界面预览需要重启启动器，但重启失败：{ex.Message}", "新界面预览");
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// 首页"新界面预览"开关被关闭时调用（此时当前进程本身就是 --preview-session 那次启动）：
+    /// 同样走重启，但这次不带任何预览相关参数，新窗口只会打开原有默认界面（ShowHome），
+    /// 不会再打开新界面预览或其它界面，跟"从来没开过预览"完全一致。
+    /// </summary>
+    public bool RequestExitPreviewModeRestart()
+    {
+        try
+        {
+            ConfigService.Config.PreviewModeEnabled = false;
+            ConfigService.Save();
+
+            var exe = Environment.ProcessPath;
+            if (string.IsNullOrWhiteSpace(exe))
+            {
+                MessageBoxDialog.ShowWarning("无法确定启动器程序路径，因此暂时不能重启退出新界面预览。", "新界面预览");
+                return false;
+            }
+
+            var psi = new ProcessStartInfo(exe)
+            {
+                UseShellExecute = true,
+                WorkingDirectory = AppContext.BaseDirectory
+            };
+            psi.ArgumentList.Add("--wait-pid");
+            psi.ArgumentList.Add(Environment.ProcessId.ToString());
+            Process.Start(psi);
+            Application.Current.Shutdown();
+            return true;
+        }
+        catch (Exception ex)
+        {
+            ConfigService.Config.PreviewModeEnabled = true;
+            ConfigService.Save();
+            LauncherLogService.AppendLine($"[新界面预览] 退出重启失败：{ex}");
+            MessageBoxDialog.ShowWarning($"退出新界面预览需要重启启动器，但重启失败：{ex.Message}", "新界面预览");
+            return false;
+        }
     }
 
     /// <summary>
@@ -3456,6 +3684,53 @@ public partial class MainWindow : Window
                 LauncherLogService.AppendLine(
                     $"[操作模式] 本次启动使用 {(useTouchMode ? "触屏模式" : "键鼠模式")}" +
                     (modeWindow.TimedOut ? "（倒计时超时自动选择）" : ""));
+
+                // 只在用户主动选了"触屏模式"时才提醒——键鼠模式是绝大多数用户的默认路径，
+                // 不该被这条实验性警告打扰；倒计时超时也不算"选了触屏"，同样不弹。
+                // 两层确认：第一层"好吧好吧"是主按钮（默认更安全的退出项）；选了"我偏要
+                // 试试"才会看到第二层更明确的警告（真出 bug 别提 issue，作者已经在修了），
+                // 第二层"怕了"仍是主按钮，只有"爷们儿继续干"才真正放行进入触屏模式。
+                // 第二层选退出的话要把 useTouchMode 和已经写下去的配置都回退成键鼠模式，
+                // 不然日志和后面 cfg.TouchModeEnabled 记的选择会跟实际行为对不上。
+                if (useTouchMode)
+                {
+                    var stillWantsTouch = MessageBoxDialog.ShowCustomYesNo(
+                        "触屏模式是实验性功能，经过实测存在一些比较抽象的 bug，作者也不会修，建议不要打开。",
+                        "触屏模式提醒",
+                        leftText: "我偏要试试",
+                        rightText: "好吧好吧",
+                        rightIsPrimary: true);
+
+                    if (stillWantsTouch)
+                    {
+                        var reallyEnter = MessageBoxDialog.ShowCustomYesNo(
+                            "这个实验性功能真的不稳定，出了 bug 不要往外提交反馈——作者也在努力修。",
+                            "再确认一下",
+                            leftText: "爷们儿继续干",
+                            rightText: "怕了",
+                            rightIsPrimary: true);
+
+                        if (!reallyEnter)
+                        {
+                            useTouchMode = false;
+                            if (!modeWindow.TimedOut && modeWindow.RememberChoice)
+                            {
+                                cfg.TouchModeEnabled = false;
+                                ConfigService.Save();
+                            }
+                            LauncherLogService.AppendLine("[操作模式] 触屏模式二次确认时退出，回退为键鼠模式。");
+                        }
+                    }
+                    else
+                    {
+                        useTouchMode = false;
+                        if (!modeWindow.TimedOut && modeWindow.RememberChoice)
+                        {
+                            cfg.TouchModeEnabled = false;
+                            ConfigService.Save();
+                        }
+                    }
+                }
             }
 
             LauncherLogService.AppendLine($"[启动游戏] 账户={account.DisplayLabel} 版本={cfg.SelectedVersionId}");
@@ -4728,6 +5003,18 @@ public partial class MainWindow : Window
     /// 要顺着整棵逻辑树一路查到 App.xaml 那个上百 KB 的资源字典，放在尺寸变化路径上属于
     /// 纯浪费；缓存后每次调用就只是一次引用赋值。_lastMaximizeIconIsRestore 再挡掉
     /// "状态没变还反复赋值 Data"导致的多余重绘。</summary>
+    /// <summary>设置页「启动器标题栏/任务栏文字」保存后，以及语言切换时都会重新调用一次：
+    /// 按 ConfigService.Config.CustomWindowTitleText 是否为空决定 Title 到底显示用户自定义
+    /// 文字，还是回退到跟这个设置项加入之前完全一样的 Str_Main_WindowTitlePrefix 语言资源。
+    /// 直接赋值 Window.Title（而不是继续用 XAML 里的 DynamicResource）：自绘标题栏左上角的
+    /// TitleBarText 本身就是绑定 Title 属性画出来的，任务栏/Alt-Tab 也读同一个 Title，
+    /// 改这一处，两个"展示位置"一起生效，不是两份独立文字。</summary>
+    public void ApplyWindowTitle()
+    {
+        var custom = ConfigService.Config.CustomWindowTitleText;
+        Title = !string.IsNullOrWhiteSpace(custom) ? custom : (string)FindResource("Str_Main_WindowTitlePrefix");
+    }
+
     private Geometry? _iconWinRestoreCache;
     private Geometry? _iconWinMaximizeCache;
     private bool? _lastMaximizeIconIsRestore;

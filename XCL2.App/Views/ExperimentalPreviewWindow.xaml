@@ -4,19 +4,80 @@
  Title="XCL2 · 新界面预览（实验性）" Width="920" Height="590"
  WindowStartupLocation="CenterOwner" WindowStyle="None" ResizeMode="NoResize"
  AllowsTransparency="True" Background="Transparent" ShowInTaskbar="False">
+ <Window.Resources>
+  <!-- PCL 风格：圆形标题栏按钮（不是 Windows 那种方形按钮），只有 最小化 / 下载 / 关闭
+       三个，刻意不提供最大化——预览窗口固定尺寸、ResizeMode="NoResize"，加一个"看起来
+       能点但点了没用"的最大化按钮只会误导用户。平时完全透明、看不出按钮轮廓，
+       只有鼠标悬停/按下时才整块填充成一个实心圆——这是 PCL 标题栏按钮真正的观感，
+       不是"平时就画一个空心圆圈描边"（那样反而不像，也跟 PanelBrush 底色不搭）。 -->
+  <Style TargetType="Button" x:Key="RoundCaptionButton">
+   <Setter Property="Background" Value="Transparent"/>
+   <Setter Property="BorderThickness" Value="0"/>
+   <Setter Property="Width" Value="30"/>
+   <Setter Property="Height" Value="30"/>
+   <Setter Property="Margin" Value="3,0"/>
+   <Setter Property="Cursor" Value="Hand"/>
+   <Setter Property="Template">
+    <Setter.Value>
+     <ControlTemplate TargetType="Button">
+      <!-- Width=Height=30 时 CornerRadius=15 正好是一个完整圆形；宽高一旦不相等就不再是
+           正圆，所以圆角按钮必须保证按钮本身是正方形，不能像方形标题栏按钮那样随便拉宽。 -->
+      <Border x:Name="bd" CornerRadius="15" Background="{TemplateBinding Background}">
+       <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+      </Border>
+      <ControlTemplate.Triggers>
+       <Trigger Property="IsMouseOver" Value="True">
+        <Setter TargetName="bd" Property="Background" Value="{DynamicResource GlowSoftBrush}"/>
+       </Trigger>
+       <Trigger Property="IsPressed" Value="True">
+        <Setter TargetName="bd" Property="Opacity" Value="0.7"/>
+       </Trigger>
+      </ControlTemplate.Triggers>
+     </ControlTemplate>
+    </Setter.Value>
+   </Setter>
+  </Style>
+  <Style TargetType="Button" x:Key="RoundCaptionCloseButton" BasedOn="{StaticResource RoundCaptionButton}">
+   <Setter Property="Template">
+    <Setter.Value>
+     <ControlTemplate TargetType="Button">
+      <Border x:Name="bd" CornerRadius="15" Background="{TemplateBinding Background}">
+       <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+      </Border>
+      <ControlTemplate.Triggers>
+       <Trigger Property="IsMouseOver" Value="True">
+        <Setter TargetName="bd" Property="Background" Value="#E81123"/>
+       </Trigger>
+       <Trigger Property="IsPressed" Value="True">
+        <Setter TargetName="bd" Property="Opacity" Value="0.7"/>
+       </Trigger>
+      </ControlTemplate.Triggers>
+     </ControlTemplate>
+    </Setter.Value>
+   </Setter>
+  </Style>
+ </Window.Resources>
  <Border Margin="10" CornerRadius="20" BorderThickness="1" BorderBrush="{DynamicResource DividerBrush}"
          Background="{DynamicResource PanelBrush}" ClipToBounds="True">
   <Grid><Grid.RowDefinitions><RowDefinition Height="44"/><RowDefinition Height="*"/></Grid.RowDefinitions>
    <Border Background="{DynamicResource SideBrush}" CornerRadius="20,20,0,0" MouseLeftButtonDown="Title_MouseLeftButtonDown">
-    <DockPanel Margin="16,0,8,0" LastChildFill="True">
+    <DockPanel Margin="16,0,10,0" LastChildFill="True">
+     <!-- 只保留 最小化 / 下载 / 关闭，没有最大化按钮 -->
      <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
-      <Button x:Name="MinimizeButton" Style="{StaticResource CaptionButton}" Width="40" Height="32"
-              Click="Minimize_Click" ToolTip="{DynamicResource Str_Ui_Minimize}">
-       <Path Style="{StaticResource CaptionIconPath}" Data="{StaticResource IconWinMinimize}"/>
+      <Button x:Name="DownloadButton" Style="{StaticResource RoundCaptionButton}"
+              Click="Download_Click" ToolTip="下载">
+       <Path Style="{StaticResource CaptionIconPath}" Data="{StaticResource IconDownload}"
+             Width="14" Height="14" Stretch="Uniform"/>
       </Button>
-      <Button x:Name="CloseButton" Style="{StaticResource CaptionCloseButton}" Width="40" Height="32"
+      <Button x:Name="MinimizeButton" Style="{StaticResource RoundCaptionButton}"
+              Click="Minimize_Click" ToolTip="{DynamicResource Str_Ui_Minimize}">
+       <Path Style="{StaticResource CaptionIconPath}" Data="{StaticResource IconWinMinimize}"
+             Width="14" Height="14" Stretch="Uniform"/>
+      </Button>
+      <Button x:Name="CloseButton" Style="{StaticResource RoundCaptionCloseButton}"
               Click="Close_Click" ToolTip="关闭预览">
-       <Path Style="{StaticResource CaptionCloseIconPath}" Data="{StaticResource IconWinClose}"/>
+       <Path Style="{StaticResource CaptionCloseIconPath}" Data="{StaticResource IconWinClose}"
+             Width="14" Height="14" Stretch="Uniform"/>
       </Button>
      </StackPanel>
      <TextBlock Text="✦  新界面预览 · 实验性功能" FontSize="14" FontWeight="Bold" VerticalAlignment="Center"/>

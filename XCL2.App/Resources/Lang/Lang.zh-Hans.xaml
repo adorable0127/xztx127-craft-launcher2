@@ -689,6 +689,8 @@
     <system:String x:Key="Str_Ui_Bedrock_Dedicated_Server_Is_Published_Fr">Bedrock Dedicated Server 由 Mojang 官网公开免费提供，不需要账号也不需要许可证，可以直接下载。</system:String>
     <system:String x:Key="Str_Ui_Switches_Between_Light_And_Dark_Automati">开启后按系统时间自动切换深浅色模式（默认早 8:00 到晚 19:00 为浅色，其余为深色），切换时间点可在「设置」页自行调整。</system:String>
     <system:String x:Key="Str_Ui_In_Game_Watermark_Text_Shown_In_The_Bott">游戏内水印文字（左下角显示，如 &amp;quot;XCL2&amp;quot;；留空则显示官方原始的 &amp;quot;release&amp;quot;）</system:String>
+    <system:String x:Key="Str_Ui_Window_Title_Bar_And_Taskbar_Text">启动器标题栏／任务栏显示的文字（留空则跟随界面语言显示默认标题）</system:String>
+    <system:String x:Key="Str_Ui_Restore_Default">恢复默认</system:String>
     <system:String x:Key="Str_Ui_Turning_This_Off_Restores_The_Old_Behavi">关闭后会退回旧行为：只把整合包内容解压覆盖进你选的某个已有实例，不下载游戏本体和加载器——整合包版本跟实例对不上时会直接崩游戏。</system:String>
     <system:String x:Key="Str_Ui_Installing_The_Fabric_Client_Doesn_T_Run">Fabric 客户端安装本身不需要本地运行安装器，不填 Java 也可以安装；启动这个版本时仍会照常自动匹配/下载所需 Java。</system:String>
     <system:String x:Key="Str_Ui_Keep_Resource_Data_And_Shader_Packs_Sepa">资源包/数据包/光影包按版本隔离，互不共用（默认开启；取消勾选=全局共用一份，避免重复下载；可在「版本选择」页为单个版本单独覆盖）</system:String>

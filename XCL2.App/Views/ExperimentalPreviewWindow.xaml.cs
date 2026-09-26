@@ -8,9 +8,11 @@ namespace XCL2.App.Views;
 public partial class ExperimentalPreviewWindow : Window
 {
     private HomePage? _previewHome;
+    private readonly MainWindow _owner;
 
     public ExperimentalPreviewWindow(MainWindow owner)
     {
+        _owner = owner;
         Owner = owner;
         InitializeComponent();
         _previewHome = new HomePage(owner);
@@ -28,6 +30,12 @@ public partial class ExperimentalPreviewWindow : Window
     private void Minimize_Click(object sender, RoutedEventArgs e) => WindowState = WindowState.Minimized;
 
     private void Close_Click(object sender, RoutedEventArgs e) => Close();
+
+    /// <summary>
+    /// 标题栏"下载"按钮：就是打开下载列表（下载中心页面），跟侧边栏「下载」导航按钮
+    /// 是同一个入口——直接复用 MainWindow.NavigateToDownloadCenter()，不重新实现一份。
+    /// </summary>
+    private void Download_Click(object sender, RoutedEventArgs e) => _owner.NavigateToDownloadCenter();
 
     /// <summary>
     /// 之前直接把 PreviewContent.Content 置空会崩：HomePage 内部的搜索结果 Popup
