@@ -366,6 +366,24 @@
                 </ComboBox>
             </StackPanel>
 
+            <TextBlock Text="第三方插件" FontWeight="Bold" FontSize="14" Margin="0,14,0,4"/>
+            <TextBlock Text="拖入 DLL 或 EXE 后会先提示确认来源。以下设置决定插件何时运行。"
+                       FontSize="11" TextWrapping="Wrap" Margin="0,0,0,8"
+                       Foreground="{DynamicResource TextSecondaryBrush}"/>
+            <StackPanel Orientation="Horizontal" Margin="0,0,0,12">
+                <TextBlock Text="插件启动方式" VerticalAlignment="Center" Width="200"/>
+                <ComboBox x:Name="PluginLaunchModeCombo" Width="260">
+                    <ComboBoxItem Content="每次打开启动器时启动（默认）" Tag="EachLaunch"/>
+                    <ComboBoxItem Content="只在导入时启动一次" Tag="OnceOnImport"/>
+                </ComboBox>
+            </StackPanel>
+            <StackPanel Orientation="Horizontal" Margin="0,0,0,20">
+                <TextBlock Text="已安装的插件" VerticalAlignment="Center" Width="200"/>
+                <Button x:Name="OpenPluginManagerButton" Content="插件管理…" Width="140"
+                        Click="OpenPluginManagerButton_Click"
+                        ToolTip="查看已安装插件、启用/禁用、重新扫描——不需要先打开「实验性功能」。"/>
+            </StackPanel>
+
             <!-- 资源包下载作用域：独立于上面的"版本隔离"总开关。默认勾选(材质包/数据包/光影包都
                  按版本隔离，装进各自版本目录下，互不共用)；取消勾选后改为全局共用一份，装进
                  .minecraft 根目录的 resourcepacks/shaderpacks，不用每个版本各下一次。

@@ -435,6 +435,13 @@ public sealed class MarkdownViewer : RichTextBox
         };
         copyBtn.SetResourceReference(Button.ForegroundProperty, "TextSecondaryBrush");
         copyBtn.SetResourceReference(Button.BorderBrushProperty, "BorderBrush2");
+        // 加固：宿主是只读 RichTextBox，其内部 TextEditor 会在 Preview 阶段处理左键按下
+        // （用于判断是否要开始文字拖选），个别情况下会连带把落在嵌入控件上的按下事件也
+        // 标记为已处理，导致按钮收不到后续 MouseUp、Click 不触发——即"点了没反应"。
+        // 这里在按钮自身的 Preview 阶段先把事件标记为已处理，阻止它被当成"文档拖选起点"，
+        // 按钮随后仍能在 Bubble 阶段正常收到 MouseUp 并触发 Click。
+        copyBtn.Focusable = true;
+        copyBtn.PreviewMouseLeftButtonDown += (_, e) => e.Handled = true;
         copyBtn.Click += (_, _) =>
         {
             try

@@ -38,6 +38,18 @@ public partial class SettingsPage : UserControl
         }
     }
 
+    /// <summary>"插件管理"弹窗在这里额外开一个入口：原来的唯一入口挂在「实验性功能」
+    /// 窗口里（见 ExperimentalFeaturesWindow.PluginManager_Click），而「实验性功能」按钮
+    /// 本身只在启动器界面语言是简体中文、且没开简洁模式时才显示（见
+    /// LocalizationService.ExperimentalFeaturesLanguageGate）。插件的启用/禁用、查看加载
+    /// 状态属于基础的插件管理能力，不应该跟着一批"实验性"功能一起被这层语言/模式门控
+    /// 挡住，所以在"设置"页里单独放一个不受这些门控影响的按钮，直接复用同一个
+    /// PluginManagerDialog，不重复实现。</summary>
+    private void OpenPluginManagerButton_Click(object sender, RoutedEventArgs e)
+    {
+        new PluginManagerDialog(_owner).ShowDialog();
+    }
+
     private readonly MainWindow _owner;
 
     /// <summary>设置页"编辑追踪/自动保存气泡"相关状态，见 HookDirtyTracking / OnSettingsEdited 注释。
@@ -219,6 +231,7 @@ public partial class SettingsPage : UserControl
         SelectComboByTag(ZipDropDefaultCombo, cfg.ZipDropDefault.ToString());
         SelectComboByTag(ServerJarDropCombo, cfg.ServerPageJarDropTarget.ToString());
         SelectComboByTag(DefaultJarDropCombo, cfg.DefaultJarDropTarget.ToString());
+        SelectComboByTag(PluginLaunchModeCombo, cfg.PluginLaunchMode.ToString());
         IsolateResourcePacksCheck.IsChecked = cfg.IsolateResourcePacksByDefault;
         // CurseForge 地图下载走内置 Key，不再需要在这里读取/展示用户配置状态（见下方删除说明）。
 
@@ -2046,6 +2059,9 @@ public partial class SettingsPage : UserControl
             cfg.ServerPageJarDropTarget = srvJar;
         if (Enum.TryParse<DropJarTarget>(TagOf(DefaultJarDropCombo), out var defJar))
             cfg.DefaultJarDropTarget = defJar;
+        if (Enum.TryParse<PluginLaunchMode>(TagOf(PluginLaunchModeCombo), out var pluginMode))
+            cfg.PluginLaunchMode = pluginMode;
+        _owner.Plugins.StartPolicy = cfg.PluginLaunchMode;
         cfg.IsolateResourcePacksByDefault = IsolateResourcePacksCheck.IsChecked == true;
 
         cfg.EnableMultiThreadDownload = MultiThreadDownloadCheck.IsChecked == true;

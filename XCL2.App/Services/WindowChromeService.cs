@@ -1,5 +1,6 @@
 ﻿using System.Runtime.InteropServices;
 using System.Windows;
+using System.Windows.Controls;
 using System.Windows.Interop;
 using System.Windows.Media;
 
@@ -208,6 +209,118 @@ public static class WindowChromeService
 
             Marshal.StructureToPtr(mmi, lParam, true);
             handled = true;
+            return IntPtr.Zero;
+        });
+    }
+
+    // ===== Win11 贴靠布局（Snap Layout）悬停菜单 =====
+    //
+    // 只对自绘标题栏的最大化按钮生效（目前只有 MainWindow 那一个）。原生系统标题栏的
+    // 最大化按钮天然有这个悬停菜单，全靠自绘之后就没了；要拿回来，唯一官方支持的办法是
+    // 在 WM_NCHITTEST 里把鼠标扫到这个按钮矩形范围内时如实上报 HTMAXBUTTON——Windows 11
+    // 外壳自己会在检测到"鼠标悬停在 HTMAXBUTTON 上"时弹出贴靠布局九宫格，这部分逻辑在
+    // 系统里，这边不用也不能自己画。声明了 HTMAXBUTTON 之后，鼠标在这块矩形上的按下/
+    // 抬起就变成非客户区消息（WM_NCLBUTTONDOWN/UP），不会再走 Button 的 Click 事件，
+    // 所以点击切换最大化/还原改成在这里手动调用传进来的 toggleMaximizeRestore；悬停高亮
+    // 同理也要手动摸模板里的 "bd" Border 来切换背景色（IsMouseOver 触发器不会再自己生效，
+    // 因为这块区域对 WPF 来说已经不算"鼠标进入了这个控件"）。
+    //
+    // 懒加载：只在 Windows 11（Build ≥ 22000，贴靠布局悬停菜单最早随 Win11 一起出现）
+    // 才挂这个钩子，Windows 10 及更早版本一次都不会调用下面的 Win32 互操作，跟原来
+    // 完全没有这个功能时开销一样。
+
+    [DllImport("user32.dll")]
+    private static extern bool ScreenToClient(IntPtr hWnd, ref POINT lpPoint);
+
+    private const int WM_NCHITTEST = 0x0084;
+    private const int WM_NCMOUSELEAVE = 0x02A2;
+    private const int WM_NCLBUTTONDOWN = 0x00A1;
+    private const int WM_NCLBUTTONUP = 0x00A2;
+    private const int WM_NCLBUTTONDBLCLK = 0x00A3;
+    private const int HTMAXBUTTON = 9;
+
+    /// <summary>给自绘标题栏的最大化按钮接上 Win11 贴靠布局悬停菜单支持。只在
+    /// Windows 11 上生效（懒加载：非 Win11 直接原样返回，不挂任何钩子）； SourceInitialized
+    /// 时 HWND 才真正创建，必须放在这个事件里而不是构造函数本体直接调用。
+    /// <paramref name="maximizeButton"/> 只用于计算按钮在窗口里的矩形范围（悬停命中测试），
+    /// <paramref name="toggleMaximizeRestore"/> 是点击后真正切换最大化/还原状态的回调——
+    /// 一旦声明了 HTMAXBUTTON，这块区域的点击就不会再触发 Button 的 Click 事件了，
+    /// 必须由这里接管并手动调用。</summary>
+    public static void EnableSnapLayoutForMaximizeButton(Window window, FrameworkElement maximizeButton, Action toggleMaximizeRestore)
+    {
+        if (Environment.OSVersion.Version.Build < 22000) return; // 懒加载：Win10 及更早版本直接跳过
+
+        var hwnd = new WindowInteropHelper(window).Handle;
+        if (hwnd == IntPtr.Zero) return;
+        var source = HwndSource.FromHwnd(hwnd);
+        if (source == null) return;
+
+        Border? hoverBorder = null; // 模板里名为 "bd" 的部件，首次用到时才去找，找不到就放弃高亮但不影响点击/贴靠
+        Brush? normalBrush = null;
+        var hovering = false;
+
+        void SetHover(bool over)
+        {
+            if (hovering == over) return;
+            hovering = over;
+            if (maximizeButton is not Button btn) return;
+            if (hoverBorder == null)
+            {
+                btn.ApplyTemplate();
+                hoverBorder = btn.Template?.FindName("bd", btn) as Border;
+                if (hoverBorder == null) return;
+                normalBrush = hoverBorder.Background;
+            }
+            hoverBorder.Background = over ? (Brush)btn.FindResource("GlowSoftBrush") : normalBrush;
+        }
+
+        source.AddHook((IntPtr hWnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled) =>
+        {
+            switch (msg)
+            {
+                case WM_NCHITTEST:
+                {
+                    // lParam 是屏幕物理像素坐标；先用 ScreenToClient 换算成客户区物理像素
+                    // （这一步是精确的 DPI 无关操作），再按当前窗口 DPI 缩放成 WPF 的设备
+                    // 无关单位，最后跟按钮在窗口里的矩形（TransformToAncestor 得到）比较。
+                    var pt = new POINT { X = unchecked((short)(long)lParam), Y = unchecked((short)((long)lParam >> 16)) };
+                    if (!ScreenToClient(hWnd, ref pt)) break;
+                    var dpi = VisualTreeHelper.GetDpi(window);
+                    var clientPoint = new Point(pt.X / dpi.DpiScaleX, pt.Y / dpi.DpiScaleY);
+
+                    var over = false;
+                    if (maximizeButton.IsVisible && maximizeButton.Visibility == Visibility.Visible)
+                    {
+                        var rect = maximizeButton.TransformToAncestor(window)
+                            .TransformBounds(new Rect(0, 0, maximizeButton.ActualWidth, maximizeButton.ActualHeight));
+                        over = rect.Contains(clientPoint);
+                    }
+
+                    if (over)
+                    {
+                        SetHover(true);
+                        handled = true;
+                        return new IntPtr(HTMAXBUTTON);
+                    }
+                    SetHover(false);
+                    break;
+                }
+                case WM_NCMOUSELEAVE:
+                    SetHover(false);
+                    break;
+                case WM_NCLBUTTONDOWN:
+                case WM_NCLBUTTONDBLCLK:
+                    if (wParam.ToInt32() == HTMAXBUTTON) { handled = true; return IntPtr.Zero; }
+                    break;
+                case WM_NCLBUTTONUP:
+                    if (wParam.ToInt32() == HTMAXBUTTON)
+                    {
+                        handled = true;
+                        toggleMaximizeRestore();
+                        return IntPtr.Zero;
+                    }
+                    break;
+            }
             return IntPtr.Zero;
         });
     }

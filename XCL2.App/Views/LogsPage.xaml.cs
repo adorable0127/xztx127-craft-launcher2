@@ -71,6 +71,7 @@ public partial class LogsPage : UserControl
 
         // 默认不显示日志面板，符合"小白 0 基础也能用"的定位：日志只是可选的高手工具。
         ShowLogCheck.IsChecked = _owner.ConfigService.Config.ShowLogPanel;
+        ShowNormalLogsCheck.IsChecked = _owner.ConfigService.Config.ShowNormalLogsInCrashAnalysis;
         ApplyVisibility();
 
         ReloadProcessCombos();
@@ -313,14 +314,19 @@ public partial class LogsPage : UserControl
         }
         if (string.IsNullOrWhiteSpace(CrashRawBox.Text))
         {
-            MessageBoxDialog.ShowInfo("请先选择一个崩溃报告。", "AI 日志分析");
+            MessageBoxDialog.ShowInfo("请先选择一份日志。", "AI 日志分析");
             return;
         }
 
+        var selectedIndex = CrashFileCombo.SelectedIndex;
+        var ordinaryLog = selectedIndex >= 0 && selectedIndex < _crashFiles.Count
+            && CrashAnalyzerService.IsOrdinaryGameLog(_crashFiles[selectedIndex].path);
         SubmitLogToAi(
-            "Minecraft 崩溃报告",
+            ordinaryLog ? "Minecraft 普通游戏日志（未确认崩溃）" : "Minecraft 崩溃报告",
             CrashRawBox.Text,
-            "请深入分析下面的 Minecraft 崩溃报告。优先定位第一责任方（具体 Mod、前置依赖、Mixin、Loader、Java 版本、显卡驱动或资源问题），区分根因与后续连锁异常，并给出可执行的修复顺序。",
+            ordinaryLog
+                ? "以下是普通游戏日志，未确认游戏发生崩溃。先客观说明日志状态，不要把正常运行、正常/手动退出、INFO/WARN/ERROR 或可恢复异常当成崩溃。只有存在明确失败证据时才解释，并区分证据和推测；无法判定时明确说明。"
+                : "请深入分析下面的 Minecraft 崩溃报告。优先定位第一责任方（具体 Mod、前置依赖、Mixin、Loader、Java 版本、显卡驱动或资源问题），区分根因与后续连锁异常，并给出可执行的修复顺序。",
             isCrashLogContext: true);
     }
 
@@ -592,13 +598,27 @@ public partial class LogsPage : UserControl
     }
 
     // --- 崩溃报告分析 Tab ---
+    private void ShowNormalLogsCheck_Click(object sender, RoutedEventArgs e)
+    {
+        _owner.ConfigService.Config.ShowNormalLogsInCrashAnalysis = ShowNormalLogsCheck.IsChecked == true;
+        _owner.ConfigService.Save();
+        RescanCrash_Click(sender, e);
+    }
+
     private void RescanCrash_Click(object sender, RoutedEventArgs e)
     {
+        var includeNormalLogs = ShowNormalLogsCheck.IsChecked == true;
+        var selectedPath = CrashFileCombo.SelectedIndex >= 0 && CrashFileCombo.SelectedIndex < _crashFiles.Count
+            ? _crashFiles[CrashFileCombo.SelectedIndex].path : null;
+        // 先解除旧列表，再清除原文，避免关闭开关后仍残留上一份普通日志的内容/结论。
+        CrashFileCombo.ItemsSource = null;
+        CrashRawBox.Text = "";
+        CrashFindingsText.Text = "";
         _crashFiles.Clear();
         foreach (var folder in _owner.ConfigService.Config.Folders)
         {
             // .minecraft 根目录（版本隔离关闭时崩溃报告在这里）
-            try { _crashFiles.AddRange(_crashAnalyzer.ListCrashFiles(folder.Path)); }
+            try { _crashFiles.AddRange(_crashAnalyzer.ListCrashFiles(folder.Path, includeNormalLogs)); }
             catch { /* 忽略单个目录扫描失败 */ }
 
             // ===== 关键补充：逐个版本目录也要扫 =====
@@ -613,7 +633,7 @@ public partial class LogsPage : UserControl
                 {
                     foreach (var versionDir in Directory.GetDirectories(versionsDir))
                     {
-                        try { _crashFiles.AddRange(_crashAnalyzer.ListCrashFiles(versionDir)); }
+                        try { _crashFiles.AddRange(_crashAnalyzer.ListCrashFiles(versionDir, includeNormalLogs)); }
                         catch { /* 单个版本目录扫描失败不影响其它 */ }
                     }
                 }
@@ -633,18 +653,22 @@ public partial class LogsPage : UserControl
         CrashFileCombo.ItemsSource = _crashFiles.Select(f =>
         {
             var owner = TryDescribeOwningInstance(f.path);
+            var kind = CrashAnalyzerService.IsOrdinaryGameLog(f.path) ? "【普通日志】" : "【异常退出】";
             return owner == null
-                ? $"{Path.GetFileName(f.path)}  ({f.modifiedAt:yyyy-MM-dd HH:mm})"
-                : $"[{owner}] {Path.GetFileName(f.path)}  ({f.modifiedAt:yyyy-MM-dd HH:mm})";
+                ? $"{kind} {Path.GetFileName(f.path)}  ({f.modifiedAt:yyyy-MM-dd HH:mm})"
+                : $"{kind} [{owner}] {Path.GetFileName(f.path)}  ({f.modifiedAt:yyyy-MM-dd HH:mm})";
         }).ToList();
         if (_crashFiles.Count == 0)
         {
-            CrashFindingsText.Text = Loc.T("Str_Cs_No_Crash_Reports_Found_So_No_Game_Crashe", "没有发现崩溃报告文件，说明目前没有检测到游戏崩溃记录。");
+            CrashFindingsText.Text = includeNormalLogs
+                ? "未找到可查看的游戏日志或崩溃报告。"
+                : "没有找到已确认的非人为异常退出记录。正常、手动退出和未确认异常的普通日志已隐藏；如需查看，请开启“显示正常日志”。";
             CrashRawBox.Text = "";
         }
         else
         {
-            CrashFileCombo.SelectedIndex = 0;
+            var retainedIndex = _crashFiles.FindIndex(f => string.Equals(f.path, selectedPath, StringComparison.OrdinalIgnoreCase));
+            CrashFileCombo.SelectedIndex = retainedIndex >= 0 ? retainedIndex : 0;
         }
     }
 

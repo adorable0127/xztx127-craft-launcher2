@@ -331,6 +331,9 @@ public class AppConfig
     /// <summary>是否显示日志面板（游戏控制台输出 / 启动器日志）。默认关闭，小白用户看不到也不受打扰。</summary>
     public bool ShowLogPanel { get; set; } = false;
 
+    /// <summary>崩溃分析页是否同时列出普通游戏日志。默认关闭，只显示崩溃报告和已确认的异常退出快照。</summary>
+    public bool ShowNormalLogsInCrashAnalysis { get; set; } = false;
+
     /// <summary>是否启用注入检测（游戏进程模块扫描 + 已知外挂特征码匹配）。默认开启，属于安全保护功能。</summary>
     public bool EnableInjectionScan { get; set; } = true;
 
@@ -408,6 +411,10 @@ public class AppConfig
     /// 覆盖装进已有实例几乎必然跟已装的 mod 打架。
     /// </summary>
     public bool ModpackDropCreatesNewInstance { get; set; } = true;
+
+    /// <summary>第三方插件启动方式。默认每次打开启动器运行；OnceOnImport 只在首次
+    /// 拖入并确认导入时运行一次，重启和重新扫描均不再自动运行。</summary>
+    public PluginLaunchMode PluginLaunchMode { get; set; } = global::XCL2.App.Models.PluginLaunchMode.EachLaunch;
 
     /// <summary>
     /// 社区资源是否显示预览版（beta / alpha）。
@@ -1196,6 +1203,13 @@ public static class UiZoomShortcutMode
     /// <summary>Ctrl + 键盘上下方向键。</summary>
     public const string CtrlArrow = "CtrlArrow";
     public static readonly string[] All = { CtrlWheel, CtrlArrow };
+}
+
+/// <summary>导入第三方插件后何时再次启动。</summary>
+public enum PluginLaunchMode
+{
+    EachLaunch,
+    OnceOnImport
 }
 
 /// <summary>拖入 .zip 且内容特征不明确时的默认处理方式。</summary>

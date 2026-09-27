@@ -1,0 +1,57 @@
+<local:OverlayDialogControl x:Class="XCL2.App.Views.PluginManagerDialog"
+                            xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                            xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                            xmlns:local="clr-namespace:XCL2.App.Views"
+                            xmlns:services="clr-namespace:XCL2.App.Services"
+                            MinWidth="640" MaxWidth="640" MinHeight="560" MaxHeight="620">
+ <!-- 布局跟 ExperimentalFeaturesWindow 是同一套模式：Auto 头部 + * 内容 + Auto 底部按钮条，
+      挂在 Overlay 卡片里，MinHeight 不能省（原因见 ExperimentalFeaturesWindow.xaml 顶部注释：
+      Overlay 是按内容自适应测量，没有 MinHeight 时空列表会直接塌成 0 高度）。
+      修复：原来只有"插件列表"那一块单独套了 ScrollViewer，标题/说明文字/开发命令按钮条
+      （WrapPanel）不在滚动范围内——按钮一多、WrapPanel 换行变多时，这几块加起来的高度
+      超过 MaxHeight 后照样会把下面的列表和底部"关闭"按钮条挤出可视区、显示不全。现在把
+      标题、按钮条、插件列表一起放进同一个 ScrollViewer（复用全局 EnableFastWheel 滚轮手感），
+      只留底部"关闭"/统计文字这一条固定在最下面，整个弹窗任何位置放不下都能直接用鼠标滚轮
+      上下滚动看全，不用再手动拉伸窗口。 -->
+ <Grid Margin="20">
+  <Grid.RowDefinitions>
+   <RowDefinition Height="*"/>
+   <RowDefinition Height="Auto"/>
+  </Grid.RowDefinitions>
+
+  <ScrollViewer Grid.Row="0" VerticalScrollBarVisibility="Auto"
+                services:ScrollWheelBehavior.EnableFastWheel="True">
+   <StackPanel>
+    <StackPanel Margin="0,0,0,10">
+     <TextBlock Text="插件管理" FontSize="18" FontWeight="Bold" Margin="0,0,0,4"/>
+     <TextBlock Text="拖入 DLL / EXE 自动安装；也可使用下方按钮选择文件。导入前会提示确认来源。"
+                Foreground="{DynamicResource TextSecondaryBrush}" FontSize="12" TextWrapping="Wrap"/>
+    </StackPanel>
+
+    <!-- 开发命令工具条：都是这次新增的“开发命令”。 -->
+    <WrapPanel Margin="0,0,0,10">
+     <Button x:Name="RescanButton" Content="🔄 重新扫描 / 重新加载插件" Padding="10,6" Margin="0,0,8,8" Click="Rescan_Click"/>
+     <Button Content="导入插件（DLL / EXE）" Padding="10,6" Margin="0,0,8,8" Click="Import_Click"/>
+     <Button x:Name="OpenDirButton" Content="📂 打开插件目录" Padding="10,6" Margin="0,0,8,8" Click="OpenDir_Click"/>
+     <Button x:Name="GenerateTemplateButton" Content="🧪 生成插件项目模板" Padding="10,6" Margin="0,0,8,8" Click="GenerateTemplate_Click"/>
+     <Button x:Name="OpenGuideButton" Content="一键打开查看插件开发指南" Padding="10,6" Margin="0,0,8,8" Click="OpenGuide_Click"/>
+     <Button x:Name="OpenApiReferenceButton" Content="📘 一键查看API接口" Padding="10,6" Margin="0,0,8,8" Click="OpenApiReference_Click"/>
+    </WrapPanel>
+
+    <StackPanel x:Name="PluginListPanel"/>
+   </StackPanel>
+  </ScrollViewer>
+
+  <Grid Grid.Row="1" Margin="0,14,0,0">
+   <Grid.ColumnDefinitions>
+    <ColumnDefinition Width="*"/>
+    <ColumnDefinition Width="Auto"/>
+    <ColumnDefinition Width="Auto"/>
+   </Grid.ColumnDefinitions>
+   <TextBlock x:Name="SummaryText" Grid.Column="0" Foreground="{DynamicResource TextSecondaryBrush}"
+              FontSize="11" VerticalAlignment="Center" TextWrapping="Wrap"/>
+   <Button Grid.Column="1" Content="保存" Margin="0,0,8,0" Style="{StaticResource PrimaryButton}" Click="Save_Click"/>
+   <Button Grid.Column="2" Content="取消" Click="Cancel_Click"/>
+  </Grid>
+ </Grid>
+</local:OverlayDialogControl>

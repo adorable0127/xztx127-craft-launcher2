@@ -10,16 +10,15 @@ namespace XCL2.App.Services;
 
 /// <summary>
 /// 账户列表（「账户」导航页 LoginPage、启动前的「选择账户」弹窗 AccountPickerDialog）里
-/// 用户名左边那个静态头像的取图逻辑。四档优先级，从高到低：
+/// 用户名左边那个静态头像的取图逻辑。未设置皮肤的离线账户在没有可用的自定义头像照片时，
+/// 直接显示内嵌的 offline-default.png，不读取残留皮肤路径或在线缓存。其余账户按以下优先级取图：
 ///   1) 用户自己导入的头像照片（Account.AvatarPhotoPath，任意图片，跟 Minecraft 皮肤无关）；
 ///   2) <see cref="AccountAvatarCacheService"/> 后台从服务器查到的"当前公开皮肤"缓存文件——
 ///      覆盖皮肤站(AuthServer)账户、正版(Microsoft)账户，以及设置过皮肤(SkinType != None)的
 ///      离线账户，皮肤随时可能在服务器端被换掉，这份缓存比下面的本地文件更"新"；
 ///   3) 绑定了自定义 Minecraft 皮肤（Account.CustomSkinPath）时，从皮肤贴图截出正脸——
 ///      多数是第 2 档还没来得及查到结果、或本来就没有服务器端皮肤可查时的本地兜底；
-///   4) 都没有——不管是"离线账户还没设置皮肤"还是"选了史蒂夫/艾利克斯默认骨架且服务器
-///      端查不到"，按 SkinType 显示内置的史蒂夫/艾利克斯默认头像图片，不需要下载/依赖任何
-///      外部资源。
+///   4) 都没有——按 SkinType 显示内置的史蒂夫/艾利克斯默认头像图片，不需要下载/依赖任何外部资源。
 /// 任何一步读取/解码失败都静默退回下一档，最终兜底一定是史蒂夫/艾利克斯默认头像，
 /// 不会出现空白头像。
 /// </summary>
@@ -44,6 +43,10 @@ public sealed class AccountAvatarConverter : IValueConverter
             }
             catch { /* 照片损坏/被移动了，落到下一档而不是显示空白 */ }
         }
+
+        // 未设置皮肤的离线账户固定使用指定默认头像；独立上传的头像照片仍优先。
+        if (account.Type == AccountType.Offline && account.SkinType == OfflineSkinType.None)
+            return OfflineDefaultAvatar;
 
         // 第二档：后台查到的服务器端"当前公开皮肤"缓存。
         var onlineCachePath = AccountAvatarCacheService.GetCachePath(account);
@@ -80,9 +83,11 @@ public sealed class AccountAvatarConverter : IValueConverter
     }
 
     /// <summary>内置默认头像图片，打包成嵌入资源，不依赖任何外部文件/下载。</summary>
+    private static ImageSource OfflineDefaultAvatar => LoadEmbeddedAvatar("offline-default.png", ref _offlineCache);
     private static ImageSource SteveDefaultAvatar => LoadEmbeddedAvatar("steve-default.png", ref _steveCache);
     private static ImageSource AlexDefaultAvatar => LoadEmbeddedAvatar("alex-default.png", ref _alexCache);
 
+    private static ImageSource? _offlineCache;
     private static ImageSource? _steveCache;
     private static ImageSource? _alexCache;
 

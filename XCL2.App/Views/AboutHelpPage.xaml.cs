@@ -138,6 +138,18 @@ public partial class AboutHelpPage : UserControl
 
     private void OpenIssue_Click(object sender, RoutedEventArgs e) => OpenUrl($"{GitHubRepoUrl}/issues/new");
 
+    private void ViewHelpDocument_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { Tag: string fileName }) return;
+        try { OverlayDialogService.ShowNonModal(new HelpDocumentDialog(fileName)); }
+        catch (Exception ex) { MessageBoxDialog.ShowWarning("打开内置文档失败：\n" + ex.Message, "帮助文档"); }
+    }
+
+    private void ExportHelpDocument_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is Button { Tag: string fileName }) HelpDocumentDialog.ExportMarkdown(fileName);
+    }
+
     // ===================== 鸣谢板块：作者 / 赞助 / 仓库 =====================
 
     private void OpenDonate_Click(object sender, RoutedEventArgs e) => OpenUrl(DonateUrl);

@@ -6,16 +6,10 @@ namespace XCL2.App.Services;
 /// 触屏模式的底层输入注入器：把悬浮层上的按钮/拖动，翻译成 Windows 系统级的键盘、鼠标事件，
 /// 送进当前前台窗口（也就是 Minecraft 的游戏窗口）。
 ///
-/// 为什么用 SendInput 而不是 PostMessage/SendMessage：
-/// Minecraft Java 版（1.13+ 用 LWJGL3/GLFW，老版本用 LWJGL2）都不是靠标准 WM_KEYDOWN 消息
-/// 做游戏内输入的——GLFW 走的是原始输入(Raw Input)/底层键盘状态，鼠标视角更是完全依赖
-/// "光标被锁定后系统上报的相对位移"。用 PostMessage 往窗口句柄发消息，在聊天框里也许能打出字，
-/// 但人物根本不会移动、视角也不会转，是最常见的踩坑点。SendInput 注入的是系统输入队列层面的
-/// 事件，对游戏来说跟真实键盘鼠标完全没有区别，所以三种输入（按键/点击/视角）都能正常工作。
-///
-/// 代价是：SendInput 只会送给"当前前台窗口"。所以悬浮层窗口必须永远不能抢焦点
-/// （WS_EX_NOACTIVATE，见 TouchOverlayWindow），否则你一点按钮，焦点跑到悬浮层上，
-/// 按键就全被悬浮层自己吃掉了，游戏一动不动。
+/// 键盘和视角位移使用 SendInput，保留扫描码、按键状态和相对输入。
+/// 鼠标消息按命中窗口投递，并不保证送到前台窗口：悬浮层命中自己注入的鼠标消息时，
+/// 必须在原生消息入口把它转交游戏，不能再次走 WPF 的按钮/拖动处理。
+/// 悬浮层仍须保持 WS_EX_NOACTIVATE，确保键盘输入和 Raw Input 的前台目标是游戏。
 ///
 /// 另外键盘事件统一用扫描码(KEYEVENTF_SCANCODE)而不是只给虚拟键码：GLFW 是按扫描码识别
 /// 物理按键位置的，只给 VK 在部分非美式键盘布局/部分驱动环境下会识别失败。这里两者都填，
@@ -84,17 +78,28 @@ internal static class TouchInputInjector
     private const uint MOUSEEVENTF_MIDDLEDOWN = 0x0020;
     private const uint MOUSEEVENTF_MIDDLEUP = 0x0040;
     private const uint MOUSEEVENTF_WHEEL = 0x0800;
+    private const uint MOUSEEVENTF_VIRTUALDESK = 0x4000;
+    private const uint MOUSEEVENTF_ABSOLUTE = 0x8000;
 
     private const uint MAPVK_VK_TO_VSC = 0;
 
     [DllImport("user32.dll", SetLastError = true)]
-    private static extern uint SendInput(uint nInputs, INPUT[] pInputs, int cbSize);
+    private static extern uint SendInput(uint nInputs, in INPUT pInputs, int cbSize);
+
+    // 每次只发送一个 INPUT，直接传结构体，避免连续滑动时为每一帧分配临时数组。
+    private static readonly int InputSize = Marshal.SizeOf<INPUT>();
 
     [DllImport("user32.dll")]
     private static extern uint MapVirtualKey(uint uCode, uint uMapType);
 
     [DllImport("user32.dll")]
-    private static extern bool SetCursorPos(int X, int Y);
+    private static extern int GetSystemMetrics(int nIndex);
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr GetMessageExtraInfo();
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern bool PostMessage(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
 
     [DllImport("user32.dll")]
     private static extern bool GetCursorInfo(ref CURSORINFO pci);
@@ -111,6 +116,9 @@ internal static class TouchInputInjector
     [DllImport("user32.dll")]
     private static extern bool ClientToScreen(IntPtr hWnd, ref POINT lpPoint);
 
+    [DllImport("user32.dll")]
+    private static extern bool ScreenToClient(IntPtr hWnd, ref POINT lpPoint);
+
     [StructLayout(LayoutKind.Sequential)]
     private struct CURSORINFO
     {
@@ -121,6 +129,7 @@ internal static class TouchInputInjector
     }
 
     private const int CURSOR_SHOWING = 0x0001;
+    private const int CURSOR_SUPPRESSED = 0x0002;
 
     /// <summary>
     /// 打在我们自己注入的每一个事件的 dwExtraInfo 上的专属签名（"XCL2" 的 ASCII）。
@@ -132,6 +141,32 @@ internal static class TouchInputInjector
     public const ulong InjectedSignature = 0x58434C32; // 'X''C''L''2'
 
     private static IntPtr Signature => (IntPtr)unchecked((long)InjectedSignature);
+
+    public static bool IsInjectedMouseMessage => GetMessageExtraInfo() == Signature;
+
+    public static bool IsMouseMessage(int message) => message >= 0x0200 && message <= 0x020E;
+
+    /// <summary>鼠标消息中的坐标转成屏幕像素；滚轮消息本来就使用屏幕坐标。</summary>
+    public static bool TryGetMouseMessagePosition(IntPtr source, int message, IntPtr lParam, out int x, out int y)
+    {
+        var value = lParam.ToInt64();
+        var point = new POINT { x = unchecked((short)(value & 0xFFFF)), y = unchecked((short)((value >> 16) & 0xFFFF)) };
+        var ok = message is 0x020A or 0x020E || ClientToScreen(source, ref point);
+        x = point.x;
+        y = point.y;
+        return ok;
+    }
+
+    /// <summary>把被悬浮层截获的原生鼠标消息交给游戏，避免模拟点击再次触发悬浮层。
+    /// 不再注入一次相对位移：游戏已收到 SendInput 的 Raw Input，重复注入会加倍转动。</summary>
+    public static void ForwardMouseMessage(IntPtr source, IntPtr game, int message, IntPtr wParam, IntPtr lParam)
+    {
+        if (game == IntPtr.Zero || !TryGetMouseMessagePosition(source, message, lParam, out var x, out var y)) return;
+        var point = new POINT { x = x, y = y };
+        if (message is not (0x020A or 0x020E) && !ScreenToClient(game, ref point)) return;
+        var packed = unchecked((int)((uint)(ushort)point.x | ((uint)(ushort)point.y << 16)));
+        PostMessage(game, (uint)message, wParam, new IntPtr(packed));
+    }
 
     // ===================== 键盘 =====================
 
@@ -179,7 +214,7 @@ internal static class TouchInputInjector
                 ki = new KEYBDINPUT { wVk = vk, wScan = scan, dwFlags = flags, dwExtraInfo = Signature }
             }
         };
-        SendInput(1, new[] { input }, Marshal.SizeOf<INPUT>());
+        SendInput(1, in input, InputSize);
     }
 
     // ===================== 鼠标 =====================
@@ -209,7 +244,7 @@ internal static class TouchInputInjector
             type = INPUT_MOUSE,
             u = new INPUTUNION { mi = new MOUSEINPUT { dwFlags = flags, dwExtraInfo = Signature } }
         };
-        SendInput(1, new[] { input }, Marshal.SizeOf<INPUT>());
+        SendInput(1, in input, InputSize);
     }
 
     /// <summary>相对位移：这是"手指在视角区拖动 = 转视角"的实现基础。
@@ -223,7 +258,7 @@ internal static class TouchInputInjector
             type = INPUT_MOUSE,
             u = new INPUTUNION { mi = new MOUSEINPUT { dx = dx, dy = dy, dwFlags = MOUSEEVENTF_MOVE, dwExtraInfo = Signature } }
         };
-        SendInput(1, new[] { input }, Marshal.SizeOf<INPUT>());
+        SendInput(1, in input, InputSize);
     }
 
     /// <summary>滚轮：用于切换快捷栏物品。notches 为正=向上滚（上一格）。</summary>
@@ -237,7 +272,7 @@ internal static class TouchInputInjector
                 mi = new MOUSEINPUT { mouseData = unchecked((uint)(notches * 120)), dwFlags = MOUSEEVENTF_WHEEL, dwExtraInfo = Signature }
             }
         };
-        SendInput(1, new[] { input }, Marshal.SizeOf<INPUT>());
+        SendInput(1, in input, InputSize);
     }
 
     /// <summary>
@@ -246,29 +281,50 @@ internal static class TouchInputInjector
     /// 只在"游戏没有抓住光标"的时候用——也就是背包/菜单/聊天这类界面里，光标是可见的、
     /// 有真实绝对位置的，手指点哪就该点哪。游戏中（光标被抓走、隐藏）绝对不能用这个：
     /// 那种状态下游戏把光标位置的变化当成视角增量，强行挪光标 = 视角瞬间甩飞，
-    /// 正是我们要消灭的那个毛病。判断方式见 <see cref="IsCursorVisible"/>。
+    /// 正是我们要消灭的那个毛病。判断方式见 <see cref="TryGetCursorVisibility"/>。
     /// </summary>
     public static void MoveCursorTo(int screenX, int screenY)
     {
-        try { SetCursorPos(screenX, screenY); } catch { /* 尽力而为 */ }
+        // 使用整个虚拟桌面的物理像素坐标，兼容副屏、负坐标和系统缩放。
+        // 与相对移动一样打上签名，防止菜单定位被当成外接鼠标操作再次处理。
+        var left = GetSystemMetrics(76); // SM_XVIRTUALSCREEN
+        var top = GetSystemMetrics(77); // SM_YVIRTUALSCREEN
+        var width = GetSystemMetrics(78); // SM_CXVIRTUALSCREEN
+        var height = GetSystemMetrics(79); // SM_CYVIRTUALSCREEN
+        if (width <= 0 || height <= 0) return;
+        var x = Math.Clamp((long)screenX - left, 0, width - 1);
+        var y = Math.Clamp((long)screenY - top, 0, height - 1);
+        var input = new INPUT
+        {
+            type = INPUT_MOUSE,
+            u = new INPUTUNION
+            {
+                mi = new MOUSEINPUT
+                {
+                    dx = (int)(((2 * x + 1) * 65536) / (2L * width)),
+                    dy = (int)(((2 * y + 1) * 65536) / (2L * height)),
+                    dwFlags = MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_VIRTUALDESK,
+                    dwExtraInfo = Signature
+                }
+            }
+        };
+        SendInput(1, in input, InputSize);
     }
 
     /// <summary>
-    /// 当前系统光标是否可见。用来区分玩家此刻在"游戏画面里"还是在"某个界面里"：
-    /// Minecraft 进入游戏画面时会把光标隐藏并锁定（GLFW 的 disabled cursor 模式），
-    /// 打开背包/菜单/聊天时又把它放出来。这是不用读游戏内存、不依赖版本就能拿到的
-    /// 最可靠信号，比"猜测按了哪个键"靠谱得多。
-    ///
-    /// 拿不到状态时按"不可见（游戏中）"处理：走相对位移那条路，最坏情况是界面里点不准，
-    /// 而不是视角乱飞——两害相权取其轻。
+    /// 光标是否可用于菜单定位。CURSOR_SUPPRESSED 是 Windows 在触摸/笔输入时
+    /// 暂时不绘制光标，必须同时参考光标句柄，不能只凭 SUPPRESSED 就隐藏游戏按键。
+    /// 读取失败返回 false，由调用方保留上次确认的模式。
     /// </summary>
-    public static bool IsCursorVisible()
+    public static bool TryGetCursorVisibility(out bool visible)
     {
+        visible = false;
         try
         {
             var info = new CURSORINFO { cbSize = Marshal.SizeOf<CURSORINFO>() };
             if (!GetCursorInfo(ref info)) return false;
-            return (info.flags & CURSOR_SHOWING) != 0;
+            visible = info.hCursor != IntPtr.Zero && (info.flags & (CURSOR_SHOWING | CURSOR_SUPPRESSED)) != 0;
+            return true;
         }
         catch { return false; }
     }
@@ -296,23 +352,6 @@ internal static class TouchInputInjector
             return true;
         }
         catch { return false; }
-    }
-
-    /// <summary>
-    /// 把系统光标摆到游戏客户区正中间。
-    ///
-    /// 只在"光标刚刚从可见变成不可见"（也就是游戏刚锁光标进世界那一瞬间）调用一次：
-    /// 如果那一刻光标恰好停在手指上一次点击的地方（比如菜单右上角），游戏锁光标时
-    /// 内部记录的"上一帧位置"和"这一帧我们想让它在的中心"隔着老远，
-    /// 游戏按"位移=视角增量"一算，等于凭空多出一大截位移，表现就是刚进世界视角猛地转一圈。
-    /// 进锁定状态前先把光标钉在正中间，就不会有这个虚假的第一帧跳变了。
-    /// </summary>
-    public static void CenterCursor(IntPtr hwnd)
-    {
-        if (!TryGetClientAreaOnScreen(hwnd, out var left, out var top, out var right, out var bottom)) return;
-        var cx = (left + right) / 2;
-        var cy = (top + bottom) / 2;
-        try { SetCursorPos(cx, cy); } catch { /* 尽力而为 */ }
     }
 
     // ===================== 按键名 -> 虚拟键码 =====================

@@ -18,20 +18,21 @@ public partial class SkinModelViewerDialog : OverlayDialogControl
     private readonly Dictionary<string, AxisAngleRotation3D> _bones = new();
     private readonly ImageBrush _textureBrush;
     private readonly string _fallbackSkinDescription;
-    private double _yaw, _pitch = 7, _distance = 8, _tick;
+    // 包围球覆盖身体和四肢绕关节运动的范围，并给取景留出少量边距。
+    private const double CameraTargetY = 1.9;
+    private const double ModelFramingRadius = 2.65;
+    private double _yaw, _pitch = 7, _zoom = 1, _tick;
     private System.Windows.Point? _dragFrom;
 
     public SkinModelViewerDialog(Account account)
     {
         InitializeComponent();
-        // 默认贴图：离线账户没有设置任何皮肤（SkinType.None，包括还没来得及选过的全新离线
-        // 账户），或者显式选了"史蒂夫"，都应该看到内置的史蒂夫模型，而不是一个跟史蒂夫/
-        // 艾利克斯都不像的抽象配色示意方块——2D 头像（AccountAvatarConverter）早就是这个
-        // 优先级和这个兜底了，这里的 3D 纸娃娃之前没跟上，各自维护了一套不一致的"默认皮肤"。
+        // 未设置皮肤的离线账户使用内嵌的完整 Steve 贴图，并忽略残留的自定义皮肤路径。
+        bool useOfflineDefault = account.Type == AccountType.Offline && account.SkinType == OfflineSkinType.None;
         bool isAlex = account.Type == AccountType.Offline && account.SkinType == OfflineSkinType.Alex;
-        BitmapSource texture = BuildDefaultSkin();
+        BitmapSource texture = useOfflineDefault ? LoadOfflineDefaultSkin() : BuildDefaultSkin();
         var fallbackDescription = isAlex ? "艾利克斯默认模型" : "史蒂夫默认模型";
-        if (!string.IsNullOrWhiteSpace(account.CustomSkinPath) && File.Exists(account.CustomSkinPath))
+        if (!useOfflineDefault && !string.IsNullOrWhiteSpace(account.CustomSkinPath) && File.Exists(account.CustomSkinPath))
         {
             try
             {
@@ -58,7 +59,18 @@ public partial class SkinModelViewerDialog : OverlayDialogControl
             SkinSourceText.Text = $"当前账户：{account.Username} · 当前使用{_fallbackSkinDescription}。";
 
         var group = new Model3DGroup();
-        _textureBrush = new ImageBrush(texture) { Stretch = Stretch.Fill };
+        // 每个部件只使用皮肤图集的一部分 UV。默认 RelativeToBoundingBox 会把
+        // 整张皮肤重新压进该部件的 UV 边界，导致其它部位和透明留白被贴到身体上。
+        // 固定图集在 0..1 的绝对 UV 空间；更换 ImageSource 时也保留这个映射。
+        _textureBrush = new ImageBrush(PreparePixelTexture(texture))
+        {
+            Stretch = Stretch.Fill,
+            ViewportUnits = BrushMappingMode.Absolute,
+            Viewport = new Rect(0, 0, 1, 1),
+            TileMode = TileMode.None
+        };
+        RenderOptions.SetBitmapScalingMode(_textureBrush, BitmapScalingMode.NearestNeighbor);
+        RenderOptions.SetBitmapScalingMode(ModelViewport, BitmapScalingMode.NearestNeighbor);
         var material = new DiffuseMaterial(_textureBrush);
         // 坐标：x 左右、y 上下、z 前后；像素 UV 使用原版 Minecraft 标准 64x64 图集。
         AddPart(group, material, "head", 0, 3.14, 0, 1, 1, 1,
@@ -74,6 +86,7 @@ public partial class SkinModelViewerDialog : OverlayDialogControl
         AddPart(group, material, "rightLeg", .25, .37, 0, .5, 1.5, .5,
             (4, 20, 4, 12), (12, 20, 4, 12), (0, 20, 4, 12), (8, 20, 4, 12), (4, 16, 4, 4), (8, 16, 4, 4), .25, 1.14);
         ModelViewport.Children.Add(new ModelVisual3D { Content = group });
+        ModelViewport.SizeChanged += (_, _) => UpdateCamera();
         UpdateCamera();
 
         // 微软账户/皮肤站账户都不再因为"没有本地 CustomSkinPath"就永久显示占位模型。
@@ -107,9 +120,10 @@ public partial class SkinModelViewerDialog : OverlayDialogControl
             if (bitmap.PixelWidth < 64 || bitmap.PixelHeight < 64)
                 throw new InvalidDataException($"服务器返回的皮肤尺寸为 {bitmap.PixelWidth}×{bitmap.PixelHeight}，不足 64×64。");
 
+            var displayTexture = await Task.Run(() => PreparePixelTexture(bitmap));
             await Dispatcher.InvokeAsync(() =>
             {
-                _textureBrush.ImageSource = bitmap;
+                _textureBrush.ImageSource = displayTexture;
                 SkinSourceText.Text = $"当前账户：{account.Username} · 已加载微软账户当前皮肤" +
                                       (info.IsSlimModel ? "（Alex/纤细手臂）" : "（Steve/经典手臂）") + "。";
             });
@@ -134,9 +148,10 @@ public partial class SkinModelViewerDialog : OverlayDialogControl
             if (bitmap.PixelWidth < 64 || bitmap.PixelHeight < 64)
                 throw new InvalidDataException($"皮肤站返回的皮肤尺寸为 {bitmap.PixelWidth}×{bitmap.PixelHeight}，不足 64×64。");
 
+            var displayTexture = await Task.Run(() => PreparePixelTexture(bitmap));
             await Dispatcher.InvokeAsync(() =>
             {
-                _textureBrush.ImageSource = bitmap;
+                _textureBrush.ImageSource = displayTexture;
                 SkinSourceText.Text = $"当前账户：{account.Username} · 已加载皮肤站当前皮肤" +
                                       (info.IsSlimModel ? "（Alex/纤细手臂）" : "（Steve/经典手臂）") + "。";
             });
@@ -148,6 +163,17 @@ public partial class SkinModelViewerDialog : OverlayDialogControl
                 SkinSourceText.Text = $"当前账户：{account.Username} · 皮肤站皮肤读取失败，已回退到{_fallbackSkinDescription}。{ex.Message}";
             });
         }
+    }
+
+    /// <summary>未设置皮肤的离线账户专用默认贴图，直接读取内嵌 PNG，无需联网。</summary>
+    private static BitmapSource LoadOfflineDefaultSkin()
+    {
+        using var stream = typeof(SkinModelViewerDialog).Assembly.GetManifestResourceStream("XCL2.App.Resources.Skins.steve.png")
+            ?? throw new FileNotFoundException("找不到内置离线默认皮肤资源 steve.png。");
+        var decoder = new PngBitmapDecoder(stream, BitmapCreateOptions.PreservePixelFormat, BitmapCacheOption.OnLoad);
+        var bitmap = decoder.Frames[0];
+        bitmap.Freeze();
+        return bitmap;
     }
 
     private static BitmapSource LoadBitmapFromFile(string path)
@@ -171,6 +197,56 @@ public partial class SkinModelViewerDialog : OverlayDialogControl
         bmp.EndInit();
         bmp.Freeze();
         return bmp;
+    }
+
+    /// <summary>
+    /// 用整数倍复制像素，生成供 3D 使用的清晰贴图。只设置 ImageBrush 的
+    /// BitmapScalingMode 不足以消除 3D 纹理采样的平滑；先把每个源像素扩成
+    /// 同色块，可将采样过渡限制在很窄的边缘。保留原色、透明度和整张图集的 UV。
+    /// </summary>
+    private static BitmapSource PreparePixelTexture(BitmapSource source)
+    {
+        // 64x64 -> 2048x2048（32 倍）；128x128 -> 2048x2048（16 倍）。
+        // 不缩小高清皮肤；扩展后的单张 BGRA 贴图最多占 16 MiB。
+        const int maxExpandedSize = 2048;
+        int scale = maxExpandedSize / Math.Max(source.PixelWidth, source.PixelHeight);
+        if (scale <= 1) return source;
+
+        BitmapSource bgra = source.Format == PixelFormats.Bgra32
+            ? source
+            : new FormatConvertedBitmap(source, PixelFormats.Bgra32, null, 0);
+        int sourceStride = source.PixelWidth * 4;
+        byte[] sourcePixels = new byte[sourceStride * source.PixelHeight];
+        bgra.CopyPixels(sourcePixels, sourceStride, 0);
+
+        int width = source.PixelWidth * scale, height = source.PixelHeight * scale;
+        int stride = width * 4;
+        byte[] pixels = new byte[stride * height];
+        for (int y = 0; y < source.PixelHeight; y++)
+        {
+            int sourceRow = y * sourceStride;
+            int targetRow = y * scale * stride;
+            for (int x = 0; x < source.PixelWidth; x++)
+            {
+                int src = sourceRow + x * 4;
+                int dst = targetRow + x * scale * 4;
+                for (int repeat = 0; repeat < scale; repeat++, dst += 4)
+                {
+                    pixels[dst] = sourcePixels[src];
+                    pixels[dst + 1] = sourcePixels[src + 1];
+                    pixels[dst + 2] = sourcePixels[src + 2];
+                    pixels[dst + 3] = sourcePixels[src + 3];
+                }
+            }
+            // 横向放大一行后直接复制整行，避免逐个重复计算纵向像素。
+            for (int row = 1; row < scale; row++)
+                Buffer.BlockCopy(pixels, targetRow, pixels, targetRow + row * stride, stride);
+        }
+
+        var texture = BitmapSource.Create(width, height, 96, 96,
+            PixelFormats.Bgra32, null, pixels, stride);
+        texture.Freeze();
+        return texture;
     }
 
     private void AddPart(Model3DGroup group, Material mat, string bone, double cx, double cy, double cz,
@@ -212,12 +288,8 @@ public partial class SkinModelViewerDialog : OverlayDialogControl
         foreach (int k in new[] { 0, 1, 2, 0, 2, 3 }) mesh.TriangleIndices.Add(start + k);
     }
 
-    /// <summary>没有任何本地/在线皮肤可用时的内置默认贴图：画的是真正的"史蒂夫"配色
-    /// （暖棕肤色 + 深棕短发 + 青色短袖 + 深蓝裤子），而不是一堆跟史蒂夫/艾利克斯都对不上号
-    /// 的抽象色块——只把 AddPart 里实际会用到的那几块 UV 矩形（头/身体/双臂/双腿的六个面）
-    /// 按部位刷成对应颜色即可，其余没被任何面采样到的贴图区域不影响渲染结果。
-    /// 颜色跟 AccountAvatarConverter.CreateSteveDefault 里 2D 头像用的史蒂夫肤色/发色保持
-    /// 完全一致，确保"账户"页头像小图标和这里的 3D 纸娃娃是同一个"史蒂夫"，不是各画各的。</summary>
+    /// <summary>其他账户原有的简化回退贴图；未设置皮肤的离线账户改用 LoadOfflineDefaultSkin
+    /// 读取完整的内嵌 Steve PNG，不再使用这里绘制的纯色部件。</summary>
     private static BitmapSource BuildDefaultSkin()
     {
         byte[] pixels = new byte[64 * 64 * 4];
@@ -294,11 +366,20 @@ public partial class SkinModelViewerDialog : OverlayDialogControl
 
     private void UpdateCamera()
     {
+        if (ModelViewport.ActualWidth <= 0 || ModelViewport.ActualHeight <= 0) return;
+
+        // WPF 的 FieldOfView 是水平视角。按视口宽高比求垂直视角，使用较小的
+        // 半视角容纳包围球，避免宽弹窗里默认距离过近、脚部被截掉。
+        double aspect = ModelViewport.ActualWidth / ModelViewport.ActualHeight;
+        double horizontalHalfFov = ModelCamera.FieldOfView * Math.PI / 360;
+        double verticalHalfFov = Math.Atan(Math.Tan(horizontalHalfFov) / aspect);
+        double fitDistance = ModelFramingRadius / Math.Sin(Math.Min(horizontalHalfFov, verticalHalfFov));
+        double distance = fitDistance * _zoom;
         double rad = _yaw * Math.PI / 180, pitch = _pitch * Math.PI / 180;
-        var position = new Point3D(Math.Sin(rad) * _distance * Math.Cos(pitch),
-                                   1.9 + Math.Sin(pitch) * _distance, Math.Cos(rad) * _distance * Math.Cos(pitch));
+        var position = new Point3D(Math.Sin(rad) * distance * Math.Cos(pitch),
+                                   CameraTargetY + Math.Sin(pitch) * distance, Math.Cos(rad) * distance * Math.Cos(pitch));
         ModelCamera.Position = position;
-        ModelCamera.LookDirection = new Vector3D(-position.X, 1.9-position.Y, -position.Z);
+        ModelCamera.LookDirection = new Vector3D(-position.X, CameraTargetY-position.Y, -position.Z);
         ModelCamera.UpDirection = new Vector3D(0, 1, 0);
     }
     private void Viewport_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
@@ -321,7 +402,7 @@ public partial class SkinModelViewerDialog : OverlayDialogControl
     }
     private void Viewport_MouseWheel(object sender, MouseWheelEventArgs e)
     {
-        _distance = Math.Clamp(_distance - e.Delta / 120.0 * .6, 4, 14);
+        _zoom = Math.Clamp(_zoom - e.Delta / 120.0 * .075, .5, 1.75);
         UpdateCamera();
     }
     private void MotionCombo_SelectionChanged(object sender, SelectionChangedEventArgs e) => _tick = 0;

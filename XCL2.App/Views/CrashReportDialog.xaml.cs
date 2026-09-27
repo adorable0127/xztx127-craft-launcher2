@@ -45,7 +45,7 @@ public partial class CrashReportDialog : OverlayDialogControl
 
     /// <summary>需求：把「日志分析」直接嵌进这个崩溃弹窗，不用再点"查看日志"跳去日志页找。
     /// 复用 LogsPage 崩溃报告分析 Tab 同一套 CrashAnalyzerService，只是这里自动定位到
-    /// _processInfo.GameDir 下最新的一份崩溃文件/hs_err 日志/latest.log 来分析，不需要用户
+    /// _processInfo.GameDir 下本次退出的快照/崩溃文件/hs_err 日志来分析，不需要用户
     /// 自己在下拉框里挑。processInfo 为 null（极端情况下没能拿到进程对象）或者这个目录下
     /// 确实没有任何崩溃文件时，整块分析区域保持折叠不显示，不留一句空话唬人。</summary>
     private void RunInlineAnalysis()
@@ -56,11 +56,13 @@ public partial class CrashReportDialog : OverlayDialogControl
         try
         {
             var analyzer = new CrashAnalyzerService();
-            var files = analyzer.ListCrashFiles(_processInfo.GameDir);
+            var files = analyzer.ListCrashFiles(_processInfo.GameDir)
+                .Where(f => f.modifiedAt >= _processInfo.StartedAt.AddSeconds(-3)).ToList();
             if (files.Count == 0) return;
 
-            // ListCrashFiles 已经按修改时间倒序，第一个就是离这次崩溃最近的一份。
-            var latest = files[0];
+            // 优先本进程的快照；保存失败时再使用本次启动之后生成的崩溃文件。
+            var latest = files.FirstOrDefault(f => string.Equals(f.path, _processInfo.CrashLogPath, StringComparison.OrdinalIgnoreCase));
+            if (string.IsNullOrEmpty(latest.path)) latest = files[0];
             var result = analyzer.Analyze(latest.path);
             if (result.RankedFindings.Count == 0 && result.Findings.Count == 0) return;
 

@@ -43,10 +43,11 @@ public enum CrashConfidence
 /// </summary>
 public class CrashAnalyzerService
 {
-    /// <summary>列出一个 .minecraft 目录下所有崩溃报告/JVM 错误日志，按时间倒序。</summary>
-    public List<(string path, DateTime modifiedAt)> ListCrashFiles(string gameDir)
+    /// <summary>默认只列出真实崩溃报告和已确认异常退出的快照；普通日志必须显式开启。</summary>
+    public List<(string path, DateTime modifiedAt)> ListCrashFiles(string gameDir, bool includeNormalLogs = false)
     {
         var results = new List<(string, DateTime)>();
+        if (!Directory.Exists(gameDir)) return results;
 
         var crashDir = Path.Combine(gameDir, "crash-reports");
         if (Directory.Exists(crashDir))
@@ -60,15 +61,16 @@ public class CrashAnalyzerService
         foreach (var f in Directory.GetFiles(gameDir, "hs_err_pid*.log"))
             results.Add((f, File.GetLastWriteTime(f)));
 
-        // ===== 关键补充：logs/latest.log =====
-        // 这是之前最大的盲区。**大量启动失败根本不会产生 crash-report**：
-        // - Fabric/Forge 的依赖解析失败（缺前置 mod、版本不匹配）会打印错误后直接 exit，
-        //   crash-reports 目录里什么都没有；
-        // - mod 在 mixin 阶段就炸掉时也常常只有日志、没有崩溃报告。
-        // 这两类恰恰是玩家最常遇到的问题。只看 crash-reports 就等于对它们完全失明——
-        // 用户会看到"游戏闪退但找不到崩溃报告"，启动器也给不出任何提示。
+        // latest/debug 每次正常运行也会生成，存在文件或出现 WARN/ERROR 都不能证明崩溃。
+        // 没有原生 crash-report 的启动失败，由退出处理保存独立快照，不再混入普通日志。
         var logsDir = Path.Combine(gameDir, "logs");
-        if (Directory.Exists(logsDir))
+        var snapshotsDir = GameCrashLogService.GetSnapshotDirectory(gameDir);
+        if (Directory.Exists(snapshotsDir))
+        {
+            foreach (var f in Directory.GetFiles(snapshotsDir, "exit-*.log"))
+                results.Add((f, File.GetLastWriteTime(f)));
+        }
+        if (includeNormalLogs && Directory.Exists(logsDir))
         {
             foreach (var name in new[] { "latest.log", "debug.log" })
             {
@@ -80,9 +82,26 @@ public class CrashAnalyzerService
         return results.OrderByDescending(r => r.Item2).ToList();
     }
 
+    public static bool IsOrdinaryGameLog(string filePath)
+        => string.Equals(Path.GetFileName(filePath), "latest.log", StringComparison.OrdinalIgnoreCase)
+        || string.Equals(Path.GetFileName(filePath), "debug.log", StringComparison.OrdinalIgnoreCase);
+
     public CrashReportResult Analyze(string filePath)
     {
         var raw = SafeReadAll(filePath);
+        if (IsOrdinaryGameLog(filePath))
+        {
+            return new CrashReportResult
+            {
+                FilePath = filePath,
+                ModifiedAt = File.Exists(filePath) ? File.GetLastWriteTime(filePath) : DateTime.MinValue,
+                RawText = raw,
+                Findings = new List<string>
+                {
+                    "这是普通游戏日志，未据此判定发生崩溃。正常退出、手动关闭和运行中的游戏都会生成此文件；INFO、WARN、ERROR 或异常栈本身不代表本次游戏崩溃。"
+                }
+            };
+        }
         var modsDir = ResolveLikelyModsDir(filePath);
         var ranked = RunRankedRules(raw, modsDir);
         return new CrashReportResult
@@ -99,7 +118,12 @@ public class CrashAnalyzerService
 
     private static string SafeReadAll(string path)
     {
-        try { return File.ReadAllText(path); }
+        try
+        {
+            using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+            using var reader = new StreamReader(stream, detectEncodingFromByteOrderMarks: true);
+            return reader.ReadToEnd();
+        }
         catch (Exception ex) { return $"(读取崩溃文件失败: {ex.Message})"; }
     }
 
@@ -168,7 +192,7 @@ public class CrashAnalyzerService
     /// 而且直接告诉用户该去下什么，所以给 Certain 置信度、排在最前面。
     ///
     /// 注意这类失败通常**不产生 crash-report**，只写进 logs/latest.log——
-    /// 这也是为什么 ListCrashFiles 现在必须把 latest.log 一起列出来。
+    /// 已确认异常退出时会把这些证据存为独立快照，再由 ListCrashFiles 列出。
     /// </summary>
     private static List<CrashFinding> RunDependencyRules(string text)
     {

@@ -67,8 +67,8 @@ public static class SingleInstanceService
 
     /// <summary>
     /// 供 App.xaml.cs 接线：新实例发来 "CLOSE" 指令、或者本实例自己判定"拉不起来、只能
-    /// 关闭"时，负责结束所有游戏/服务器子进程后再彻底退出应用。在接线之前保持 null，
-    /// 此时退化成直接 Application.Shutdown()（不清理子进程），仅作为兜底，正常流程下
+    /// 关闭"时，负责退出启动器本身，保留已经运行的游戏和服务器。在接线之前保持 null，
+    /// 此时退化成直接 Application.Shutdown()，仅作为兜底，正常流程下
     /// App.xaml.cs 会在 MainWindow 创建后立刻接好这个钩子。
     /// </summary>
     public static Action? PerformFullExit { get; set; }
@@ -136,7 +136,7 @@ public static class SingleInstanceService
             case ConflictChoice.CloseOldKeepNewInstance:
                 TrySendCommand(probe, "CLOSE");
                 // 旧实例收到 CLOSE 到它真正退出、释放管道名之间有一小段异步延迟（要等它的
-                // UI 线程调度到、执行 PerformFullExit，把子进程清理完再 Shutdown），
+                // UI 线程调度到、执行 PerformFullExit，再 Shutdown），
                 // 这里不死等，交给 StartServer() 内部的重试机制（见其注释）。
                 StartServer();
                 return true;
@@ -291,10 +291,7 @@ public static class SingleInstanceService
             case "CLOSE":
                 app.Dispatcher.BeginInvoke(() =>
                 {
-                    // 需求："结束的时候，如果用户选择真的要关闭，那就彻底结束 XCL 的所有
-                    // 进程"——收到别的实例发来的关闭指令，同样属于"用户已经明确选择让这个
-                    // 旧实例彻底退出"，必须走 PerformFullExit 清理游戏/服务器子进程，
-                    // 不能只是简单 Application.Shutdown() 留下孤儿进程。
+                    // 替换旧启动器实例只退出启动器，不影响已经运行的游戏/服务器。
                     if (PerformFullExit != null)
                         PerformFullExit();
                     else

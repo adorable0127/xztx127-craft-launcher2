@@ -20,6 +20,17 @@ namespace XCL2.App.Services;
 /// </summary>
 public static class CommandLineService
 {
+    // 简短页面指令统一映射到 -gui 使用的导航标题，真正跳转仍复用首页搜索索引。
+    private static readonly Dictionary<string, string> QuickPages = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["--home"] = "首页", ["--versions"] = "版本管理", ["--downloads"] = "下载中心",
+        ["--multiplayer"] = "联机", ["--mods"] = "Mod 管理", ["--servers"] = "服务端管理",
+        ["--accounts"] = "账户", ["--settings"] = "设置", ["--logs"] = "日志",
+        ["--toolbox"] = "百宝箱", ["--bedrock"] = "基岩版启动",
+        ["--about"] = "鸣谢与帮助", ["--experimental"] = "实验性功能",
+        ["--ai"] = "AI 助手"
+    };
+
     public sealed class ParsedArgs
     {
         /// <summary>命中 -help，只需要打印帮助然后退出，不需要往下走任何其它逻辑。</summary>
@@ -135,6 +146,11 @@ public static class CommandLineService
         "  -help                                  显示本帮助并退出\n" +
         "  -r --账户名 <账户名> --实例名称 <实例名>   使用指定账户与实例直接启动游戏\n" +
         "  -gui <页面名>                           启动后跳转到对应页面，例如：-gui 设置 / -gui 下载中心 / -gui 百宝箱\n" +
+        "  --home --versions --downloads         快速打开首页 / 版本管理 / 下载中心（每次选一项）\n" +
+        "  --settings --logs --accounts          快速打开设置 / 日志 / 账户\n" +
+        "  --mods --servers --toolbox            快速打开 Mod 管理 / 服务端管理 / 百宝箱\n" +
+        "  --multiplayer --bedrock --ai          快速打开联机 / 基岩版 / AI 助手\n" +
+        "  --about --experimental                快速打开帮助页 / 实验性功能面板\n" +
         "  --d --版本 <版本号> --加载器 <加载器>      打开下载中心；不填 --版本 时会直接弹出下载页面供手动选择，\n" +
         "                                          填写 --版本 后会自动跳转并按该版本号筛选，--加载器 可省略\n" +
         "  -l                                     以访客模式启动本次会话（会要求重新阅读并同意协议）\n" +
@@ -173,6 +189,8 @@ public static class CommandLineService
         "示例：\n" +
         "  XCL2.App.exe -r --账户名 Steve --实例名称 \"1.20.1-Fabric\"\n" +
         "  XCL2.App.exe -gui 百宝箱\n" +
+        "  XCL2.App.exe --settings\n" +
+        "  XCL2.App.exe --logs\n" +
         "  XCL2.App.exe --d --版本 1.21.1 --加载器 Fabric\n" +
         "  XCL2.App.exe --d\n" +
         "  XCL2.App.exe -l\n" +
@@ -215,7 +233,11 @@ public static class CommandLineService
 
         foreach (var raw in args)
         {
-            if (string.Equals(raw, "-help", StringComparison.OrdinalIgnoreCase) ||
+            if (QuickPages.TryGetValue(raw, out var quickPage))
+            {
+                result.GuiPage ??= quickPage;
+            }
+            else if (string.Equals(raw, "-help", StringComparison.OrdinalIgnoreCase) ||
                 string.Equals(raw, "--help", StringComparison.OrdinalIgnoreCase) ||
                 string.Equals(raw, "/?", StringComparison.OrdinalIgnoreCase))
             {

@@ -298,6 +298,7 @@ public partial class App : Application
         }
 
         base.OnStartup(e);
+        TextEditContextMenuService.Initialize();
 
         // 修复"启动时偶发 NullReferenceException @ ThemeService.Apply / Application.Current.Resources"：
         // ShutdownMode 默认是 OnLastWindowClose。而这里、以及下面 SingleInstanceService.HandleStartup

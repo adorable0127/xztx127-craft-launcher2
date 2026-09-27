@@ -355,9 +355,9 @@ public partial class MessageBoxDialog : OverlayDialogControl
         var dlg = new MessageBoxDialog(message, title, XclMessageKind.Warning, XclMessageButtons.OK);
         dlg.ButtonPanel.Children.Clear();
         dlg.ButtonPanel.Children.Add(dlg.MakeTouchCloseButton(cancelText, XclTouchCloseChoiceResult.Cancel, isPrimary: false, isDefault: false));
-        dlg.ButtonPanel.Children.Add(dlg.MakeTouchCloseButton(closeLauncherOnlyText, XclTouchCloseChoiceResult.CloseLauncherAndOverlayOnly, isPrimary: false, isDefault: false));
+        dlg.ButtonPanel.Children.Add(dlg.MakeTouchCloseButton(closeLauncherOnlyText, XclTouchCloseChoiceResult.CloseLauncherAndOverlayOnly, isPrimary: true, isDefault: true));
         dlg.ButtonPanel.Children.Add(dlg.MakeTouchCloseButton(trayText, XclTouchCloseChoiceResult.Tray, isPrimary: false, isDefault: false));
-        dlg.ButtonPanel.Children.Add(dlg.MakeTouchCloseButton(closeAllText, XclTouchCloseChoiceResult.CloseAllIncludingGame, isPrimary: true, isDefault: true));
+        dlg.ButtonPanel.Children.Add(dlg.MakeTouchCloseButton(closeAllText, XclTouchCloseChoiceResult.CloseAllIncludingGame, isPrimary: false, isDefault: false));
         OverlayDialogService.ShowModal(dlg);
         return dlg.TouchCloseResult;
     }

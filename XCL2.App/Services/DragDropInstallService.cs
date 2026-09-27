@@ -53,6 +53,9 @@ public class DragDropInstallService
         World,
         Modpack,
         BedrockContent,
+        /// <summary>启动器插件，由 MainWindow 确认来源并交给 PluginManager 安装；
+        /// 不属于游戏实例内的文件。</summary>
+        Plugin,
         /// <summary>服务端 jar：由 MainWindow 单独处理（装进服务器实例的 mods/），
         /// 不经过 InstallMany 的客户端实例目录。Classify 永远不会自己产出这个值，
         /// 它只会作为"上层按页面/设置决定的覆盖"传进来。</summary>

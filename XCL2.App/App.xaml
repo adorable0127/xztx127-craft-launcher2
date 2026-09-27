@@ -1407,20 +1407,50 @@
                 <Setter Property="Template">
                     <Setter.Value>
                         <ControlTemplate TargetType="RadioButton">
+                            <!-- 悬浮态原来是"Background 直接换成 DynamicResource 画刷"：每次换刷都要重新
+                                 解析主题资源、重建 Freezable、整块 Border 连带子元素一起重排，鼠标划过多个
+                                 条目时这一串开销叠加起来就是能感觉到的"卡顿"。改成一层始终存在、只是
+                                 Opacity=0 的高亮层（HoverOverlay），悬浮/离开时只淡入淡出这一层的透明度，
+                                 不再触发 Background 换刷和相邻条目的重排，用 BitmapCache 把这层顺带缓存成
+                                 位图，动画期间合成成本也更低，观感更跟手。 -->
                             <Border x:Name="bd" Background="Transparent" CornerRadius="8"
                                     BorderThickness="0" Padding="{TemplateBinding Padding}">
-                                <!-- TextElement.Foreground 附加属性把 RadioButton.Foreground 强制"传"给内部
-                                     TextBlock：全局隐式 TextBlock 样式（见上面 TargetType="TextBlock"）显式设置了
-                                     Foreground=TextPrimaryBrush，这个显式 Setter 的优先级高于属性继承，普通继承
-                                     不会生效，必须用 TextElement.Foreground 这个附加属性从外层强制下发才能盖过它。 -->
-                                <ContentPresenter HorizontalAlignment="Left" VerticalAlignment="Center"
-                                                   TextElement.Foreground="{TemplateBinding Foreground}"/>
+                                <Grid>
+                                    <Border x:Name="HoverOverlay" CornerRadius="8" Opacity="0"
+                                            Background="{DynamicResource GlowSoftBrush}">
+                                        <Border.CacheMode>
+                                            <BitmapCache EnableClearType="False" SnapsToDevicePixels="True"/>
+                                        </Border.CacheMode>
+                                    </Border>
+                                    <!-- TextElement.Foreground 附加属性把 RadioButton.Foreground 强制"传"给内部
+                                         TextBlock：全局隐式 TextBlock 样式（见上面 TargetType="TextBlock"）显式设置了
+                                         Foreground=TextPrimaryBrush，这个显式 Setter 的优先级高于属性继承，普通继承
+                                         不会生效，必须用 TextElement.Foreground 这个附加属性从外层强制下发才能盖过它。 -->
+                                    <ContentPresenter HorizontalAlignment="Left" VerticalAlignment="Center"
+                                                       TextElement.Foreground="{TemplateBinding Foreground}"/>
+                                </Grid>
                             </Border>
                             <ControlTemplate.Triggers>
                                 <Trigger Property="IsMouseOver" Value="True">
-                                    <Setter TargetName="bd" Property="Background" Value="{DynamicResource GlowSoftBrush}"/>
+                                    <Trigger.EnterActions>
+                                        <BeginStoryboard>
+                                            <Storyboard>
+                                                <DoubleAnimation Storyboard.TargetName="HoverOverlay" Storyboard.TargetProperty="Opacity"
+                                                                 To="1" Duration="0:0:0.08"/>
+                                            </Storyboard>
+                                        </BeginStoryboard>
+                                    </Trigger.EnterActions>
+                                    <Trigger.ExitActions>
+                                        <BeginStoryboard>
+                                            <Storyboard>
+                                                <DoubleAnimation Storyboard.TargetName="HoverOverlay" Storyboard.TargetProperty="Opacity"
+                                                                 To="0" Duration="0:0:0.08"/>
+                                            </Storyboard>
+                                        </BeginStoryboard>
+                                    </Trigger.ExitActions>
                                 </Trigger>
                                 <Trigger Property="IsChecked" Value="True">
+                                    <Setter TargetName="HoverOverlay" Property="Opacity" Value="0"/>
                                     <Setter TargetName="bd" Property="Background" Value="{DynamicResource AccentBrush}"/>
                                     <Setter Property="Foreground" Value="{DynamicResource ButtonForegroundBrush}"/>
                                     <Setter Property="FontWeight" Value="SemiBold"/>
@@ -1467,13 +1497,8 @@
                  皮肤的 PanelBrush/TextPrimaryBrush/BorderBrush2/GlowSoftBrush，跟随 ThemeService
                  切换皮肤时自动刷新，不需要 code-behind 那边做任何改动——纯代码 new 出来的
                  ContextMenu/MenuItem 只要没有显式设置 Style，就会自动应用这里的隐式类型样式。 -->
-            <!-- 右键菜单（含 TextBox/RichTextBox/PasswordBox 编辑文字时系统自动弹出的
-                 "剪切/复制/粘贴"菜单——这些也是普通 ContextMenu+MenuItem，同样吃这份隐式样式）：
-                 之前的版本只转发了 Header，没处理 Icon 和 InputGestureText（Ctrl+X 这类快捷键提示），
-                 WPF 会在没有对应视觉呈现的情况下退化成很难看的默认灰底样式，跟其它自绘控件的
-                 圆角卡片风格格格不入。这里统一用 Grid 分栏（图标 / 文字 / 快捷键 / 子菜单箭头），
-                 圆角、间距、配色都跟应用其它弹层（下拉框、Popup 卡片）保持一致，且完全走
-                 DynamicResource，跟随 ThemeService 切皮肤自动刷新。 -->
+            <!-- 普通业务菜单；文本编辑菜单由 TextEditContextMenuService 显式安装，
+                 使用下方独立模板，避免系统内置编辑菜单绕过隐式样式。 -->
             <Style TargetType="ContextMenu">
                 <Setter Property="Background" Value="{DynamicResource PanelBrush}"/>
                 <Setter Property="BorderBrush" Value="{DynamicResource BorderBrush2}"/>
@@ -1567,6 +1592,91 @@
                     <Setter.Value>
                         <ControlTemplate TargetType="Separator">
                             <Border Background="{TemplateBinding Background}" Height="{TemplateBinding Height}"/>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+            </Style>
+
+            <!-- 文本编辑菜单：圆角浮层、线性图标、快捷键标签；显式应用到每个编辑器。 -->
+            <Style x:Key="TextEditContextMenuStyle" TargetType="ContextMenu">
+                <Setter Property="Background" Value="{DynamicResource PanelBrush}"/>
+                <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}"/>
+                <Setter Property="BorderBrush" Value="{DynamicResource BorderBrush2}"/>
+                <Setter Property="BorderThickness" Value="1"/>
+                <Setter Property="FontFamily" Value="{DynamicResource AppFontFamily}"/>
+                <Setter Property="FontSize" Value="13"/>
+                <Setter Property="Padding" Value="6"/>
+                <Setter Property="HasDropShadow" Value="False"/>
+                <Setter Property="SnapsToDevicePixels" Value="True"/>
+                <Setter Property="UseLayoutRounding" Value="True"/>
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="ContextMenu">
+                            <Grid Margin="10,8,10,12">
+                                <Border Background="{TemplateBinding Background}" CornerRadius="12" IsHitTestVisible="False">
+                                    <Border.Effect>
+                                        <DropShadowEffect Color="Black" Opacity="0.16" BlurRadius="16" ShadowDepth="3"/>
+                                    </Border.Effect>
+                                </Border>
+                                <Border Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}"
+                                        BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="12"
+                                        Padding="{TemplateBinding Padding}" MinWidth="226">
+                                    <ScrollViewer MaxHeight="420" VerticalScrollBarVisibility="Auto"
+                                                  HorizontalScrollBarVisibility="Disabled" CanContentScroll="True">
+                                        <ItemsPresenter KeyboardNavigation.DirectionalNavigation="Cycle"
+                                                        KeyboardNavigation.TabNavigation="Cycle"/>
+                                    </ScrollViewer>
+                                </Border>
+                            </Grid>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+            </Style>
+
+            <Style x:Key="TextEditMenuItemStyle" TargetType="MenuItem">
+                <Setter Property="Background" Value="Transparent"/>
+                <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}"/>
+                <Setter Property="FontFamily" Value="{DynamicResource AppFontFamily}"/>
+                <Setter Property="FontSize" Value="13"/>
+                <Setter Property="Padding" Value="11,8"/>
+                <Setter Property="MinHeight" Value="38"/>
+                <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+                <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="MenuItem">
+                            <Border x:Name="Row" Background="{TemplateBinding Background}" CornerRadius="7"
+                                    Padding="{TemplateBinding Padding}" Margin="0,1" MinHeight="{TemplateBinding MinHeight}">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="16"/>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <ContentPresenter ContentSource="Icon" VerticalAlignment="Center"/>
+                                    <ContentPresenter Grid.Column="1" ContentSource="Header" Margin="12,0,26,0"
+                                                      VerticalAlignment="Center" RecognizesAccessKey="True"
+                                                      TextElement.Foreground="{TemplateBinding Foreground}"/>
+                                    <Border Grid.Column="2" Background="{DynamicResource SideBrush}"
+                                            BorderBrush="{DynamicResource DividerBrush}" BorderThickness="1"
+                                            CornerRadius="4" Padding="5,1" VerticalAlignment="Center">
+                                        <TextBlock Text="{TemplateBinding InputGestureText}" FontSize="11"
+                                                   Foreground="{DynamicResource TextSecondaryBrush}"/>
+                                    </Border>
+                                </Grid>
+                            </Border>
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="IsHighlighted" Value="True">
+                                    <Setter TargetName="Row" Property="Background" Value="{DynamicResource GlowSoftBrush}"/>
+                                    <Setter Property="Foreground" Value="{DynamicResource AccentBrush}"/>
+                                </Trigger>
+                                <Trigger Property="IsKeyboardFocused" Value="True">
+                                    <Setter TargetName="Row" Property="Background" Value="{DynamicResource GlowSoftBrush}"/>
+                                </Trigger>
+                                <Trigger Property="IsEnabled" Value="False">
+                                    <Setter TargetName="Row" Property="Opacity" Value="0.4"/>
+                                </Trigger>
+                            </ControlTemplate.Triggers>
                         </ControlTemplate>
                     </Setter.Value>
                 </Setter>

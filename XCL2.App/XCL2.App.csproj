@@ -10,9 +10,9 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <AssemblyName>XCL2</AssemblyName>
     <RootNamespace>XCL2.App</RootNamespace>
-    <Version>2.2.18</Version>
-    <AssemblyVersion>2.2.18.0</AssemblyVersion>
-    <FileVersion>2.2.18.0</FileVersion>
+    <Version>2.2.19</Version>
+    <AssemblyVersion>2.2.19.0</AssemblyVersion>
+    <FileVersion>2.2.19.0</FileVersion>
     <Platforms>AnyCPU</Platforms>
     <LangVersion>latest</LangVersion>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
@@ -43,15 +43,25 @@
     编译时间戳（确定性构建，Deterministic=true 时那个字段被写死成固定值，不能反过来读取），
     所以编译时间没法从程序集元数据里读出来，只能在编译期间由 MSBuild 生成一份带时间戳字符串
     的源文件，跟随这次编译一起打进程序集常量里——每次真正触发编译（Debug/Release 都算）都会
-    用当时的本机时间重新生成一次，只改代码不重新编译则不会更新（这正是"编译时的时间"该有的
-    语义，不是"运行时的时间"）。
+    重新生成一次，只改代码不重新编译则不会更新（这正是"编译时的时间"该有的语义，不是
+    "运行时的时间"）。
     放在 CoreCompile 之前，保证生成的 BuildInfo.g.cs 在这次编译动作里也被一起编进程序集。
-  -->
+
+    时区：以前直接用 $([System.DateTime]::Now)，也就是构建机器当时的操作系统本机时区——
+    在开发者本机（时区各不相同，CI 上更是完全不可控）编译时会显示成各自的本机时间，
+    同一个提交在不同机器上编译出来的"编译时间"文本却对不上，没法作为一个稳定的、
+    大家都能对齐理解的时间戳看待。现在固定换算成上海时间（UTC+8，中国大陆不实行夏令时，
+    所以直接对 UtcNow 加 8 小时是准确的，不需要依赖 TimeZoneInfo 在不同操作系统上
+    "China Standard Time" / "Asia/Shanghai" 这两个不同 ID 体系的查找），并在文本里显式
+    带上时区、且时区写在时间左边（"时区+时间"），不管在哪台机器编译，展示出来的
+    都是同一个、无歧义的上海时间。 -->
   <Target Name="XCL2GenerateBuildInfo" BeforeTargets="BeforeCompile;CoreCompile">
     <PropertyGroup>
-      <!-- 精确到秒，格式跟界面上其它时间展示（yyyy-MM-dd HH:mm:ss）保持一致，不带时区后缀——
-           跟启动器其它地方展示本机时间的习惯一致，都是本机时间而不是 UTC。 -->
-      <XCL2BuildTimestamp>$([System.DateTime]::Now.ToString(&quot;yyyy-MM-dd HH:mm:ss&quot;))</XCL2BuildTimestamp>
+      <!-- 精确到秒，时区放在时间左边（"时区+时间"，例如 "UTC+8 2026-09-27 12:34:56"），
+           跟界面上其它时间展示的日期时间格式（yyyy-MM-dd HH:mm:ss）保持一致，只是
+           前面多一个固定的 "UTC+8" 前缀，一次性解决"编译时间没有统一时区、各自本机
+           时间对不上"的问题。 -->
+      <XCL2BuildTimestamp>UTC+8 $([System.DateTime]::UtcNow.AddHours(8).ToString(&quot;yyyy-MM-dd HH:mm:ss&quot;))</XCL2BuildTimestamp>
     </PropertyGroup>
     <MakeDir Directories="$(IntermediateOutputPath)" Condition="!Exists('$(IntermediateOutputPath)')" />
     <ItemGroup>
@@ -59,7 +69,7 @@
       <XCL2BuildInfoLines Include="namespace XCL2.App" />
       <XCL2BuildInfoLines Include="{" />
       <XCL2BuildInfoLines Include="    /// &lt;summary&gt;编译期生成的构建信息：版本号取自 csproj 的 Version，仅用于展示；" />
-      <XCL2BuildInfoLines Include="    /// 时间戳精确到秒，代表这次真正触发编译动作时的本机时间。&lt;/summary&gt;" />
+      <XCL2BuildInfoLines Include="    /// 时间戳精确到秒，已固定换算为上海时间（UTC+8），文本里时区写在时间左边。&lt;/summary&gt;" />
       <XCL2BuildInfoLines Include="    internal static class BuildInfo" />
       <XCL2BuildInfoLines Include="    {" />
       <XCL2BuildInfoLines Include="        public const string Version = &quot;$(Version)&quot;%3B" />
@@ -81,12 +91,25 @@
     <EmbeddedResource Include="Resources\Data\WikiEntries.txt">
       <LogicalName>XCL2.App.Resources.Data.WikiEntries.txt</LogicalName>
     </EmbeddedResource>
+    <EmbeddedResource Include="Resources\Avatars\offline-default.png">
+      <LogicalName>XCL2.App.Resources.Avatars.offline-default.png</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Resources\Skins\steve.png">
+      <LogicalName>XCL2.App.Resources.Skins.steve.png</LogicalName>
+    </EmbeddedResource>
     <EmbeddedResource Include="Resources\Avatars\steve-default.png">
       <LogicalName>XCL2.App.Resources.Avatars.steve-default.png</LogicalName>
     </EmbeddedResource>
     <EmbeddedResource Include="Resources\Avatars\alex-default.png">
       <LogicalName>XCL2.App.Resources.Avatars.alex-default.png</LogicalName>
     </EmbeddedResource>
+  </ItemGroup>
+
+  <!-- 单文件发布时仍能从插件管理一键查看开发指南。 -->
+  <ItemGroup>
+    <EmbeddedResource Include="Resources\Docs\PLUGIN_GUIDE.md" LogicalName="XCL2.App.PLUGIN_GUIDE.md" />
+    <EmbeddedResource Include="Resources\Docs\PAPERDOLL_FIX.md" LogicalName="XCL2.App.Docs.PAPERDOLL_FIX.md" />
+    <EmbeddedResource Include="Resources\Docs\API_REFERENCE.md" LogicalName="XCL2.App.Docs.API_REFERENCE.md" />
   </ItemGroup>
 
 </Project>

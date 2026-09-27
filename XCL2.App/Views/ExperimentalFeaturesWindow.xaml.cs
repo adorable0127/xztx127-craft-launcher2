@@ -48,4 +48,11 @@ public partial class ExperimentalFeaturesWindow : OverlayDialogControl
             _owner.RefreshVersionsPageIfActive();
         }
     }
+
+    /// <summary>打开"插件管理"弹窗——第三方插件系统的唯一入口，见
+    /// PluginManagerDialog / Services/Plugins/PluginManager.cs 类头注释。</summary>
+    private void PluginManager_Click(object sender, RoutedEventArgs e)
+    {
+        new PluginManagerDialog(_owner).ShowDialog();
+    }
 }

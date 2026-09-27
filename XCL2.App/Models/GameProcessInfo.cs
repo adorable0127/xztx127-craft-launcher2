@@ -16,6 +16,9 @@ public class GameProcessInfo
     public string GameDir { get; }
     public DateTime StartedAt { get; } = DateTime.Now;
 
+    /// <summary>本次已确认异常退出的独立日志快照，避免下次启动覆盖 latest.log。</summary>
+    public string? CrashLogPath { get; internal set; }
+
     /// <summary>游戏 Java 进程的 stdout+stderr 实时输出，滚动缓冲，供日志面板"游戏日志"Tab 展示。</summary>
     public StringBuilder OutputBuffer { get; } = new();
 

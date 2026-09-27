@@ -75,14 +75,18 @@
                             <RowDefinition Height="*"/>
                         </Grid.RowDefinitions>
                         <WrapPanel Grid.Row="0" Orientation="Horizontal" Margin="0,8,0,8">
-                            <TextBlock Text="{DynamicResource Str_Ui_Crash_File}" VerticalAlignment="Center"/>
+                            <CheckBox x:Name="ShowNormalLogsCheck" Content="显示正常日志" IsChecked="False"
+                                      Margin="0,0,12,0" VerticalAlignment="Center"
+                                      ToolTip="默认关闭：只显示崩溃报告和已确认的非人为异常退出记录。开启后也可查看普通日志，普通日志不会自动作为崩溃分析。"
+                                      Click="ShowNormalLogsCheck_Click"/>
+                            <TextBlock Text="日志文件" VerticalAlignment="Center"/>
                             <ComboBox x:Name="CrashFileCombo" Width="300" Margin="8,0,8,0"
                                       SelectionChanged="CrashFileCombo_SelectionChanged"/>
                             <Button Content="{DynamicResource Str_Ui_Rescan}" Style="{StaticResource SideNavButton}" Padding="10,4" Click="RescanCrash_Click"/>
-                            <Button Content="AI 分析崩溃报告" Style="{StaticResource PrimaryButton}" Padding="10,4" Margin="8,0,0,0"
+                            <Button Content="AI 分析所选日志" Style="{StaticResource PrimaryButton}" Padding="10,4" Margin="8,0,0,0"
                                     ToolTip="需要先在 AI 助手设置中允许读取崩溃报告" Click="AnalyzeCrashLogWithAi_Click"/>
                             <Button Content="复制" Style="{StaticResource SideNavButton}" Padding="10,4" Margin="8,0,0,0"
-                                    ToolTip="复制当前崩溃报告的完整内容" Click="CopyCrashLog_Click"/>
+                                    ToolTip="复制所选日志的完整内容" Click="CopyCrashLog_Click"/>
                         </WrapPanel>
                         <Border Grid.Row="1" Background="{DynamicResource WarningBannerBrush}" CornerRadius="6" Padding="10" Margin="0,0,0,8">
                             <TextBlock x:Name="CrashFindingsText" TextWrapping="Wrap" FontSize="13"

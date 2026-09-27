@@ -61,6 +61,24 @@
                 <!-- 原「启动基岩版」入口已整合进侧边栏独立页「基岩版启动」（BedrockPage），
                      不再放在实验性功能弹窗里。 -->
 
+                <Border BorderBrush="{DynamicResource DividerBrush}" BorderThickness="0,1,0,0" Margin="0,4,0,14"/>
+
+                <TextBlock Text="开发者 / 插件" FontSize="14" FontWeight="Bold" Margin="0,0,0,8"/>
+                <TextBlock Text="面向想扩展启动器功能的开发者：管理第三方插件、生成插件项目模板、查看插件开发指南。"
+                           Foreground="{DynamicResource TextSecondaryBrush}" FontSize="12" Margin="0,0,0,12" TextWrapping="Wrap"/>
+
+                <Button HorizontalContentAlignment="Left" Padding="12,10" Margin="0,0,0,8"
+                        Click="PluginManager_Click">
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Text="🧩" FontSize="16" Margin="0,0,8,0" VerticalAlignment="Center"/>
+                        <StackPanel>
+                            <TextBlock Text="插件管理" FontWeight="Bold"/>
+                            <TextBlock Text="启用/禁用插件、打开插件目录、生成插件项目模板"
+                                       FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}"/>
+                        </StackPanel>
+                    </StackPanel>
+                </Button>
+
             </StackPanel>
         </ScrollViewer>
 

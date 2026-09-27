@@ -126,7 +126,7 @@
         </StackPanel>
 
         <!-- ============ 左下：方向键（WASD） ============ -->
-        <Grid HorizontalAlignment="Left" VerticalAlignment="Bottom" Margin="24,0,0,28">
+        <Grid x:Name="MovementKeys" HorizontalAlignment="Left" VerticalAlignment="Bottom" Margin="24,0,0,28">
             <Grid.RowDefinitions>
                 <RowDefinition Height="Auto"/>
                 <RowDefinition Height="Auto"/>
@@ -158,7 +158,7 @@
         </Grid>
 
         <!-- ============ 右下：动作区 ============ -->
-        <Grid HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="0,0,24,28">
+        <Grid x:Name="ActionKeys" HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="0,0,24,28">
             <Grid.RowDefinitions>
                 <RowDefinition Height="Auto"/>
                 <RowDefinition Height="Auto"/>
@@ -199,7 +199,7 @@
         </Grid>
 
         <!-- ============ 底部中间：快捷栏 1-9 ============ -->
-        <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" VerticalAlignment="Bottom" Margin="0,0,0,10">
+        <StackPanel x:Name="HotbarKeys" Orientation="Horizontal" HorizontalAlignment="Center" VerticalAlignment="Bottom" Margin="0,0,0,10">
             <Border Style="{StaticResource SmallKeyStyle}" Tag="TAP:1"><TextBlock Style="{StaticResource SmallKeyTextStyle}" Text="1"/></Border>
             <Border Style="{StaticResource SmallKeyStyle}" Tag="TAP:2"><TextBlock Style="{StaticResource SmallKeyTextStyle}" Text="2"/></Border>
             <Border Style="{StaticResource SmallKeyStyle}" Tag="TAP:3"><TextBlock Style="{StaticResource SmallKeyTextStyle}" Text="3"/></Border>
