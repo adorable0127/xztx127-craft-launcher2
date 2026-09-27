@@ -42,15 +42,6 @@
                                 <TextBlock Text="帮助文档（离线可用）" FontWeight="Bold" Margin="0,0,0,6"/>
                                 <TextBlock Text="可直接查看文档，也可以导出 MD 文件保存到本地。" TextWrapping="Wrap"
                                            Foreground="{DynamicResource TextSecondaryBrush}" FontSize="13" Margin="0,0,0,12"/>
-                                <TextBlock Text="解决方法与修复说明" FontWeight="SemiBold"/>
-                                <TextBlock Text="日志误判、纸娃娃与离线账户默认显示等问题的处理说明。" TextWrapping="Wrap"
-                                           Foreground="{DynamicResource TextSecondaryBrush}" FontSize="13" Margin="0,4,0,6"/>
-                                <WrapPanel Margin="0,0,0,12">
-                                    <Button Content="查看解决方法" Padding="12,6" Margin="0,0,8,4"
-                                            Tag="PAPERDOLL_FIX.md" Click="ViewHelpDocument_Click"/>
-                                    <Button Content="导出 MD…" Padding="12,6" Margin="0,0,0,4"
-                                            Tag="PAPERDOLL_FIX.md" Click="ExportHelpDocument_Click"/>
-                                </WrapPanel>
                                 <TextBlock Text="启动器 API 接入说明" FontWeight="SemiBold"/>
                                 <TextBlock Text="插件接口、配置与日志、EXE 进程约定、命令行调用及自定义 AI 接口的用法。" TextWrapping="Wrap"
                                            Foreground="{DynamicResource TextSecondaryBrush}" FontSize="13" Margin="0,4,0,6"/>
