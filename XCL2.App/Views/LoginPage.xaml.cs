@@ -322,26 +322,6 @@ public partial class LoginPage : UserControl
     private void SkinModel_Click(object sender, RoutedEventArgs e)
     {
         if (sender is not Button { Tag: Account account }) return;
-
-        // 3D 纸娃娃同样是实验性功能，两层确认后才真正放行：
-        // 第一层"好吧好吧"是主按钮（默认更安全的退出项）；选了"我偏要试试"才会看到
-        // 第二层更明确的警告，第二层"怕了"仍是主按钮，只有"爷们儿继续干"才真正进入。
-        var stillWants = MessageBoxDialog.ShowCustomYesNo(
-            "3D 纸娃娃是实验性功能，经过实测存在一些比较抽象的 bug，作者也不会修，建议不要打开。",
-            "3D 纸娃娃提醒",
-            leftText: "我偏要试试",
-            rightText: "好吧好吧",
-            rightIsPrimary: true);
-        if (!stillWants) return;
-
-        var reallyEnter = MessageBoxDialog.ShowCustomYesNo(
-            "这个实验性功能真的不稳定，出了 bug 不要往外提交反馈——作者也在努力修。",
-            "再确认一下",
-            leftText: "爷们儿继续干",
-            rightText: "怕了",
-            rightIsPrimary: true);
-        if (!reallyEnter) return;
-
         new SkinModelViewerDialog(account).ShowDialog();
     }
 

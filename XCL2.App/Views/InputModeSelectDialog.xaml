@@ -19,8 +19,8 @@
         <Button x:Name="KeyboardBtn" HorizontalAlignment="Stretch" Padding="14,10" Margin="0,0,0,8"
                 HorizontalContentAlignment="Left" Click="Keyboard_Click">
             <StackPanel>
-                <TextBlock Text="键鼠模式（默认）" FontWeight="SemiBold"/>
-                <TextBlock Text="不加任何覆盖层，跟平时一样用键盘和鼠标。" FontSize="11"
+                <TextBlock Text="键鼠模式" FontWeight="SemiBold"/>
+                <TextBlock Text="默认模式，不加任何覆盖层，跟平时一样用键盘和鼠标。" FontSize="11"
                            Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap"/>
             </StackPanel>
         </Button>
@@ -33,10 +33,7 @@
                            Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap"/>
             </StackPanel>
         </Button>
-        <!-- 实验性功能提示：直接写在按钮下面（内嵌，不再单独弹一个确认框打断这个选择流程），
-             每次弹这个"这次用键鼠还是触屏"的框都能看到，不需要用户记住"设置里勾选时提醒过一次"。
-             用 WarningTextBrush，跟项目里其它警告文案统一配色。 -->
-        <TextBlock Text="⚠ 触屏模式目前是实验性功能，依赖底层鼠标钩子模拟输入，可能出现视角异常、按键无响应等问题，仍在完善中。"
+        <TextBlock Text="这个是实验性功能。如果有问题请及时提交问题报告。"
                    FontSize="11" TextWrapping="Wrap" Margin="0,0,0,12"
                    Foreground="{DynamicResource WarningTextBrush}"/>
 

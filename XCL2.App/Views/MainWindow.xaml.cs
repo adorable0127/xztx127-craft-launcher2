@@ -3691,53 +3691,6 @@ public partial class MainWindow : Window
                 LauncherLogService.AppendLine(
                     $"[操作模式] 本次启动使用 {(useTouchMode ? "触屏模式" : "键鼠模式")}" +
                     (modeWindow.TimedOut ? "（倒计时超时自动选择）" : ""));
-
-                // 只在用户主动选了"触屏模式"时才提醒——键鼠模式是绝大多数用户的默认路径，
-                // 不该被这条实验性警告打扰；倒计时超时也不算"选了触屏"，同样不弹。
-                // 两层确认：第一层"好吧好吧"是主按钮（默认更安全的退出项）；选了"我偏要
-                // 试试"才会看到第二层更明确的警告（真出 bug 别提 issue，作者已经在修了），
-                // 第二层"怕了"仍是主按钮，只有"爷们儿继续干"才真正放行进入触屏模式。
-                // 第二层选退出的话要把 useTouchMode 和已经写下去的配置都回退成键鼠模式，
-                // 不然日志和后面 cfg.TouchModeEnabled 记的选择会跟实际行为对不上。
-                if (useTouchMode)
-                {
-                    var stillWantsTouch = MessageBoxDialog.ShowCustomYesNo(
-                        "触屏模式是实验性功能，经过实测存在一些比较抽象的 bug，作者也不会修，建议不要打开。",
-                        "触屏模式提醒",
-                        leftText: "我偏要试试",
-                        rightText: "好吧好吧",
-                        rightIsPrimary: true);
-
-                    if (stillWantsTouch)
-                    {
-                        var reallyEnter = MessageBoxDialog.ShowCustomYesNo(
-                            "这个实验性功能真的不稳定，出了 bug 不要往外提交反馈——作者也在努力修。",
-                            "再确认一下",
-                            leftText: "爷们儿继续干",
-                            rightText: "怕了",
-                            rightIsPrimary: true);
-
-                        if (!reallyEnter)
-                        {
-                            useTouchMode = false;
-                            if (!modeWindow.TimedOut && modeWindow.RememberChoice)
-                            {
-                                cfg.TouchModeEnabled = false;
-                                ConfigService.Save();
-                            }
-                            LauncherLogService.AppendLine("[操作模式] 触屏模式二次确认时退出，回退为键鼠模式。");
-                        }
-                    }
-                    else
-                    {
-                        useTouchMode = false;
-                        if (!modeWindow.TimedOut && modeWindow.RememberChoice)
-                        {
-                            cfg.TouchModeEnabled = false;
-                            ConfigService.Save();
-                        }
-                    }
-                }
             }
 
             LauncherLogService.AppendLine($"[启动游戏] 账户={account.DisplayLabel} 版本={cfg.SelectedVersionId}");

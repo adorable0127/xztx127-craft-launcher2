@@ -262,12 +262,18 @@ public partial class PluginManagerDialog : OverlayDialogControl
         catch (Exception ex) { MessageBoxDialog.ShowWarning($"打开 API 接口说明失败：{ex.Message}", "启动器 API 接入说明"); }
     }
 
-    /// <summary>把暂存的启用/禁用改动一次性落盘，再关闭弹窗。</summary>
+    /// <summary>把暂存的启用/禁用改动一次性落盘；然后必须紧接着调用一次 ScanAndLoad()——
+    /// 否则只是磁盘上的 plugins-state.json 变了，_manager.Plugins 这份内存快照还是旧值，
+    /// 下次重新打开这个弹窗（同一次启动器进程内）用的还是内存里的旧状态，界面上看起来就像
+    /// “保存没生效”。ScanAndLoad 顺带完成了“重新扫描/重新加载插件”要做的事——保存后新启用的
+    /// 插件会立刻被加载执行，不需要用户再手动点一次重新扫描。</summary>
     private void Save_Click(object sender, RoutedEventArgs e)
     {
         foreach (var (filePath, enabled) in _pendingEnabled)
             _manager.SetEnabled(filePath, enabled);
         _pendingEnabled.Clear();
+        _manager.ScanAndLoad();
+        Render();
         CloseWith(null);
     }
 
