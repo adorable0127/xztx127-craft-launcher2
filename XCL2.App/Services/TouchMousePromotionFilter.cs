@@ -38,16 +38,26 @@ internal static class TouchMousePromotionFilter
     [DllImport("user32.dll")]
     private static extern bool IsWindowVisible(IntPtr hwnd);
 
+    [StructLayout(LayoutKind.Sequential)]
+    private struct KBDLLHOOKSTRUCT
+    {
+        public uint vkCode, scanCode, flags, time;
+        public UIntPtr dwExtraInfo;
+    }
+    private const int WH_KEYBOARD_LL = 13;
     private const int WH_MOUSE_LL = 14;
     private const ulong TouchSignature = 0xFF515700;
     private const ulong TouchSignatureMask = 0xFFFFFF00;
 
-    private sealed record Target(IntPtr GameHwnd, IntPtr OverlayHwnd);
+    private sealed record Target(IntPtr GameHwnd, IntPtr OverlayHwnd, Dispatcher Dispatcher, Action<ushort>? KeyDown);
 
     private static readonly object Sync = new();
     // 委托终身存活；回调只读取一个不可变快照，不等待 UI 锁。
     private static readonly LowLevelMouseProc Proc = HookCallback;
     private static IntPtr _hook;
+    private static IntPtr _keyboardHook;
+    private static readonly LowLevelMouseProc KeyboardProc = KeyboardHookCallback;
+    private static readonly HashSet<uint> PhysicalKeys = new();
     private static Target? _target;
     private static Thread? _thread;
     private static Dispatcher? _dispatcher;
@@ -57,7 +67,7 @@ internal static class TouchMousePromotionFilter
     public static bool IsEnabled => Volatile.Read(ref _hook) != IntPtr.Zero && Volatile.Read(ref _target) != null;
 
     /// <summary>使用独立的消息线程安装钩子，避免启动器的布局、定时刷新拖住系统鼠标输入。</summary>
-    public static void Enable(IntPtr gameHwnd, IntPtr overlayHwnd)
+    public static void Enable(IntPtr gameHwnd, IntPtr overlayHwnd, Action<ushort>? keyDown = null)
     {
         if (gameHwnd == IntPtr.Zero || overlayHwnd == IntPtr.Zero) return;
         try
@@ -67,7 +77,7 @@ internal static class TouchMousePromotionFilter
                 if (_stopping) return;
                 var target = _target;
                 if (target == null || target.GameHwnd != gameHwnd || target.OverlayHwnd != overlayHwnd)
-                    Volatile.Write(ref _target, new Target(gameHwnd, overlayHwnd));
+                    Volatile.Write(ref _target, new Target(gameHwnd, overlayHwnd, Dispatcher.CurrentDispatcher, keyDown));
                 if (_thread != null || Environment.TickCount64 < _nextInstallAttemptAt) return;
                 _nextInstallAttemptAt = Environment.TickCount64 + 2000;
 
@@ -105,6 +115,8 @@ internal static class TouchMousePromotionFilter
                 LauncherLogService.AppendLine("[触屏模式] 触摸合成鼠标拦截器安装失败，视角可能会乱转。");
                 return;
             }
+            PhysicalKeys.Clear();
+            _keyboardHook = SetWindowsHookEx(WH_KEYBOARD_LL, KeyboardProc, IntPtr.Zero, 0);
             Dispatcher.Run();
         }
         catch (Exception ex)
@@ -118,6 +130,12 @@ internal static class TouchMousePromotionFilter
             {
                 try { UnhookWindowsHookEx(hook); } catch { /* 线程结束时系统也会清理钩子 */ }
             }
+            if (_keyboardHook != IntPtr.Zero)
+            {
+                try { UnhookWindowsHookEx(_keyboardHook); } catch { }
+                _keyboardHook = IntPtr.Zero;
+            }
+            PhysicalKeys.Clear();
             lock (Sync)
             {
                 Volatile.Write(ref _hook, IntPtr.Zero);
@@ -143,6 +161,34 @@ internal static class TouchMousePromotionFilter
         }
         try { dispatcher?.BeginInvokeShutdown(DispatcherPriority.Send); }
         catch { /* 应用退出时消息线程可能已经结束 */ }
+    }
+
+    private static IntPtr KeyboardHookCallback(int nCode, IntPtr wParam, IntPtr lParam)
+    {
+        if (nCode >= 0)
+        {
+            try
+            {
+                var data = Marshal.PtrToStructure<KBDLLHOOKSTRUCT>(lParam);
+                if ((ulong)data.dwExtraInfo != TouchInputInjector.InjectedSignature)
+                {
+                    var message = wParam.ToInt32();
+                    if (message is 0x0101 or 0x0105) PhysicalKeys.Remove(data.vkCode);
+                    else if ((message is 0x0100 or 0x0104) && PhysicalKeys.Add(data.vkCode))
+                    {
+                        var target = Volatile.Read(ref _target);
+                        if (target?.KeyDown != null && GetForegroundWindow() == target.GameHwnd)
+                            target.Dispatcher.BeginInvoke(new Action(() =>
+                            {
+                                if (ReferenceEquals(target, Volatile.Read(ref _target)) && GetForegroundWindow() == target.GameHwnd)
+                                    target.KeyDown((ushort)data.vkCode);
+                            }), DispatcherPriority.Input);
+                    }
+                }
+            }
+            catch { /* 键盘观察不拦截任何输入。 */ }
+        }
+        return CallNextHookEx(_keyboardHook, nCode, wParam, lParam);
     }
 
     private static IntPtr HookCallback(int nCode, IntPtr wParam, IntPtr lParam)

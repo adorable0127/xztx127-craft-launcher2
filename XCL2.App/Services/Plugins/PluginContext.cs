@@ -5,7 +5,7 @@ namespace XCL2.App.Services.Plugins;
 /// 插件只应该通过这里提供的成员跟启动器打交道，不要自己去猜启动器内部目录结构/私有服务，
 /// 那些随时可能改，这里暴露出来的这几个成员会尽量保持稳定。
 /// </summary>
-public sealed class PluginContext
+public sealed class PluginContext : IDisposable
 {
     /// <summary>该插件独享的配置读写入口，落盘在
     /// %AppData%/XCL2/Plugins/config/{PluginId}.json，
@@ -21,15 +21,35 @@ public sealed class PluginContext
     /// 排查问题时能直接在启动器"日志"页里看到，不需要插件自己另外弹窗/写文件。</summary>
     public Action<string> Log { get; }
 
+    /// <summary>UI 注册 API 版本；原有 IPlugin 契约保持兼容。</summary>
+    public Version ApiVersion { get; } = new(1, 3);
+
+    /// <summary>注册弹窗、按钮、选项、面板和弹窗生命周期订阅。</summary>
+    public PluginUiService Ui { get; }
+
+    /// <summary>任意已加载视图的组件定位、增加、移除、移动、替换与布局。</summary>
+    public PluginComponentService Components { get; }
+
+    /// <summary>启动内核、头像和实时 3D 渲染后端扩展。</summary>
+    public PluginRuntimeService Runtime { get; }
+
+    public void Dispose() => Ui.Dispose();
+
+    /// <summary>插件停止时取消，后台任务应传入此令牌。</summary>
+    public System.Threading.CancellationToken Stopping => Ui.Stopping;
+
     public PluginContext(string pluginId, PluginConfigService config, string dataDirectory, Action<string> log)
     {
         Config = config;
         DataDirectory = dataDirectory;
         Log = log;
         PluginId = pluginId;
+        Ui = new PluginUiService(this);
+        Components = new PluginComponentService(this);
+        Runtime = new PluginRuntimeService(this);
     }
 
-    /// <summary>就是 IPlugin.Id，重复放一份在这里方便插件代码里不用额外持有 IPlugin 引用
+    /// <summary>原安装等于 IPlugin.Id，副本含独立实例后缀。使用此 Id 隔离注册项，方便插件代码里不用额外持有 IPlugin 引用
     /// 也能拿到自己的 Id（比如拼日志前缀、拼文件名）。</summary>
     public string PluginId { get; }
 }

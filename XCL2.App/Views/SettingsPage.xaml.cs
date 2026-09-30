@@ -50,6 +50,9 @@ public partial class SettingsPage : UserControl
         new PluginManagerDialog(_owner).ShowDialog();
     }
 
+    private void OpenTouchControlsSettings_Click(object sender, RoutedEventArgs e)
+        => new TouchControlsSettingsWindow { Owner = _owner }.ShowDialog();
+
     private readonly MainWindow _owner;
 
     /// <summary>设置页"编辑追踪/自动保存气泡"相关状态，见 HookDirtyTracking / OnSettingsEdited 注释。

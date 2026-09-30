@@ -3,6 +3,7 @@ using System.Windows.Controls;
 using System.Windows.Media.Animation;
 using System.Windows.Threading;
 using XCL2.App.Services;
+using XCL2.App.Services.Plugins;
 
 namespace XCL2.App.Views;
 
@@ -68,6 +69,7 @@ public static class OverlayDialogService
     private sealed class OverlayEntry
     {
         public required object Content;
+        public PluginOverlayView? View;
         public required TaskCompletionSource<bool?> Tcs;
         public required bool DismissOnBackgroundClick;
         /// <summary>是否允许按 Esc 关闭本弹窗。默认 true（跟系统对话框习惯一致）；
@@ -111,10 +113,10 @@ public static class OverlayDialogService
         if (_host is null)
             throw new InvalidOperationException("OverlayDialogService 尚未 Register 宿主 MainWindow。");
 
-        var tcs = new TaskCompletionSource<bool?>();
+        var tcs = new TaskCompletionSource<bool?>(TaskCreationOptions.RunContinuationsAsynchronously);
         var entry = new OverlayEntry { Content = dialog, Tcs = tcs, DismissOnBackgroundClick = dismissOnBackgroundClick, DismissOnEsc = dismissOnEsc };
 
-        void OnRequestClose(object? s, bool? result) => CloseTop(result);
+        void OnRequestClose(object? s, bool? result) => CloseEntry(entry, result);
         dialog.RequestClose += OnRequestClose;
 
         Push(entry, () => dialog.RequestClose -= OnRequestClose);
@@ -136,10 +138,10 @@ public static class OverlayDialogService
         if (_host is null)
             throw new InvalidOperationException("OverlayDialogService 尚未 Register 宿主 MainWindow。");
 
-        var tcs = new TaskCompletionSource<bool?>();
+        var tcs = new TaskCompletionSource<bool?>(TaskCreationOptions.RunContinuationsAsynchronously);
         var entry = new OverlayEntry { Content = dialog, Tcs = tcs, DismissOnBackgroundClick = dismissOnBackgroundClick, DismissOnEsc = dismissOnEsc };
 
-        void OnRequestClose(object? s, bool? result) => CloseTop(result);
+        void OnRequestClose(object? s, bool? result) => CloseEntry(entry, result);
         dialog.RequestClose += OnRequestClose;
 
         Push(entry, () => dialog.RequestClose -= OnRequestClose);
@@ -160,14 +162,22 @@ public static class OverlayDialogService
 
     private static void Push(OverlayEntry entry, Action unsubscribe)
     {
+        if (_stack.Any(existing => ReferenceEquals(existing.Content, entry.Content)))
+        {
+            unsubscribe();
+            throw new InvalidOperationException("同一个弹窗实例不能重复打开。");
+        }
+        if (_stack.TryPeek(out var previous)) previous.EscHintTimer?.Stop();
+        entry.View = new PluginOverlayView((IOverlayDialog)entry.Content);
         _unsubscribers[entry.Content] = unsubscribe;
 
         // 已经有弹窗在显示：先把当前这个"藏起来"（从 ContentHost 摘掉但保留在栈里），
         // 新弹窗压栈显示，形成"弹窗里弹弹窗"的层级观感。
         _stack.Push(entry);
-        _host!.OverlayRenderEntry(entry.Content, animateIn: true);
+        _host!.OverlayRenderEntry(entry.View, animateIn: true);
 
         StartEscHintTimerIfNeeded(entry);
+        PluginUiRegistry.Publish((IOverlayDialog)entry.Content, true);
     }
 
     /// <summary>
@@ -221,6 +231,25 @@ public static class OverlayDialogService
     private static void CloseTop(bool? result)
     {
         if (_stack.Count == 0) return;
+        CloseEntry(_stack.Peek(), result);
+    }
+
+    // 插件停止或异步任务可能关闭被子弹窗覆盖的父弹窗，不能误关当前栈顶。
+    private static void CloseEntry(OverlayEntry entry, bool? result)
+    {
+        if (!_stack.Contains(entry)) return;
+        if (!ReferenceEquals(_stack.Peek(), entry))
+        {
+            var remaining = _stack.Where(item => !ReferenceEquals(item, entry)).Reverse().ToArray();
+            _stack.Clear();
+            foreach (var item in remaining) _stack.Push(item);
+            if (_unsubscribers.Remove(entry.Content, out var detach)) detach();
+            entry.EscHintTimer?.Stop();
+            entry.View?.Dispose();
+            entry.Tcs.TrySetResult(result);
+            PluginUiRegistry.Publish((IOverlayDialog)entry.Content, false, result);
+            return;
+        }
 
         var top = _stack.Pop();
         if (_unsubscribers.Remove(top.Content, out var unsubscribe)) unsubscribe();
@@ -231,14 +260,15 @@ public static class OverlayDialogService
         top.EscHintTimer?.Stop();
         top.EscHintTimer = null;
 
-        _host!.OverlayDismissEntry(top.Content, () =>
+        _host!.OverlayDismissEntry(top.View!, () =>
         {
+            top.View?.Dispose();
             top.Tcs.TrySetResult(result);
 
             if (_stack.Count > 0)
             {
                 var previous = _stack.Peek();
-                _host.OverlayRenderEntry(previous.Content, animateIn: false);
+                _host.OverlayRenderEntry(previous.View!, animateIn: false);
                 // 被暂存的上一层弹窗重新显示出来（比如弹窗里弹出的子弹窗关掉了），
                 // 之前它在被压住期间不该有计时器在跑（见 Push 里"只在栈顶时才弹"的检查），
                 // 现在它重新变回栈顶，重新起一个新的 10 秒计时，跟"刚打开"体验一致。
@@ -248,6 +278,7 @@ public static class OverlayDialogService
             {
                 _host.OverlayHideRoot();
             }
+            PluginUiRegistry.Publish((IOverlayDialog)top.Content, false, result);
         });
     }
 

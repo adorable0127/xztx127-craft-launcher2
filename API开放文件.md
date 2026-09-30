@@ -1,5 +1,6 @@
 # XCL2 启动器 API 接入说明
 
+本文只说明当前源码已有的接入接口、参数、返回值和调用方式。故障处理见 `PAPERDOLL_FIX.md`；插件安装操作见 `PLUGIN_GUIDE.md`。
 
 ## 1. 选择接入方式
 
@@ -50,7 +51,7 @@
 
 `Initialize` 应尽快返回，网络和长时间任务采用异步方式。后台线程更新 WPF 控件时切回 UI Dispatcher。重新扫描会先关停上一轮实例，再按策略加载；`Shutdown` 不保证程序集立即完成垃圾回收。后台任务、定时器和事件订阅应由插件自行取消或解除。
 
-返回 `null` 的设置面板由宿主替换为已有配置的只读 JSON 预览。仅本轮已运行的 DLL 能打开配置面板。
+返回 `null` 的设置面板由宿主替换为已有配置的只读 JSON 预览，并在下方展示本插件已注册的选项、按钮和面板。仅本轮已运行的 DLL 能打开配置面板。
 
 ### 插件管理界面入口
 
@@ -82,6 +83,9 @@
 | `Config` | `PluginConfigService` | 读写本插件配置 |
 | `DataDirectory` | `string` | 已创建的专属可写目录，保存插件缓存、下载内容或其他数据 |
 | `Log` | `Action<string>` | `ctx.Log("消息")`，宿主自动添加插件标识并写入启动器日志 |
+| `ApiVersion` | `Version` | UI API 版本，本版为 1.1 |
+| `Ui` | `PluginUiService` | 注册弹窗、选项、按钮、面板；详见第 10 节 |
+| `Stopping` | `CancellationToken` | 插件停止时取消的令牌 |
 
 默认数据目录：`%APPDATA%\XCL2\Plugins\data\<PluginId>\`。配置目录：`%APPDATA%\XCL2\Plugins\config\<PluginId>.json`。使用上下文提供的实际路径，避免在插件中自行拼接固定路径。
 
@@ -351,3 +355,194 @@ string markdown = reader.ReadToEnd();
 | AI 请求与配置 | `Services/AiAssistantService.cs`、`Models/AiAssistantModels.cs` |
 | MD 读取和导出 | `Services/EmbeddedDocumentationService.cs` |
 | 文档界面 | `Views/AboutHelpPage.xaml`、`Views/HelpDocumentDialog.xaml` |
+
+## 10. UI 注册 API（1.1）
+
+本节接口均位于 `XCL2.App.Services.Plugins`，适用于本轮已经运行的 DLL 插件。原有 `IPlugin` 和 `PluginContext` 构造签名保持兼容。新插件通过 `ctx.ApiVersion` 判断 UI API 版本；`ctx.Ui` 是当前插件实例的注册表；`ctx.Stopping` 在插件停止时取消。
+
+### 注册、调用与注销
+
+| API | 返回值 | 行为 |
+| --- | --- | --- |
+| `ctx.ApiVersion` | `Version` | 本版为 `1.1`，与启动器产品版本独立 |
+| `ctx.Ui` | `PluginUiService` | 当前实例的 UI 注册入口 |
+| `ctx.Stopping` / `ctx.Ui.Stopping` | `CancellationToken` | 停止、重载、初始化失败时取消；可传给后台任务 |
+| `Ui.RegisterDialog(PluginDialogDefinition definition)` | `IDisposable` | 注册可多次打开的弹窗工厂 |
+| `Ui.RegisterButton(PluginButtonDefinition definition)` | `IDisposable` | 向目标位置注册异步操作按钮 |
+| `Ui.RegisterOption(PluginOptionDefinition definition)` | `IDisposable` | 自动生成配置控件并保存到本插件 Config |
+| `Ui.RegisterPanel(PluginPanelDefinition definition)` | `IDisposable` | 向目标位置注册任意 WPF 内容工厂 |
+| `Ui.ShowDialogAsync(string id, object? parameter = null)` | `Task<bool?>` | 打开本插件注册的弹窗，关闭后返回结果 |
+| `Ui.GetDialogTarget(string id)` | `string` | 返回本插件某个弹窗的扩展位置 `plugin:<PluginId>/<id>` |
+| `Ui.ShowMessageAsync(string title, string message)` | `Task<bool?>` | 通用提示弹窗；确定返回 true，关闭返回 null |
+| `Ui.ConfirmAsync(string title, string message)` | `Task<bool>` | 通用确认弹窗；仅点确定返回 true；取消、Esc、关闭均返回 false |
+| `Ui.SubscribeDialogs(Action<PluginDialogEvent> observer)` | `IDisposable` | 订阅 Overlay 弹窗打开/关闭通知 |
+| `Ui.RunOnUiAsync(Action action)` | `Task` | 将操作安排到宿主 UI 线程；异常通过任务返回 |
+| `Ui.Dispose()` | `void` | 停止当前 UI 服务；通常由宿主自动调用，重复调用无副作用 |
+| 注册返回值的 `Dispose()` | `void` | 提前注销对应条目或订阅；重复调用无副作用 |
+
+注册 ID 在“当前插件实例 + 条目种类”范围内唯一，空白 ID 和同种类重复 ID 抛出 `ArgumentException`。不同插件可以使用相同局部 ID。弹窗、按钮、选项、面板的同名 ID 也互不冲突。宿主拒绝同时加载会映射到同一插件配置路径的重复插件 ID。
+
+注册、注销、打开弹窗会自动切回 UI 线程；控件工厂、按钮回调、校验、配置保存、通知回调均在 UI 线程执行。按钮回调可以 `await`，执行期间该按钮禁用，异常显示在按钮旁并写日志。需要 CPU 密集工作时使用 `Task.Run`，不要在回调中同步等待 `.Wait()` / `.Result`，也不要在 UI 线程阻塞等待正在调用 UI API 的后台线程。
+
+插件停止时，宿主先取消 `Stopping`、关闭本插件打开的弹窗、移除注册项及订阅，再调用插件自己的 `Shutdown()`。即使 `Initialize` 中途抛出异常，也会清理已注册的 UI；初始化失败不会额外调用 `Shutdown`。`Shutdown` 中仍可使用 `Config` 和 `Log`，不要重新注册 UI。停止后的注册/打开调用抛出 `ObjectDisposedException`。后台任务与插件自行订阅的外部事件仍由插件自己取消、解除。
+
+### 可扩展的位置
+
+| Target | 位置 |
+| --- | --- |
+| `PluginUiTargets.PluginSettings`（默认） | 当前插件的配置界面，仅显示自己的注册项 |
+| `PluginUiTargets.PluginManager` | 插件管理弹窗底部 |
+| `PluginUiTargets.LoaderChoice` | Minecraft 加载器选择弹窗底部 |
+| `PluginUiTargets.MultiLoaderInstall` | 多加载器安装弹窗底部 |
+| `PluginUiTargets.CreateServer` | 创建服务端弹窗底部 |
+| `PluginUiTargets.ExperimentalFeatures` | 实验性功能弹窗底部 |
+| `PluginUiTargets.ForDialog<T>()` | 任意实现 `IOverlayDialog` 的 `FrameworkElement` 弹窗；值为 `dialog:` 加类型短名称 |
+| `Ui.GetDialogTarget(id)` | 本插件注册的自定义弹窗底部 |
+
+所有经 `OverlayDialogService` 显示的弹窗都提供独立扩展区，包括已有的加载器选择、账户选择、Java 选择、帮助文档、插件管理等弹窗。可使用 `PluginUiTargets.ForDialog<XCL2.App.Views.AccountPickerDialog>()` 等类型安全写法。独立的系统文件选择窗口和没有经过 Overlay 宿主的 Window 不提供这个扩展位置。
+
+扩展区支持按钮、配置选项和自定义面板，空间不足时可滚动。动态注册/注销会刷新当前扩展区；被子弹窗覆盖的扩展区在恢复显示时刷新。排列先按 `Order` 升序，再按插件 ID、条目 ID 排序。未知 Target 可以注册，但在对应宿主出现前不会显示；请优先使用常量和 `ForDialog<T>()`。
+
+扩展区是附加 UI，不会把注册按钮自动变成 Minecraft 新加载器的安装实现，不会修改原弹窗的选中项、返回结果或确认按钮。插件如需完整业务交互，应注册自己的弹窗/面板，并在自己的回调中实现逻辑，无需反射宿主私有控件。
+
+### 弹窗定义与结果
+
+`PluginDialogDefinition`：
+
+| 属性 | 类型 / 默认值 | 说明 |
+| --- | --- | --- |
+| `Id`、`Title` | 必填 `string` | 本插件局部 ID、显示标题 |
+| `CreateContent` | 必填 `Func<PluginDialogContext, FrameworkElement>` | 每次打开创建全新的 WPF 内容，不可返回 null 或复用已有父控件的元素 |
+| `Width` | `double`，560 | 允许 240～1600；显示宽度受主窗口可用宽度限制 |
+| `DismissOnEscape` | `bool`，true | 是否允许 Esc 关闭 |
+| `DismissOnBackgroundClick` | `bool`，false | 是否允许点击遮罩关闭 |
+
+`PluginDialogContext` 提供 `Plugin`、`Parameter`、`Stopping`、`Close(bool? result = null)`。`Parameter` 原样传入，不会持久化。`Close(true)` 表示成功，`Close(false)` 表示取消，`Close()` 表示无结果关闭。每次打开都有独立上下文，支持同一种弹窗多次打开与弹窗内再开弹窗。宿主标题和关闭按钮始终可用，内容较多时滚动。
+
+注销一个弹窗注册项会关闭该条目已打开的所有实例。插件停止也会关闭它的弹窗；关闭被另一层遮住的父弹窗只移除父层，不会误关当前子弹窗。关闭期间发出的后续重复关闭请求无效。
+
+### 按钮、选项和面板定义
+
+`PluginButtonDefinition`：必填 `Id`、`Text`、`OnClick: Func<PluginUiContext, Task>`；可选 `Target`（默认插件配置页）、`Description`（提示文字）、`Order`（默认 0）。
+
+`PluginPanelDefinition`：必填 `Id`、`CreateContent: Func<PluginUiContext, FrameworkElement>`；可选 `Target`、`Order`。面板工厂应只创建 UI，不要在每次创建时重复注册条目。手工创建的控件和订阅由插件自己管理；宿主负责移除面板及自己的事件处理。注册表变化会重建扩展区，需保留的编辑状态应存放在插件自己的模型中。
+
+`PluginUiContext` 提供 `Plugin`、`Target`、`Stopping`。操作按钮和面板工厂可据此访问当前插件配置、数据目录、日志或打开弹窗。
+
+`PluginOptionDefinition`：
+
+| 属性 | 类型 / 默认值 | 说明 |
+| --- | --- | --- |
+| `Id`、`Title` | 必填 `string` | 注册 ID、控件标题 |
+| `Target`、`Order`、`Description` | 同按钮定义 | 位置、顺序、说明 |
+| `ConfigKey` | `string?`，null | null 时使用 Id 作为本插件 Config 的键；显式键不可为空 |
+| `Kind` | `PluginOptionKind`，Toggle | Toggle、Text、Number、Choice |
+| `DefaultValue` | `object?`，null | 需要与类型匹配：bool、string、double、string |
+| `Minimum` / `Maximum` | `double` 最小/最大有限值 | Number 的合法范围，要求下限不大于上限 |
+| `Choices` | `IReadOnlyList<PluginChoice>`，空列表 | Choice 必填非空列表；Value 唯一，Value/Label 均非空 |
+| `Validate` | `Func<object?, string?>?` | 保存前校验，null/空字符串通过；错误文本显示在控件旁 |
+| `OnChanged` | `Action<object?>?` | 成功持久化后调用；异常记录日志，不撤销已保存值 |
+
+`PluginChoice(string Value, string Label)` 将机器使用的字符串值与界面标签分开。下拉保存 Value，不保存标签。默认值未提供时，Toggle=false、Text=空字符串、Number=范围内最接近 0 的数、Choice=第一项 Value。数字默认值要写成 `2d` 等 double，NaN/无穷大无效。已存储值类型错误、超出范围或下拉项已移除时，界面使用默认值；直到用户操作才写回。
+
+开关和下拉选择立即保存；文本和数字在点击各自的“应用”按钮后保存，未应用的文本不会因为关闭弹窗而写入。输入不合法或配置文件写入失败会显示错误。原有 `IPluginSettingsPanel.Save()` 仍由配置弹窗的“保存”按钮调用，自动注册选项遵循上述独立保存规则。
+
+### 弹窗生命周期通知
+
+`PluginDialogEvent` 包含 `Target: string`、`IsOpen: bool`、`Result: bool?`。打开通知的 Result 为 null；关闭通知的 Result 为实际结果，Esc/关闭/停止通常为 null。通知只覆盖订阅之后经 Overlay 宿主打开/关闭的弹窗，不回放历史。它是只读通知，不提供取消或替代宿主流程的权力。回调异常记录日志，不阻断其他订阅者。避免在通知里无条件再打开相同弹窗形成递归。
+
+### 完整 UI 注册示例
+
+```csharp
+using System.Windows;
+using System.Windows.Controls;
+using XCL2.App.Services.Plugins;
+
+public sealed class UiExamplePlugin : IPlugin
+{
+    public string Id => "example.open-ui";
+    public string DisplayName => "开放界面示例";
+    public string Version => "1.0.0";
+    public string Description => "注册弹窗、按钮、选项和自定义面板。";
+    public string Author => "Example";
+
+    public void Initialize(PluginContext ctx)
+    {
+        ctx.Ui.RegisterOption(new PluginOptionDefinition
+        {
+            Id = "enabled", Title = "启用扩展", DefaultValue = true,
+            OnChanged = value => ctx.Log($"开关已更新：{value}")
+        });
+        ctx.Ui.RegisterOption(new PluginOptionDefinition
+        {
+            Id = "parallelism", Title = "并发数", Kind = PluginOptionKind.Number,
+            DefaultValue = 2d, Minimum = 1, Maximum = 8,
+            Validate = value => value is double n && n == Math.Truncate(n)
+                ? null : "并发数必须是整数。"
+        });
+        ctx.Ui.RegisterOption(new PluginOptionDefinition
+        {
+            Id = "profile", Title = "配置方案", Kind = PluginOptionKind.Choice,
+            DefaultValue = "normal",
+            Choices = new[] { new PluginChoice("normal", "默认"), new PluginChoice("fast", "快速") }
+        });
+        ctx.Ui.RegisterDialog(new PluginDialogDefinition
+        {
+            Id = "details", Title = "插件详情", Width = 520,
+            CreateContent = dialog =>
+            {
+                var panel = new StackPanel();
+                panel.Children.Add(new TextBlock
+                {
+                    Text = dialog.Parameter as string ?? "来自插件的弹窗",
+                    TextWrapping = TextWrapping.Wrap
+                });
+                var ok = new Button { Content = "完成", Margin = new Thickness(0, 12, 0, 0) };
+                ok.Click += (_, _) => dialog.Close(true);
+                panel.Children.Add(ok);
+                return panel;
+            }
+        });
+        ctx.Ui.RegisterButton(new PluginButtonDefinition
+        {
+            Id = "details-button", Text = "打开详情",
+            OnClick = async ui =>
+            {
+                var accepted = await ui.Plugin.Ui.ShowDialogAsync("details", "可以嵌套打开其他插件弹窗。");
+                if (accepted == true) ui.Plugin.Log("用户已完成操作。");
+            }
+        });
+        ctx.Ui.RegisterButton(new PluginButtonDefinition
+        {
+            Id = "loader-action", Text = "插件操作", Target = PluginUiTargets.LoaderChoice,
+            OnClick = async ui =>
+            {
+                if (await ui.Plugin.Ui.ConfirmAsync("插件操作", "是否运行示例操作？"))
+                    await ui.Plugin.Ui.ShowMessageAsync("已完成", "在这里接入自己的业务逻辑。");
+            }
+        });
+        ctx.Ui.RegisterPanel(new PluginPanelDefinition
+        {
+            Id = "help-panel", Target = ctx.Ui.GetDialogTarget("details"), Order = 100,
+            CreateContent = ui => new TextBlock { Text = "附加说明：" + ui.Plugin.PluginId }
+        });
+        ctx.Ui.SubscribeDialogs(change => ctx.Log($"{change.Target} 打开={change.IsOpen} 结果={change.Result}"));
+    }
+
+    // 宿主会自动清理本示例中的注册项。自行创建的后台任务需响应 ctx.Stopping。
+    public void Shutdown() { }
+}
+```
+
+本例省略 `CreateSettingsPanel`，宿主仍会展示已注册选项和按钮；原有自定义设置面板可以同时保留。只需提前移除某项时，保留 `Register*` 返回的 `IDisposable` 并调用 `Dispose()`。
+
+### 新增源码对应表
+
+| 功能 | 源文件 |
+| --- | --- |
+| 公开定义、目标位置、参数与事件 | `Services/Plugins/PluginUiContracts.cs` |
+| 注册、调用、线程切换、生命周期清理 | `Services/Plugins/PluginUiService.cs`、`PluginContext.cs`、`PluginManager.cs` |
+| 自动控件、插件弹窗、宿主扩展区 | `Views/PluginExtensionPanel.cs` |
+| 弹窗栈接入、按实例关闭、事件通知 | `Services/OverlayDialogService.cs` |
+| 插件配置页合并显示 | `Views/PluginManagerDialog.xaml.cs` |
+| 新插件模板 | `Services/Plugins/PluginTemplateGenerator.cs` |

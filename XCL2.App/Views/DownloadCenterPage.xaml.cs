@@ -1664,9 +1664,11 @@ public partial class DownloadCenterPage : UserControl
             var hasChinese = keyword.Any(ch => ch is >= '\u4e00' and <= '\u9fff');
             if (outcome.TranslatedFrom != null)
             {
-                ModTranslationHintText.Text = !string.IsNullOrWhiteSpace(outcome.TranslatedKeyword)
-                    ? $"“{outcome.TranslatedFrom}” 已自动转换为 “{outcome.TranslatedKeyword}” 后优先搜索 Modrinth / CurseForge。"
-                    : $"“{outcome.TranslatedFrom}” 已自动按对应的英文名搜索。";
+                ModTranslationHintText.Text = outcome.UsedTranslationFallback
+                    ? $"“{outcome.TranslatedFrom}” 已自动翻译为 “{outcome.TranslatedKeyword}” 补充搜索，匹配结果优先，低匹配候选保留在后。"
+                    : !string.IsNullOrWhiteSpace(outcome.TranslatedKeyword)
+                        ? $"“{outcome.TranslatedFrom}” 已自动转换为 “{outcome.TranslatedKeyword}” 后优先搜索 Modrinth / CurseForge。"
+                        : $"“{outcome.TranslatedFrom}” 已自动按对应的英文名搜索。";
                 ModTranslationHintText.Visibility = Visibility.Visible;
             }
             else if (hasChinese && outcome.Items.Count == 0)

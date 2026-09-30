@@ -38,21 +38,11 @@ public sealed class LoadedPluginInfo
     public bool StartedOnce { get; init; }
 }
 
-/// <summary>
-/// 插件系统的核心服务：负责在启动器启动时扫描插件目录、用可回收的 AssemblyLoadContext
-/// 逐个加载 dll、按用户之前保存的启用/禁用状态决定是否调用 Initialize，以及在"插件管理"
-/// 界面里响应启用/禁用/重新扫描等操作。
-///
-/// 插件目录：%AppData%/XCL2/Plugins/installed/<文件名>/<文件名>.dll 或 .exe。
-/// 每个插件的依赖文件可放在自己的子目录；兼容旧版 installed/*.dll 根目录布局。
-///
-/// 加载隔离：每个插件 dll 都用独立的 AssemblyLoadContext（isCollectible: true）加载，
-/// 一是避免不同插件之间如果各自带了不同版本的同名依赖 dll 时互相冲突，二是"重新扫描/
-/// 重新加载插件"时能把旧的 ALC 连同它加载过的类型一起卸载掉，不会在同一个进程里
-/// 越攒越多僵尸程序集。当前版本的卸载走的是"整个 PluginManager 重新扫描时销毁所有旧 ALC
-/// 再重建"的简单策略，不支持单独热卸载一个插件而不影响其它插件——这个限制在 PLUGIN_GUIDE.md
-/// 里也跟插件作者说明了（Shutdown 不代表这个插件的程序集立刻从内存释放，取决于 GC 时机）。
-/// </summary>
+/// <summary>安装冲突必须由调用方选择；取消不改文件、不停止插件。</summary>
+public enum PluginInstallConflictAction { Cancel, Copy, Replace }
+public sealed record PluginOperationResult(string FilePath, bool Success, string? Error = null);
+
+/// <summary>管理独立安装、影子加载、状态与单个插件的停止/删除。</summary>
 public sealed class PluginManager
 {
     private sealed class PluginState
@@ -92,250 +82,417 @@ public sealed class PluginManager
         }
     }
 
+
+    private sealed class InstallManifest
+    {
+        public string EntryFile { get; set; } = "";
+        public string? InstanceSuffix { get; set; }
+    }
+    private sealed record Runtime(AssemblyLoadContext Context, string Directory);
+    private const string ManifestName = ".xcl-plugin.json";
     private readonly string _pluginsRoot;
     private readonly string _installedDir;
     private readonly string _configDir;
     private readonly string _dataDir;
     private readonly string _stateFilePath;
-    private readonly List<AssemblyLoadContext> _loadContexts = new();
+    private readonly Dictionary<string, Runtime> _runtimes = new(StringComparer.OrdinalIgnoreCase);
     private readonly Action<string> _logSink;
-
+    private readonly HashSet<string> _activePluginIds = new(StringComparer.OrdinalIgnoreCase);
     public IReadOnlyList<LoadedPluginInfo> Plugins { get; private set; } = Array.Empty<LoadedPluginInfo>();
-
+    public event Action? Changed;
     public PluginLaunchMode StartPolicy { get; set; } = PluginLaunchMode.EachLaunch;
 
     public PluginManager(Action<string>? logSink = null)
+        : this(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "XCL2", "Plugins"), logSink) { }
+
+    internal PluginManager(string rootDirectory, Action<string>? logSink = null)
     {
         _logSink = logSink ?? (_ => { });
-        _pluginsRoot = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "XCL2", "Plugins");
+        _pluginsRoot = Path.GetFullPath(rootDirectory);
         _installedDir = Path.Combine(_pluginsRoot, "installed");
         _configDir = Path.Combine(_pluginsRoot, "config");
         _dataDir = Path.Combine(_pluginsRoot, "data");
         _stateFilePath = Path.Combine(_pluginsRoot, "plugins-state.json");
         EnsureDirectories();
     }
-
-    /// <summary>插件安装根目录，"插件管理"的"打开插件目录"按钮使用此路径。</summary>
     public string InstalledDirectory => _installedDir;
-
-    /// <summary>导入用户确认过的独立 DLL/EXE。每个插件放进同名子目录，依赖可以
-    /// 与主 DLL 放在该目录而不被扫描成另一插件。导入后由调用方 ScanAndLoad。</summary>
-    public string InstallFromFile(string sourcePath)
-    {
-        if (!File.Exists(sourcePath)) throw new FileNotFoundException("插件文件不存在。", sourcePath);
-        var extension = Path.GetExtension(sourcePath);
-        if (!extension.Equals(".dll", StringComparison.OrdinalIgnoreCase) &&
-            !extension.Equals(".exe", StringComparison.OrdinalIgnoreCase))
-            throw new InvalidDataException("插件必须是 .dll 或 .exe 文件。");
-        if (extension.Equals(".dll", StringComparison.OrdinalIgnoreCase))
-            _ = AssemblyName.GetAssemblyName(sourcePath); // 只读元数据，拒绝非 .NET DLL
-        else
-        {
-            using var input = File.OpenRead(sourcePath);
-            if (input.ReadByte() != 'M' || input.ReadByte() != 'Z')
-                throw new InvalidDataException("EXE 文件没有有效的可执行文件头。");
-        }
-
-        var name = SafeFileName(Path.GetFileNameWithoutExtension(sourcePath));
-        if (string.IsNullOrWhiteSpace(name) || name is "." or "..")
-            throw new InvalidDataException("插件文件名无效。");
-        var destinationDir = Path.Combine(_installedDir, name);
-        var destination = Path.Combine(destinationDir, Path.GetFileName(sourcePath));
-        if (File.Exists(destination)) throw new IOException("同名插件已安装；请先在插件目录中移除旧版。");
-        Directory.CreateDirectory(destinationDir);
-        File.Copy(sourcePath, destination);
-        return destination;
-    }
-
     private void EnsureDirectories()
     {
         Directory.CreateDirectory(_installedDir);
         Directory.CreateDirectory(_configDir);
         Directory.CreateDirectory(_dataDir);
     }
-
-    /// <summary>
-    /// 扫描 InstalledDirectory 下根目录及同名子目录中的 DLL / EXE，
-    /// 按 StartPolicy 运行符合条件的插件。
-    /// 单个插件加载失败/构造失败/Initialize 抛异常都只记录在它自己的 LoadedPluginInfo 里，
-    /// 不会中断其它插件的加载——一个写坏了的插件不应该让其它插件、乃至整个"插件管理"
-    /// 页面一起用不了。重复调用会先对上一轮已启用的插件调用 Shutdown、卸载旧的
-    /// AssemblyLoadContext，再重新扫描一遍，用于"重新加载插件"这个开发命令。
-    /// </summary>
-    public void ScanAndLoad()
+    private static bool IsPluginFile(string file) =>
+        Path.GetExtension(file).Equals(".dll", StringComparison.OrdinalIgnoreCase) ||
+        Path.GetExtension(file).Equals(".exe", StringComparison.OrdinalIgnoreCase);
+    private string StateKey(string path) => Path.GetRelativePath(_installedDir, path);
+    private static string SafeFileName(string id)
     {
-        ShutdownAll();
-        Plugins = Array.Empty<LoadedPluginInfo>();
-
-        var state = LoadState();
-        var results = new List<LoadedPluginInfo>();
-        EnsureDirectories();
-
-        var entries = Directory.EnumerateFiles(_installedDir)
-            .Where(IsPluginFile)
-            .Concat(Directory.EnumerateDirectories(_installedDir).SelectMany(dir =>
-                Directory.EnumerateFiles(dir).Where(file => IsPluginFile(file) &&
-                    Path.GetFileNameWithoutExtension(file).Equals(Path.GetFileName(dir), StringComparison.OrdinalIgnoreCase))))
-            .OrderBy(f => f, StringComparer.OrdinalIgnoreCase);
-        foreach (var file in entries)
+        var invalid = Path.GetInvalidFileNameChars();
+        var safe = new string(id.Select(c => invalid.Contains(c) || c is '/' or '\\' ? '_' : c).ToArray()).TrimEnd('.', ' ');
+        return string.IsNullOrWhiteSpace(safe) || safe is "." or ".." ? "_" : safe;
+    }
+    private static InstallManifest? ReadManifest(string dir)
+    {
+        var path = Path.Combine(dir, ManifestName);
+        if (!File.Exists(path)) return null;
+        var manifest = JsonSerializer.Deserialize<InstallManifest>(File.ReadAllText(path));
+        if (manifest == null || !IsPluginFile(manifest.EntryFile) ||
+            Path.GetFileName(manifest.EntryFile) != manifest.EntryFile || manifest.EntryFile.Contains('\\'))
+            throw new InvalidDataException("插件安装清单中的入口无效。");
+        return manifest;
+    }
+    private IEnumerable<string> Entries()
+    {
+        foreach (var file in Directory.EnumerateFiles(_installedDir).Where(IsPluginFile)) yield return file;
+        foreach (var dir in Directory.EnumerateDirectories(_installedDir))
         {
-            var key = StateKey(file);
-            var saved = state.TryGetValue(key, out var existing) ? existing : new PluginState();
-            results.Add(LoadOne(file, saved));
+            if ((File.GetAttributes(dir) & FileAttributes.ReparsePoint) != 0) continue;
+            InstallManifest? manifest;
+            try { manifest = ReadManifest(dir); }
+            catch (Exception ex) { _logSink($"[PluginManager] 安装清单损坏：{dir}：{ex.Message}"); manifest = null; }
+            if (manifest != null)
+            {
+                var entry = Path.Combine(dir, manifest.EntryFile);
+                if (File.Exists(entry)) yield return entry;
+            }
+            else foreach (var file in Directory.EnumerateFiles(dir).Where(f => IsPluginFile(f) &&
+                Path.GetFileNameWithoutExtension(f).Equals(Path.GetFileName(dir), StringComparison.OrdinalIgnoreCase)))
+                yield return file;
         }
-
-        Plugins = results;
-        SaveState();
+    }
+    public string? FindInstallConflict(string sourcePath)
+    {
+        var name = SafeFileName(Path.GetFileNameWithoutExtension(sourcePath));
+        var directory = Path.Combine(_installedDir, name);
+        if (Directory.Exists(directory)) return directory;
+        return Directory.EnumerateFiles(_installedDir).FirstOrDefault(f => IsPluginFile(f) &&
+            Path.GetFileNameWithoutExtension(f).Equals(name, StringComparison.OrdinalIgnoreCase));
+    }
+    private static void CopyDirectory(string source, string destination)
+    {
+        if ((File.GetAttributes(source) & FileAttributes.ReparsePoint) != 0)
+            throw new IOException("插件目录不能包含目录链接。");
+        Directory.CreateDirectory(destination);
+        foreach (var file in Directory.EnumerateFiles(source))
+        {
+            if ((File.GetAttributes(file) & FileAttributes.ReparsePoint) != 0)
+                throw new IOException("插件目录不能包含文件链接。");
+            File.Copy(file, Path.Combine(destination, Path.GetFileName(file)), true);
+        }
+        foreach (var dir in Directory.EnumerateDirectories(source)) CopyDirectory(dir, Path.Combine(destination, Path.GetFileName(dir)));
+    }
+    private static void ValidateSource(string path)
+    {
+        if (!File.Exists(path)) throw new FileNotFoundException("插件文件不存在。", path);
+        if (!IsPluginFile(path)) throw new InvalidDataException("插件必须是 .dll 或 .exe 文件。");
+        if (Path.GetExtension(path).Equals(".dll", StringComparison.OrdinalIgnoreCase)) _ = AssemblyName.GetAssemblyName(path);
+        else
+        {
+            using var input = File.OpenRead(path);
+            if (input.ReadByte() != 'M' || input.ReadByte() != 'Z') throw new InvalidDataException("EXE 文件没有有效的可执行文件头。");
+        }
     }
 
-    private static bool IsPluginFile(string file)
-        => Path.GetExtension(file) is { } ext &&
-           (ext.Equals(".dll", StringComparison.OrdinalIgnoreCase) ||
-            ext.Equals(".exe", StringComparison.OrdinalIgnoreCase));
+    /// <summary>旧的一参数接口仍然保留；有冲突时由三参数调用方显式决定。</summary>
+    public string InstallFromFile(string sourcePath) => InstallFromFile(sourcePath, PluginInstallConflictAction.Cancel)
+        ?? throw new IOException("同名插件已安装，请选择复制为副本、替换或取消。");
 
-    private string StateKey(string path) => Path.GetRelativePath(_installedDir, path);
-
-    private LoadedPluginInfo LoadOne(string filePath, PluginState state)
+    public string? InstallFromFile(string sourcePath, PluginInstallConflictAction action)
     {
-        var fileName = Path.GetFileName(filePath);
-        var executable = Path.GetExtension(filePath).Equals(".exe", StringComparison.OrdinalIgnoreCase);
-        var shouldStart = state.Enabled && (StartPolicy == PluginLaunchMode.EachLaunch || !state.StartedOnce);
+        if (!Enum.IsDefined(action)) throw new ArgumentOutOfRangeException(nameof(action));
+        var conflict = FindInstallConflict(sourcePath);
+        if (conflict != null && action == PluginInstallConflictAction.Cancel) return null;
+        ValidateSource(sourcePath);
+        var name = SafeFileName(Path.GetFileNameWithoutExtension(sourcePath));
+        var destinationDir = Path.Combine(_installedDir, name);
+        string? suffix = null;
+        var copyDependenciesFrom = action == PluginInstallConflictAction.Copy && conflict != null && Directory.Exists(conflict) ? conflict : null;
+        if (conflict != null && action == PluginInstallConflictAction.Copy)
+        {
+            var number = 1;
+            do { destinationDir = Path.Combine(_installedDir, $"{name}-copy-{number++}"); }
+            while (Directory.Exists(destinationDir) || File.Exists(destinationDir));
+            suffix = Guid.NewGuid().ToString("N");
+            conflict = null;
+        }
+        var stage = Path.Combine(_pluginsRoot, "staging", Guid.NewGuid().ToString("N"));
+        var backup = Path.Combine(_pluginsRoot, "staging", Guid.NewGuid().ToString("N"));
+        var oldEntries = conflict == null ? Array.Empty<string>() : Entries().Where(f =>
+            f.Equals(conflict, StringComparison.OrdinalIgnoreCase) ||
+            Path.GetDirectoryName(f)!.Equals(conflict, StringComparison.OrdinalIgnoreCase)).ToArray();
+        var state = LoadState();
+        var movedOld = false;
+        var movedNew = false;
         try
         {
+            // 先完整写入暂存区，再停止旧实例；依赖与原 DLL/EXE 文件名保持不变。
+            if (conflict != null && Directory.Exists(conflict))
+            {
+                CopyDirectory(conflict, stage);
+                suffix = ReadManifest(conflict)?.InstanceSuffix;
+            }
+            else if (copyDependenciesFrom != null) CopyDirectory(copyDependenciesFrom, stage);
+            else Directory.CreateDirectory(stage);
+            var entryName = Path.GetFileName(sourcePath);
+            File.Copy(sourcePath, Path.Combine(stage, entryName), true);
+            File.WriteAllText(Path.Combine(stage, ManifestName), JsonSerializer.Serialize(new InstallManifest
+            { EntryFile = entryName, InstanceSuffix = suffix }));
+            foreach (var old in oldEntries) StopOne(old);
+            if (conflict != null)
+            {
+                if (Directory.Exists(conflict)) Directory.Move(conflict, backup);
+                else File.Move(conflict, backup);
+                movedOld = true;
+            }
+            Directory.Move(stage, destinationDir);
+            movedNew = true;
+            var destination = Path.Combine(destinationDir, entryName);
+            foreach (var old in oldEntries) state.Remove(StateKey(old));
+            state[StateKey(destination)] = new PluginState(); // 替换也算新导入，OnceOnImport 可运行新版本。
+            WriteState(state);
+            TryDelete(backup);
+            return destination;
+        }
+        catch
+        {
+            if (movedNew) TryDelete(destinationDir);
+            if (movedOld && conflict != null)
+            {
+                if (Directory.Exists(backup)) Directory.Move(backup, conflict);
+                else if (File.Exists(backup)) File.Move(backup, conflict);
+            }
+            throw;
+        }
+        finally { TryDelete(stage); }
+    }
+
+    public void ScanAndLoad()
+    {
+        EnsureDirectories();
+        var state = LoadState();
+        ShutdownAll();
+        Plugins = Entries().OrderBy(f => f, StringComparer.OrdinalIgnoreCase)
+            .Select(file => LoadOne(file, state.TryGetValue(StateKey(file), out var saved) ? saved : new PluginState())).ToArray();
+        foreach (var p in Plugins) state[StateKey(p.FilePath)] = new PluginState { Enabled = p.Enabled, StartedOnce = p.StartedOnce };
+        WriteState(state);
+        NotifyChanged();
+    }
+    private LoadedPluginInfo LoadOne(string filePath, PluginState state)
+    {
+        var executable = Path.GetExtension(filePath).Equals(".exe", StringComparison.OrdinalIgnoreCase);
+        var shouldStart = state.Enabled && (StartPolicy == PluginLaunchMode.EachLaunch || !state.StartedOnce);
+        PluginContext? context = null;
+        IPlugin? plugin = null;
+        string? reservedId = null;
+        try
+        {
+            var parent = Path.GetDirectoryName(filePath)!;
+            var manifest = parent.Equals(_installedDir, StringComparison.OrdinalIgnoreCase) ? null : ReadManifest(parent);
+            var suffix = manifest?.InstanceSuffix is { Length: > 0 } id ? "@" + SafeFileName(id) : "";
             if (executable)
             {
                 Process? process = null;
                 if (shouldStart)
                 {
-                    var psi = new ProcessStartInfo(filePath)
-                    {
-                        UseShellExecute = false,
-                        WorkingDirectory = Path.GetDirectoryName(filePath)!
-                    };
-                    psi.Environment["XCL2_PLUGIN_DATA_DIR"] = EnsurePluginDataDir("exe." + Path.GetFileNameWithoutExtension(filePath));
+                    var psi = new ProcessStartInfo(filePath) { UseShellExecute = false, WorkingDirectory = parent };
+                    psi.Environment["XCL2_PLUGIN_DATA_DIR"] = EnsurePluginDataDir("exe." + Path.GetFileNameWithoutExtension(filePath) + suffix);
                     process = Process.Start(psi) ?? throw new InvalidOperationException("EXE 插件无法启动。");
                     state.StartedOnce = true;
                 }
                 return new LoadedPluginInfo { FilePath = filePath, IsExecutable = true, Enabled = state.Enabled,
                     RunningProcess = process, StartedOnce = state.StartedOnce };
             }
-
-            // 已禁用或仅导入运行一次且已经运行过：不再装载 DLL，也不执行其构造函数。
-            if (!shouldStart)
-                return new LoadedPluginInfo { FilePath = filePath, Enabled = state.Enabled, StartedOnce = state.StartedOnce };
-
-            var alc = new PluginLoadContext(filePath);
-            _loadContexts.Add(alc);
-            var asm = alc.LoadFromAssemblyPath(filePath);
-
-            var pluginType = asm.GetTypes().FirstOrDefault(t =>
-                typeof(IPlugin).IsAssignableFrom(t) && !t.IsInterface && !t.IsAbstract &&
-                t.GetConstructor(Type.EmptyTypes) != null);
-
-            if (pluginType == null)
-                return new LoadedPluginInfo { FilePath = filePath, LoadError = "这个 dll 里没有找到任何实现 IPlugin 接口、且带无参构造函数的公共类。", Enabled = state.Enabled };
-
-            var plugin = (IPlugin)Activator.CreateInstance(pluginType)!;
+            if (!shouldStart) return new LoadedPluginInfo { FilePath = filePath, Enabled = state.Enabled, StartedOnce = state.StartedOnce };
+            // 从影子目录加载，安装文件不会被 ALC 锁住，删除/替换无需强制 GC。
+            var shadow = Path.Combine(_pluginsRoot, "runtime", Guid.NewGuid().ToString("N"));
+            try
+            {
+                if (parent.Equals(_installedDir, StringComparison.OrdinalIgnoreCase))
+                {
+                    Directory.CreateDirectory(shadow);
+                    foreach (var adjacent in Directory.EnumerateFiles(parent)) File.Copy(adjacent, Path.Combine(shadow, Path.GetFileName(adjacent)));
+                }
+                else CopyDirectory(parent, shadow);
+                var shadowEntry = Path.Combine(shadow, Path.GetFileName(filePath));
+                var alc = new PluginLoadContext(shadowEntry);
+                _runtimes[filePath] = new Runtime(alc, shadow);
+                var asm = alc.LoadFromAssemblyPath(shadowEntry);
+                var types = asm.GetTypes().Where(t => typeof(IPlugin).IsAssignableFrom(t) && t.IsPublic && !t.IsAbstract &&
+                    !t.IsInterface && t.GetConstructor(Type.EmptyTypes) != null).ToArray();
+                if (types.Length != 1) throw new InvalidDataException("DLL 必须包含且仅包含一个公共 IPlugin 实现（公共无参构造）。");
+                plugin = (IPlugin)Activator.CreateInstance(types[0])!;
+            }
+            catch { if (!_runtimes.ContainsKey(filePath)) TryDelete(shadow); throw; }
             if (string.IsNullOrWhiteSpace(plugin.Id)) throw new InvalidDataException("插件 Id 不能为空。");
-            var ctx = new PluginContext(
-                plugin.Id,
-                new PluginConfigService(Path.Combine(_configDir, SafeFileName(plugin.Id) + ".json")),
-                EnsurePluginDataDir(plugin.Id),
-                line => _logSink($"[Plugin:{plugin.Id}] {line}"));
-            plugin.Initialize(ctx);
+            var instanceId = plugin.Id + suffix;
+            reservedId = SafeFileName(instanceId);
+            if (!_activePluginIds.Add(reservedId))
+            {
+                reservedId = null;
+                throw new InvalidDataException($"插件 Id 或配置路径重复：{plugin.Id}；请通过“复制为副本”安装独立实例。");
+            }
+            context = new PluginContext(instanceId, new PluginConfigService(Path.Combine(_configDir, SafeFileName(instanceId) + ".json")),
+                EnsurePluginDataDir(instanceId), line => _logSink($"[Plugin:{instanceId}] {line}"));
+            plugin.Initialize(context);
             state.StartedOnce = true;
-            return new LoadedPluginInfo { FilePath = filePath, Plugin = plugin, Enabled = state.Enabled,
-                Context = ctx, StartedOnce = state.StartedOnce };
+            return new LoadedPluginInfo { FilePath = filePath, Plugin = plugin, Enabled = state.Enabled, Context = context, StartedOnce = state.StartedOnce };
         }
         catch (Exception ex)
         {
-            _logSink($"[PluginManager] 加载 {fileName} 失败：{ex.Message}");
+            try { context?.Dispose(); } catch (Exception cleanup) { _logSink(cleanup.Message); }
+            if (context != null) try { plugin?.Shutdown(); } catch (Exception cleanup) { _logSink(cleanup.Message); }
+            if (reservedId != null) _activePluginIds.Remove(reservedId);
+            ReleaseRuntime(filePath);
+            _logSink($"[PluginManager] 加载 {Path.GetFileName(filePath)} 失败：{ex.Message}");
             return new LoadedPluginInfo { FilePath = filePath, LoadError = ex.Message, Enabled = state.Enabled,
                 IsExecutable = executable, StartedOnce = state.StartedOnce };
         }
     }
-
-    private string EnsurePluginDataDir(string pluginId)
+    private string EnsurePluginDataDir(string id)
     {
-        var dir = Path.Combine(_dataDir, SafeFileName(pluginId));
-        Directory.CreateDirectory(dir);
-        return dir;
+        var path = Path.Combine(_dataDir, SafeFileName(id));
+        Directory.CreateDirectory(path);
+        return path;
     }
-
-    /// <summary>把插件 Id 里可能出现的路径非法字符替换掉，用作配置/数据目录的文件名——
-    /// 插件 Id 建议用"作者.插件名"这种纯 ASCII 短字符串，这里只是兜底，不强制校验格式。</summary>
-    private static string SafeFileName(string id)
+    private string RequireInstalledEntry(string path)
     {
-        var invalid = Path.GetInvalidFileNameChars();
-        var safe = new string(id.Select(c => invalid.Contains(c) || c is '/' or '\\' ? '_' : c).ToArray());
-        return safe is "." or ".." ? "_" : safe;
+        path = Path.GetFullPath(path);
+        if (!Entries().Any(e => e.Equals(path, StringComparison.OrdinalIgnoreCase)))
+            throw new InvalidOperationException("只能操作 installed 目录内已发现的插件入口。");
+        if ((File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0) throw new IOException("不能操作链接文件。");
+        return path;
     }
-
-    /// <summary>切换某个插件的启用状态并立即持久化，但不会自动重新调用 Initialize/Shutdown——
-    /// 调用方（PluginsPage）需要在切换之后自己调用一次 ScanAndLoad() 让改动生效，
-    /// 这里只负责记账，避免把"改配置"和"重新加载"这两件事绑死。</summary>
-    public void SetEnabled(string filePath, bool enabled)
+    public void SetEnabled(string filePath, bool enabled) => SetEnabled(new[] { filePath }, enabled);
+    public void SetEnabled(IEnumerable<string> filePaths, bool enabled)
     {
+        var paths = filePaths.Distinct(StringComparer.OrdinalIgnoreCase).Select(RequireInstalledEntry).ToArray();
         var state = LoadState();
-        var key = StateKey(filePath);
-        if (!state.TryGetValue(key, out var entry)) state[key] = entry = new PluginState();
-        entry.Enabled = enabled;
-        File.WriteAllText(_stateFilePath, JsonSerializer.Serialize(state, new JsonSerializerOptions { WriteIndented = true }));
+        foreach (var path in paths)
+        {
+            var key = StateKey(path);
+            if (!state.TryGetValue(key, out var entry)) state[key] = entry = new PluginState();
+            entry.Enabled = enabled;
+        }
+        WriteState(state);
+        foreach (var plugin in Plugins.Where(p => paths.Contains(p.FilePath, StringComparer.OrdinalIgnoreCase))) plugin.Enabled = enabled;
     }
-
-    private Dictionary<string, PluginState> LoadState()
+    /// <summary>实际移除安装目录和状态；配置/数据保留，避免丢失用户内容。批量逐项报告。</summary>
+    public IReadOnlyList<PluginOperationResult> Uninstall(IEnumerable<string> filePaths)
+    {
+        var results = new List<PluginOperationResult>();
+        foreach (var source in filePaths.Distinct(StringComparer.OrdinalIgnoreCase).ToArray())
+        {
+            try
+            {
+                var path = RequireInstalledEntry(source);
+                var parent = Path.GetDirectoryName(path)!;
+                var rootEntry = parent.Equals(_installedDir, StringComparison.OrdinalIgnoreCase);
+                var target = rootEntry ? path : parent;
+                var entries = Entries().Where(e => e.Equals(path, StringComparison.OrdinalIgnoreCase) ||
+                    (!rootEntry && Path.GetDirectoryName(e)!.Equals(parent, StringComparison.OrdinalIgnoreCase))).ToArray();
+                var state = LoadState();
+                foreach (var entry in entries) StopOne(entry);
+                var removed = Path.Combine(_pluginsRoot, "removed", Guid.NewGuid().ToString("N"));
+                Directory.CreateDirectory(Path.GetDirectoryName(removed)!);
+                if (rootEntry) File.Move(target, removed); else Directory.Move(target, removed);
+                try
+                {
+                    foreach (var entry in entries) state.Remove(StateKey(entry));
+                    WriteState(state);
+                }
+                catch
+                {
+                    if (rootEntry) File.Move(removed, target); else Directory.Move(removed, target);
+                    throw;
+                }
+                var warning = TryDelete(removed) ? null : "已卸载；占用中的残留文件位于 Plugins/removed，关闭占用后可清理。";
+                results.Add(new PluginOperationResult(source, true, warning));
+            }
+            catch (Exception ex) { results.Add(new PluginOperationResult(source, false, ex.Message)); }
+        }
+        // 只刷新清单，不重启无关插件；失败项也继续可见，可再次删除或重新加载。
+        var stateNow = LoadState();
+        var current = Plugins.ToDictionary(p => p.FilePath, StringComparer.OrdinalIgnoreCase);
+        Plugins = Entries().OrderBy(p => p, StringComparer.OrdinalIgnoreCase).Select(path => current.TryGetValue(path, out var info)
+            ? info : new LoadedPluginInfo { FilePath = path, Enabled = stateNow.TryGetValue(StateKey(path), out var s) ? s.Enabled : true,
+                IsExecutable = Path.GetExtension(path).Equals(".exe", StringComparison.OrdinalIgnoreCase) }).ToArray();
+        NotifyChanged();
+        return results;
+    }
+    private void StopOne(string path)
+    {
+        var p = Plugins.FirstOrDefault(p => p.FilePath.Equals(path, StringComparison.OrdinalIgnoreCase));
+        if (p?.RunningProcess is { } process)
+        {
+            if (!process.HasExited)
+            {
+                process.Kill(entireProcessTree: true);
+                if (!process.WaitForExit(5000)) throw new IOException("插件进程未停止，未删除或替换文件。");
+            }
+            process.Dispose();
+        }
+        try { p?.Context?.Dispose(); } catch (Exception ex) { _logSink($"[PluginManager] 清理扩展失败：{ex.Message}"); }
+        if (p?.Context != null && p.Plugin != null)
+        {
+            try { p.Plugin.Shutdown(); } catch (Exception ex) { _logSink($"[PluginManager] Shutdown 失败：{ex.Message}"); }
+            _activePluginIds.Remove(SafeFileName(p.Context.PluginId));
+        }
+        ReleaseRuntime(path);
+        Plugins = Plugins.Where(p => !p.FilePath.Equals(path, StringComparison.OrdinalIgnoreCase)).ToArray();
+    }
+    private void ReleaseRuntime(string path)
+    {
+        if (!_runtimes.Remove(path, out var runtime)) return;
+        try { runtime.Context.Unload(); } catch (Exception ex) { _logSink(ex.Message); }
+        TryDelete(runtime.Directory); // ALC 卸载受 GC 时机影响；不影响安装目录操作。
+    }
+    public void ShutdownAll()
+    {
+        foreach (var p in Plugins.ToArray())
+            try { StopOne(p.FilePath); } catch (Exception ex) { _logSink($"[PluginManager] 停止失败：{ex.Message}"); }
+        foreach (var path in _runtimes.Keys.ToArray()) ReleaseRuntime(path);
+        if (Plugins.Count > 0) throw new IOException("有插件进程无法停止，请结束该进程后重试。");
+        _activePluginIds.Clear();
+    }
+    private bool TryDelete(string path)
     {
         try
         {
-            if (!File.Exists(_stateFilePath)) return new();
-            using var doc = JsonDocument.Parse(File.ReadAllText(_stateFilePath));
-            var entries = new Dictionary<string, PluginState>(StringComparer.OrdinalIgnoreCase);
-            foreach (var entry in doc.RootElement.EnumerateObject())
-            {
-                entries[entry.Name] = entry.Value.ValueKind switch
-                {
-                    JsonValueKind.True => new PluginState { Enabled = true },
-                    JsonValueKind.False => new PluginState { Enabled = false },
-                    JsonValueKind.Object => entry.Value.Deserialize<PluginState>() ?? new PluginState(),
-                    _ => new PluginState()
-                };
-            }
-            return entries;
+            if (Directory.Exists(path)) Directory.Delete(path, true);
+            else if (File.Exists(path)) File.Delete(path);
+            return true;
         }
-        catch { return new(); }
+        catch (Exception ex) { _logSink($"[PluginManager] 清理 {path} 失败：{ex.Message}"); return false; }
     }
-
-    private void SaveState()
+    private Dictionary<string, PluginState> LoadState()
     {
-        var state = Plugins.ToDictionary(p => StateKey(p.FilePath),
-            p => new PluginState { Enabled = p.Enabled, StartedOnce = p.StartedOnce },
-            StringComparer.OrdinalIgnoreCase);
-        try { File.WriteAllText(_stateFilePath, JsonSerializer.Serialize(state, new JsonSerializerOptions { WriteIndented = true })); }
-        catch (Exception ex) { _logSink($"[PluginManager] 保存插件启用状态失败：{ex.Message}"); }
+        if (!File.Exists(_stateFilePath)) return new(StringComparer.OrdinalIgnoreCase);
+        using var doc = JsonDocument.Parse(File.ReadAllText(_stateFilePath));
+        var state = new Dictionary<string, PluginState>(StringComparer.OrdinalIgnoreCase);
+        foreach (var entry in doc.RootElement.EnumerateObject()) state[entry.Name] = entry.Value.ValueKind switch
+        {
+            JsonValueKind.True => new PluginState(),
+            JsonValueKind.False => new PluginState { Enabled = false },
+            JsonValueKind.Object => entry.Value.Deserialize<PluginState>() ?? new PluginState(),
+            _ => throw new InvalidDataException("插件状态格式无效。")
+        };
+        return state;
     }
-
-    /// <summary>对所有当前已启用且加载成功的插件调用一次 Shutdown，并释放所有
-    /// AssemblyLoadContext——用于"重新加载插件"和启动器整体退出两个场景。</summary>
-    public void ShutdownAll()
+    private void WriteState(Dictionary<string, PluginState> state)
     {
-        foreach (var p in Plugins)
+        var temporary = _stateFilePath + "." + Guid.NewGuid().ToString("N") + ".tmp";
+        try
         {
-            if (p is { Enabled: true, Plugin: not null, Context: not null })
-            {
-                try { p.Plugin.Shutdown(); }
-                catch (Exception ex) { _logSink($"[Plugin:{p.Plugin.Id}] Shutdown 抛出异常：{ex.Message}"); }
-            }
-            if (p.RunningProcess is { } process)
-            {
-                try { if (!process.HasExited) process.Kill(entireProcessTree: true); }
-                catch (Exception ex) { _logSink($"[PluginManager] 停止 {Path.GetFileName(p.FilePath)} 失败：{ex.Message}"); }
-                finally { process.Dispose(); }
-            }
+            File.WriteAllText(temporary, JsonSerializer.Serialize(state, new JsonSerializerOptions { WriteIndented = true }));
+            File.Move(temporary, _stateFilePath, true);
         }
-        foreach (var alc in _loadContexts)
-        {
-            try { alc.Unload(); } catch { /* 卸载失败不影响启动器继续运行，忽略 */ }
-        }
-        _loadContexts.Clear();
+        finally { TryDelete(temporary); }
+    }
+    private void NotifyChanged()
+    {
+        if (Changed == null) return;
+        foreach (Action handler in Changed.GetInvocationList())
+            try { handler(); } catch (Exception ex) { _logSink($"[PluginManager] 刷新列表失败：{ex.Message}"); }
     }
 }

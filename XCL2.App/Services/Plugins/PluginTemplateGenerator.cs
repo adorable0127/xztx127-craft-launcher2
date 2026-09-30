@@ -25,19 +25,20 @@ public static class PluginTemplateGenerator
             <Project Sdk="Microsoft.NET.Sdk">
 
               <PropertyGroup>
-                <TargetFramework>net8.0-windows</TargetFramework>
+                <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
                 <Nullable>enable</Nullable>
                 <UseWPF>true</UseWPF>
+                <ImplicitUsings>enable</ImplicitUsings>
                 <!-- 插件运行在 XCL2 主程序进程里，不需要（也不应该）把 XCL2.App.dll 打进插件
                      自己的输出目录——启动器加载插件时，插件能直接看到主程序已经加载的那些
                      程序集。这里只是为了编译期能识别 IPlugin/PluginContext 这两个类型，
                      引用方式用 Reference 而不是 PackageReference，且不随插件一起发布：
-                     把下面这行的路径改成你本机 XCL2 安装目录下的 XCL2.exe 实际路径。 -->
+                     把下面这行的路径改成当前宿主构建输出中的托管 XCL2.dll；不能引用单文件 EXE。 -->
               </PropertyGroup>
 
               <ItemGroup>
                 <Reference Include="XCL2">
-                  <HintPath>C:\path\to\your\XCL2\XCL2.exe</HintPath>
+                  <HintPath>C:\path\to\your\XCL2\XCL2.dll</HintPath>
                   <Private>false</Private>
                 </Reference>
               </ItemGroup>
@@ -69,9 +70,48 @@ public static class PluginTemplateGenerator
                     _ctx = ctx;
                     ctx.Log("插件已加载。");
 
+                    // 任意坐标：Parent = "$overlay" 自动覆盖整个视图，不受原 Grid 行列限制。
+                    // 可用 Action = Move / Remove / Replace 操作 Inspect 返回的现有组件。
+                    // ctx.Components.Register(new PluginComponentDefinition
+                    // {
+                    //     Id = "floating-widget", Target = "view:MainWindow",
+                    //     Action = PluginComponentAction.Add, Parent = "$overlay",
+                    //     Layout = new PluginComponentLayout { Left = 120, Top = 80, Width = 160, Height = 44 },
+                    //     CreateContent = _ => new Button { Content = "自定义组件" }
+                    // });
+                    // ctx.Runtime.RegisterLaunchMiddleware("kernel", (request, next) => next());
+                    // ctx.Runtime.RegisterSkinModelRenderer("renderer", request => new YourRenderer(request));
+                    // YourRenderer 实现 IPluginSkinModelRenderer，负责 View、皮肤、动作、帧更新和 Dispose。
+
                     // 示例：读取/写入插件自己的配置。
                     var greeting = ctx.Config.Get("greeting", "Hello, XCL2!");
                     ctx.Config.Set("greeting", greeting);
+
+                    // 注册项由宿主在插件停止/重新加载时自动释放；返回的 IDisposable 可提前注销。
+                    ctx.Ui.RegisterOption(new PluginOptionDefinition
+                    {
+                        Id = "greeting", Title = "问候语", Kind = PluginOptionKind.Text,
+                        DefaultValue = greeting, Description = "编辑后点击应用保存。"
+                    });
+                    ctx.Ui.RegisterDialog(new PluginDialogDefinition
+                    {
+                        Id = "welcome", Title = "插件弹窗",
+                        CreateContent = dialog => new TextBlock
+                        {
+                            Text = ctx.Config.Get("greeting", "Hello, XCL2!"),
+                            TextWrapping = System.Windows.TextWrapping.Wrap
+                        }
+                    });
+                    ctx.Ui.RegisterButton(new PluginButtonDefinition
+                    {
+                        Id = "open-welcome", Text = "打开示例弹窗",
+                        OnClick = async action => { await action.Plugin.Ui.ShowDialogAsync("welcome"); }
+                    });
+                    ctx.Ui.RegisterButton(new PluginButtonDefinition
+                    {
+                        Id = "loader-help", Text = "插件加载器说明", Target = PluginUiTargets.LoaderChoice,
+                        OnClick = async action => { await action.Plugin.Ui.ShowMessageAsync("插件说明", "这里可以提供加载器相关的扩展操作。"); }
+                    });
                 }
 
                 public void Shutdown()
@@ -93,11 +133,12 @@ public static class PluginTemplateGenerator
             """);
 
         File.WriteAllText(Path.Combine(targetDir, "README.txt"),
-            "1. 把 csproj 里 HintPath 改成你本机 XCL2.exe 的实际路径。\r\n" +
+            "1. 把 csproj 里 HintPath 改成当前宿主构建输出中的托管 XCL2.dll 路径（不是单文件 EXE）。\r\n" +
             "2. dotnet build -c Release\r\n" +
-            "3. 将 bin/Release/net8.0-windows/" + projectName + ".dll 拖入启动器并审查来源提醒。\r\n" +
+            "3. 将 bin/Release/net8.0-windows10.0.19041.0/" + projectName + ".dll 拖入启动器并审查来源提醒。\r\n" +
             "4. 确认后自动安装并运行；需要的依赖 DLL 请放进 installed/" + projectName + "/。\r\n" +
-            "更完整的接口说明、生命周期、注意事项见仓库根目录的 PLUGIN_GUIDE.md。\r\n");
+            "5. 插件配置页可编辑问候语、打开示例弹窗；加载器选择弹窗显示扩展按钮。\r\n" +
+            "更完整的 UI 注册接口见 API_REFERENCE.md，开发流程见 PLUGIN_GUIDE.md。\r\n");
     }
 
     private static string ToPascalCase(string id)

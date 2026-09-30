@@ -38,6 +38,14 @@
      <Button x:Name="OpenApiReferenceButton" Content="📘 一键查看API接口" Padding="10,6" Margin="0,0,8,8" Click="OpenApiReference_Click"/>
     </WrapPanel>
 
+    <WrapPanel Margin="0,0,0,8">
+     <CheckBox x:Name="SelectAllBox" Content="全选" IsThreeState="True" VerticalAlignment="Center" Margin="0,0,12,6" Click="SelectAll_Click"/>
+     <Button x:Name="EnableSelectedButton" Content="启用所选" Margin="0,0,8,6" Padding="10,6" Click="EnableSelected_Click"/>
+     <Button x:Name="DisableSelectedButton" Content="禁用所选" Margin="0,0,8,6" Padding="10,6" Click="DisableSelected_Click"/>
+     <Button x:Name="DeleteSelectedButton" Content="删除所选" Margin="0,0,8,6" Padding="10,6" Click="DeleteSelected_Click"/>
+     <TextBlock x:Name="SelectionText" VerticalAlignment="Center" Margin="0,0,0,6"/>
+    </WrapPanel>
+    <TextBlock Text="全选后可批量操作。启用/禁用点“保存”生效；删除经确认后立即生效。" FontSize="11" TextWrapping="Wrap" Margin="0,0,0,10" Foreground="{DynamicResource TextSecondaryBrush}"/>
     <StackPanel x:Name="PluginListPanel"/>
    </StackPanel>
   </ScrollViewer>

@@ -305,6 +305,9 @@
                 <TextBox x:Name="TouchSensitivityBox" Width="60" VerticalAlignment="Center"/>
             </StackPanel>
 
+            <Button Content="触屏按键与组件布局设置…" HorizontalAlignment="Left"
+                    Padding="12,7" Margin="0,0,0,12" Click="OpenTouchControlsSettings_Click"/>
+
             <!-- 下载中心 Mod 搜索结果的图标显示开关：图标从 Modrinth/CurseForge 抓取，
                  默认显示；网络较差或者不喜欢列表里混图片的用户可以关掉，只影响图标渲染，
                  不影响搜索/下载本身。 -->

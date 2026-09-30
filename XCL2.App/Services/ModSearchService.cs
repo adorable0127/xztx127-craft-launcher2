@@ -37,98 +37,128 @@ public class ModSearchService
     /// 跟视频参照的 CurseForge 官方客户端类似的思路：综合模式下，第 N 页 = Modrinth 第 N 页(pageSize条)
     /// + CurseForge 第 N 页(pageSize条)拼在一起，两边"同步翻页"，总页数取两个来源里页数较多的那个
     /// （较少的一侧翻到底后该页对应位置自然没有它的结果，不会报错，只是这次拼出来的页比 pageSize*2 少）。
-    /// 仅单一来源(Modrinth-only/CurseForge-only)时是最简单直接的真分页，一页就是 API 返回的一页。
+    /// 仅单一来源(Modrinth-only/CurseForge-only)时通常是一页 API 结果。
+    /// 中文低匹配补搜时，同一来源的原查询和英文查询也采用并列分页：各取相同 offset 的一页，
+    /// 合并去重并按匹配度排序，页数取两支中较多的那个，不截掉后面的低匹配候选。
     /// </summary>
     public async Task<ModSearchOutcome> SearchAsync(ModSource source, string query, string? gameVersion,
         string? modLoader, int pageIndex = 0, int pageSize = 20, CancellationToken ct = default)
     {
         var outcome = new ModSearchOutcome();
-
-        // 中文搜索支持：Modrinth/CurseForge 的搜索接口本身基本不认中文关键词(如直接搜"钠"
-        // 大概率没有结果)，这里用移植自 PCL2 的 WikiEntry 全量中文名数据库 + 模糊搜索算法
-        // (见 ChineseModSearchTranslator)，命中就把实际发给 Modrinth/CurseForge 的关键词
-        // 换成对应的英文名，这样用户搜"钠"能直接搜到 Sodium，而不需要先去 MC百科查到英文名
-        // 再回来手动重新输入一遍。查不到就照旧用原始关键词搜（不影响任何已有行为）。
-        //
-        // 两个平台分开翻译而不是共用一个关键词：Modrinth 和 CurseForge 上同一个 Mod 的 Slug
-        // 经常不一样（例如某些 Mod 在两边的项目名拼写不同），各自查各自数据库里的 Slug 才准确，
-        // 这也是 PCL2 原版的做法（CurseForgeAltSearchText 和 ModrinthAltSearchText 分开算）。
         var searchModrinth = source is ModSource.Combined or ModSource.Modrinth;
         var searchCurseForge = source is ModSource.Combined or ModSource.CurseForge;
         var offset = pageIndex * pageSize;
-
         var isChinese = ChineseModSearchTranslator.IsChineseQuery(query);
-        string? modrinthQuery = query, curseForgeQuery = query;
-        string? translatedForDisplay = null;
 
+        ModSearchRelevance? mrContext = null, cfContext = null;
         if (isChinese)
         {
-            var mrLocal = searchModrinth ? ChineseModSearchTranslator.Translate(query, ModSource.Modrinth) : default;
-            var cfLocal = searchCurseForge ? ChineseModSearchTranslator.Translate(query, ModSource.CurseForge) : default;
-
-            var needsLiteralTranslation =
-                (searchModrinth && (mrLocal.Keyword == null || mrLocal.BestSimilarity < StaticSourceTrustThreshold)) ||
-                (searchCurseForge && (cfLocal.Keyword == null || cfLocal.BestSimilarity < StaticSourceTrustThreshold));
-
-            // 关键修复：静态 WikiEntries 的最佳匹配不足 70% 时，不再强行相信“最像的那个 Mod”。
-            // 优先把用户原词直接翻成英文，用这个英文去搜 Modrinth/CurseForge。这样搜索生僻词、
-            // 功能描述词时，不会被一个只有 30%~60% 相似度的静态项目名带偏。
-            var literalEnglish = needsLiteralTranslation
-                ? await SearchQueryTranslationService.TranslateToEnglishAsync(query, ct)
-                : null;
-
-            if (searchModrinth)
+            // 预设库的名称匹配在后台计算，避免输入较长关键词时阻塞界面。
+            await Task.Run(() =>
             {
-                modrinthQuery = mrLocal.Keyword != null && mrLocal.BestSimilarity >= StaticSourceTrustThreshold
-                    ? mrLocal.Keyword
-                    : literalEnglish ?? mrLocal.Keyword ?? query;
-                if (!string.Equals(modrinthQuery, query, StringComparison.OrdinalIgnoreCase))
-                    translatedForDisplay ??= modrinthQuery;
-            }
-            if (searchCurseForge)
-            {
-                curseForgeQuery = cfLocal.Keyword != null && cfLocal.BestSimilarity >= StaticSourceTrustThreshold
-                    ? cfLocal.Keyword
-                    : literalEnglish ?? cfLocal.Keyword ?? query;
-                if (!string.Equals(curseForgeQuery, query, StringComparison.OrdinalIgnoreCase))
-                    translatedForDisplay ??= curseForgeQuery;
-            }
+                if (searchModrinth) mrContext = ModSearchRelevance.Create(query, ModSource.Modrinth);
+                if (searchCurseForge) cfContext = ModSearchRelevance.Create(query, ModSource.CurseForge);
+            }, ct);
         }
-        if (translatedForDisplay != null)
+
+        // 未命中预设且最佳匹配严格低于 70% 时补搜；两个平台共享一次原文翻译。
+        var needsTranslation = mrContext?.NeedsTranslation == true || cfContext?.NeedsTranslation == true;
+        var translationTask = needsTranslation
+            ? SearchQueryTranslationService.TranslateToEnglishAsync(query, ct)
+            : Task.FromResult<string?>(null);
+        var mrTask = searchModrinth
+            ? SearchModSourceAsync(ModSource.Modrinth, query, mrContext, translationTask,
+                gameVersion, modLoader, offset, pageSize, ct) : null;
+        var cfTask = searchCurseForge
+            ? SearchModSourceAsync(ModSource.CurseForge, query, cfContext, translationTask,
+                gameVersion, modLoader, offset, pageSize, ct) : null;
+
+        if (mrTask != null && cfTask != null) await Task.WhenAll(mrTask, cfTask);
+        else if (mrTask != null) await mrTask;
+        else if (cfTask != null) await cfTask;
+        ct.ThrowIfCancellationRequested();
+
+        var candidates = new List<(UnifiedModItem Item, double Score)>();
+        foreach (var result in new[] { mrTask?.Result, cfTask?.Result })
         {
-            outcome.TranslatedFrom = query;
-            outcome.TranslatedKeyword = translatedForDisplay;
+            if (result == null) continue;
+            candidates.AddRange(result.Items);
+            outcome.Warnings.AddRange(result.Warnings);
+            if (result.UsedTranslationFallback && !outcome.UsedTranslationFallback)
+                outcome.TranslatedKeyword = result.TranslatedKeyword;
+            else
+                outcome.TranslatedKeyword ??= result.TranslatedKeyword;
+            outcome.UsedTranslationFallback |= result.UsedTranslationFallback;
         }
+        outcome.ModrinthTotal = mrTask?.Result.Total ?? 0;
+        outcome.CurseForgeTotal = cfTask?.Result.Total ?? 0;
+        if (outcome.TranslatedKeyword != null) outcome.TranslatedFrom = query;
 
-        var modrinthTask = searchModrinth ? SearchModrinthSafe(modrinthQuery ?? query, gameVersion, modLoader, offset, pageSize, ct) : null;
-        var curseForgeTask = searchCurseForge ? SearchCurseForgeSafe(curseForgeQuery ?? query, gameVersion, modLoader, offset, pageSize, ct) : null;
-
-        // 用 Task.WhenAll 而不是逐个 await：虽然两个 Task 在上面赋值时已经开始并发执行，
-        // 顺序 await 不会真的让第二个任务"等"第一个跑完，但写成 WhenAll 让并发意图在代码上
-        // 一目了然，不需要读者靠"C# async 方法调用即执行"这个隐含知识才能确认这里是并发的。
-        // 用 Task（非泛型）的 WhenAll 重载而不是把两个不同调用点的具名元组类型硬塞进同一个
-        // 数组，避免匿名元组类型推断在某些编译器版本上出现意外的隐式转换问题。
-        if (modrinthTask != null && curseForgeTask != null) await Task.WhenAll(modrinthTask, curseForgeTask);
-        else if (modrinthTask != null) await modrinthTask;
-        else if (curseForgeTask != null) await curseForgeTask;
-
-        if (modrinthTask?.Result is { } mr)
-        {
-            if (mr.Error != null) outcome.Warnings.Add($"Modrinth 搜索失败：{mr.Error}");
-            else outcome.Items.AddRange(mr.Items);
-            if (mr.Notice != null) outcome.Warnings.Add(mr.Notice);
-            outcome.ModrinthTotal = mr.Total;
-        }
-
-        if (curseForgeTask?.Result is { } cr)
-        {
-            if (cr.Error != null) outcome.Warnings.Add($"CurseForge 搜索失败：{cr.Error}");
-            else outcome.Items.AddRange(cr.Items);
-            if (cr.Notice != null) outcome.Warnings.Add(cr.Notice);
-            outcome.CurseForgeTotal = cr.Total;
-        }
-
+        // 原候选和英文补搜结果合并，按来源+项目 ID 去重。低匹配项保留在列表后面，
+        // 不因“来自翻译搜索”就置顶；同分保持接口原顺序，英文/空词搜索维持原行为。
+        var unique = candidates.GroupBy(candidate => (candidate.Item.Source, candidate.Item.SourceId))
+            .Select(group => group.OrderByDescending(candidate => candidate.Score).First());
+        if (isChinese)
+            unique = unique.OrderByDescending(candidate => candidate.Score >= StaticSourceTrustThreshold)
+                .ThenByDescending(candidate => candidate.Score);
+        outcome.Items.AddRange(unique.Select(candidate => candidate.Item));
+        var warnings = outcome.Warnings.Distinct().ToList();
+        outcome.Warnings.Clear();
+        outcome.Warnings.AddRange(warnings);
         return outcome;
+    }
+
+    private sealed class ModSourceSearchResult
+    {
+        public List<(UnifiedModItem Item, double Score)> Items { get; } = new();
+        public List<string> Warnings { get; } = new();
+        public int Total { get; set; }
+        public string? TranslatedKeyword { get; set; }
+        public bool UsedTranslationFallback { get; set; }
+    }
+
+    private async Task<ModSourceSearchResult> SearchModSourceAsync(ModSource source, string query,
+        ModSearchRelevance? context, Task<string?> translationTask, string? gameVersion,
+        string? modLoader, int offset, int pageSize, CancellationToken ct)
+    {
+        Task<(List<UnifiedModItem> Items, string? Error, string? Notice, int Total)> Search(string keyword)
+            => source == ModSource.Modrinth
+                ? SearchModrinthSafe(keyword, gameVersion, modLoader, offset, pageSize, ct)
+                : SearchCurseForgeSafe(keyword, gameVersion, modLoader, offset, pageSize, ct);
+
+        var result = new ModSourceSearchResult();
+        var originalKeyword = context?.PresetKeyword ?? query;
+        var originalTask = Search(originalKeyword);
+        var literalEnglish = context?.NeedsTranslation == true ? await translationTask : null;
+        ct.ThrowIfCancellationRequested();
+        var supplementalTask = !string.IsNullOrWhiteSpace(literalEnglish) &&
+            !string.Equals(literalEnglish, originalKeyword, StringComparison.OrdinalIgnoreCase)
+                ? Search(literalEnglish) : null;
+
+        if (supplementalTask != null) await Task.WhenAll(originalTask, supplementalTask);
+        else await originalTask;
+        ct.ThrowIfCancellationRequested();
+
+        void Add((List<UnifiedModItem> Items, string? Error, string? Notice, int Total) response)
+        {
+            if (response.Error != null) result.Warnings.Add($"{source} 搜索失败：{response.Error}");
+            if (response.Notice != null) result.Warnings.Add(response.Notice);
+            foreach (var item in response.Items)
+                result.Items.Add((item, context?.Score(item, literalEnglish) ?? 0));
+            // 原查询与补搜各自使用同一页 offset，页数取较多的一支，所有候选都能继续翻到。
+            // 不把两个总数相加，否则会出现只有重复结果或完全空白的末尾页。
+            result.Total = Math.Max(result.Total, response.Total);
+        }
+        Add(originalTask.Result);
+        if (supplementalTask != null) Add(supplementalTask.Result);
+
+        result.UsedTranslationFallback = !string.IsNullOrWhiteSpace(literalEnglish);
+        var displayKeyword = literalEnglish ?? originalKeyword;
+        if (!string.Equals(displayKeyword, query, StringComparison.OrdinalIgnoreCase))
+            result.TranslatedKeyword = displayKeyword;
+        if (context?.NeedsTranslation == true && string.IsNullOrWhiteSpace(literalEnglish))
+            result.Warnings.Add("中文翻译暂时不可用，已保留原有候选结果，可稍后重试。");
+        return result;
     }
 
     /// <summary>MC百科单独查询入口：只做中文名搜索辅助，不参与统一下载列表（见类注释）。</summary>
@@ -395,4 +425,5 @@ public class ModSearchOutcome<T>
 
 public class ModSearchOutcome : ModSearchOutcome<UnifiedModItem>
 {
+    public bool UsedTranslationFallback { get; set; }
 }

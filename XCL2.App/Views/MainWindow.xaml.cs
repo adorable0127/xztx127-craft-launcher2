@@ -378,7 +378,8 @@ public partial class MainWindow : Window
         // 插件策略必须在读取用户配置后确定；放在 Load 之前会把“只在导入时启动一次”
         // 误读成默认的“每次启动”，从而在下一次打开启动器时重新执行第三方代码。
         Plugins.StartPolicy = ConfigService.Config.PluginLaunchMode;
-        Plugins.ScanAndLoad();
+        try { Plugins.ScanAndLoad(); }
+        catch (Exception ex) { LauncherLogService.AppendLine($"[PluginManager] 加载插件失败：{ex.Message}"); }
 
         // 标题栏（自绘标题栏左上角文字，见 TitleBarText）/任务栏/Alt-Tab 显示的文字：
         // 必须紧跟 ConfigService.Load() 之后应用一次，保证窗口首帧出现之前任务栏图标上
@@ -672,7 +673,11 @@ public partial class MainWindow : Window
         // GuestModeService.CleanupNewLogFiles 注释——"不留下这次使用的痕迹"是访客模式的
         // 既定设计），如果反过来先清理再落盘，访客模式下这个文件会残留下来，跟"访客模式
         // 不留痕迹"的承诺矛盾。
-        Closed += (_, _) => Plugins.ShutdownAll();
+        Closed += (_, _) =>
+        {
+            try { Plugins.ShutdownAll(); }
+            catch (Exception ex) { LauncherLogService.AppendLine($"[PluginManager] 退出时停止插件失败：{ex.Message}"); }
+        };
         Closed += (_, _) => LauncherLogService.EndSessionAndFlush();
 
         // 应用关闭时，如果访客模式是开启状态，清理本次会话产生的日志/临时下载文件，
@@ -4230,15 +4235,27 @@ public partial class MainWindow : Window
                 "第三方插件来源提醒")) return;
 
         var installed = new List<string>();
+        var attempted = false;
         foreach (var file in files)
         {
-            try { Plugins.InstallFromFile(file); installed.Add(Path.GetFileName(file)); }
+            try
+            {
+                var action = Services.Plugins.PluginInstallConflictAction.Cancel;
+                if (Plugins.FindInstallConflict(file) is { } conflict)
+                {
+                    action = PluginConflictDialog.Choose(Path.GetFileName(file), conflict);
+                    if (action == Services.Plugins.PluginInstallConflictAction.Cancel) continue;
+                }
+                attempted = true;
+                if (Plugins.InstallFromFile(file, action) is { } destination) installed.Add(destination);
+            }
             catch (Exception ex) { MessageBoxDialog.ShowWarning($"导入 {Path.GetFileName(file)} 失败：{ex.Message}", "插件导入"); }
         }
-        if (installed.Count == 0) return;
+        if (!attempted) return;
         Plugins.StartPolicy = ConfigService.Config.PluginLaunchMode;
-        Plugins.ScanAndLoad();
-        ToastService.ShowSuccess($"已导入 {installed.Count} 个插件；可在「插件管理」查看运行状态。");
+        try { Plugins.ScanAndLoad(); }
+        catch (Exception ex) { MessageBoxDialog.ShowWarning($"刷新插件失败：{ex.Message}", "插件导入"); }
+        if (installed.Count > 0) ToastService.ShowSuccess($"已导入 {installed.Count} 个插件；可在「插件管理」查看运行状态。");
     }
 
     // 修复"拖动文件时，只要鼠标晃动，屏幕就会闪烁"：拖拽悬停在窗口上时，DragOver 事件会
@@ -4484,6 +4501,23 @@ public partial class MainWindow : Window
         DownloadQueueBadge.Visibility = count > 0 ? Visibility.Visible : Visibility.Collapsed;
         DownloadQueueBadgeText.Text = count > 9 ? "9+" : count.ToString();
         DownloadQueueEmptyHint.Visibility = count == 0 ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    private TouchpadManagerWindow? _touchpadManagerWindow;
+
+    private async void TouchpadButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_touchpadManagerWindow != null) return;
+        DownloadQueuePopup.IsOpen = false;
+        _touchpadManagerWindow = new TouchpadManagerWindow(ProcessManager, ConfigService.Config);
+        try
+        {
+            await OverlayDialogService.ShowModalAsync(_touchpadManagerWindow);
+        }
+        finally
+        {
+            _touchpadManagerWindow = null;
+        }
     }
 
     private void DownloadQueueButton_Click(object sender, RoutedEventArgs e)

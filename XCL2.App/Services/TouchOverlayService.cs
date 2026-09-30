@@ -1,95 +1,230 @@
-﻿using System.Windows;
+using System.Threading;
+using System.Windows;
 using XCL2.App.Models;
 using XCL2.App.Views;
 
 namespace XCL2.App.Services;
 
-/// <summary>
-/// 触屏模式的接入口：负责在游戏窗口真正出现之后，把"套娃层"(<see cref="TouchOverlayWindow"/>)
-/// 贴上去，并在游戏进程退出时自动收掉。
-///
-/// 为什么要轮询等窗口：Process.Start 返回的时候 java 进程刚起来，游戏窗口还不存在
-/// （要等 JVM 起来、资源加载完，慢的机器上几十秒都有可能），MainWindowHandle 这时是 0。
-/// 直接建悬浮层会贴到一个不存在的窗口上。这里最多等 3 分钟，每 500ms 探一次，
-/// 拿到有效句柄再建层；期间游戏要是崩了/被关了就直接放弃，不留任何残留窗口。
-///
-/// 这是纯附加功能：任何一步失败都只记日志，绝不能影响游戏本身的启动和运行。
-/// </summary>
+public enum TouchOverlayState
+{
+    Disabled,
+    Starting,
+    Enabled,
+    Failed
+}
+
+/// <summary>按游戏实例管理触屏悬浮层。会话和状态通知均在 UI 线程上处理。</summary>
 public class TouchOverlayService
 {
-    private static readonly List<TouchOverlayWindow> Active = new();
-
-    /// <summary>给一个刚启动的游戏进程挂上触屏悬浮层（异步等待窗口出现，不阻塞调用方）。</summary>
-    public static void Attach(GameProcessInfo info, AppConfig cfg)
+    private sealed class OverlaySession
     {
-        _ = Task.Run(async () =>
-        {
-            try
-            {
-                var deadline = DateTime.UtcNow + TimeSpan.FromMinutes(3);
-                IntPtr hwnd = IntPtr.Zero;
+        public GameProcessInfo Info { get; }
+        public CancellationTokenSource Cancellation { get; } = new();
+        public TouchOverlayWindow? Window { get; set; }
+        public EventHandler? ExitHandler { get; set; }
+        public EventHandler? ClosedHandler { get; set; }
+        public TouchOverlayState State { get; set; } = TouchOverlayState.Starting;
+        public string? Error { get; set; }
 
-                while (DateTime.UtcNow < deadline)
-                {
-                    if (info.HasExited) return; // 游戏已经退出/崩了，不用贴了
-
-                    try
-                    {
-                        info.Process.Refresh();
-                        hwnd = info.Process.MainWindowHandle;
-                    }
-                    catch { hwnd = IntPtr.Zero; }
-
-                    if (hwnd != IntPtr.Zero) break;
-                    await Task.Delay(500);
-                }
-
-                if (hwnd == IntPtr.Zero)
-                {
-                    LauncherLogService.AppendLine("[触屏模式] 等待游戏窗口超时，未能加载触屏悬浮层。");
-                    return;
-                }
-
-                Application.Current?.Dispatcher.Invoke(() =>
-                {
-                    var overlay = new TouchOverlayWindow(
-                        hwnd,
-                        cfg.TouchOverlayButtonScale,
-                        cfg.TouchOverlayOpacityPercent,
-                        cfg.TouchOverlayLookSensitivity);
-                    overlay.Show();
-                    Active.Add(overlay);
-                    LauncherLogService.AppendLine($"[触屏模式] 已为版本 {info.VersionId} 加载触屏悬浮层。");
-
-                    // 游戏退出后自动关掉悬浮层（Exited 事件在后台线程触发，切回 UI 线程操作窗口）。
-                    info.Process.Exited += (_, _) =>
-                    {
-                        Application.Current?.Dispatcher.Invoke(() =>
-                        {
-                            overlay.ShutdownOverlay();
-                            Active.Remove(overlay);
-                        });
-                    };
-                });
-            }
-            catch (Exception ex)
-            {
-                ErrorPresenter.LogTechnicalDetail($"[触屏悬浮层加载失败，不影响游戏运行]\n{ex}");
-            }
-        });
+        public OverlaySession(GameProcessInfo info) => Info = info;
     }
 
-    /// <summary>当前是否有至少一个触屏悬浮层正在运行——关闭启动器前用来判断要不要弹出
-    /// 触屏模式专属的关闭确认，见 MainWindow.MainWindow_Closing。</summary>
-    public static bool HasActive => Active.Count > 0;
+    // 使用实例对象作为键，同一版本启动多次也能独立开关。
+    private static readonly Dictionary<GameProcessInfo, OverlaySession> Sessions = new();
 
-    /// <summary>关闭当前所有悬浮层（启动器退出时调用，避免留下孤儿置顶窗口）。</summary>
+    public static event Action? Changed;
+
+    public static (TouchOverlayState State, string? Error) GetStatus(GameProcessInfo info)
+    {
+        var dispatcher = Application.Current?.Dispatcher;
+        if (dispatcher != null && !dispatcher.CheckAccess())
+            return dispatcher.Invoke(() => GetStatus(info));
+
+        if (info.HasExited || !Sessions.TryGetValue(info, out var session))
+            return (TouchOverlayState.Disabled, null);
+        return (session.State, session.Error);
+    }
+
+    /// <summary>可在游戏启动时或运行中开启；已有悬浮层/等待任务时不会重复创建。</summary>
+    public static void Attach(GameProcessInfo info, AppConfig cfg)
+    {
+        var dispatcher = Application.Current?.Dispatcher;
+        if (dispatcher == null || dispatcher.HasShutdownStarted || dispatcher.HasShutdownFinished) return;
+        if (!dispatcher.CheckAccess())
+        {
+            dispatcher.Invoke(() => Attach(info, cfg));
+            return;
+        }
+
+        if (info.HasExited) return;
+        if (Sessions.TryGetValue(info, out var existing))
+        {
+            if (existing.State is TouchOverlayState.Starting or TouchOverlayState.Enabled) return;
+            StopSession(existing);
+        }
+
+        var session = new OverlaySession(info);
+        Sessions.Add(info, session);
+        session.ExitHandler = (_, _) =>
+        {
+            // 不阻塞进程退出线程，避免主线程等待游戏退出时互相等待。
+            if (dispatcher.HasShutdownStarted || dispatcher.HasShutdownFinished) return;
+            try { dispatcher.BeginInvoke(new Action(() => StopSession(session))); }
+            catch (InvalidOperationException) { /* 启动器正在退出 */ }
+        };
+        info.Process.Exited += session.ExitHandler;
+        _ = AttachWhenReadyAsync(session, cfg.TouchOverlayButtonScale,
+            cfg.TouchOverlayOpacityPercent, cfg.TouchOverlayLookSensitivity);
+        Changed?.Invoke();
+    }
+
+    private static bool IsCurrent(OverlaySession session)
+        => Sessions.TryGetValue(session.Info, out var current) && ReferenceEquals(current, session);
+
+    private static async Task AttachWhenReadyAsync(OverlaySession session,
+        double buttonScale, double opacityPercent, double sensitivity)
+    {
+        var token = session.Cancellation.Token;
+        try
+        {
+            var deadline = DateTime.UtcNow + TimeSpan.FromMinutes(3);
+            IntPtr hwnd = IntPtr.Zero;
+            while (DateTime.UtcNow < deadline)
+            {
+                token.ThrowIfCancellationRequested();
+                if (!IsCurrent(session) || session.Info.HasExited) return;
+
+                hwnd = await Task.Run(() =>
+                {
+                    try
+                    {
+                        session.Info.Process.Refresh();
+                        return session.Info.Process.MainWindowHandle;
+                    }
+                    catch { return IntPtr.Zero; }
+                }, token);
+
+                token.ThrowIfCancellationRequested();
+                if (!IsCurrent(session) || session.Info.HasExited) return;
+                if (hwnd != IntPtr.Zero) break;
+                await Task.Delay(500, token);
+            }
+
+            if (hwnd == IntPtr.Zero)
+            {
+                FailSession(session, "等待游戏窗口超时，请在游戏窗口出现后重新开启。");
+                return;
+            }
+
+            var dispatcher = Application.Current?.Dispatcher;
+            if (dispatcher == null || dispatcher.HasShutdownStarted || dispatcher.HasShutdownFinished) return;
+            token.ThrowIfCancellationRequested();
+            if (!IsCurrent(session) || session.Info.HasExited) return;
+
+            var overlay = new TouchOverlayWindow(hwnd, buttonScale, opacityPercent, sensitivity);
+            session.Window = overlay;
+            session.ClosedHandler = (_, _) => StopSession(session, closeWindow: false);
+            overlay.Closed += session.ClosedHandler;
+            overlay.Show();
+
+            // Loaded/Closed 可能在 Show 中触发；已关闭的窗口不能再标记为开启。
+            if (!IsCurrent(session)) return;
+            if (session.Info.HasExited) { StopSession(session); return; }
+            session.State = TouchOverlayState.Enabled;
+            Changed?.Invoke();
+            LauncherLogService.AppendLine($"[触屏模式] 已为版本 {session.Info.VersionId} (PID {session.Info.Pid}) 开启触摸板。");
+        }
+        catch (OperationCanceledException) when (token.IsCancellationRequested)
+        {
+            // 用户关闭/游戏退出后，旧的等待任务不能重新创建悬浮层。
+        }
+        catch (Exception ex)
+        {
+            FailSession(session, "触摸板开启失败，可重试或在日志中查看原因。");
+            ErrorPresenter.LogTechnicalDetail($"[触屏悬浮层加载失败，不影响游戏运行]\n{ex}");
+        }
+        finally
+        {
+            if (IsCurrent(session) && session.State == TouchOverlayState.Starting)
+                StopSession(session);
+        }
+    }
+
+    private static void FailSession(OverlaySession session, string message)
+    {
+        if (!IsCurrent(session)) return;
+        if (session.Info.HasExited) { StopSession(session); return; }
+        session.State = TouchOverlayState.Failed;
+        session.Error = message;
+        ReleaseWindow(session, closeWindow: true);
+        LauncherLogService.AppendLine($"[触屏模式] {session.Info.VersionId} (PID {session.Info.Pid})：{message}");
+        Changed?.Invoke();
+    }
+
+    private static void ReleaseWindow(OverlaySession session, bool closeWindow)
+    {
+        var overlay = session.Window;
+        session.Window = null;
+        if (overlay == null) return;
+        if (session.ClosedHandler != null) overlay.Closed -= session.ClosedHandler;
+        session.ClosedHandler = null;
+        try
+        {
+            if (closeWindow) overlay.ShutdownOverlay();
+        }
+        catch (Exception ex)
+        {
+            ErrorPresenter.LogTechnicalDetail($"[触屏悬浮层关闭失败]\n{ex}");
+        }
+    }
+
+    /// <summary>只关闭所选实例的触摸板（或取消等待），游戏继续运行。</summary>
+    public static void Detach(GameProcessInfo info)
+    {
+        var dispatcher = Application.Current?.Dispatcher;
+        if (dispatcher == null || dispatcher.HasShutdownStarted || dispatcher.HasShutdownFinished) return;
+        if (!dispatcher.CheckAccess())
+        {
+            dispatcher.Invoke(() => Detach(info));
+            return;
+        }
+        if (Sessions.TryGetValue(info, out var session)) StopSession(session);
+    }
+
+    private static void StopSession(OverlaySession session, bool closeWindow = true)
+    {
+        if (!IsCurrent(session)) return;
+        Sessions.Remove(session.Info);
+        session.Cancellation.Cancel();
+        if (session.ExitHandler != null)
+            session.Info.Process.Exited -= session.ExitHandler;
+        ReleaseWindow(session, closeWindow);
+        session.Cancellation.Dispose();
+        Changed?.Invoke();
+    }
+
+    /// <summary>等待开启也算活动会话，退出启动器时一并提示和清理。</summary>
+    public static bool HasActive
+    {
+        get
+        {
+            var dispatcher = Application.Current?.Dispatcher;
+            if (dispatcher != null && !dispatcher.CheckAccess())
+                return dispatcher.Invoke(() => HasActive);
+            return Sessions.Values.Any(s => !s.Info.HasExited &&
+                (s.State is TouchOverlayState.Starting or TouchOverlayState.Enabled));
+        }
+    }
+
     public static void CloseAll()
     {
-        foreach (var w in Active.ToList())
+        var dispatcher = Application.Current?.Dispatcher;
+        if (dispatcher != null && !dispatcher.CheckAccess())
         {
-            try { w.ShutdownOverlay(); } catch { /* 尽力而为 */ }
+            if (!dispatcher.HasShutdownStarted && !dispatcher.HasShutdownFinished)
+                dispatcher.Invoke(CloseAll);
+            return;
         }
-        Active.Clear();
+        foreach (var session in Sessions.Values.ToList()) StopSession(session);
     }
 }

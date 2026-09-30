@@ -202,7 +202,7 @@ public static class ChineseModSearchTranslator
     /// 所有繁简字符（完整方案需要引入一整张繁简映射表，超出这个轻量搜索辅助功能的必要范围；
     /// 未覆盖到的字符会原样保留，不影响后续的模糊相似度匹配——模糊搜索本身能容忍少量未转换字符）。
     /// </summary>
-    private static string TraditionalToSimplified(string s)
+    internal static string TraditionalToSimplified(string s)
     {
         if (string.IsNullOrEmpty(s)) return s;
         var chars = s.ToCharArray();

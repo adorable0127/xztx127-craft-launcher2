@@ -10,6 +10,7 @@
   <!-- 动态 Viewport3D 直接参与合成。弹窗阴影与磨砂放在它的兄弟图层，
        避免动画期间的位图缓存/特效祖先把不同帧的 3D 面片拼在一起。 -->
   <Border Background="{DynamicResource SideBrush}" CornerRadius="12" ClipToBounds="True">
+   <local:PluginSkinModelHost x:Name="ModelRenderHost" Height="390" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch">
    <Viewport3D x:Name="ModelViewport" Height="390" Cursor="Hand"
                MouseLeftButtonDown="Viewport_MouseLeftButtonDown" MouseLeftButtonUp="Viewport_MouseLeftButtonUp"
                MouseMove="Viewport_MouseMove" MouseWheel="Viewport_MouseWheel">
@@ -21,6 +22,7 @@
      <DirectionalLight Color="White" Direction="-1,-2,-3"/>
     </Model3DGroup></ModelVisual3D.Content></ModelVisual3D>
    </Viewport3D>
+   </local:PluginSkinModelHost>
   </Border>
   <TextBlock x:Name="SkinSourceText" Margin="0,8,0,10" TextWrapping="Wrap" FontSize="11"/>
   <StackPanel Orientation="Horizontal">

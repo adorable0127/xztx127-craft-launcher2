@@ -86,6 +86,7 @@ public partial class SkinModelViewerDialog : OverlayDialogControl
         AddPart(group, material, "rightLeg", .25, .37, 0, .5, 1.5, .5,
             (4, 20, 4, 12), (12, 20, 4, 12), (0, 20, 4, 12), (8, 20, 4, 12), (4, 16, 4, 4), (8, 16, 4, 4), .25, 1.14);
         ModelViewport.Children.Add(new ModelVisual3D { Content = group });
+        ModelRenderHost.Configure(texture, isAlex, account.Username);
         ModelViewport.SizeChanged += (_, _) => UpdateCamera();
         UpdateCamera();
 
@@ -100,6 +101,7 @@ public partial class SkinModelViewerDialog : OverlayDialogControl
 
         _animation.Tick += Animation_Tick;
         _animation.Start();
+        Loaded += (_, _) => _animation.Start();
         RequestClose += (_, _) => _animation.Stop();
         Unloaded += (_, _) => _animation.Stop();
     }
@@ -124,6 +126,7 @@ public partial class SkinModelViewerDialog : OverlayDialogControl
             await Dispatcher.InvokeAsync(() =>
             {
                 _textureBrush.ImageSource = displayTexture;
+                ModelRenderHost.SetSkin(bitmap, info.IsSlimModel);
                 SkinSourceText.Text = $"当前账户：{account.Username} · 已加载微软账户当前皮肤" +
                                       (info.IsSlimModel ? "（Alex/纤细手臂）" : "（Steve/经典手臂）") + "。";
             });
@@ -152,6 +155,7 @@ public partial class SkinModelViewerDialog : OverlayDialogControl
             await Dispatcher.InvokeAsync(() =>
             {
                 _textureBrush.ImageSource = displayTexture;
+                ModelRenderHost.SetSkin(bitmap, info.IsSlimModel);
                 SkinSourceText.Text = $"当前账户：{account.Username} · 已加载皮肤站当前皮肤" +
                                       (info.IsSlimModel ? "（Alex/纤细手臂）" : "（Steve/经典手臂）") + "。";
             });
@@ -410,6 +414,7 @@ public partial class SkinModelViewerDialog : OverlayDialogControl
     {
         _tick += .09;
         string mode = (MotionCombo.SelectedItem as ComboBoxItem)?.Tag as string ?? "idle";
+        if (ModelRenderHost.RenderFrame(mode)) return;
         double gait = Math.Sin(_tick * (mode == "sprint" ? 3.4 : 2.0));
         double amplitude = mode == "sprint" ? 75 : mode == "walk" ? 38 : 0;
         _bones["leftArm"].Angle = amplitude * gait;

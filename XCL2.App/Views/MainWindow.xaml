@@ -136,6 +136,18 @@
                      只有这三个显式标了 IsHitTestVisibleInChrome=True 的按钮会正常吃到点击，
                      不会被当成"拖动窗口"。 -->
                 <StackPanel Grid.Column="2" Orientation="Horizontal">
+                    <Button x:Name="TouchpadButton" Style="{StaticResource CaptionButton}"
+                            Width="Auto" MinWidth="80" Padding="8,0" Margin="0,0,4,0"
+                            shell:WindowChrome.IsHitTestVisibleInChrome="True"
+                            Click="TouchpadButton_Click" ToolTip="触摸板：管理游戏实例的触屏操作"
+                            AutomationProperties.Name="触摸板">
+                        <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                            <Path Style="{StaticResource CaptionIconPath}" Width="14" Height="12"
+                                  Data="M 2,2 L 22,2 22,18 2,18 Z M 2,13 L 22,13 M 12,13 L 12,18"/>
+                            <TextBlock Text="触摸板" FontSize="12" Margin="6,0,0,0" VerticalAlignment="Center"
+                                       Foreground="{DynamicResource TextPrimaryBrush}"/>
+                        </StackPanel>
+                    </Button>
                     <!-- 下载列表按钮：放在最小化/最大化/关闭三个系统按钮左边。需求："下载的暂停、
                          取消等操作与启动按钮分开，而且在下载的时候也可以启动"——这个按钮弹出的下拉
                          列表只管下载任务的暂停/继续/取消，跟主界面里的"启动游戏"按钮完全独立，

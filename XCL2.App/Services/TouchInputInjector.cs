@@ -1,4 +1,4 @@
-﻿using System.Runtime.InteropServices;
+using System.Runtime.InteropServices;
 
 namespace XCL2.App.Services;
 
@@ -98,11 +98,23 @@ internal static class TouchInputInjector
     [DllImport("user32.dll")]
     private static extern IntPtr GetMessageExtraInfo();
 
+    [DllImport("user32.dll")]
+    private static extern short GetKeyState(int nVirtKey);
+
+    [DllImport("user32.dll")] private static extern short GetAsyncKeyState(int nVirtKey);
+
     [DllImport("user32.dll", SetLastError = true)]
     private static extern bool PostMessage(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
 
     [DllImport("user32.dll")]
     private static extern bool GetCursorInfo(ref CURSORINFO pci);
+
+    [DllImport("user32.dll")]
+    private static extern bool GetClipCursor(out RECT rect);
+
+    [DllImport("user32.dll")] private static extern bool ClipCursor(IntPtr rect);
+    [DllImport("user32.dll")] private static extern bool SetCursorPos(int x, int y);
+    [DllImport("user32.dll")] private static extern IntPtr GetForegroundWindow();
 
     [StructLayout(LayoutKind.Sequential)]
     private struct POINT { public int x; public int y; }
@@ -144,6 +156,9 @@ internal static class TouchInputInjector
 
     public static bool IsInjectedMouseMessage => GetMessageExtraInfo() == Signature;
 
+    public static bool IsTouchPromotedMouseMessage
+        => (unchecked((ulong)GetMessageExtraInfo().ToInt64()) & 0xFFFFFF00UL) == 0xFF515700UL;
+
     public static bool IsMouseMessage(int message) => message >= 0x0200 && message <= 0x020E;
 
     /// <summary>鼠标消息中的坐标转成屏幕像素；滚轮消息本来就使用屏幕坐标。</summary>
@@ -166,6 +181,33 @@ internal static class TouchInputInjector
         if (message is not (0x020A or 0x020E) && !ScreenToClient(game, ref point)) return;
         var packed = unchecked((int)((uint)(ushort)point.x | ((uint)(ushort)point.y << 16)));
         PostMessage(game, (uint)message, wParam, new IntPtr(packed));
+    }
+
+    /// <summary>菜单采用屏幕绝对位置：同时更新系统指针和 GLFW 的窗口消息坐标。
+    /// 只投递 WM_MOUSEMOVE 会使读取 GetCursorPos 的后端仍看到旧坐标。
+    /// 松开游戏遗留的局部约束后定位；游戏视角路径绝不调用此方法。</summary>
+    public static bool MenuPointerMove(IntPtr game, int screenX, int screenY, bool leftDown)
+    {
+        if (game == IntPtr.Zero || GetForegroundWindow() != game) return false;
+        ClipCursor(IntPtr.Zero);
+        if (!SetCursorPos(screenX, screenY)) return false;
+        return PostMenuMouseMessage(game, 0x0200, screenX, screenY, leftDown);
+    }
+
+    /// <summary>调用方先投递目标位置，再投递按下；松开仍发给原游戏，切走窗口也不会松错目标。</summary>
+    public static bool MenuLeftButton(IntPtr game, int screenX, int screenY, bool down)
+        => PostMenuMouseMessage(game, down ? 0x0201u : 0x0202u, screenX, screenY, down);
+
+    private static bool PostMenuMouseMessage(IntPtr game, uint message, int screenX, int screenY, bool leftDown)
+    {
+        if (game == IntPtr.Zero) return false;
+        var point = new POINT { x = screenX, y = screenY };
+        if (!ScreenToClient(game, ref point)) return false;
+        var flags = leftDown ? 0x0001 : 0;
+        if ((GetKeyState(0x10) & 0x8000) != 0) flags |= 0x0004; // MK_SHIFT
+        if ((GetKeyState(0x11) & 0x8000) != 0) flags |= 0x0008; // MK_CONTROL
+        var packed = unchecked((int)((uint)(ushort)point.x | ((uint)(ushort)point.y << 16)));
+        return PostMessage(game, message, new IntPtr(flags), new IntPtr(packed));
     }
 
     // ===================== 键盘 =====================
@@ -312,8 +354,8 @@ internal static class TouchInputInjector
     }
 
     /// <summary>
-    /// 光标是否可用于菜单定位。CURSOR_SUPPRESSED 是 Windows 在触摸/笔输入时
-    /// 暂时不绘制光标，必须同时参考光标句柄，不能只凭 SUPPRESSED 就隐藏游戏按键。
+    /// 光标是否可用于菜单定位。触摸抑制状态没有可靠的可见性含义，作为未知样本处理，
+    /// 不能把 Windows 残留的箭头句柄当成游戏打开了菜单。
     /// 读取失败返回 false，由调用方保留上次确认的模式。
     /// </summary>
     public static bool TryGetCursorVisibility(out bool visible)
@@ -323,10 +365,46 @@ internal static class TouchInputInjector
         {
             var info = new CURSORINFO { cbSize = Marshal.SizeOf<CURSORINFO>() };
             if (!GetCursorInfo(ref info)) return false;
-            visible = info.hCursor != IntPtr.Zero && (info.flags & (CURSOR_SHOWING | CURSOR_SUPPRESSED)) != 0;
+            if ((info.flags & CURSOR_SUPPRESSED) != 0) return false;
+            visible = info.hCursor != IntPtr.Zero && (info.flags & CURSOR_SHOWING) != 0;
             return true;
         }
         catch { return false; }
+    }
+
+    /// <summary>
+    /// 只观察游戏已经建立的鼠标约束，不主动抓取/隐藏/移动鼠标。
+    /// 加载画面隐藏光标不等于进入世界：还必须确认光标被约束在游戏客户区内。
+    /// true=菜单，false=游戏视角，null=状态不明确，调用方保留已确认的模式。
+    /// </summary>
+    public static bool? ReadGameMenuMode(IntPtr gameHwnd, bool allowFullscreenCapture = false)
+    {
+        if (!TryGetClientAreaOnScreen(gameHwnd, out var left, out var top, out var right, out var bottom) ||
+            right <= left || bottom <= top || !GetClipCursor(out var clip)) return null;
+        var confined = clip.Right > clip.Left && clip.Bottom > clip.Top &&
+            clip.Left >= left && clip.Top >= top && clip.Right <= right && clip.Bottom <= bottom;
+        var desktopLeft = GetSystemMetrics(76);
+        var desktopTop = GetSystemMetrics(77);
+        // 全屏客户区可能与整个桌面相同；默认的桌面矩形不是游戏抓取的证据。
+        var wholeDesktop = clip.Left == desktopLeft && clip.Top == desktopTop &&
+            clip.Right == desktopLeft + GetSystemMetrics(78) &&
+            clip.Bottom == desktopTop + GetSystemMetrics(79);
+        var info = new CURSORINFO { cbSize = Marshal.SizeOf<CURSORINFO>() };
+        if (!GetCursorInfo(ref info)) return null;
+        if ((info.flags & CURSOR_SUPPRESSED) != 0)
+        {
+            // 抑制本身不能判为菜单；游戏约束 + 显式空光标仍是独立的抓取证据。
+            if (confined && info.hCursor == IntPtr.Zero && (!wholeDesktop || allowFullscreenCapture)) return false;
+            // 菜单释放约束后，触屏仍可能让箭头处于抑制状态。此时结合释放约束的证据，
+            // 交由上层持续采样确认，不能等到用户接入物理鼠标才恢复菜单操作。
+            if (info.hCursor != IntPtr.Zero && (!confined || wholeDesktop)) return true;
+            return null;
+        }
+        var visible = info.hCursor != IntPtr.Zero && (info.flags & CURSOR_SHOWING) != 0;
+        // 可见光标是菜单证据，即使游戏遗留了较小的 ClipCursor 矩形也不能拒绝菜单模式。
+        if (visible) return true;
+        if (!visible && confined && (!wholeDesktop || (allowFullscreenCapture && info.hCursor == IntPtr.Zero))) return false;
+        return null;
     }
 
     /// <summary>
@@ -358,7 +436,7 @@ internal static class TouchInputInjector
 
     /// <summary>
     /// 悬浮层按钮上写的按键名（XAML 里 Tag="K:W" 这种）映射到虚拟键码。
-    /// 只收录 Minecraft 实际会用到的那些键，不做完整键盘表——保持可读、避免维护负担。
+    /// 支持自定义字母、功能键、常用特殊键及 VK_XX 虚拟键码。
     /// </summary>
     private static readonly Dictionary<string, ushort> KeyMap = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -376,7 +454,48 @@ internal static class TouchInputInjector
     };
 
     public static ushort? TryMapKey(string name)
-        => KeyMap.TryGetValue(name.Trim(), out var vk) ? vk : null;
+    {
+        name = (name ?? "").Trim().ToUpperInvariant();
+        if (KeyMap.TryGetValue(name, out var vk)) return vk;
+        if (name.Length == 1 && (name[0] is >= 'A' and <= 'Z' or >= '0' and <= '9')) return name[0];
+        if (name.StartsWith("F") && int.TryParse(name[1..], out var f) && f is >= 1 and <= 24) return (ushort)(0x6F + f);
+        if (name.StartsWith("VK_") && ushort.TryParse(name[3..], System.Globalization.NumberStyles.HexNumber,
+            System.Globalization.CultureInfo.InvariantCulture, out vk) && vk is > 0 and < 256) return vk;
+        return name switch
+        {
+            "ESCAPE" => 0x1B, "RETURN" => 0x0D, "DELETE" => 0x2E, "BACKSPACE" => 0x08,
+            "INSERT" => 0x2D, "HOME" => 0x24, "END" => 0x23, "PAGEUP" => 0x21, "PAGEDOWN" => 0x22,
+            "CAPSLOCK" => 0x14, "RCTRL" => 0xA3, "RALT" => 0xA5, "RSHIFT" => 0xA1,
+            "MINUS" => 0xBD, "PLUS" => 0xBB, "COMMA" => 0xBC, "PERIOD" => 0xBE,
+            "SEMICOLON" => 0xBA, "QUOTE" => 0xDE, "BACKSLASH" => 0xDC,
+            "LBRACKET" => 0xDB, "RBRACKET" => 0xDD, "GRAVE" => 0xC0,
+            _ => null
+        };
+    }
+
+    public static bool MatchesKeyBinding(string binding, ushort vk)
+    {
+        var keys = binding.Split('+', StringSplitOptions.TrimEntries).Select(TryMapKey).ToArray();
+        return keys.Length > 0 && keys[^1] == vk && keys.Take(keys.Length - 1)
+            .All(key => key.HasValue && (GetAsyncKeyState(key.Value) & 0x8000) != 0);
+    }
+
+    public static string GetKeyName(ushort vk)
+    {
+        if (vk is >= 0x41 and <= 0x5A or >= 0x30 and <= 0x39) return ((char)vk).ToString();
+        if (vk is >= 0x70 and <= 0x87) return "F" + (vk - 0x6F);
+        return KeyMap.FirstOrDefault(pair => pair.Value == vk).Key ?? $"VK_{vk:X2}";
+    }
+
+    public static bool IsValidBinding(string? binding, bool command = false)
+    {
+        if (string.IsNullOrWhiteSpace(binding)) return false;
+        var value = binding.Trim().ToUpperInvariant();
+        if (command) return value is "SENS+" or "SENS-" or "GRAB" or "HIDE" or "SHOW" or "KEYBOARD" or "SETTINGS" or "MENU";
+        if (value is "MOUSE_L" or "MOUSE_R" or "MOUSE_M" or "WHEEL_UP" or "WHEEL_DOWN") return true;
+        var keys = value.Split('+', StringSplitOptions.TrimEntries);
+        return keys.Length is > 0 and <= 5 && keys.All(k => TryMapKey(k).HasValue);
+    }
 
     /// <summary>兜底：悬浮层被隐藏/关闭时，把所有可能还处于"按住"状态的键统一松开，
     /// 避免出现"人物一直往前走停不下来"这种最难受的残留状态。</summary>

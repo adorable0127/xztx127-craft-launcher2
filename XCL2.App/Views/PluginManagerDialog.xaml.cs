@@ -25,21 +25,26 @@ public partial class PluginManagerDialog : OverlayDialogControl
     private readonly MainWindow _owner;
     private readonly PluginManager _manager;
 
-    /// <summary>启用/禁用勾选框的改动先暂存在这里，不立刻写盘；只有点“保存”时才
-    /// 一次性调用 _manager.SetEnabled 落盘，点“取消”则整批丢弃，界面状态也不回滚
-    /// 到磁盘上的旧值（因为压根没写过），符合“取消=不生效”的直觉。</summary>
-    private readonly Dictionary<string, bool> _pendingEnabled = new();
+    private readonly Dictionary<string, bool> _pendingEnabled = new(StringComparer.OrdinalIgnoreCase);
+    private readonly HashSet<string> _selected = new(StringComparer.OrdinalIgnoreCase);
+    private bool _rendering;
 
     public PluginManagerDialog(MainWindow owner)
     {
         _owner = owner;
         InitializeComponent();
         _manager = _owner.Plugins;
+        Loaded += (_, _) => { _manager.Changed -= Render; _manager.Changed += Render; Render(); };
+        Unloaded += (_, _) => _manager.Changed -= Render;
         Render();
     }
 
     private void Render()
     {
+        _rendering = true;
+        var installed = _manager.Plugins.Select(p => p.FilePath).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        _selected.IntersectWith(installed);
+        foreach (var stale in _pendingEnabled.Keys.Where(k => !installed.Contains(k)).ToArray()) _pendingEnabled.Remove(stale);
         PluginListPanel.Children.Clear();
 
         if (_manager.Plugins.Count == 0)
@@ -60,6 +65,11 @@ public partial class PluginManagerDialog : OverlayDialogControl
         bool IsEffectivelyEnabled(LoadedPluginInfo p) =>
             _pendingEnabled.TryGetValue(p.FilePath, out var pending) ? pending : p.Enabled;
 
+        SelectAllBox.IsEnabled = installed.Count > 0;
+        SelectAllBox.IsChecked = _selected.Count == 0 ? false : _selected.Count == installed.Count ? true : null;
+        SelectionText.Text = $"已选择 {_selected.Count} / {installed.Count}";
+        DeleteSelectedButton.IsEnabled = EnableSelectedButton.IsEnabled = DisableSelectedButton.IsEnabled = _selected.Count > 0;
+        _rendering = false;
         int ok = _manager.Plugins.Count(p => p.LoadError == null);
         int enabled = _manager.Plugins.Count(p => p.LoadError == null && IsEffectivelyEnabled(p));
         int failed = _manager.Plugins.Count(p => p.LoadError != null);
@@ -71,18 +81,27 @@ public partial class PluginManagerDialog : OverlayDialogControl
     private Border BuildRow(LoadedPluginInfo info)
     {
         var root = new StackPanel();
-        var titleLine = new StackPanel { Orientation = Orientation.Horizontal };
+        var titleLine = new WrapPanel();
+        var selectBox = new CheckBox
+        {
+            Content = "选择", IsChecked = _selected.Contains(info.FilePath),
+            VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 12, 4),
+            ToolTip = "选择此插件进行批量操作"
+        };
+        selectBox.Click += (_, _) => { if (selectBox.IsChecked == true) _selected.Add(info.FilePath); else _selected.Remove(info.FilePath); Render(); };
+        titleLine.Children.Add(selectBox);
 
         var enabledBox = new CheckBox
         {
             IsChecked = _pendingEnabled.TryGetValue(info.FilePath, out var pending) ? pending : info.Enabled,
+            Content = "启用",
             IsEnabled = true,
             VerticalAlignment = VerticalAlignment.Center,
             Margin = new Thickness(0, 0, 8, 0),
-            ToolTip = "启用 / 禁用（点“保存”才会落盘，之后还需要“重新扫描 / 重新加载插件”才会生效）"
+            ToolTip = "启用 / 禁用（点“保存”后立即生效）"
         };
-        enabledBox.Checked += (_, _) => _pendingEnabled[info.FilePath] = true;
-        enabledBox.Unchecked += (_, _) => _pendingEnabled[info.FilePath] = false;
+        enabledBox.Checked += (_, _) => { _pendingEnabled[info.FilePath] = true; Render(); };
+        enabledBox.Unchecked += (_, _) => { _pendingEnabled[info.FilePath] = false; Render(); };
         titleLine.Children.Add(enabledBox);
 
         string name = info.Plugin?.DisplayName ?? Path.GetFileName(info.FilePath);
@@ -105,8 +124,15 @@ public partial class PluginManagerDialog : OverlayDialogControl
         };
         configButton.Click += (_, _) => OpenSettings(info);
         titleLine.Children.Add(configButton);
+        var delete = new Button { Content = "删除", Padding = new Thickness(10, 3, 10, 3),
+            Margin = new Thickness(8, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center,
+            ToolTip = "立即停止并删除插件安装文件，保留配置和数据" };
+        delete.Click += (_, _) => DeletePlugins(new[] { info.FilePath });
+        titleLine.Children.Add(delete);
 
         root.Children.Add(titleLine);
+        root.Children.Add(new TextBlock { Text = Path.GetRelativePath(_manager.InstalledDirectory, info.FilePath),
+            FontSize = 11, TextWrapping = TextWrapping.Wrap, Opacity = 0.7, Margin = new Thickness(0, 4, 0, 0) });
 
         if (info.IsExecutable || (info.StartedOnce && info.Context == null))
         {
@@ -174,7 +200,12 @@ public partial class PluginManagerDialog : OverlayDialogControl
 
         panel ??= BuildFallbackConfigPreview(info);
 
-        new PluginSettingsHostDialog($"{info.Plugin.DisplayName} · 配置", panel).ShowDialog();
+        if (info.Context != null)
+        {
+            using var combined = new PluginSettingsContent(panel, info.Context.Ui);
+            new PluginSettingsHostDialog($"{info.Plugin.DisplayName} · 配置", combined).ShowDialog();
+        }
+        else new PluginSettingsHostDialog($"{info.Plugin.DisplayName} · 配置", panel).ShowDialog();
     }
 
     private UserControl BuildFallbackConfigPreview(LoadedPluginInfo info)
@@ -199,7 +230,8 @@ public partial class PluginManagerDialog : OverlayDialogControl
 
     private void Rescan_Click(object sender, RoutedEventArgs e)
     {
-        _manager.ScanAndLoad();
+        try { _manager.ScanAndLoad(); }
+        catch (Exception ex) { MessageBoxDialog.ShowWarning(ex.Message, "重新加载插件"); }
         Render();
     }
 
@@ -262,19 +294,48 @@ public partial class PluginManagerDialog : OverlayDialogControl
         catch (Exception ex) { MessageBoxDialog.ShowWarning($"打开 API 接口说明失败：{ex.Message}", "启动器 API 接入说明"); }
     }
 
-    /// <summary>把暂存的启用/禁用改动一次性落盘；然后必须紧接着调用一次 ScanAndLoad()——
-    /// 否则只是磁盘上的 plugins-state.json 变了，_manager.Plugins 这份内存快照还是旧值，
-    /// 下次重新打开这个弹窗（同一次启动器进程内）用的还是内存里的旧状态，界面上看起来就像
-    /// “保存没生效”。ScanAndLoad 顺带完成了“重新扫描/重新加载插件”要做的事——保存后新启用的
-    /// 插件会立刻被加载执行，不需要用户再手动点一次重新扫描。</summary>
+    private void SelectAll_Click(object sender, RoutedEventArgs e)
+    {
+        if (_rendering) return;
+        if (_selected.Count == _manager.Plugins.Count) _selected.Clear();
+        else foreach (var plugin in _manager.Plugins) _selected.Add(plugin.FilePath);
+        Render();
+    }
+    private void EnableSelected_Click(object sender, RoutedEventArgs e) => ChangeSelected(true);
+    private void DisableSelected_Click(object sender, RoutedEventArgs e) => ChangeSelected(false);
+    private void ChangeSelected(bool enabled)
+    {
+        foreach (var path in _selected) _pendingEnabled[path] = enabled;
+        Render();
+    }
+    private void DeleteSelected_Click(object sender, RoutedEventArgs e) => DeletePlugins(_selected.ToArray());
+    private void DeletePlugins(string[] paths)
+    {
+        if (paths.Length == 0) return;
+        var names = string.Join("\n", paths.Select(p => Path.GetRelativePath(_manager.InstalledDirectory, p)));
+        if (!MessageBoxDialog.ShowConfirm($"立即停止并删除以下 {paths.Length} 个插件的安装文件（包括独立目录内的依赖）？\n\n{names}\n\n配置和数据会保留。此操作立即执行，不受底部“取消”影响。", "删除插件")) return;
+        try
+        {
+            var results = _manager.Uninstall(paths);
+            foreach (var result in results.Where(r => r.Success)) { _selected.Remove(result.FilePath); _pendingEnabled.Remove(result.FilePath); }
+            var errors = results.Where(r => r.Error != null).Select(r => $"{Path.GetFileName(r.FilePath)}：{r.Error}").ToArray();
+            if (errors.Length > 0) MessageBoxDialog.ShowWarning(string.Join("\n", errors), "插件删除结果");
+            if (results.Any(r => r.Success)) Services.ToastService.ShowSuccess($"已删除 {results.Count(r => r.Success)} 个插件。");
+        }
+        catch (Exception ex) { MessageBoxDialog.ShowWarning(ex.Message, "删除插件"); }
+        Render();
+    }
     private void Save_Click(object sender, RoutedEventArgs e)
     {
-        foreach (var (filePath, enabled) in _pendingEnabled)
-            _manager.SetEnabled(filePath, enabled);
-        _pendingEnabled.Clear();
-        _manager.ScanAndLoad();
-        Render();
-        CloseWith(null);
+        try
+        {
+            foreach (var group in _pendingEnabled.GroupBy(p => p.Value))
+                _manager.SetEnabled(group.Select(p => p.Key), group.Key);
+            _pendingEnabled.Clear();
+            _manager.ScanAndLoad();
+            CloseWith(null);
+        }
+        catch (Exception ex) { MessageBoxDialog.ShowWarning(ex.Message, "保存插件设置"); Render(); }
     }
 
     /// <summary>丢弃所有未保存的勾选改动，直接关闭弹窗。</summary>

@@ -10,9 +10,9 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <AssemblyName>XCL2</AssemblyName>
     <RootNamespace>XCL2.App</RootNamespace>
-    <Version>2.2.19</Version>
-    <AssemblyVersion>2.2.19.0</AssemblyVersion>
-    <FileVersion>2.2.19.0</FileVersion>
+    <Version>2.2.20</Version>
+    <AssemblyVersion>2.2.20.0</AssemblyVersion>
+    <FileVersion>2.2.20.0</FileVersion>
     <Platforms>AnyCPU</Platforms>
     <LangVersion>latest</LangVersion>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
@@ -108,7 +108,6 @@
   <!-- 单文件发布时仍能从插件管理一键查看开发指南。 -->
   <ItemGroup>
     <EmbeddedResource Include="Resources\Docs\PLUGIN_GUIDE.md" LogicalName="XCL2.App.PLUGIN_GUIDE.md" />
-    <EmbeddedResource Include="Resources\Docs\PAPERDOLL_FIX.md" LogicalName="XCL2.App.Docs.PAPERDOLL_FIX.md" />
     <EmbeddedResource Include="Resources\Docs\API_REFERENCE.md" LogicalName="XCL2.App.Docs.API_REFERENCE.md" />
   </ItemGroup>
 

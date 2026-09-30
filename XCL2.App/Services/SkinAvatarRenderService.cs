@@ -28,6 +28,14 @@ public static class SkinAvatarRenderService
     /// 叠加上去不会有任何视觉差异；有头饰的玩家叠加上去才是"完整"的头像。</param>
     public static byte[] RenderFaceAvatar(byte[] skinPngBytes, int outputSize, bool includeHatLayer = true)
     {
+        ArgumentNullException.ThrowIfNull(skinPngBytes);
+        if (outputSize <= 0) throw new ArgumentOutOfRangeException(nameof(outputSize));
+        return Plugins.PluginRuntimeRegistry.RenderAvatar(skinPngBytes, outputSize, includeHatLayer,
+            () => RenderBuiltIn(skinPngBytes, outputSize, includeHatLayer));
+    }
+
+    private static byte[] RenderBuiltIn(byte[] skinPngBytes, int outputSize, bool includeHatLayer)
+    {
         using var ms = new MemoryStream(skinPngBytes);
         var decoder = new PngBitmapDecoder(ms, BitmapCreateOptions.PreservePixelFormat, BitmapCacheOption.OnLoad);
         var source = decoder.Frames[0];

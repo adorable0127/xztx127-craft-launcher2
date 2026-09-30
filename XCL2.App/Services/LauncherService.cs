@@ -1,4 +1,4 @@
-﻿using System.Diagnostics;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Text;
@@ -431,6 +431,12 @@ public class LauncherService
 
     /// <summary>启动游戏，返回封装了进程 + 实时输出缓冲的 GameProcessInfo，供进程管理/日志面板使用。</summary>
     public GameProcessInfo Launch(LaunchOptions opts)
+    {
+        ArgumentNullException.ThrowIfNull(opts);
+        return Plugins.PluginRuntimeRegistry.Launch(opts, () => LaunchBuiltIn(opts));
+    }
+
+    private GameProcessInfo LaunchBuiltIn(LaunchOptions opts)
     {
         var (mainClass, args) = BuildArguments(opts); // 内部会设置 opts.EffectiveGameDir
 

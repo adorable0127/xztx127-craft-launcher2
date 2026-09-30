@@ -62,14 +62,23 @@ public sealed class PluginConfigService
     /// 不需要为此做增量写入或者异步优化。</summary>
     public void Set<T>(string key, T value)
     {
+        var existed = _values.TryGetValue(key, out var previous);
         _values[key] = JsonSerializer.SerializeToElement(value);
-        Save();
+        try { Save(); }
+        catch
+        {
+            if (existed) _values[key] = previous;
+            else _values.Remove(key);
+            throw;
+        }
     }
 
     /// <summary>删除一个配置项并落盘；key 不存在时静默忽略。</summary>
     public void Remove(string key)
     {
-        if (_values.Remove(key)) Save();
+        if (!_values.Remove(key, out var previous)) return;
+        try { Save(); }
+        catch { _values[key] = previous; throw; }
     }
 
     /// <summary>当前已保存的所有 key，供"插件管理"里给不提供图形配置界面的插件
