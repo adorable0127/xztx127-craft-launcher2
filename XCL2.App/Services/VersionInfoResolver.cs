@@ -120,12 +120,7 @@ public static class VersionInfoResolver
     {
         try
         {
-            var exact = Path.Combine(versionDir, $"{versionId}.json");
-            var path = File.Exists(exact)
-                ? exact
-                : Directory.Exists(versionDir)
-                    ? Directory.GetFiles(versionDir, "*.json") is { Length: 1 } only ? only[0] : null
-                    : null;
+            var path = FolderService.ResolveVersionJson(versionDir, versionId);
             if (path == null) return null;
             return JsonSerializer.Deserialize<VersionDetail>(File.ReadAllText(path));
         }

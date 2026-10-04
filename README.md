@@ -1,5 +1,4 @@
-本项目为开源项目，安全无毒，如果火绒和Acronis报毒，请加入到白名单再运行，感谢支持
-如想观看完整报告，见xztx127.dpdns.org/1.webp"
+windwos上唯一无需模组支持触屏使用mc的启动器！唯一一个基岩版与java版可以一起管理的启动器！代码完全开源！！
 # XCL2
 下载地址:xztx127.dpdns.org/download
 ## default.zip代表的是纯源码，不包含成品（通常会小很多）

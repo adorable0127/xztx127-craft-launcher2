@@ -24,6 +24,7 @@ public partial class AboutHelpPage : UserControl
     private const string GitHubRepoUrl = "https://github.com/adorable0127/xztx127-craft-launcher2";
     private const string DonateUrl = "https://ifdian.net/a/xztx127";
     private const string ContactAuthorUrl = "https://xztx127.dpdns.org/arcade#contact";
+    private const string MinecraftWikiHelpUrl = "https://zh.minecraft.wiki/w/%E6%95%99%E7%A8%8B";
     private const string AllProjectsUrl = "https://github.com/adorable0127";
 
     /// <summary>XCL 官方下载站（安装包直链）。刻意跟 GitHub 仓库/发布页分开列，
@@ -42,36 +43,34 @@ public partial class AboutHelpPage : UserControl
         InitializeComponent();
         BiliFansList.ItemsSource = BiliFanNames;
 
-        // BuildInfo.Version / BuildInfo.BuildTimestamp 都是编译期常量（见 csproj 里
-        // XCL2GenerateBuildInfo 目标生成的 BuildInfo.g.cs），不是这里现算的——运行时只是
-        // 原样读出来拼成一行文字，保证展示的就是"这次真正编译出这个 exe"时的版本号和
-        // 精确到秒的编译时间，重新运行同一个 exe 不会变。
+        // BuildInfo 是编译期生成的常量（见 csproj 的 XCL2GenerateBuildInfo）：版本号自动取自 <Version>，
+        // 编译时间精确到秒、固定为上海时间（UTC+8）。
         BuildInfoText.Text = $"当前构建版本 v{BuildInfo.Version}　编译时间：{BuildInfo.BuildTimestamp}";
     }
 
     /// <summary>
     /// 哔哩哔哩粉丝墙用户名列表——来自截图整理，按截图里出现的顺序排列，
-    /// 排名不分先后，纯展示、不带任何跳转（用户名本身不一定对应可点击的稳定链接）。
-    /// 这一份是最新截图（共 46 个）整理出来的完整名单，之前旧的一份已经整体替换掉。
+    /// 共 50 位，排名不分先后，纯展示、不带任何跳转（用户名本身不一定对应可点击的稳定链接）。
     /// </summary>
     private static readonly string[] BiliFanNames =
     {
-        "Mc不灭11258", "鬼畜即景", "MEiucV",
-        "0090867755", "SONG2013", "盖比特斯",
-        "蜂条", "杨玺么么么", "Grosgrain_mx",
-        "Bellachenfang", "bili_31970594677", "陈玩乐高",
-        "喵喵碧姬公主", "bili_3706994055711652", "bili_97571116538",
-        "bili_32985147256", "动情交欢", "bili_35853316190",
-        "星玄已出院", "bili_23723056057", "节奏盒子Dave-开学收心",
-        "bili_21598593536",
-        "白面汤圆王子", "水木6666", "阡陌忍",
-        "猪头人概念", "bili_13546398981", "GG主",
-        "请输入名称-他__", "277_bili", "鹤_1337",
-        "田中山王", "一名帅气的矿工", "岁月有归期",
-        "bili_52782751469", "从来困难", "苏葛航",
-        "寻梦省兰", "芍芍bb", "小奶音ptG",
-        "天汉皖熙", "塔卫二第一蚊子养殖户", "小凯丽x_x",
-        "舞麟人捕鱼为业", "星光闪闪_2024", "c001001001",
+        "小凯丽x_x", "舞麟人捕鱼为业", "星光闪闪_2024",
+        "c001001001", "Mc不灭11258", "鬼畜即景",
+        "MEiucV", "0090867755", "SONG2013",
+        "盖比特斯", "蜂条", "杨玺么么么",
+        "Grosgrain_mx", "Bellachenfang", "bili_31970594677",
+        "陈玩乐高", "喵喵碧姬公主", "bili_3706994055711652",
+        "bili_97571116538", "bili_32985147256", "动情交欢",
+        "bili_35853316190", "星玄已出院", "bili_23723056057",
+        "节奏盒子Dave-开学收心", "bili_21598593536",
+        "bili_47719074595", "许宸铖", "Sheep洋杨",
+        "我若不懂开玩笑", "白面汤圆王子", "水木6666",
+        "阡陌忍", "猪头人概念", "bili_13546398981",
+        "GG主", "请输入名称-他__", "277_bili",
+        "鹤_1337", "田中山王", "一名帅气的矿工",
+        "岁月有归期", "bili_52782751469", "从来困难",
+        "苏葛航", "寻梦首兰", "芍芍bb",
+        "小奶音ptG", "桑库特斯圣娅", "塔卫二第一蚊子养殖户",
     };
 
     // ===================== 顶部 Tab ⇄ 滚动位置 双向联动 =====================
@@ -129,6 +128,8 @@ public partial class AboutHelpPage : UserControl
 
     private void OpenMicrosoftLogin_Click(object sender, RoutedEventArgs e) => OpenUrl(MicrosoftLoginUrl);
 
+    private void OpenMinecraftWikiHelp_Click(object sender, RoutedEventArgs e) => OpenUrl(MinecraftWikiHelpUrl);
+
     private void OpenMinecraftBuy_Click(object sender, RoutedEventArgs e) => OpenUrl(MinecraftBuyUrl);
 
     private void OpenLogsPage_Click(object sender, RoutedEventArgs e)
@@ -137,18 +138,6 @@ public partial class AboutHelpPage : UserControl
     }
 
     private void OpenIssue_Click(object sender, RoutedEventArgs e) => OpenUrl($"{GitHubRepoUrl}/issues/new");
-
-    private void ViewHelpDocument_Click(object sender, RoutedEventArgs e)
-    {
-        if (sender is not Button { Tag: string fileName }) return;
-        try { OverlayDialogService.ShowNonModal(new HelpDocumentDialog(fileName)); }
-        catch (Exception ex) { MessageBoxDialog.ShowWarning("打开内置文档失败：\n" + ex.Message, "帮助文档"); }
-    }
-
-    private void ExportHelpDocument_Click(object sender, RoutedEventArgs e)
-    {
-        if (sender is Button { Tag: string fileName }) HelpDocumentDialog.ExportMarkdown(fileName);
-    }
 
     // ===================== 鸣谢板块：作者 / 赞助 / 仓库 =====================
 

@@ -27,11 +27,12 @@ public partial class HomePage : UserControl
     private bool _simplifiedToggleInitializing;
     private Action? _onLanguageChanged;
     private bool _previewToggleSyncing;
+    private ExperimentalPreviewWindow? _previewWindow;
 
     /// <summary>
     /// 标记这份 HomePage 实例是不是"重启进入的新界面预览"那一次——也就是 MainWindow 本身
     /// 就是用 --preview-session 启动、把这份 HomePage 直接当成首页放进 MainContent 的那种，
-    /// 跟旧版"套一层独立浮动窗口"承载预览的方案是两回事：这种情况下侧边栏、标题栏都是
+    /// 跟旧的"套一层独立浮动窗口"（_previewWindow）是两回事：这种情况下侧边栏、标题栏都是
     /// MainWindow 本来就有的那一套，天然可点、天然有侧边栏，不需要也不应该再额外禁用/锁定
     /// PreviewToggle。见 MainWindow.RequestPreviewModeRestart / ShowExperimentalPreview。
     /// </summary>
@@ -492,14 +493,7 @@ public partial class HomePage : UserControl
             return;
         }
 
-        // 走到这里说明：当前不在"MainWindow 直接展示预览"的会话里，且不是代码同步触发的
-        // Unchecked（前面已经 return 掉了）——也就是这份 HomePage 本身处于正常模式，
-        // 但它的开关却被以某种方式取消选中。正常模式下开关默认就是未选中，点开时走的是
-        // 上面 OpenExperimentalPreview_Checked（要么重启进入预览、要么弹确认框取消后复位），
-        // 不会有"正常模式下开关先被选中、再单独触发一次 Unchecked"这条路径，所以这里
-        // 不需要做任何事——历史上这里曾经维护一个指向旧版独立浮动预览窗口的引用并在此关闭它，
-        // 那个方案已经被上面"整个进程重启"的方案取代，浮动窗口那条代码路径本身也早就没有
-        // 地方会走到了，直接删掉，不留一个永远是 null、只会产生"从未赋值"编译警告的死字段。
+        _previewWindow?.Close();
     }
 
     /// <summary>
@@ -535,8 +529,11 @@ public partial class HomePage : UserControl
     /// 修复方式：把内层按钮直接锁定成"已选中且不可再点"，从根上让套娃这条路径永远走不到，
     /// 而不是等它触发了再补救。
     /// </summary>
-    public void ConfigureAsEmbeddedPreview()
+    public void ConfigureAsEmbeddedPreview(ExperimentalPreviewWindow host)
     {
+        // 记录承载这份 HomePage 的预览窗口，供 OpenExperimentalPreview_Unchecked 里的
+        // _previewWindow?.Close() 使用（同时消除 CS0649：字段从未赋值）。
+        _previewWindow = host;
         _previewToggleSyncing = true;
         PreviewToggle.IsChecked = true;
         _previewToggleSyncing = false;

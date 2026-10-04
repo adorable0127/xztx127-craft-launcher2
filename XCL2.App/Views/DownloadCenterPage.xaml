@@ -5,64 +5,6 @@
              xmlns:services="clr-namespace:XCL2.App.Services">
     <UserControl.Resources>
         <ResourceDictionary>
-            <!-- 社区资源专用视觉样式：使用现有主题画刷，按钮和事件保持原样。 -->
-            <Style x:Key="CommunitySearchBox" TargetType="TextBox" BasedOn="{StaticResource SearchTextBox}">
-                <Setter Property="MinHeight" Value="36"/>
-                <Setter Property="VerticalContentAlignment" Value="Center"/>
-                <Setter Property="Background" Value="{DynamicResource PanelBrush}"/>
-            </Style>
-            <Style x:Key="CommunityFilterCombo" TargetType="ComboBox" BasedOn="{StaticResource FilterComboBox}">
-                <Setter Property="MinHeight" Value="36"/>
-                <Setter Property="VerticalContentAlignment" Value="Center"/>
-                <Setter Property="Background" Value="{DynamicResource PanelBrush}"/>
-            </Style>
-            <Style x:Key="CommunityFilterCard" TargetType="Border">
-                <Setter Property="Background" Value="{DynamicResource SideBrush}"/>
-                <Setter Property="BorderBrush" Value="{DynamicResource DividerBrush}"/>
-                <Setter Property="BorderThickness" Value="1"/>
-                <Setter Property="CornerRadius" Value="10"/>
-                <Setter Property="Padding" Value="16"/>
-                <Setter Property="Margin" Value="0,0,0,16"/>
-            </Style>
-            <Style x:Key="CommunitySourceBadge" TargetType="Border" BasedOn="{StaticResource SourceBadge}">
-                <Setter Property="CornerRadius" Value="5"/>
-                <Setter Property="Padding" Value="7,3"/>
-                <Setter Property="Margin" Value="10,0,0,0"/>
-                <Setter Property="Background" Value="{DynamicResource SideBrush}"/>
-            </Style>
-            <Style x:Key="CommunityListItem" TargetType="ListBoxItem" BasedOn="{StaticResource DownloadListItem}">
-                <Setter Property="Padding" Value="14"/>
-                <Setter Property="Margin" Value="0,0,0,10"/>
-                <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
-                <Setter Property="Background" Value="{DynamicResource PanelBrush}"/>
-                <Setter Property="BorderBrush" Value="{DynamicResource DividerBrush}"/>
-                <Setter Property="BorderThickness" Value="1"/>
-                <Setter Property="Template">
-                    <Setter.Value>
-                        <ControlTemplate TargetType="ListBoxItem">
-                            <Border x:Name="Card" Background="{TemplateBinding Background}"
-                                    BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}"
-                                    CornerRadius="10" Padding="{TemplateBinding Padding}" SnapsToDevicePixels="True">
-                                <ContentPresenter HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
-                                                  VerticalAlignment="Center"/>
-                            </Border>
-                            <ControlTemplate.Triggers>
-                                <Trigger Property="IsMouseOver" Value="True">
-                                    <Setter TargetName="Card" Property="Background" Value="{DynamicResource GlowSoftBrush}"/>
-                                </Trigger>
-                                <Trigger Property="IsSelected" Value="True">
-                                    <Setter TargetName="Card" Property="BorderBrush" Value="{DynamicResource AccentBrush}"/>
-                                    <Setter TargetName="Card" Property="Background" Value="{DynamicResource GlowSoftBrush}"/>
-                                </Trigger>
-                                <Trigger Property="IsKeyboardFocusWithin" Value="True">
-                                    <Setter TargetName="Card" Property="BorderBrush" Value="{DynamicResource AccentBrush}"/>
-                                </Trigger>
-                            </ControlTemplate.Triggers>
-                        </ControlTemplate>
-                    </Setter.Value>
-                </Setter>
-            </Style>
-
             <!-- ===== [已废弃，仅作参照，无任何引用] 卡片内联展开面板：点击条目后卡片下方直接展开版本/文件列表。
                  已被"整页跳转详情"(ModDetailPage，见 ModListItem_Click/ResourceListItem_Click/
                  MapListItem_Click)取代，不再有任何 DataTemplate 引用这两个 Key。保留只是因为
@@ -89,7 +31,7 @@
                                     <Border Background="{DynamicResource PanelBrush}" CornerRadius="4" Margin="0,3" Padding="0">
                                         <StackPanel>
                                             <!-- 分组标题条：整条可点击展开/收起，右侧箭头随 IsExpanded 状态旋转，
-                                                 视觉上跟截图2里"Fabric 26.2 ⌄/⌃"的交互一致。 -->
+                                                 箭头用矢量 Path 绘制（展开时旋转 180°），与模组详情页的版本分组完全一致，不依赖字体字形。 -->
                                             <Grid Cursor="Hand" Background="Transparent" Tag="{Binding}"
                                                   MouseLeftButtonUp="VersionGroupHeader_Click">
                                                 <Grid.ColumnDefinitions>
@@ -98,19 +40,19 @@
                                                 </Grid.ColumnDefinitions>
                                                 <TextBlock Grid.Column="0" Text="{Binding GroupTitle}" FontSize="14" FontWeight="SemiBold"
                                                            Padding="10,10" Foreground="{DynamicResource TextPrimaryBrush}"/>
-                                                <TextBlock Grid.Column="1" Padding="10,10" FontSize="13" VerticalAlignment="Center"
-                                                           Foreground="{DynamicResource TextSecondaryBrush}">
-                                                    <TextBlock.Style>
-                                                        <Style TargetType="TextBlock">
-                                                            <Setter Property="Text" Value="⌄"/>
+                                                <Path Grid.Column="1" Data="M 0,0 L 5,5 L 10,0" Width="10" Height="5" Stretch="Fill" Margin="10,0"
+                                                      VerticalAlignment="Center" StrokeThickness="1.6" StrokeStartLineCap="Round" StrokeEndLineCap="Round"
+                                                      StrokeLineJoin="Round" Stroke="{DynamicResource TextSecondaryBrush}" RenderTransformOrigin="0.5,0.5">
+                                                    <Path.Style>
+                                                        <Style TargetType="Path">
                                                             <Style.Triggers>
                                                                 <DataTrigger Binding="{Binding IsExpanded}" Value="True">
-                                                                    <Setter Property="Text" Value="⌃"/>
+                                                                    <Setter Property="RenderTransform"><Setter.Value><RotateTransform Angle="180"/></Setter.Value></Setter>
                                                                 </DataTrigger>
                                                             </Style.Triggers>
                                                         </Style>
-                                                    </TextBlock.Style>
-                                                </TextBlock>
+                                                    </Path.Style>
+                                                </Path>
                                             </Grid>
 
                                             <!-- 分组展开内容：前置资源 + 版本列表，只有 IsExpanded 时占用空间显示。 -->
@@ -180,7 +122,7 @@
             </DataTemplate>
         </ResourceDictionary>
     </UserControl.Resources>
-    <Grid Margin="0" UseLayoutRounding="True" SnapsToDevicePixels="True">
+    <Grid Margin="0">
         <Grid.ColumnDefinitions>
             <ColumnDefinition Width="180"/>
             <ColumnDefinition Width="10"/>
@@ -191,8 +133,7 @@
              右侧面板紧贴列边界，两侧 Padding/CornerRadius 渲染基准不同导致视觉上相差 1px 且不对称；
              现在改为用一列宽度恰好 10 的空 Column 隔开两个面板，左右面板各自都不再带不对称 Margin，
              间距由 Grid 布局保证，不会再有像素级偏差。 -->
-        <Border x:Name="ListRootLeft" Grid.Column="0" Background="{DynamicResource PanelBrush}" CornerRadius="12" Padding="12"
-                BorderBrush="{DynamicResource DividerBrush}" BorderThickness="1">
+        <Border x:Name="ListRootLeft" Grid.Column="0" Background="{DynamicResource PanelBrush}" CornerRadius="14" Padding="12">
             <StackPanel>
                 <TextBlock Text="{DynamicResource Str_Common_Download}" FontSize="18" FontWeight="Bold" Margin="8,4,0,16" Foreground="{DynamicResource AccentBrush}"/>
 
@@ -282,8 +223,7 @@
         </Border>
 
         <!-- 右侧内容区 -->
-        <Border x:Name="ListRootRight" Grid.Column="2" Background="{DynamicResource PanelBrush}" CornerRadius="12" Padding="20"
-                BorderBrush="{DynamicResource DividerBrush}" BorderThickness="1">
+        <Border x:Name="ListRootRight" Grid.Column="2" Background="{DynamicResource PanelBrush}" CornerRadius="14" Padding="20">
             <Grid>
             <!-- 列表态：Mod/资源包/地图/游戏版本/收藏 等各分类面板，跟之前完全一样。点击某个
                  条目后"整页跳转"到详情时，靠下面同级的 DetailHost 盖住整个内容区，而不是真的
@@ -292,7 +232,7 @@
             <DockPanel>
 
                 <!-- ===== 游戏版本下载面板 ===== -->
-                <Grid x:Name="VersionPanel" DockPanel.Dock="Top" Visibility="Visible">
+                <Grid x:Name="VersionPanel" services:PageTransitionBehavior.AnimateOnVisible="True" DockPanel.Dock="Top" Visibility="Visible">
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto"/>
                         <RowDefinition Height="Auto"/>
@@ -404,7 +344,7 @@
                      内容区跟外层窗口背景（可能带模糊/半透明特效）混在一起，文字看不清楚。
                      这里直接给 ResourcePanel 一层纯白不透明底色（PanelBrush），列表本身的
                      Transparent 保留（用来透出这层纯白底色，而不是透到窗口背景）。 -->
-                <Grid x:Name="ResourcePanel" DockPanel.Dock="Top" Visibility="Collapsed" Background="{DynamicResource PanelBrush}">
+                <Grid x:Name="ResourcePanel" services:PageTransitionBehavior.AnimateOnVisible="True" DockPanel.Dock="Top" Visibility="Collapsed" Background="{DynamicResource PanelBrush}">
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto"/>
                         <RowDefinition Height="Auto"/>
@@ -412,14 +352,15 @@
                         <RowDefinition Height="Auto"/>
                     </Grid.RowDefinitions>
 
-                    <TextBlock Grid.Row="0" x:Name="ResourcePanelTitle" Text="{DynamicResource Str_Ui_Resource_Pack_Downloads}" FontSize="20" FontWeight="SemiBold" Margin="0,2,0,16"/>
+                    <TextBlock Grid.Row="0" x:Name="ResourcePanelTitle" Text="{DynamicResource Str_Ui_Resource_Pack_Downloads}" FontSize="18" FontWeight="Bold" Margin="0,0,0,10"/>
 
                     <!-- 仿 PCL「搜索 Mod」筛选栏，跟 Mod 面板同一套两列网格+搜索/重置按钮结构。
                          这个面板"类型"其实是靠左侧导航栏(材质包/数据包/光影包三个入口)决定的，
                          不是面板内部可选项，所以这里的"类型"下拉框用来展示当前选中的类型，
                          并让用户可以在不切回左侧导航的情况下直接在这个面板内切换三种类型——
                          比如正在看材质包搜索结果时，想顺手看看光影包，不需要来回点左侧栏。 -->
-                    <Border Grid.Row="1" Style="{StaticResource CommunityFilterCard}">
+                    <Border Grid.Row="1" Background="{DynamicResource SideBrush}" BorderBrush="{DynamicResource BorderBrush2}"
+                            BorderThickness="1" CornerRadius="14" Padding="16" Margin="0,0,0,12">
                         <Grid>
                             <Grid.RowDefinitions>
                                 <RowDefinition Height="Auto"/>
@@ -434,14 +375,14 @@
                             </Grid.ColumnDefinitions>
 
                             <StackPanel Grid.Row="0" Grid.Column="0">
-                                <TextBlock Text="{DynamicResource Str_Ui_Name}" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,6"/>
-                                <TextBox x:Name="ResourceSearchBox" Style="{StaticResource CommunitySearchBox}" Padding="8" FontSize="13"
+                                <TextBlock Text="{DynamicResource Str_Ui_Name}" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4"/>
+                                <TextBox x:Name="ResourceSearchBox" Style="{StaticResource SearchTextBox}" Padding="8" FontSize="13"
                                          TextChanged="ResourceFilter_Changed"
                                          ToolTip="{DynamicResource Str_Ui_Search_By_Keyword_Leave_Blank_To_Browse_}"/>
                             </StackPanel>
                             <StackPanel Grid.Row="0" Grid.Column="2">
-                                <TextBlock Text="{DynamicResource Str_Ui_Source}" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,6"/>
-                                <ComboBox x:Name="ResourceSourceCombo" Style="{StaticResource CommunityFilterCombo}"
+                                <TextBlock Text="{DynamicResource Str_Ui_Source}" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4"/>
+                                <ComboBox x:Name="ResourceSourceCombo" Style="{StaticResource FilterComboBox}"
                                           SelectionChanged="ResourceSourceCombo_SelectionChanged">
                                     <ComboBoxItem Content="{DynamicResource Str_Ui_Combined_Modrinth_Curseforge}" IsSelected="True" Tag="combined"/>
                                     <ComboBoxItem Content="{DynamicResource Str_Ui_Modrinth_Only}" Tag="modrinth"/>
@@ -473,16 +414,16 @@
                                      （Modrinth 的 version_type != release / CurseForge 的 releaseType 2、3）
                                    - 详情页那个：控制某个资源的版本列表里要不要列出它的预览版构建
                                  默认都关闭——新手装到 beta 版 mod 崩游戏是很常见的坑。 -->
-                            <StackPanel Grid.Row="1" Grid.Column="0" Margin="0,12,0,0" Orientation="Horizontal"
+                            <StackPanel Grid.Row="1" Grid.Column="0" Margin="0,10,0,0" Orientation="Horizontal"
                                         VerticalAlignment="Bottom">
                                 <CheckBox x:Name="ResourceShowPreviewCheck" VerticalAlignment="Center"
                                           Click="ResourceShowPreview_Changed"
                                           Content="{DynamicResource Str_Ui_Show_Pre_Release_Resources}"
                                           ToolTip="{DynamicResource Str_Ui_When_Ticked_Search_Results_Include_Beta_}"/>
                             </StackPanel>
-                            <StackPanel Grid.Row="1" Grid.Column="2" Margin="0,12,0,0">
-                                <TextBlock Text="{DynamicResource Str_Ui_Type}" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,6"/>
-                                <ComboBox x:Name="ResourceTypeCombo" Style="{StaticResource CommunityFilterCombo}"
+                            <StackPanel Grid.Row="1" Grid.Column="2" Margin="0,10,0,0">
+                                <TextBlock Text="{DynamicResource Str_Ui_Type}" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4"/>
+                                <ComboBox x:Name="ResourceTypeCombo" Style="{StaticResource FilterComboBox}"
                                           SelectionChanged="ResourceTypeCombo_SelectionChanged">
                                     <ComboBoxItem Content="{DynamicResource Str_Ui_Resource_Packs}" IsSelected="True" Tag="ResourcePack"/>
                                     <ComboBoxItem Content="{DynamicResource Str_Ui_Data_Packs}" Tag="DataPack"/>
@@ -501,36 +442,31 @@
                     </Border>
 
                     <ListBox x:Name="ResourceListBox" Grid.Row="2" BorderThickness="0" Background="Transparent"
-                             ScrollViewer.HorizontalScrollBarVisibility="Disabled" ScrollViewer.VerticalScrollBarVisibility="Auto"
-                             ItemContainerStyle="{StaticResource CommunityListItem}" SelectionChanged="ResourceListBox_SelectionChanged">
+                             ItemContainerStyle="{StaticResource DownloadListItem}" SelectionChanged="ResourceListBox_SelectionChanged">
                         <ListBox.ItemTemplate>
                             <DataTemplate>
                                 <!-- 整页跳转：同 Mod 面板，点击后跳到 ModDetailPage，不再原地展开。 -->
-                                <Grid Margin="0" Cursor="Hand" Background="Transparent" Tag="{Binding}"
+                                <Grid Margin="4,8" Cursor="Hand" Background="Transparent" Tag="{Binding}"
                                       MouseLeftButtonUp="ResourceListItem_Click" ToolTip="{DynamicResource Str_Ui_Click_For_Details_And_Downloadable_Versi}">
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="Auto"/>
                                         <ColumnDefinition Width="*"/>
                                         <ColumnDefinition Width="Auto"/>
                                     </Grid.ColumnDefinitions>
-                                    <Border Grid.Column="0" Width="52" Height="52" Margin="0,0,14,0" CornerRadius="10"
+                                    <Border Grid.Column="0" Width="48" Height="48" Margin="0,0,12,0" CornerRadius="8"
                                             Background="{DynamicResource SideBrush}" VerticalAlignment="Top">
-                                        <Image Source="{Binding DisplayIconUrl}" Width="52" Height="52" Stretch="UniformToFill"/>
+                                        <Image Source="{Binding DisplayIconUrl}" Width="48" Height="48" Stretch="UniformToFill"/>
                                     </Border>
-                                    <StackPanel Grid.Column="1" Margin="0,0,12,0">
-                                        <Grid>
-                                            <Grid.ColumnDefinitions>
-                                                <ColumnDefinition Width="*"/>
-                                                <ColumnDefinition Width="Auto"/>
-                                            </Grid.ColumnDefinitions>
-                                            <TextBlock Text="{Binding Title, Mode=OneWay}" FontSize="15" FontWeight="SemiBold" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
-                                            <Border Grid.Column="1" Style="{StaticResource CommunitySourceBadge}">
+                                    <StackPanel Grid.Column="1">
+                                        <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                            <TextBlock Text="{Binding Title, Mode=OneWay}" FontSize="15" FontWeight="Bold" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
+                                            <Border Style="{StaticResource SourceBadge}">
                                                 <TextBlock Text="{Binding SourceLabel, Mode=OneWay}" FontSize="10" FontWeight="SemiBold" Foreground="{DynamicResource AccentBrush}"/>
                                             </Border>
-                                        </Grid>
-                                        <TextBlock Text="{Binding Description}" FontSize="12" TextWrapping="Wrap" MaxHeight="38" LineHeight="18" Margin="0,6,0,0"
+                                        </StackPanel>
+                                        <TextBlock Text="{Binding Description}" FontSize="12" TextWrapping="Wrap" MaxHeight="34"
                                                    Foreground="{DynamicResource TextSecondaryBrush}"/>
-                                        <TextBlock FontSize="11" Margin="0,8,0,0" TextWrapping="Wrap" Foreground="{DynamicResource TextSecondaryBrush}">
+                                        <TextBlock FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}">
                                             <Run Text="{DynamicResource Str_Ui_Author}"/><Run Text="{Binding Author}"/>
                                             <Run Text="{DynamicResource Str_Ui_Downloads}"/><Run Text="{Binding Downloads}"/>
                                         </TextBlock>
@@ -544,13 +480,12 @@
                     </ListBox>
 
                     <!-- 分页条：跟 Mod 面板同款样式。 -->
-                    <Grid Grid.Row="3" Margin="0,14,0,0">
+                    <Grid Grid.Row="3" Margin="0,8,0,0">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="Auto"/>
                             <ColumnDefinition Width="*"/>
                             <ColumnDefinition Width="Auto"/>
                         </Grid.ColumnDefinitions>
-                        <Border Grid.ColumnSpan="3" Height="1" VerticalAlignment="Top" Margin="0,-8,0,0" Background="{DynamicResource DividerBrush}" IsHitTestVisible="False"/>
                         <Button Grid.Column="0" x:Name="ResourcePrevPageButton" Content="{DynamicResource Str_Ui_Previous}" Style="{StaticResource SecondaryButton}"
                                 Padding="12,6" Click="ResourcePrevPage_Click"/>
                         <TextBlock Grid.Column="1" x:Name="ResourcePageSummaryText" HorizontalAlignment="Center"
@@ -561,7 +496,7 @@
                 </Grid>
 
                 <!-- ===== 我的收藏：游戏版本 + Mod + 材质包/数据包/光影包 + 地图，按类型分组展示 ===== -->
-                <Grid x:Name="FavoritesPanel" DockPanel.Dock="Top" Visibility="Collapsed">
+                <Grid x:Name="FavoritesPanel" services:PageTransitionBehavior.AnimateOnVisible="True" DockPanel.Dock="Top" Visibility="Collapsed">
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto"/>
                         <RowDefinition Height="*"/>
@@ -711,7 +646,7 @@
                 </Grid>
 
                 <!-- ===== 地图分类：接入 CurseForge（Modrinth 没有对应分类） ===== -->
-                <Grid x:Name="MapPanel" DockPanel.Dock="Top" Visibility="Collapsed" Background="{DynamicResource PanelBrush}">
+                <Grid x:Name="MapPanel" services:PageTransitionBehavior.AnimateOnVisible="True" DockPanel.Dock="Top" Visibility="Collapsed" Background="{DynamicResource PanelBrush}">
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto"/>
                         <RowDefinition Height="Auto"/>
@@ -725,28 +660,26 @@
                             <ColumnDefinition Width="*"/>
                             <ColumnDefinition Width="Auto"/>
                         </Grid.ColumnDefinitions>
-                        <TextBlock Text="{DynamicResource Str_Ui_Map_Downloads}" FontSize="20" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                        <TextBlock Text="{DynamicResource Str_Ui_Map_Downloads}" FontSize="18" FontWeight="Bold" VerticalAlignment="Center"/>
                         <TextBlock Grid.Column="1" Text="{DynamicResource Str_Ui_Data_From_Curseforge}" FontSize="12" VerticalAlignment="Center"
                                    Foreground="{DynamicResource TextSecondaryBrush}"/>
                     </Grid>
 
-                    <Border Grid.Row="1" Style="{StaticResource CommunityFilterCard}">
-                    <Grid>
+                    <Grid Grid.Row="1" Margin="0,0,0,10">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*"/>
                             <ColumnDefinition Width="140"/>
                             <ColumnDefinition Width="Auto"/>
                         </Grid.ColumnDefinitions>
-                        <TextBox x:Name="MapSearchBox" Style="{StaticResource CommunitySearchBox}" Grid.Column="0" Padding="8" FontSize="13" Margin="0,0,10,0"
+                        <TextBox x:Name="MapSearchBox" Style="{StaticResource SearchTextBox}" Grid.Column="0" Padding="8" FontSize="13" Margin="0,0,10,0"
                                  TextChanged="MapFilter_Changed"
                                  ToolTip="{DynamicResource Str_Ui_Search_By_Keyword_E_G_A_Map_Name_Leave_B}"/>
-                        <TextBox x:Name="MapGameVersionBox" Style="{StaticResource CommunitySearchBox}" Grid.Column="1" Padding="8" FontSize="13" Margin="0,0,10,0"
+                        <TextBox x:Name="MapGameVersionBox" Style="{StaticResource SearchTextBox}" Grid.Column="1" Padding="8" FontSize="13" Margin="0,0,10,0"
                                  TextChanged="MapFilter_Changed"
                                  ToolTip="{DynamicResource Str_Ui_Limit_To_A_Game_Version_E_G_1_20_1_Leave}"/>
                         <Button Grid.Column="2" Content="{DynamicResource Str_Ui_Refresh_Now}" Style="{StaticResource PrimaryButton}" Click="MapSearch_Click"
                                 ToolTip="{DynamicResource Str_Ui_The_List_Refreshes_Automatically_Use_Thi}"/>
                     </Grid>
-                    </Border>
 
                     <!-- 版本快捷选择条，同 Mod/Resource 面板，见 ResourceVersionChipPanel 注释。 -->
                     <WrapPanel x:Name="MapVersionChipPanel" Grid.Row="2" Margin="0,0,0,10">
@@ -760,13 +693,12 @@
                     </WrapPanel>
 
                     <ListBox x:Name="MapListBox" Grid.Row="3" BorderThickness="0" Background="Transparent"
-                             ScrollViewer.HorizontalScrollBarVisibility="Disabled" ScrollViewer.VerticalScrollBarVisibility="Auto"
-                             ItemContainerStyle="{StaticResource CommunityListItem}">
+                             ItemContainerStyle="{StaticResource DownloadListItem}">
                         <ListBox.ItemTemplate>
                             <DataTemplate>
                                 <!-- 整页跳转：地图之前是弹 CurseForgeMapPickerWindow 独立窗口，
                                      现在统一改成跳 ModDetailPage，跟 Mod/资源包同一套交互。 -->
-                                <Grid Margin="0" Cursor="Hand" Background="Transparent" Tag="{Binding}"
+                                <Grid Margin="4,8" Cursor="Hand" Background="Transparent" Tag="{Binding}"
                                       MouseLeftButtonUp="MapListItem_Click" ToolTip="{DynamicResource Str_Ui_Click_For_Details_And_Downloadable_Versi}">
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="Auto"/>
@@ -776,15 +708,15 @@
                                     <!-- 封面图：跟 Mod 列表同款样式，绑定 CurseForge 返回的 logo.thumbnailUrl。
                                          地图之前列表里完全没有图，只有点进详情页才能看到封面——这里补上，
                                          没有封面（Logo 为空）时 Border 底色兜底，不会露出空白。 -->
-                                    <Border Grid.Column="0" Width="52" Height="52" Margin="0,0,14,0" CornerRadius="10"
+                                    <Border Grid.Column="0" Width="48" Height="48" Margin="0,0,12,0" CornerRadius="8"
                                             Background="{DynamicResource SideBrush}" VerticalAlignment="Top">
-                                        <Image Source="{Binding DisplayIconUrl}" Width="52" Height="52" Stretch="UniformToFill"/>
+                                        <Image Source="{Binding DisplayIconUrl}" Width="48" Height="48" Stretch="UniformToFill"/>
                                     </Border>
-                                    <StackPanel Grid.Column="1" Margin="0,0,12,0">
-                                        <TextBlock Text="{Binding Name}" FontSize="15" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
-                                        <TextBlock Text="{Binding Summary}" FontSize="12" TextWrapping="Wrap" MaxHeight="38" LineHeight="18" Margin="0,6,0,0"
+                                    <StackPanel Grid.Column="1">
+                                        <TextBlock Text="{Binding Name}" FontSize="15" FontWeight="Bold"/>
+                                        <TextBlock Text="{Binding Summary}" FontSize="12" TextWrapping="Wrap" MaxHeight="34"
                                                    Foreground="{DynamicResource TextSecondaryBrush}"/>
-                                        <TextBlock FontSize="11" Margin="0,8,0,0" TextWrapping="Wrap" Foreground="{DynamicResource TextSecondaryBrush}">
+                                        <TextBlock FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}">
                                             <Run Text="{DynamicResource Str_Ui_Author}"/><Run Text="{Binding AuthorsDisplay, Mode=OneWay}"/>
                                             <Run Text="{DynamicResource Str_Ui_Downloads}"/><Run Text="{Binding DownloadCount}"/>
                                         </TextBlock>
@@ -798,13 +730,12 @@
                     </ListBox>
 
                     <!-- 分页条：跟 Mod/资源包面板同款样式。 -->
-                    <Grid Grid.Row="4" Margin="0,14,0,0">
+                    <Grid Grid.Row="4" Margin="0,8,0,0">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="Auto"/>
                             <ColumnDefinition Width="*"/>
                             <ColumnDefinition Width="Auto"/>
                         </Grid.ColumnDefinitions>
-                        <Border Grid.ColumnSpan="3" Height="1" VerticalAlignment="Top" Margin="0,-8,0,0" Background="{DynamicResource DividerBrush}" IsHitTestVisible="False"/>
                         <Button Grid.Column="0" x:Name="MapPrevPageButton" Content="{DynamicResource Str_Ui_Previous}" Style="{StaticResource SecondaryButton}"
                                 Padding="12,6" Click="MapPrevPage_Click"/>
                         <TextBlock Grid.Column="1" x:Name="MapPageSummaryText" HorizontalAlignment="Center"
@@ -815,7 +746,7 @@
                 </Grid>
 
                 <!-- ===== 地图分类但未配置 CurseForge Key：引导去设置页粘贴 ===== -->
-                <StackPanel x:Name="MapKeyMissingPanel" DockPanel.Dock="Top" Visibility="Collapsed"
+                <StackPanel x:Name="MapKeyMissingPanel" services:PageTransitionBehavior.AnimateOnVisible="True" DockPanel.Dock="Top" Visibility="Collapsed"
                             HorizontalAlignment="Center" VerticalAlignment="Center" Margin="0,80,0,0">
                     <TextBlock Text="{DynamicResource Str_Ui_Map_Downloads_Need_A_Curseforge_Api_Key_}" FontSize="16" FontWeight="Bold"
                                Foreground="{DynamicResource TextSecondaryBrush}" HorizontalAlignment="Center"/>
@@ -827,27 +758,30 @@
                 </StackPanel>
 
                 <!-- ===== Mod 分类：综合搜索 Modrinth + CurseForge，来源可切换；右侧附 MC百科中文名搜索辅助 ===== -->
-                <Grid x:Name="ModPanel" DockPanel.Dock="Top" Visibility="Collapsed" Background="{DynamicResource PanelBrush}">
+                <Grid x:Name="ModPanel" services:PageTransitionBehavior.AnimateOnVisible="True" DockPanel.Dock="Top" Visibility="Collapsed" Background="{DynamicResource PanelBrush}">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="*"/>
-                        <ColumnDefinition Width="190"/>
+                        <ColumnDefinition Width="220"/>
                     </Grid.ColumnDefinitions>
-                    <Grid.RowDefinitions>
-                        <RowDefinition Height="Auto"/>
-                        <RowDefinition Height="Auto"/>
-                        <RowDefinition Height="Auto"/>
-                        <RowDefinition Height="*"/>
-                        <RowDefinition Height="Auto"/>
-                    </Grid.RowDefinitions>
 
-                        <TextBlock Grid.Row="0" Grid.ColumnSpan="2" Text="{DynamicResource Str_Ui_Mod_Downloads}" FontSize="20" FontWeight="SemiBold" Margin="0,2,0,16"/>
+                    <Grid Grid.Column="0" Margin="0,0,14,0">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="*"/>
+                            <RowDefinition Height="Auto"/>
+                        </Grid.RowDefinitions>
+
+                        <TextBlock Grid.Row="0" Text="{DynamicResource Str_Ui_Mod_Downloads}" FontSize="18" FontWeight="Bold" Margin="0,0,0,10"/>
 
                         <!-- 仿 PCL「搜索 Mod」筛选栏：名称/来源 一行，版本/类型(加载器) 一行，
                              两列网格布局，最后单独一行放"搜索"+"重置条件"两个按钮。
                              之前是"一行塞下所有筛选框+一个手动刷新按钮"，跟截图1的 PCL 布局差异较大，
                              这里改成结构一致的两列网格，同时保留原有的自动搜索(TextChanged/SelectionChanged
                              防抖触发)行为——"搜索"按钮只是补一个跟 PCL 一样的手动触发入口，不是唯一触发方式。 -->
-                        <Border Grid.Row="1" Grid.ColumnSpan="2" Style="{StaticResource CommunityFilterCard}">
+                        <Border Grid.Row="1" Background="{DynamicResource SideBrush}" BorderBrush="{DynamicResource BorderBrush2}"
+                                BorderThickness="1" CornerRadius="14" Padding="16" Margin="0,0,0,12">
                             <Grid>
                                 <Grid.RowDefinitions>
                                     <RowDefinition Height="Auto"/>
@@ -862,29 +796,29 @@
                                 </Grid.ColumnDefinitions>
 
                                 <StackPanel Grid.Row="0" Grid.Column="0">
-                                    <TextBlock Text="{DynamicResource Str_Ui_Name}" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,6"/>
-                                    <TextBox x:Name="ModSearchBox" Style="{StaticResource CommunitySearchBox}" Padding="8" FontSize="13"
+                                    <TextBlock Text="{DynamicResource Str_Ui_Name}" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4"/>
+                                    <TextBox x:Name="ModSearchBox" Style="{StaticResource SearchTextBox}" Padding="8" FontSize="13"
                                              TextChanged="ModFilter_Changed"
                                              ToolTip="{DynamicResource Str_Ui_Search_By_Keyword_In_English_Or_Chinese_}"/>
                                 </StackPanel>
                                 <StackPanel Grid.Row="0" Grid.Column="2">
-                                    <TextBlock Text="{DynamicResource Str_Ui_Source}" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,6"/>
-                                    <ComboBox x:Name="ModSourceCombo" Style="{StaticResource CommunityFilterCombo}" SelectionChanged="ModSourceCombo_SelectionChanged">
+                                    <TextBlock Text="{DynamicResource Str_Ui_Source}" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4"/>
+                                    <ComboBox x:Name="ModSourceCombo" Style="{StaticResource FilterComboBox}" SelectionChanged="ModSourceCombo_SelectionChanged">
                                         <ComboBoxItem Content="{DynamicResource Str_Ui_Combined_Modrinth_Curseforge}" IsSelected="True" Tag="combined"/>
                                         <ComboBoxItem Content="{DynamicResource Str_Ui_Modrinth_Only}" Tag="modrinth"/>
                                         <ComboBoxItem Content="{DynamicResource Str_Ui_Curseforge_Only}" Tag="curseforge"/>
                                     </ComboBox>
                                 </StackPanel>
 
-                                <StackPanel Grid.Row="1" Grid.Column="0" Margin="0,12,0,0">
-                                    <TextBlock Text="{DynamicResource Str_Ui_Version}" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,6"/>
-                                    <TextBox x:Name="ModGameVersionBox" Style="{StaticResource CommunitySearchBox}" Padding="8" FontSize="13"
+                                <StackPanel Grid.Row="1" Grid.Column="0" Margin="0,10,0,0">
+                                    <TextBlock Text="{DynamicResource Str_Ui_Version}" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4"/>
+                                    <TextBox x:Name="ModGameVersionBox" Style="{StaticResource SearchTextBox}" Padding="8" FontSize="13"
                                              TextChanged="ModFilter_Changed"
                                              ToolTip="{DynamicResource Str_Ui_Limit_To_A_Game_Version_E_G_1_20_1_Leave}"/>
                                 </StackPanel>
-                                <StackPanel Grid.Row="1" Grid.Column="2" Margin="0,12,0,0">
-                                    <TextBlock Text="{DynamicResource Str_Ui_Type_Loader}" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,6"/>
-                                    <ComboBox x:Name="ModLoaderCombo" Style="{StaticResource CommunityFilterCombo}"
+                                <StackPanel Grid.Row="1" Grid.Column="2" Margin="0,10,0,0">
+                                    <TextBlock Text="{DynamicResource Str_Ui_Type_Loader}" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4"/>
+                                    <ComboBox x:Name="ModLoaderCombo" Style="{StaticResource FilterComboBox}"
                                               SelectionChanged="ModFilter_SelectionChanged">
                                         <ComboBoxItem Content="{DynamicResource Str_Ui_Any_Loader}" IsSelected="True" Tag=""/>
                                         <ComboBoxItem Content="Fabric" Tag="fabric"/>
@@ -905,42 +839,37 @@
 
                         <!-- 命中中文名词典时展示"已按 XX 搜索"提示，让用户知道中文关键词生效了；
                              没命中/关键词是英文时这行不显示，不占用界面空间。 -->
-                        <TextBlock x:Name="ModTranslationHintText" Grid.Row="2" Grid.ColumnSpan="2" Margin="0,0,0,8" FontSize="12"
+                        <TextBlock x:Name="ModTranslationHintText" Grid.Row="2" Margin="0,0,0,8" FontSize="12"
                                    TextWrapping="Wrap" Foreground="{DynamicResource TextSecondaryBrush}" Visibility="Collapsed"/>
 
-                        <ListBox x:Name="ModListBox" Grid.Row="3" Margin="0,0,14,0" BorderThickness="0" Background="Transparent"
-                                 ScrollViewer.HorizontalScrollBarVisibility="Disabled" ScrollViewer.VerticalScrollBarVisibility="Auto"
-                             ItemContainerStyle="{StaticResource CommunityListItem}" SelectionChanged="ModListBox_SelectionChanged">
+                        <ListBox x:Name="ModListBox" Grid.Row="3" BorderThickness="0" Background="Transparent"
+                                 ItemContainerStyle="{StaticResource DownloadListItem}" SelectionChanged="ModListBox_SelectionChanged">
                             <ListBox.ItemTemplate>
                                 <DataTemplate>
                                     <!-- 整页跳转：点击条目不再原地展开手风琴，而是整页跳转到 ModDetailPage
                                          （仿 CurseForge/PCL：顶部返回箭头，整个内容区替换为该条目的详情），
                                          取代原来的 ContentPresenter 内联展开面板。 -->
-                                    <Grid Margin="0" Cursor="Hand" Background="Transparent" Tag="{Binding}"
+                                    <Grid Margin="4,8" Cursor="Hand" Background="Transparent" Tag="{Binding}"
                                           MouseLeftButtonUp="ModListItem_Click" ToolTip="{DynamicResource Str_Ui_Click_For_Details_And_Downloadable_Versi}">
                                         <Grid.ColumnDefinitions>
                                             <ColumnDefinition Width="Auto"/>
                                             <ColumnDefinition Width="*"/>
                                             <ColumnDefinition Width="Auto"/>
                                         </Grid.ColumnDefinitions>
-                                        <Border Grid.Column="0" Width="52" Height="52" Margin="0,0,14,0" CornerRadius="10"
+                                        <Border Grid.Column="0" Width="48" Height="48" Margin="0,0,12,0" CornerRadius="8"
                                                 Background="{DynamicResource SideBrush}" VerticalAlignment="Top">
-                                            <Image Source="{Binding DisplayIconUrl}" Width="52" Height="52" Stretch="UniformToFill"/>
+                                            <Image Source="{Binding DisplayIconUrl}" Width="48" Height="48" Stretch="UniformToFill"/>
                                         </Border>
-                                        <StackPanel Grid.Column="1" Margin="0,0,12,0">
-                                            <Grid>
-                                            <Grid.ColumnDefinitions>
-                                                <ColumnDefinition Width="*"/>
-                                                <ColumnDefinition Width="Auto"/>
-                                            </Grid.ColumnDefinitions>
-                                            <TextBlock Text="{Binding Title, Mode=OneWay}" FontSize="15" FontWeight="SemiBold" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
-                                            <Border Grid.Column="1" Style="{StaticResource CommunitySourceBadge}">
+                                        <StackPanel Grid.Column="1">
+                                            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                                <TextBlock Text="{Binding Title, Mode=OneWay}" FontSize="15" FontWeight="Bold" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
+                                                <Border Style="{StaticResource SourceBadge}">
                                                     <TextBlock Text="{Binding SourceLabel, Mode=OneWay}" FontSize="10" FontWeight="SemiBold" Foreground="{DynamicResource AccentBrush}"/>
                                                 </Border>
-                                        </Grid>
-                                            <TextBlock Text="{Binding Description}" FontSize="12" TextWrapping="Wrap" MaxHeight="38" LineHeight="18" Margin="0,6,0,0"
+                                            </StackPanel>
+                                            <TextBlock Text="{Binding Description}" FontSize="12" TextWrapping="Wrap" MaxHeight="34"
                                                        Foreground="{DynamicResource TextSecondaryBrush}"/>
-                                            <TextBlock FontSize="11" Margin="0,8,0,0" TextWrapping="Wrap" Foreground="{DynamicResource TextSecondaryBrush}">
+                                            <TextBlock FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}">
                                                 <Run Text="{DynamicResource Str_Ui_Author}"/><Run Text="{Binding Author}"/>
                                                 <Run Text="{DynamicResource Str_Ui_Downloads}"/><Run Text="{Binding Downloads}"/>
                                             </TextBlock>
@@ -955,13 +884,12 @@
 
                         <!-- 分页条：仿 PCL，固定每页数量 + 上一页/页码/下一页，修复结果多时列表被裁切
                              显示不全的问题（之前是把整批搜索结果一次性全塞进 ListBox）。 -->
-                        <Grid Grid.Row="4" Grid.ColumnSpan="2" Margin="0,14,0,0">
+                        <Grid Grid.Row="4" Margin="0,8,0,0">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="Auto"/>
                                 <ColumnDefinition Width="*"/>
                                 <ColumnDefinition Width="Auto"/>
                             </Grid.ColumnDefinitions>
-                        <Border Grid.ColumnSpan="3" Height="1" VerticalAlignment="Top" Margin="0,-8,0,0" Background="{DynamicResource DividerBrush}" IsHitTestVisible="False"/>
                             <Button Grid.Column="0" x:Name="ModPrevPageButton" Content="{DynamicResource Str_Ui_Previous}" Style="{StaticResource SecondaryButton}"
                                     Padding="12,6" Click="ModPrevPage_Click"/>
                             <TextBlock Grid.Column="1" x:Name="ModPageSummaryText" HorizontalAlignment="Center"
@@ -969,16 +897,15 @@
                             <Button Grid.Column="2" x:Name="ModNextPageButton" Content="{DynamicResource Str_Ui_Next}" Style="{StaticResource SecondaryButton}"
                                     Padding="12,6" Click="ModNextPage_Click"/>
                         </Grid>
+                    </Grid>
+
                     <!-- MC百科中文名搜索辅助：只提供百科页面链接，不参与下载（见 McModService 类注释） -->
-                    <Border Grid.Column="1" Grid.Row="3" Background="{DynamicResource SideBrush}"
-                            BorderBrush="{DynamicResource DividerBrush}" BorderThickness="1" CornerRadius="10" Padding="12">
+                    <Border Grid.Column="1" Background="{DynamicResource SideBrush}" CornerRadius="8" Padding="10">
                         <DockPanel>
-                            <TextBlock DockPanel.Dock="Top" Text="{DynamicResource Str_Ui_Mc_Wiki_Reference}" FontSize="14" FontWeight="Bold" Margin="0,0,0,6"/>
+                            <TextBlock DockPanel.Dock="Top" Text="{DynamicResource Str_Ui_Mc_Wiki_Reference}" FontSize="14" FontWeight="Bold" Margin="0,0,0,4"/>
                             <TextBlock DockPanel.Dock="Top" Text="{DynamicResource Str_Ui_Reference_Material_Click_To_Open_The_Wik}" FontSize="11"
                                        Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap" Margin="0,0,0,8"/>
-                            <ListBox x:Name="McModListBox" BorderThickness="0" Background="Transparent"
-                                     ScrollViewer.HorizontalScrollBarVisibility="Disabled"
-                                     ScrollViewer.VerticalScrollBarVisibility="Auto">
+                            <ListBox x:Name="McModListBox" BorderThickness="0" Background="Transparent">
                                 <ListBox.ItemTemplate>
                                     <DataTemplate>
                                         <Button Content="{Binding Title}" Style="{StaticResource SideNavButton}"
@@ -999,7 +926,7 @@
                  铺满整个右侧内容区，视觉上盖住上面的列表面板——即"整页跳转，顶部有返回箭头"，
                  而不是原来的"原地手风琴展开"。ModDetailPage 内部返回箭头回调(onBack)会把这里
                  收回 Collapsed、Content 清空，露出底下原封不动的列表状态。 -->
-            <ContentControl x:Name="DetailHost" Visibility="Collapsed" Background="{DynamicResource PanelBrush}"/>
+            <ContentControl x:Name="DetailHost" services:PageTransitionBehavior.AnimateOnVisible="True" Visibility="Collapsed" Background="{DynamicResource PanelBrush}"/>
             </Grid>
         </Border>
     </Grid>

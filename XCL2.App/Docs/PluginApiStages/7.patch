@@ -1,0 +1,717 @@
+diff --git a/Services/CommandLineService.cs b/Services/CommandLineService.cs
+--- a/Services/CommandLineService.cs
++++ b/Services/CommandLineService.cs
+@@ -29,6 +29,9 @@
+         public bool LaunchGame;
+         public string? AccountName;
+         public string? InstanceName;
++        public string? ResultFile;
++        public bool ListInstances;
++        public bool ListAccounts;
+ 
+         /// <summary>命中 -gui &lt;page&gt;，需要跳转到的页面名（原样传入，交给 MainWindow 的页面关键字表去匹配）。</summary>
+         public string? GuiPage;
+@@ -125,7 +128,7 @@
+         public bool JustUpdated;
+ 
+         /// <summary>是否解析出了任何一个需要 MainWindow 首帧后处理的有效动作。</summary>
+-        public bool HasAnyAction => ShowHelp || LaunchGame || GuiPage != null || OpenDownload || EnterGuestMode ||
++        public bool HasAnyAction => ShowHelp || LaunchGame || ListInstances || ListAccounts || GuiPage != null || OpenDownload || EnterGuestMode ||
+             EnterPreviewMode || StartedByAutoStart || CheckUpdateOnly || ClearCacheOnStart || ExportLogsPath != null || JustUpdated;
+     }
+ 
+@@ -134,6 +137,8 @@
+         "\n" +
+         "  -help                                  显示本帮助并退出\n" +
+         "  -r --账户名 <账户名> --实例名称 <实例名>   使用指定账户与实例直接启动游戏\n" +
++        "  --result-file <路径>                   将启动操作的实际进程结果写入 JSON\n" +
++        "  --list-instances / --list-accounts      查询实例 / 账户，不输出凭据；可配合 --result-file\n" +
+         "  -gui <页面名>                           启动后跳转到对应页面，例如：-gui 设置 / -gui 下载中心 / -gui 百宝箱\n" +
+         "  --d --版本 <版本号> --加载器 <加载器>      打开下载中心；不填 --版本 时会直接弹出下载页面供手动选择，\n" +
+         "                                          填写 --版本 后会自动跳转并按该版本号筛选，--加载器 可省略\n" +
+@@ -343,6 +348,9 @@
+         result.JavaPathOverride = GetOptionValue(0, "--java");
+         result.ExtraJvmArgs = GetOptionValue(0, "--jvm-args");
+         result.ExtraGameArgs = GetOptionValue(0, "--game-args");
++        result.ResultFile = GetOptionValue(0, "--result-file");
++        result.ListInstances = args.Any(a => a.Equals("--list-instances", StringComparison.OrdinalIgnoreCase));
++        result.ListAccounts = args.Any(a => a.Equals("--list-accounts", StringComparison.OrdinalIgnoreCase));
+         result.AutoJoinServer = GetOptionValue(0, "--server");
+         result.ExportLogsPath = GetOptionValue(0, "--export-logs");
+ 
+diff --git a/Services/LauncherCommandResult.cs b/Services/LauncherCommandResult.cs
+--- /dev/null
++++ b/Services/LauncherCommandResult.cs
+@@ -0,0 +1,22 @@
++using System.IO;
++using System.Text.Json;
++
++namespace XCL2.App.Services;
++
++public sealed record LauncherCommandResult(int SchemaVersion, string Operation, string Status, string Code,
++    int? Pid = null, string? InstanceId = null, string? AccountId = null, JsonElement? Data = null);
++internal static class LauncherCommandResultWriter
++{
++    internal static async Task WriteAsync(string path, LauncherCommandResult result)
++    {
++        var full = Path.GetFullPath(path); Directory.CreateDirectory(Path.GetDirectoryName(full)!);
++        var temporary = full + "." + Guid.NewGuid().ToString("N") + ".tmp";
++        try
++        {
++            var safe = JsonSerializer.Serialize(result, Plugins.PluginPipeSession.Json);
++            safe = Plugins.PluginHostBridge.Current?.Safe(safe) ?? safe;
++            await File.WriteAllTextAsync(temporary, safe); File.Move(temporary, full, overwrite: true);
++        }
++        finally { if (File.Exists(temporary)) File.Delete(temporary); }
++    }
++}
+diff --git a/Services/Plugins/PluginContext.cs b/Services/Plugins/PluginContext.cs
+--- a/Services/Plugins/PluginContext.cs
++++ b/Services/Plugins/PluginContext.cs
+@@ -68,6 +68,8 @@
+     internal bool IsStopped => System.Threading.Volatile.Read(ref _disposed) != 0 || Stopping.IsCancellationRequested;
+     internal bool BusinessDisabled => System.Threading.Volatile.Read(ref _businessDisabled) != 0;
+     internal PluginHostBridge Host => _host ?? throw new PluginHostUnavailableException();
++    internal TimeSpan CallbackTimeout => _host?.CallbackTimeout ?? TimeSpan.FromSeconds(3);
++    internal string Safe(string? text) => _host?.Safe(text) ?? text ?? "";
+     internal void BindHost(PluginHostBridge host) { _host = host; }
+     internal PluginCallbackRunner Callbacks
+     {
+diff --git a/Services/Plugins/PluginInterceptionService.cs b/Services/Plugins/PluginInterceptionService.cs
+--- a/Services/Plugins/PluginInterceptionService.cs
++++ b/Services/Plugins/PluginInterceptionService.cs
+@@ -84,11 +84,11 @@
+             var revision = Interlocked.Read(ref entry.Context.AuthorizationRevision);
+             var result = await entry.Context.Callbacks.InvokeAsync(permission, "Intercept:" + typeof(T).Name,
+                 token => ((Func<T, CancellationToken, ValueTask<PluginInterception<T>>>)entry.Callback)(before, token),
+-                entry.Context.Host.CallbackTimeout, ct).ConfigureAwait(false);
++                entry.Context.CallbackTimeout, ct).ConfigureAwait(false);
+             if (!result.Success || result.Value == null) continue;
+             if (result.Value.IsCanceled)
+             {
+-                var reason = entry.Context.Host.Safe(result.Value.Reason ?? Loc.T("Str_Plugin_NoReason", "未提供原因"));
++                var reason = entry.Context.Safe(result.Value.Reason ?? Loc.T("Str_Plugin_NoReason", "未提供原因"));
+                 if (reason.Length > 512) reason = reason[..512];
+                 entry.Context.Log("InterventionCanceled: " + typeof(T).Name + "; " + reason);
+                 throw new PluginFlowCanceledException(entry.Context.PluginId, reason);
+@@ -107,7 +107,7 @@
+     {
+         // 有查询串、用户信息或已知凭据的地址不进入插件事件，防止签名 URL / 身份信息泄露。
+         if (!IsPublicUrl(url)) return url;
+-        var plan = new PluginDownloadPlan(Guid.NewGuid(), url, Path.GetFileName(fileName), sha1);
++        var plan = new PluginDownloadPlan(Guid.NewGuid(), url, PluginProviderRegistry.Safe(Path.GetFileName(fileName)), sha1);
+         var result = await RunAsync(PluginPermissionNames.DownloadIntercept, plan,
+             (before, after) => before.OperationId == after.OperationId && before.FileName == after.FileName &&
+                 before.ExpectedSha1 == after.ExpectedSha1 && IsPublicUrl(after.Url), ct).ConfigureAwait(false);
+@@ -119,7 +119,7 @@
+         (PluginHostBridge.Current == null || PluginHostBridge.Current.Safe(url) == url);
+     internal static async Task ValidateInstanceAsync(string root, string name, string kind, CancellationToken ct)
+     {
+-        var plan = new PluginInstanceCreationPlan(Guid.NewGuid(), PluginHostBridge.InstanceId(root, name), name, kind);
++        var plan = new PluginInstanceCreationPlan(Guid.NewGuid(), PluginHostBridge.InstanceId(root, name), PluginProviderRegistry.Safe(name), kind);
+         var result = await RunAsync(PluginPermissionNames.InstanceValidate, plan, (before, after) => before == after, ct).ConfigureAwait(false);
+         result.Demand();
+     }
+@@ -135,7 +135,7 @@
+     internal static readonly string[] ProtectedGameKeys = { "--username", "--version", "--gameDir", "--assetsDir", "--assetIndex", "--uuid", "--accessToken", "--userType", "--userProperties", "--profileProperties", "--clientId", "--xuid" };
+     internal static bool ValidEnvironment(ImmutableDictionary<string, string> values)
+     {
+-        return values != null && values.Count <= 64 && values.All(pair =>
++        return values != null && values.Count <= 64 && values.Keys.Distinct(StringComparer.OrdinalIgnoreCase).Count() == values.Count && values.All(pair =>
+             Regex.IsMatch(pair.Key, "\\A[A-Za-z_][A-Za-z0-9_]{0,127}\\z", RegexOptions.CultureInvariant) &&
+             PluginArgumentSyntax.IsPublicArgument(pair.Key) &&
+             !new[] { "JAVA_TOOL_OPTIONS", "JDK_JAVA_OPTIONS", "_JAVA_OPTIONS", "CLASSPATH", "PATH", "PATHEXT", "COMSPEC", "SYSTEMROOT", "WINDIR" }.Contains(pair.Key, StringComparer.OrdinalIgnoreCase) &&
+diff --git a/Services/Plugins/PluginManager.cs b/Services/Plugins/PluginManager.cs
+--- a/Services/Plugins/PluginManager.cs
++++ b/Services/Plugins/PluginManager.cs
+@@ -52,6 +52,7 @@
+ /// <summary>管理独立安装、影子加载、状态与单个插件的停止/删除。</summary>
+ public sealed class PluginManager
+ {
++    private readonly Dictionary<string, PluginPipeSession> _exeSessions = new(StringComparer.OrdinalIgnoreCase);
+     private sealed class PluginState
+     {
+         public PluginState() { }
+@@ -407,13 +408,27 @@
+                 Process? process = null;
+                 if (shouldStart)
+                 {
++                    var instanceId = metadata?.InstanceId ?? "exe." + Path.GetFileNameWithoutExtension(filePath) + suffix;
++                    var data = EnsurePluginDataDir(instanceId);
++                    context = new PluginContext(instanceId, new PluginConfigService(Path.Combine(_pluginsRoot, "config", SafeFileName(instanceId) + ".json")), data,
++                        message => _logSink("[Plugin:" + instanceId + "] " + message));
++                    context.BindMetadata(metadata ?? PluginManifestReader.Legacy(instanceId, Path.GetFileName(filePath), "0.0.0"), state.GrantedPermissions);
++                    if (_host != null) context.BindHost(_host);
++                    context.AuthorizationChanged += NotifyChanged;
++                    var session = new PluginPipeSession(context, () => ExecutableDisconnected(filePath));
++                    _exeSessions[filePath] = session;
++                    context.Track(session);
+                     var psi = new ProcessStartInfo(filePath) { UseShellExecute = false, WorkingDirectory = parent };
+-                    psi.Environment["XCL2_PLUGIN_DATA_DIR"] = EnsurePluginDataDir(metadata?.InstanceId ?? "exe." + Path.GetFileNameWithoutExtension(filePath) + suffix);
++                    psi.Environment["XCL2_PLUGIN_DATA_DIR"] = data;
++                    psi.Environment["XCL2_PLUGIN_PIPE"] = session.PipeName;
++                    psi.Environment["XCL2_PLUGIN_SESSION_TOKEN"] = session.SessionToken;
++                    psi.Environment["XCL2_PLUGIN_PROTOCOL_VERSION"] = "1";
+                     process = Process.Start(psi) ?? throw new InvalidOperationException("EXE 插件无法启动。");
++                    session.SetProcess(process.Id);
+                     state.StartedOnce = true;
+                 }
+                 return new LoadedPluginInfo { FilePath = filePath, IsExecutable = true, Enabled = state.Enabled,
+-                    RunningProcess = process, StartedOnce = state.StartedOnce, Metadata = metadata,
++                    Context = context, RunningProcess = process, StartedOnce = state.StartedOnce, Metadata = context?.Metadata ?? metadata,
+                     GrantedPermissions = state.GrantedPermissions.ToImmutableArray() };
+             }
+             if (!shouldStart) return new LoadedPluginInfo { FilePath = filePath, Enabled = state.Enabled, StartedOnce = state.StartedOnce,
+@@ -574,6 +589,7 @@
+         foreach (var dependent in Plugins.Where(p => p.RequiredDependencyPaths.Contains(path, StringComparer.OrdinalIgnoreCase)).Reverse().ToArray())
+             StopOne(dependent.FilePath);
+         var p = Plugins.FirstOrDefault(p => p.FilePath.Equals(path, StringComparison.OrdinalIgnoreCase));
++        if (_exeSessions.Remove(path, out var session)) session.Dispose();
+         if (p?.RunningProcess is { } process)
+         {
+             if (!process.HasExited)
+@@ -593,6 +609,24 @@
+         ReleaseRuntime(path);
+         if (p?.Context != null) PluginEventHub.Publish(new PluginPeerUnavailable(p.Context.PluginId));
+         Plugins = Plugins.Where(p => !p.FilePath.Equals(path, StringComparison.OrdinalIgnoreCase)).ToArray();
++    }
++    private void ExecutableDisconnected(string path)
++    {
++        if (_host == null) return;
++        _host.Owner.Dispatcher.BeginInvoke(new Action(() =>
++        {
++            var old = Plugins.FirstOrDefault(p => p.FilePath.Equals(path, StringComparison.OrdinalIgnoreCase));
++            if (old == null || !_exeSessions.ContainsKey(path)) return;
++            try
++            {
++                StopOne(path);
++                Plugins = Plugins.Append(new LoadedPluginInfo { FilePath = path, IsExecutable = true, Enabled = old.Enabled,
++                    Metadata = old.Metadata, StartedOnce = old.StartedOnce, GrantedPermissions = old.GrantedPermissions,
++                    LoadError = Loc.T("Str_Plugin_ExeDisconnected", "EXE 通信断开或进程已退出，请重新加载插件。") }).ToArray();
++                NotifyChanged();
++            }
++            catch (Exception ex) { _logSink("[PluginManager] ExecutableCleanupFailed: " + ex.GetType().Name); }
++        }));
+     }
+     private void ReleaseRuntime(string path)
+     {
+diff --git a/Services/Plugins/PluginMetadata.cs b/Services/Plugins/PluginMetadata.cs
+--- a/Services/Plugins/PluginMetadata.cs
++++ b/Services/Plugins/PluginMetadata.cs
+@@ -17,7 +17,7 @@
+ 
+ internal static class PluginApi
+ {
+-    internal static readonly Version Version = new(1, 8);
++    internal static readonly Version Version = new(1, 9);
+ }
+ 
+ internal sealed record PluginSemanticVersion(BigInteger Major, BigInteger Minor, BigInteger Patch, string[] Prerelease)
+diff --git a/Services/Plugins/PluginPipeSession.cs b/Services/Plugins/PluginPipeSession.cs
+--- /dev/null
++++ b/Services/Plugins/PluginPipeSession.cs
+@@ -0,0 +1,299 @@
++using System.Buffers.Binary;
++using System.Collections.Concurrent;
++using System.Collections.Immutable;
++using System.IO;
++using System.IO.Pipes;
++using System.Reflection;
++using System.Runtime.InteropServices;
++using System.Security.Cryptography;
++using System.Text;
++using System.Text.Json;
++using System.Text.Json.Serialization;
++using System.Windows;
++using System.Windows.Controls;
++using Microsoft.Win32.SafeHandles;
++
++namespace XCL2.App.Services.Plugins;
++
++/// <summary>协议 1：4 字节小端长度 + UTF-8 JSON；仅当前 Windows 用户与受托管 EXE PID。</summary>
++internal sealed class PluginPipeSession : IDisposable
++{
++    internal string PipeName { get; } = "XCL2.plugin." + Guid.NewGuid().ToString("N");
++    internal string SessionToken { get; } = Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
++    private readonly PluginContext _context;
++    private readonly NamedPipeServerStream _pipe;
++    private readonly CancellationTokenSource _stop = new();
++    private readonly SemaphoreSlim _writes = new(1, 1);
++    private readonly SemaphoreSlim _requests = new(8, 8);
++    private readonly TaskCompletionSource<int> _processId = new(TaskCreationOptions.RunContinuationsAsynchronously);
++    private readonly ConcurrentDictionary<string, TaskCompletionSource<JsonElement>> _pending = new(StringComparer.Ordinal);
++    private readonly ConcurrentDictionary<string, IDisposable> _registrations = new(StringComparer.Ordinal);
++    private readonly ConcurrentDictionary<string, PluginInstallWorkspace> _workspaces = new(StringComparer.Ordinal);
++    private readonly ConcurrentDictionary<string, PluginLoginBroker> _brokers = new(StringComparer.Ordinal);
++    private readonly ConcurrentDictionary<string, byte> _activeRequestIds = new(StringComparer.Ordinal);
++    private readonly Action _disconnected;
++    private int _disposed;
++    private long _counter;
++    internal bool IsDisposed => Volatile.Read(ref _disposed) != 0;
++    internal static readonly JsonSerializerOptions Json = new()
++    { PropertyNamingPolicy = JsonNamingPolicy.CamelCase, PropertyNameCaseInsensitive = true, Converters = { new JsonStringEnumConverter() } };
++    [DllImport("kernel32.dll", SetLastError = true)]
++    [return: MarshalAs(UnmanagedType.Bool)] private static extern bool GetNamedPipeClientProcessId(SafePipeHandle pipe, out uint processId);
++    internal PluginPipeSession(PluginContext context, Action disconnected)
++    {
++        _context = context; _disconnected = disconnected;
++        _pipe = new NamedPipeServerStream(PipeName, PipeDirection.InOut, 1, PipeTransmissionMode.Byte,
++            PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly);
++        _ = RunAsync();
++    }
++    internal void SetProcess(int pid) { _processId.TrySetResult(pid); }
++    private async Task RunAsync()
++    {
++        try
++        {
++            using var connect = CancellationTokenSource.CreateLinkedTokenSource(_stop.Token); connect.CancelAfter(TimeSpan.FromSeconds(30));
++            await _pipe.WaitForConnectionAsync(connect.Token).ConfigureAwait(false);
++            var expectedPid = await _processId.Task.WaitAsync(connect.Token).ConfigureAwait(false);
++            if (!GetNamedPipeClientProcessId(_pipe.SafePipeHandle, out var actualPid) || actualPid != expectedPid)
++                throw new PluginOperationException("InvalidPeer", "插件通信端点身份不匹配。");
++            using var hello = await ReadAsync(connect.Token).ConfigureAwait(false);
++            var first = hello.RootElement;
++            if (first.GetProperty("protocol").GetInt32() != 1 || first.GetProperty("kind").GetString() != "request" ||
++                first.GetProperty("method").GetString() != "hello" || !Authenticate(first.GetProperty("params").GetProperty("token").GetString()))
++                throw new PluginOperationException("HandshakeRejected", "插件通信握手失败。");
++            await WriteAsync(new { protocol = 1, kind = "response", id = first.GetProperty("id").GetString(), result = new { apiVersion = _context.ApiVersion.ToString(), pluginId = _context.PluginId } }, connect.Token).ConfigureAwait(false);
++            while (!_stop.IsCancellationRequested)
++            {
++                using var document = await ReadAsync(_stop.Token).ConfigureAwait(false); var message = document.RootElement;
++                if (message.GetProperty("protocol").GetInt32() != 1) throw new PluginOperationException("ProtocolMismatch", "插件协议版本不兼容。");
++                var kind = message.GetProperty("kind").GetString();
++                if (kind == "response")
++                {
++                    var responseId = message.GetProperty("id").GetString() ?? "";
++                    if (_pending.TryRemove(responseId, out var completion))
++                    {
++                        if (message.TryGetProperty("error", out _)) completion.TrySetException(new PluginOperationException("RemoteCallbackFailed", "EXE 回调失败。"));
++                        else completion.TrySetResult(message.GetProperty("result").Clone());
++                    }
++                }
++                else if (kind == "request")
++                {
++                    var id = message.GetProperty("id").GetString() ?? "";
++                    if (id.Length == 0 || id.Length > 128 || !_activeRequestIds.TryAdd(id, 0))
++                        throw new PluginOperationException("InvalidRequestId", "请求 Id 为空、过长或重复。");
++                    if (!await _requests.WaitAsync(0, _stop.Token).ConfigureAwait(false))
++                    { _activeRequestIds.TryRemove(id, out _); await ErrorAsync(id, "Busy", "同时请求超过 8 个。").ConfigureAwait(false); continue; }
++                    var copy = message.Clone(); _ = HandleAsync(id, copy);
++                }
++                else throw new PluginOperationException("InvalidMessage", "不支持的插件消息类型。");
++            }
++        }
++        catch (OperationCanceledException) { }
++        catch (Exception ex) { if (!IsDisposed) _context.Log("PipeDisconnected: " + ex.GetType().Name); }
++        finally
++        {
++            if (!IsDisposed) { Dispose(); _disconnected(); }
++        }
++    }
++    private bool Authenticate(string? token) => token != null && CryptographicOperations.FixedTimeEquals(Encoding.UTF8.GetBytes(SessionToken), Encoding.UTF8.GetBytes(token));
++    private async Task<JsonDocument> ReadAsync(CancellationToken ct)
++    {
++        var header = new byte[4]; await _pipe.ReadExactlyAsync(header, ct).ConfigureAwait(false); var length = BinaryPrimitives.ReadInt32LittleEndian(header);
++        if (length is <= 0 or > 1048576) throw new PluginOperationException("FrameTooLarge", "插件通信帧超过 1 MiB。");
++        var data = new byte[length]; await _pipe.ReadExactlyAsync(data, ct).ConfigureAwait(false);
++        return JsonDocument.Parse(data, new JsonDocumentOptions { MaxDepth = 32 });
++    }
++    private async Task WriteAsync(object message, CancellationToken ct)
++    {
++        var bytes = JsonSerializer.SerializeToUtf8Bytes(message, Json);
++        if (bytes.Length > 1048576) throw new PluginOperationException("FrameTooLarge", "插件通信帧超过 1 MiB。");
++        var header = new byte[4]; BinaryPrimitives.WriteInt32LittleEndian(header, bytes.Length);
++        await _writes.WaitAsync(ct).ConfigureAwait(false);
++        try { await _pipe.WriteAsync(header, ct).ConfigureAwait(false); await _pipe.WriteAsync(bytes, ct).ConfigureAwait(false); await _pipe.FlushAsync(ct).ConfigureAwait(false); }
++        finally { _writes.Release(); }
++    }
++    private Task ErrorAsync(string id, string code, string message) => WriteAsync(new { protocol = 1, kind = "response", id, error = new { code, message } }, _stop.Token);
++    private async Task HandleAsync(string id, JsonElement message)
++    {
++        try
++        {
++            _context.EnsureActive(); var method = message.GetProperty("method").GetString() ?? "";
++            var arguments = message.TryGetProperty("params", out var supplied) ? supplied : JsonSerializer.SerializeToElement(new { });
++            var result = await DispatchAsync(method, arguments, _stop.Token).ConfigureAwait(false);
++            await WriteAsync(new { protocol = 1, kind = "response", id, result }, _stop.Token).ConfigureAwait(false);
++        }
++        catch (OperationCanceledException) { }
++        catch (Exception ex)
++        {
++            try { await ErrorAsync(id, ex is PluginOperationException operation ? operation.Code : "RequestFailed", ex is PluginOperationException safe ? safe.SafeMessage : "插件请求失败。").ConfigureAwait(false); }
++            catch (Exception writeFailure) { _context.Log("PipeWriteFailed: " + writeFailure.GetType().Name); }
++        }
++        finally { _activeRequestIds.TryRemove(id, out _); _requests.Release(); }
++    }
++    private static string String(JsonElement args, string name) => args.GetProperty(name).GetString() ?? throw new ArgumentException("字段不能为空：" + name);
++    private string Keep(IDisposable registration)
++    { var id = Guid.NewGuid().ToString("N"); _registrations[id] = registration; return id; }
++    private async Task<object?> DispatchAsync(string method, JsonElement args, CancellationToken ct)
++    {
++        switch (method)
++        {
++            case "permissions.snapshot": return _context.Permissions.GetSnapshot();
++            case "accounts.list": return await _context.Launcher.Accounts.GetSnapshotAsync(ct).ConfigureAwait(false);
++            case "accounts.selected": return await _context.Launcher.Accounts.GetSelectedAsync(ct).ConfigureAwait(false);
++            case "instances.list": return await _context.Launcher.Instances.GetSnapshotAsync(args.TryGetProperty("query", out var query) ? query.Deserialize<PluginInstanceQuery>(Json) : null, ct).ConfigureAwait(false);
++            case "instances.selected": return await _context.Launcher.Instances.GetSelectedAsync(ct).ConfigureAwait(false);
++            case "instances.details": return await _context.Launcher.Instances.GetDetailsAsync(String(args, "instanceId"), ct).ConfigureAwait(false);
++            case "mods.list": return await _context.Launcher.Mods.GetSnapshotAsync(String(args, "instanceId"), ct).ConfigureAwait(false);
++            case "downloads.list": return await _context.Launcher.Downloads.GetSnapshotAsync(ct).ConfigureAwait(false);
++            case "settings.snapshot": return await _context.Launcher.Settings.GetSnapshotAsync(ct).ConfigureAwait(false);
++            case "environment.snapshot": return await _context.Launcher.Environment.GetSnapshotAsync(ct).ConfigureAwait(false);
++            case "config.get": return _context.Config.Snapshot();
++            case "config.set": _context.Config.Set(String(args, "key"), args.GetProperty("value").Clone()); return true;
++            case "log": _context.Log(String(args, "message")); return true;
++            case "network.getText": return await _context.Network.GetTextAsync(String(args, "url"), ct).ConfigureAwait(false);
++            case "registrations.remove": return _registrations.TryRemove(String(args, "registrationId"), out var handle) && Remove(handle);
++            case "events.subscribe":
++            {
++                var type = typeof(PluginNotification).Assembly.GetTypes().FirstOrDefault(t => t.Name == String(args, "event") && t.IsSealed && typeof(PluginNotification).IsAssignableFrom(t))
++                    ?? throw new PluginOperationException("UnknownEvent", "未知事件。");
++                _ = PluginEventService.PermissionFor(type);
++                var id = Guid.NewGuid().ToString("N");
++                var subscription = (IDisposable)typeof(PluginPipeSession).GetMethod(nameof(SubscribeEvent), BindingFlags.Instance | BindingFlags.NonPublic)!.MakeGenericMethod(type).Invoke(this, new object[] { id })!;
++                _registrations[id] = subscription; return new { registrationId = id };
++            }
++            case "events.interceptLaunch": return new { registrationId = Keep(_context.Events.InterceptLaunch((plan, token) => RemoteAsync<PluginInterception<PluginLaunchPlan>>(String(args, "callbackId"), plan, token))) };
++            case "events.interceptDownload": return new { registrationId = Keep(_context.Events.InterceptDownload((plan, token) => RemoteAsync<PluginInterception<PluginDownloadPlan>>(String(args, "callbackId"), plan, token))) };
++            case "events.interceptInstanceCreation": return new { registrationId = Keep(_context.Events.InterceptInstanceCreation((plan, token) => RemoteAsync<PluginInterception<PluginInstanceCreationPlan>>(String(args, "callbackId"), plan, token))) };
++            case "messages.peers": return _context.Messages.GetPeers();
++            case "messages.send": return await _context.Messages.SendAsync(String(args, "targetPluginId"), String(args, "channel"), args.GetProperty("payload"), ct).ConfigureAwait(false);
++            case "messages.subscribe": return new { registrationId = Keep(_context.Messages.Subscribe(String(args, "channel"), (notification, token) => SendEventAsync("message", notification, token))) };
++            case "ui.showMessage": return await _context.Ui.ShowMessageAsync(String(args, "title"), String(args, "message")).ConfigureAwait(false);
++            case "ui.confirm": return await _context.Ui.ConfirmAsync(String(args, "title"), String(args, "message")).ConfigureAwait(false);
++            case "ui.registerBackground": return new { registrationId = Keep(_context.Ui.RegisterBackground(args.Deserialize<PluginBackgroundDefinition>(Json)!)) };
++            case "ui.registerInstanceAction":
++                return new { registrationId = Keep(_context.Ui.RegisterInstanceAction(new(String(args, "id"), String(args, "title"),
++                    async (instance, token) => { await RemoteAsync<bool>(String(args, "callbackId"), instance, token); }))) };
++            case "ui.registerSetting":
++            case "ui.registerOption":
++            {
++                var kind = args.TryGetProperty("kind", out var optionKind) ? optionKind.Deserialize<PluginOptionKind>(Json) : PluginOptionKind.Toggle;
++                object? defaultValue = null;
++                if (args.TryGetProperty("defaultValue", out var value)) defaultValue = kind switch
++                { PluginOptionKind.Toggle => value.GetBoolean(), PluginOptionKind.Number => value.GetDouble(), _ => value.GetString() };
++                var definition = new PluginOptionDefinition { Id = String(args, "id"), Title = String(args, "title"), Kind = kind, DefaultValue = defaultValue,
++                    ConfigKey = args.TryGetProperty("configKey", out var configKey) ? configKey.GetString() : null,
++                    Target = args.TryGetProperty("target", out var target) ? target.GetString() ?? PluginUiTargets.PluginSettings : PluginUiTargets.PluginSettings,
++                    Choices = args.TryGetProperty("choices", out var choices) ? choices.Deserialize<PluginChoice[]>(Json) ?? Array.Empty<PluginChoice>() : Array.Empty<PluginChoice>(),
++                    Minimum = args.TryGetProperty("minimum", out var minimum) ? minimum.GetDouble() : double.MinValue,
++                    Maximum = args.TryGetProperty("maximum", out var maximum) ? maximum.GetDouble() : double.MaxValue };
++                return new { registrationId = Keep(method == "ui.registerSetting" ? _context.Ui.RegisterSetting(definition) : _context.Ui.RegisterOption(definition)) };
++            }
++            case "ui.importBackgroundImage": return await _context.Ui.ImportBackgroundImageAsync(ct).ConfigureAwait(false);
++            case "ui.registerPage":
++            {
++                var content = args.GetProperty("content").Clone(); var pageId = String(args, "id");
++                return new { registrationId = Keep(_context.Ui.RegisterNavigationPage(new(pageId, String(args, "title"), _ => DeclarativeContent(content),
++                    args.TryGetProperty("showInSimplifiedMode", out var simple) && simple.GetBoolean(),
++                    args.TryGetProperty("languages", out var languages) ? languages.Deserialize<ImmutableArray<string>>(Json) : default))) };
++            }
++            case "providers.register":
++            {
++                var definition = args.GetProperty("definition").Deserialize<PluginProviderDefinition>(Json)!;
++                var callbacks = args.GetProperty("callbacks").Deserialize<ImmutableDictionary<string, string>>(Json)!;
++                var proxy = new RemoteProviders(this, callbacks);
++                var kind = String(args, "kind");
++                var registration = kind switch
++                {
++                    "download" => _context.Providers.RegisterDownloadProvider(definition, proxy),
++                    "mod" => _context.Providers.RegisterModProvider(definition, proxy),
++                    "loader" => _context.Providers.RegisterLoaderInstaller(definition, proxy),
++                    "login" => _context.Providers.RegisterLoginProvider(definition, proxy),
++                    _ => throw new PluginOperationException("UnknownProvider", "未知提供者类型。")
++                };
++                return new { registrationId = Keep(registration) };
++            }
++            case "workspace.writeVersionJson": await Workspace(args).WriteVersionJsonAsync(String(args, "json"), ct).ConfigureAwait(false); return true;
++            case "workspace.downloadFile": await Workspace(args).DownloadFileAsync(String(args, "url"), String(args, "relativePath"), args.TryGetProperty("sha1", out var sha1) ? sha1.GetString() : null, ct).ConfigureAwait(false); return true;
++            case "workspace.runJavaInstaller": return await Workspace(args).RunJavaInstallerAsync(String(args, "relativeJar"), args.GetProperty("arguments").Deserialize<ImmutableArray<string>>(Json), ct).ConfigureAwait(false);
++            case "auth.authorize":
++                if (!_brokers.TryGetValue(String(args, "brokerId"), out var broker)) throw new PluginOperationException("InvalidBroker", "登录代理已失效。");
++                return await broker.AuthorizeAsync(args.GetProperty("request").Deserialize<PluginLoginRequest>(Json)!, ct).ConfigureAwait(false);
++            default: throw new PluginOperationException("UnknownMethod", "未开放的插件方法。");
++        }
++    }
++    private PluginInstallWorkspace Workspace(JsonElement args) => _workspaces.TryGetValue(String(args, "workspaceId"), out var workspace)
++        ? workspace : throw new PluginOperationException("InvalidWorkspace", "安装工作区已失效。");
++    private static bool Remove(IDisposable handle) { handle.Dispose(); return true; }
++    private IDisposable SubscribeEvent<T>(string id) where T : PluginNotification => _context.Events.Subscribe<T>((notification, ct) => SendEventAsync(id, notification, ct));
++    private async ValueTask SendEventAsync(string subscriptionId, object notification, CancellationToken ct)
++        => await WriteAsync(new { protocol = 1, kind = "event", subscriptionId, @event = notification.GetType().Name, payload = notification }, ct).ConfigureAwait(false);
++    private async ValueTask<T> RemoteAsync<T>(string callbackId, object? payload, CancellationToken ct)
++    {
++        var id = "host-" + Interlocked.Increment(ref _counter).ToString(System.Globalization.CultureInfo.InvariantCulture);
++        var completion = new TaskCompletionSource<JsonElement>(TaskCreationOptions.RunContinuationsAsynchronously); _pending[id] = completion;
++        using var stop = CancellationTokenSource.CreateLinkedTokenSource(ct, _stop.Token);
++        try
++        {
++            await WriteAsync(new { protocol = 1, kind = "request", id, method = "callbacks.invoke", @params = new { callbackId, payload } }, stop.Token).ConfigureAwait(false);
++            var result = await completion.Task.WaitAsync(stop.Token).ConfigureAwait(false);
++            return result.Deserialize<T>(Json)!;
++        }
++        finally { _pending.TryRemove(id, out _); }
++    }
++    private FrameworkElement DeclarativeContent(JsonElement content)
++    {
++        if (content.ValueKind != JsonValueKind.Array || content.GetArrayLength() > 64) throw new PluginOperationException("InvalidUi", "页面内容必须是最多 64 项的数组。");
++        var panel = new StackPanel { Margin = new Thickness(20) };
++        foreach (var node in content.EnumerateArray())
++        {
++            var text = _context.Host.Safe(String(node, "text"));
++            if (String(node, "type") == "text") panel.Children.Add(new TextBlock { Text = text, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 4, 0, 8) });
++            else if (String(node, "type") == "button")
++            {
++                var callbackId = String(node, "callbackId"); var button = new Button { Content = text, HorizontalAlignment = HorizontalAlignment.Left, Margin = new Thickness(0, 4, 0, 8) };
++                button.Click += async (_, _) =>
++                {
++                    try { await _context.Callbacks.InvokeAsync(PluginPermissionNames.UiNavigation, "PipeUiButton", token => RemoteAsync<bool>(callbackId, null, token), _context.Host.CallbackTimeout, _context.Stopping); }
++                    catch (OperationCanceledException) { }
++                };
++                panel.Children.Add(button);
++            }
++            else throw new PluginOperationException("InvalidUi", "EXE 页面仅支持 text 和 button。");
++        }
++        return panel;
++    }
++    public void Dispose()
++    {
++        if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
++        _stop.Cancel(); _pipe.Dispose();
++        foreach (var pending in _pending.Values) pending.TrySetCanceled(); _pending.Clear();
++        foreach (var registration in _registrations.Values) try { registration.Dispose(); } catch (Exception ex) { _context.Log("PipeCleanupFailed: " + ex.GetType().Name); }
++        _registrations.Clear(); _workspaces.Clear(); _brokers.Clear();
++    }
++    private sealed class RemoteProviders : IPluginDownloadProvider, IPluginModProvider, IPluginLoaderInstaller, IPluginLoginProvider
++    {
++        private readonly PluginPipeSession _session; private readonly ImmutableDictionary<string, string> _callbacks;
++        internal RemoteProviders(PluginPipeSession session, ImmutableDictionary<string, string> callbacks) { _session = session; _callbacks = callbacks; }
++        private ValueTask<T> Call<T>(string method, object? payload, CancellationToken ct) => _callbacks.TryGetValue(method, out var id)
++            ? _session.RemoteAsync<T>(id, payload, ct) : throw new PluginOperationException("MissingCallback", "EXE 提供者缺少回调：" + method);
++        public ValueTask<PluginVersionManifest> GetManifestAsync(CancellationToken ct) => Call<PluginVersionManifest>("getManifest", null, ct);
++        public ValueTask<string?> ResolveFileAsync(PluginFileRequest request, CancellationToken ct) => Call<string?>("resolveFile", request, ct);
++        public ValueTask<PluginModSearchResult> SearchAsync(PluginModQuery query, CancellationToken ct) => Call<PluginModSearchResult>("search", query, ct);
++        public ValueTask<PluginModProject?> GetDetailsAsync(string projectId, CancellationToken ct) => Call<PluginModProject?>("getDetails", new { projectId }, ct);
++        public ValueTask<ImmutableArray<PluginModFile>> GetFilesAsync(string projectId, string? gameVersion, string? loader, CancellationToken ct)
++            => Call<ImmutableArray<PluginModFile>>("getFiles", new { projectId, gameVersion, loader }, ct);
++        public ValueTask<ImmutableArray<PluginLoaderBuild>> GetBuildsAsync(string minecraftVersion, CancellationToken ct) => Call<ImmutableArray<PluginLoaderBuild>>("getBuilds", new { minecraftVersion }, ct);
++        public async ValueTask InstallAsync(PluginInstallWorkspace workspace, PluginLoaderInstallRequest request, CancellationToken ct)
++        {
++            var id = Guid.NewGuid().ToString("N"); _session._workspaces[id] = workspace;
++            try { await Call<bool>("install", new { workspaceId = id, request }, ct); }
++            finally { _session._workspaces.TryRemove(id, out _); }
++        }
++        public async ValueTask<PluginLoginTicket?> LoginAsync(PluginLoginBroker broker, CancellationToken ct)
++        {
++            var id = Guid.NewGuid().ToString("N"); _session._brokers[id] = broker;
++            try { return await Call<PluginLoginTicket?>("login", new { brokerId = id }, ct); }
++            finally { _session._brokers.TryRemove(id, out _); }
++        }
++    }
++}
+diff --git a/Services/Plugins/PluginProviderService.cs b/Services/Plugins/PluginProviderService.cs
+--- a/Services/Plugins/PluginProviderService.cs
++++ b/Services/Plugins/PluginProviderService.cs
+@@ -106,9 +106,9 @@
+         var revision = Interlocked.Read(ref entry.Context.AuthorizationRevision);
+         var result = await entry.Context.Callbacks.InvokeAsync(entry.Permission, "Provider:" + entry.Info.Kind,
+             callback, timeout ?? TimeSpan.FromSeconds(15), ct).ConfigureAwait(false);
+-        if (!result.Success || result.Value == null || revision != Interlocked.Read(ref entry.Context.AuthorizationRevision) || !Usable(entry))
++        if (!result.Success || revision != Interlocked.Read(ref entry.Context.AuthorizationRevision) || !Usable(entry))
+             throw new PluginOperationException("ProviderFailed", "插件提供者未完成操作；可以切换回内置来源。");
+-        return result.Value;
++        return result.Value!;
+     }
+     internal static async Task<PluginVersionManifest?> GetSelectedManifestAsync(CancellationToken ct)
+     {
+diff --git a/Views/MainWindow.PluginCommands.cs b/Views/MainWindow.PluginCommands.cs
+--- /dev/null
++++ b/Views/MainWindow.PluginCommands.cs
+@@ -0,0 +1,42 @@
++using System.IO;
++using System.Text.Json;
++using XCL2.App.Services;
++using XCL2.App.Services.Plugins;
++
++namespace XCL2.App.Views;
++
++public partial class MainWindow
++{
++    private TaskCompletionSource<LauncherCommandResult>? _startupLaunchResult;
++    private async Task ExecuteStructuredStartupAsync(CommandLineService.ParsedArgs args)
++    {
++        var path = args.ResultFile ?? Path.Combine(Environment.CurrentDirectory, "xcl2-result.json");
++        try
++        {
++            if (args.ListInstances || args.ListAccounts)
++            {
++                var host = PluginHostBridge.Current ?? throw new PluginHostUnavailableException();
++                object data;
++                if (args.ListInstances && args.ListAccounts)
++                    data = new { instances = await host.GetInstancesAsync(new(true), CancellationToken.None), accounts = await host.GetAccountsAsync(CancellationToken.None) };
++                else if (args.ListInstances) data = await host.GetInstancesAsync(new(true), CancellationToken.None);
++                else data = await host.GetAccountsAsync(CancellationToken.None);
++                await LauncherCommandResultWriter.WriteAsync(path, new(1, "query", "Completed", "Ok", Data: JsonSerializer.SerializeToElement(data, PluginPipeSession.Json)));
++                return;
++            }
++            if (args.LaunchGame)
++            {
++                if (args.ResultFile == null) { ApplyStartupLaunch(args.AccountName, args.InstanceName); return; }
++                var completion = new TaskCompletionSource<LauncherCommandResult>(TaskCreationOptions.RunContinuationsAsynchronously);
++                ApplyStartupLaunch(args.AccountName, args.InstanceName, completion);
++                await LauncherCommandResultWriter.WriteAsync(path, await completion.Task);
++            }
++        }
++        catch (Exception ex)
++        {
++            LauncherLogService.AppendLine("[Automation] ResultFailed: " + ex.GetType().Name);
++            try { await LauncherCommandResultWriter.WriteAsync(path, new(1, "automation", "Failed", ex is PluginOperationException operation ? operation.Code : "OperationFailed")); }
++            catch (Exception writeError) { LauncherLogService.AppendLine("[Automation] ResultWriteFailed: " + writeError.GetType().Name); }
++        }
++    }
++}
+diff --git a/Views/MainWindow.xaml.cs b/Views/MainWindow.xaml.cs
+--- a/Views/MainWindow.xaml.cs
++++ b/Views/MainWindow.xaml.cs
+@@ -1937,6 +1937,7 @@
+     {
+         try
+         {
++            if (args.ListInstances || args.ListAccounts) { _ = ExecuteStructuredStartupAsync(args); return; }
+             // 更新完成自动重启回来的这一次：弹一次"这次更新了什么"，跟下面 EnterGuestMode/
+             // LaunchGame 等命令行动作互不冲突，所以不 return，走完继续往下判断其它参数。
+             if (args.JustUpdated && ConfigService.Config.ShowUpdateChangelogPopup)
+@@ -1952,7 +1953,7 @@
+ 
+             if (args.LaunchGame)
+             {
+-                ApplyStartupLaunch(args.AccountName, args.InstanceName);
++                _ = ExecuteStructuredStartupAsync(args);
+                 return;
+             }
+ 
+@@ -2004,11 +2005,12 @@
+     /// 任意一个没找到都只弹提示、不启动，避免"名字打错了却启动了别的账户/版本"这种
+     /// 更危险的静默兜底行为。
+     /// </summary>
+-    private void ApplyStartupLaunch(string? accountName, string? instanceName)
++    private void ApplyStartupLaunch(string? accountName, string? instanceName, TaskCompletionSource<LauncherCommandResult>? result = null)
+     {
+         if (string.IsNullOrWhiteSpace(accountName) || string.IsNullOrWhiteSpace(instanceName))
+         {
+             ToastService.ShowWarning("命令行 -r 启动需要同时指定 --账户名 和 --实例名称，本次启动已跳过。");
++            result?.TrySetResult(new(1, "launch", "NotStarted", "MissingArguments"));
+             return;
+         }
+ 
+@@ -2017,6 +2019,7 @@
+         if (account == null)
+         {
+             ToastService.ShowWarning($"未找到账户「{accountName}」，命令行启动已取消。");
++            result?.TrySetResult(new(1, "launch", "NotStarted", "AccountNotFound"));
+             return;
+         }
+ 
+@@ -2027,15 +2030,20 @@
+         if (!instanceExists)
+         {
+             ToastService.ShowWarning($"未找到实例「{instanceName}」，命令行启动已取消。");
++            result?.TrySetResult(new(1, "launch", "NotStarted", "InstanceNotFound"));
+             return;
+         }
+ 
+         ConfigService.SelectAccount(account.Id);
++        ConfigService.Config.SelectedFolderPath = folder!.Path;
+         ConfigService.Config.SelectedVersionId = instanceName;
+         ConfigService.Save();
+         RefreshSidebar();
+ 
++        _startupLaunchResult = result;
+         Launch_Click(this, new RoutedEventArgs());
++        if (ReferenceEquals(_startupLaunchResult, result) && result != null)
++        { _startupLaunchResult = null; result.TrySetResult(new(1, "launch", "NotStarted", "Busy")); }
+     }
+ 
+     /// <summary>
+@@ -3055,6 +3063,9 @@
+     /// </summary>
+     private async Task LaunchInternalAsync(object sender, RoutedEventArgs e, bool skipAccountConfirm = false, CancellationToken cancelToken = default)
+     {
++        var commandResult = _startupLaunchResult; _startupLaunchResult = null;
++        try
++        {
+         var cfg = ConfigService.Config;
+         var account = ConfigService.GetSelectedAccount();
+         var folder = cfg.Folders.FirstOrDefault(f => f.Path == cfg.SelectedFolderPath);
+@@ -3706,6 +3717,8 @@
+                 }
+             }
+             ProcessManager.Register(processInfo);
++            commandResult?.TrySetResult(new(1, "launch", "Started", "ProcessCreated", processInfo.Process.Id,
++                Services.Plugins.PluginHostBridge.InstanceId(options.MinecraftDir, options.VersionId), account.Id));
+ 
+             // 触屏模式：等游戏窗口出现后贴上虚拟按键悬浮层（内部异步等待，不阻塞这里）。
+             // 纯附加功能，失败只写日志，绝不影响游戏本身运行。见 Services/TouchOverlayService.cs。
+@@ -3871,10 +3884,12 @@
+         }
+         catch (Services.Plugins.PluginFlowCanceledException canceled)
+         {
++            commandResult?.TrySetResult(new(1, "launch", "Canceled", canceled.Code));
+             MessageBoxDialog.ShowInfo(canceled.SafeMessage, Loc.T("Str_Plugin_Canceled", "插件取消了操作"));
+         }
+         catch (Exception ex)
+         {
++            commandResult?.TrySetResult(new(1, "launch", "Failed", ex is Services.Plugins.PluginOperationException operation ? operation.Code : "LaunchFailed"));
+             ErrorPresenter.ShowFriendlyError(Loc.T("Str_Cs_Launch_Failed_Check_That_Java_And_The_Ga", "启动失败，请检查 Java、游戏文件是否完整，或查看「日志」页面获取更多信息。"), $"[启动失败] {ex}", "启动失败");
+         }
+         finally
+@@ -3883,6 +3898,8 @@
+             // 不能让"等待游戏窗口出现…"这行字永久挂在侧边栏上。
+             HideLaunchStatus();
+         }
++        }
++        finally { commandResult?.TrySetResult(new(1, "launch", "NotStarted", "CanceledOrDeclined")); }
+     }
+ 
+     /// <summary>游戏已经进入运行阶段后，安装唯一的长期退出监视。
+diff --git a/Views/PluginManagerDialog.xaml.cs b/Views/PluginManagerDialog.xaml.cs
+--- a/Views/PluginManagerDialog.xaml.cs
++++ b/Views/PluginManagerDialog.xaml.cs
+@@ -121,7 +121,7 @@
+             Content = "配置",
+             Padding = new Thickness(10, 3, 10, 3),
+             Margin = new Thickness(12, 0, 0, 0),
+-            IsEnabled = info.LoadError == null && info.Plugin != null && info.Context?.Permissions.Has(PluginPermissionNames.UiBasic) == true,
++            IsEnabled = info.LoadError == null && (info.Plugin != null || info.IsExecutable) && info.Context?.Permissions.Has(PluginPermissionNames.UiBasic) == true,
+             VerticalAlignment = VerticalAlignment.Center
+         };
+         configButton.Click += (_, _) => OpenSettings(info);
+@@ -211,12 +211,12 @@
+     /// 该插件已保存配置项的只读 JSON 预览，至少让用户知道现在存了什么。</summary>
+     private void OpenSettings(LoadedPluginInfo info)
+     {
+-        if (info.Plugin == null) return;
++        if (info.Plugin == null && !info.IsExecutable) return;
+ 
+         UserControl? panel = null;
+         if (info.Context != null)
+         {
+-            try { info.Context.Permissions.Demand(PluginPermissionNames.UiBasic); panel = info.Plugin.CreateSettingsPanel(info.Context); }
++            try { info.Context.Permissions.Demand(PluginPermissionNames.UiBasic); panel = info.Plugin?.CreateSettingsPanel(info.Context); }
+             catch (Exception ex)
+             {
+                 panel = new TextBlock { Text = $"插件生成配置面板时抛出异常：{ex.Message}", TextWrapping = TextWrapping.Wrap }
+@@ -229,9 +229,9 @@
+         if (info.Context != null)
+         {
+             using var combined = new PluginSettingsContent(panel, info.Context.Ui);
+-            new PluginSettingsHostDialog($"{info.Plugin.DisplayName} · 配置", combined).ShowDialog();
+-        }
+-        else new PluginSettingsHostDialog($"{info.Plugin.DisplayName} · 配置", panel).ShowDialog();
++            new PluginSettingsHostDialog($"{info.Metadata?.Name ?? info.Plugin?.DisplayName ?? Path.GetFileName(info.FilePath)} · 配置", combined).ShowDialog();
++        }
++        else new PluginSettingsHostDialog($"{info.Metadata?.Name ?? info.Plugin?.DisplayName ?? Path.GetFileName(info.FilePath)} · 配置", panel).ShowDialog();
+     }
+ 
+     private UserControl BuildFallbackConfigPreview(LoadedPluginInfo info)

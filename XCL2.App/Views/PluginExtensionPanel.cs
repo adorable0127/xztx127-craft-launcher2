@@ -67,7 +67,7 @@ internal sealed class PluginExtensionPanel : UserControl, IDisposable
             _building = false;
             // 控件工厂可能新增注册项，下一轮 UI 消息再刷新，避免递归重建。
             if (!_disposed && IsLoaded && _revision != PluginUiRegistry.Revision)
-                Dispatcher.BeginInvoke(new Action(Refresh));
+                _ = Dispatcher.BeginInvoke(new Action(Refresh));
         }
     }
 

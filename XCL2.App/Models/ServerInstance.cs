@@ -1,4 +1,4 @@
-﻿namespace XCL2.App.Models;
+namespace XCL2.App.Models;
 
 /// <summary>
 /// 一个已创建的服务器实例的持久化配置。对应清单里"一键开服"的各项可选项：
@@ -86,9 +86,13 @@ public class ServerInstance
     /// <summary>
     /// 局域网/公网连接端口，读自服务端目录下 server.properties 的 server-port 字段（默认 25565）。
     /// 每次刷新服务器列表/启动完成后由 ServerConnectionInfo.Resolve 重新解析并回填，
-    /// 不由用户手动填写——server-port 才是权威来源，手填容易和 server.properties 实际值不一致。
+    /// 创建/设置中可自定义，保存和启动避让同步写入核心配置；配置文件仍为权威来源。
     /// </summary>
     public int? ServerPort { get; set; }
+
+    /// <summary>端口被占用/冲突时是否自动换到下一个可用端口（默认 true，保持旧行为）。
+    /// 关闭后严格使用用户设置的端口：被占用则创建/保存/启动时明确报错，不再悄悄改号。</summary>
+    public bool AutoAvoidPort { get; set; } = true;
 
     public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
 }

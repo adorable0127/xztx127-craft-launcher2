@@ -20,6 +20,8 @@ public class ServerProcessManager
 {
     public ObservableCollection<ServerProcessInfo> Processes { get; } = new();
     public event Action? Changed;
+    public Func<IEnumerable<ServerInstance>>? InstanceProvider { get; set; }
+    private static readonly object LaunchGate = new();
 
     // 记录每个实例对应的 Job Object 句柄，进程退出时释放，避免句柄泄漏
     private readonly Dictionary<string, IntPtr> _jobHandles = new();
@@ -29,6 +31,11 @@ public class ServerProcessManager
     /// 同一个实例不允许重复启动——先检查 Processes 里是否已有该实例且仍在运行。
     /// </summary>
     public ServerProcessInfo Start(ServerInstance instance)
+    {
+        lock (LaunchGate) return StartCore(instance);
+    }
+
+    private ServerProcessInfo StartCore(ServerInstance instance)
     {
         if (Processes.Any(p => p.InstanceId == instance.Id && !p.HasExited))
             throw new InvalidOperationException($"服务器「{instance.DisplayName}」已经在运行中，不能重复启动。");
@@ -104,6 +111,12 @@ public class ServerProcessManager
         // 提前处理好，避免用户第一次点"一键开服"就迷惑于"为什么点了立刻自己退出了"。
         EnsureEulaAccepted(instance.Directory);
 
+        var previousPort = ServerPortService.ReadPort(instance);
+        var assignment = ServerPortService.PrepareForStart(instance,
+            InstanceProvider?.Invoke() ?? new[] { instance }, Processes);
+        if (previousPort != assignment.GamePort)
+            LauncherLogService.AppendLine($"[服务器] 「{instance.DisplayName}」端口 {previousPort} 已占用或被其他服务器配置，改用 {assignment.GamePort}。");
+
         var process = new Process { StartInfo = psi, EnableRaisingEvents = true };
         process.Start();
 
@@ -114,7 +127,7 @@ public class ServerProcessManager
             if (job != IntPtr.Zero) _jobHandles[instance.Id] = job;
         }
 
-        var info = new ServerProcessInfo(process, instance.Id, instance.DisplayName);
+        var info = new ServerProcessInfo(process, instance.Id, instance.DisplayName, assignment.GamePort, assignment.Ports);
         info.BeginReadOutput();
 
         process.Exited += (_, _) =>

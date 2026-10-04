@@ -1,0 +1,666 @@
+diff --git a/Services/ClientLoaderInstallService.cs b/Services/ClientLoaderInstallService.cs
+--- a/Services/ClientLoaderInstallService.cs
++++ b/Services/ClientLoaderInstallService.cs
+@@ -720,7 +720,7 @@
+                         apiProgress, saveName: null, ct);
+                 }
+             }
+-            catch (Exception ex) when (ex is not OperationCanceledException)
++            catch (Exception ex) when (ex is not OperationCanceledException and not Plugins.PluginFlowCanceledException)
+             {
+                 // 同上：Fabric API 下载失败不应该让整个安装抛异常，只在进度里提示一下，
+                 // 让用户知道"loader 装好了，但 Fabric API 这一步没成功"，而不是笼统地报"安装失败"。
+@@ -865,7 +865,7 @@
+                         qslProgress, saveName: null, ct);
+                 }
+             }
+-            catch (Exception ex) when (ex is not OperationCanceledException)
++            catch (Exception ex) when (ex is not OperationCanceledException and not Plugins.PluginFlowCanceledException)
+             {
+                 // 同上：QSL 下载失败不应该让整个安装抛异常，只在进度里提示一下，
+                 // 让用户知道"loader 装好了，但 QSL 这一步没成功"，而不是笼统地报"安装失败"。
+@@ -1481,7 +1481,8 @@
+                 attemptCts.CancelAfter(SingleAttemptTimeout);
+                 try
+                 {
+-                    using (var resp = await _http.GetAsync(candidateUrl, HttpCompletionOption.ResponseHeadersRead, attemptCts.Token))
++                    var resolved = await Plugins.PluginInterceptionRegistry.PrepareDownloadAsync(candidateUrl, Path.GetFileName(destPath), null, ct);
++                    using (var resp = await _http.GetAsync(resolved, HttpCompletionOption.ResponseHeadersRead, attemptCts.Token))
+                     {
+                         resp.EnsureSuccessStatusCode();
+                         await using var fs = File.Create(tmp);
+@@ -1504,7 +1505,7 @@
+                         $"下载单次尝试超时（{SingleAttemptTimeout.TotalSeconds:0}秒内无响应）: {candidateUrl}");
+                     TryDelete(tmp);
+                 }
+-                catch (Exception ex) when (ex is not OperationCanceledException)
++                catch (Exception ex) when (ex is not OperationCanceledException and not Plugins.PluginFlowCanceledException)
+                 {
+                     lastError = ex;
+                     TryDelete(tmp);
+diff --git a/Services/CurseForgeService.cs b/Services/CurseForgeService.cs
+--- a/Services/CurseForgeService.cs
++++ b/Services/CurseForgeService.cs
+@@ -151,12 +151,13 @@
+         {
+             try
+             {
+-                var resp = await _http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, ct);
++                var resolved = await Plugins.PluginInterceptionRegistry.PrepareDownloadAsync(url, file.FileName, null, ct);
++                var resp = await _http.GetAsync(resolved, HttpCompletionOption.ResponseHeadersRead, ct);
+                 if (resp.IsSuccessStatusCode) return resp;
+                 resp.Dispose();
+                 lastError = new HttpRequestException($"HTTP {(int)resp.StatusCode}来自 {url}");
+             }
+-            catch (Exception ex) when (ex is not OperationCanceledException)
++            catch (Exception ex) when (ex is not OperationCanceledException and not Plugins.PluginFlowCanceledException)
+             {
+                 lastError = ex;
+             }
+diff --git a/Services/DownloadEndpoints.cs b/Services/DownloadEndpoints.cs
+--- a/Services/DownloadEndpoints.cs
++++ b/Services/DownloadEndpoints.cs
+@@ -235,12 +235,13 @@
+         {
+             try
+             {
+-                var result = await http.GetStringAsync(url, ct);
++                var resolved = await Plugins.PluginInterceptionRegistry.PrepareDownloadAsync(url, "metadata.json", null, ct);
++                var result = await http.GetStringAsync(resolved, ct);
+                 ReportSuccess(url);
+                 return result;
+             }
+             catch (OperationCanceledException) { throw; }
+-            catch (Exception ex)
++            catch (Exception ex) when (ex is not Plugins.PluginFlowCanceledException)
+             {
+                 ReportFailure(url);
+                 lastError = ex;
+@@ -273,7 +274,8 @@
+             var tmpPath = destPath + ".fbpart";
+             try
+             {
+-                using var resp = await http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, ct);
++                var resolved = await Plugins.PluginInterceptionRegistry.PrepareDownloadAsync(url, Path.GetFileName(destPath), null, ct);
++                using var resp = await http.GetAsync(resolved, HttpCompletionOption.ResponseHeadersRead, ct);
+                 resp.EnsureSuccessStatusCode();
+ 
+                 var total = resp.Content.Headers.ContentLength ?? 0;
+@@ -302,7 +304,7 @@
+                 return destPath;
+             }
+             catch (OperationCanceledException) { throw; }
+-            catch (Exception ex)
++            catch (Exception ex) when (ex is not Plugins.PluginFlowCanceledException)
+             {
+                 ReportFailure(url);
+                 lastError = ex;
+diff --git a/Services/DownloadService.cs b/Services/DownloadService.cs
+--- a/Services/DownloadService.cs
++++ b/Services/DownloadService.cs
+@@ -152,6 +152,8 @@
+         IProgress<ProgressInfo>? progress, CancellationToken ct = default)
+     {
+         var versionDir = Path.Combine(minecraftDir, "versions", entry.Id);
++        var isNewInstance = !Directory.Exists(versionDir);
++        if (isNewInstance) await Plugins.PluginInterceptionRegistry.ValidateInstanceAsync(minecraftDir, entry.Id, "vanilla", ct);
+         Directory.CreateDirectory(versionDir);
+ 
+         // 1. version json
+@@ -198,6 +200,7 @@
+         }
+ 
+         progress?.Report(new ProgressInfo(Loc.T("Str_Cs_Installation_Complete", "安装完成"), 1, 1, entry.Id));
++        if (isNewInstance) Plugins.PluginHostBridge.Current?.NotifyInstanceCreated(minecraftDir, entry.Id);
+     }
+ 
+     /// <summary>
+@@ -397,7 +400,7 @@
+                 progress?.Report(new ProgressInfo("解压原生库", done, total, entry.Name));
+             }
+         }
+-        catch (Exception ex)
++        catch (Exception ex) when (ex is not Plugins.PluginFlowCanceledException)
+         {
+             ErrorPresenter.LogFallback($"解压 native 库失败，已跳过：{jarPath}", ex);
+         }
+@@ -478,7 +481,7 @@
+                 {
+                     throw;   // 用户真的取消了整个安装，直接往上抛
+                 }
+-                catch (Exception ex)
++                catch (Exception ex) when (ex is not Plugins.PluginFlowCanceledException)
+                 {
+                     lastError = ex;
+                     DownloadEndpoints.ReportFailure(candidate);
+@@ -512,13 +515,14 @@
+     private async Task DownloadFromSingleUrlAsync(string url, string destPath, string expectedSha1,
+         bool allowResume, CancellationToken ct)
+     {
++        url = await Plugins.PluginInterceptionRegistry.PrepareDownloadAsync(url, Path.GetFileName(destPath), expectedSha1, ct);
+         var part = destPath + ".part";
+ 
+         long existing = 0;
+         if (allowResume && File.Exists(part))
+         {
+             try { existing = new FileInfo(part).Length; }
+-            catch (Exception ex)
++            catch (Exception ex) when (ex is not Plugins.PluginFlowCanceledException)
+             {
+                 ErrorPresenter.LogFallback($"读取断点续传临时文件长度失败，已从头下载：{part}", ex);
+                 existing = 0;
+@@ -544,7 +548,7 @@
+                 acceptsRange = headResp.Headers.AcceptRanges.Contains("bytes");
+             }
+         }
+-        catch (Exception ex)
++        catch (Exception ex) when (ex is not Plugins.PluginFlowCanceledException)
+         {
+             // HEAD 失败不是致命问题（有些 CDN 不支持 HEAD），退回普通 GET 流程。
+             ErrorPresenter.LogFallback($"下载前 HEAD 探测失败，已退回普通 GET：{url}", ex);
+@@ -706,7 +710,7 @@
+                     {
+                         throw;   // 用户取消：不重试，直接往上抛
+                     }
+-                    catch (Exception ex)
++                    catch (Exception ex) when (ex is not Plugins.PluginFlowCanceledException)
+                     {
+                         chunkError = ex;
+                     }
+diff --git a/Services/FolderService.cs b/Services/FolderService.cs
+--- a/Services/FolderService.cs
++++ b/Services/FolderService.cs
+@@ -142,6 +142,16 @@
+     /// 就是一个已经能跑的现成实例。</summary>
+     public void ImportVersionFolder(string minecraftDir, string sourceFolder, string instanceName)
+     {
++        if (Plugins.PluginInterceptionRegistry.HasInstanceInterceptors) throw new Plugins.PluginOperationException("AsyncRequired", "请使用异步实例导入。");
++        ImportVersionFolderCore(minecraftDir, sourceFolder, instanceName);
++    }
++    public async Task ImportVersionFolderAsync(string minecraftDir, string sourceFolder, string instanceName, CancellationToken ct = default)
++    {
++        await Plugins.PluginInterceptionRegistry.ValidateInstanceAsync(minecraftDir, instanceName, "folder-import", ct);
++        await Task.Run(() => { ct.ThrowIfCancellationRequested(); ImportVersionFolderCore(minecraftDir, sourceFolder, instanceName); }, ct);
++    }
++    private void ImportVersionFolderCore(string minecraftDir, string sourceFolder, string instanceName)
++    {
+         var versionsDir = Path.Combine(minecraftDir, "versions");
+         Directory.CreateDirectory(versionsDir);
+         var targetDir = Path.Combine(versionsDir, instanceName);
+@@ -156,6 +166,16 @@
+     /// 也可能是"压缩包里包了一层文件夹再放版本 json"这两种常见打包方式），归拢进
+     /// &lt;minecraftDir&gt;/versions/&lt;instanceName&gt;。</summary>
+     public void ImportVersionZip(string minecraftDir, string zipPath, string instanceName)
++    {
++        if (Plugins.PluginInterceptionRegistry.HasInstanceInterceptors) throw new Plugins.PluginOperationException("AsyncRequired", "请使用异步实例导入。");
++        ImportVersionZipCore(minecraftDir, zipPath, instanceName);
++    }
++    public async Task ImportVersionZipAsync(string minecraftDir, string zipPath, string instanceName, CancellationToken ct = default)
++    {
++        await Plugins.PluginInterceptionRegistry.ValidateInstanceAsync(minecraftDir, instanceName, "zip-import", ct);
++        await Task.Run(() => { ct.ThrowIfCancellationRequested(); ImportVersionZipCore(minecraftDir, zipPath, instanceName); }, ct);
++    }
++    private void ImportVersionZipCore(string minecraftDir, string zipPath, string instanceName)
+     {
+         var versionsDir = Path.Combine(minecraftDir, "versions");
+         Directory.CreateDirectory(versionsDir);
+diff --git a/Services/GenericFileDownloadService.cs b/Services/GenericFileDownloadService.cs
+--- a/Services/GenericFileDownloadService.cs
++++ b/Services/GenericFileDownloadService.cs
+@@ -46,6 +46,7 @@
+                 fileName = $"download_{DateTime.Now:yyyyMMdd_HHmmss}";
+         }
+ 
++        url = await Plugins.PluginInterceptionRegistry.PrepareDownloadAsync(url, fileName, null, ct);
+         using var request = new HttpRequestMessage(HttpMethod.Get, url);
+         if (!string.IsNullOrWhiteSpace(userAgent))
+             request.Headers.TryAddWithoutValidation("User-Agent", userAgent);
+diff --git a/Services/LauncherService.Plugins.cs b/Services/LauncherService.Plugins.cs
+--- /dev/null
++++ b/Services/LauncherService.Plugins.cs
+@@ -0,0 +1,78 @@
++using System.Collections.Immutable;
++using XCL2.App.Services.Plugins;
++
++namespace XCL2.App.Services;
++
++public partial class LauncherService
++{
++    /// <summary>任何线程可调用；纯参数预览和插件回调完成后才允许导出脚本 / 启动进程。</summary>
++    public async Task PrepareLaunchAsync(LaunchOptions options, CancellationToken ct = default)
++    {
++        options.PreparedPluginLaunch = null;
++        options.PreparedPluginIdentity = null;
++        if (!PluginInterceptionRegistry.HasLaunchInterceptors) return;
++        var identity = LaunchIdentity(options);
++        var raw = await Task.Run(() => BuildArguments(options, preview: true).args, ct).ConfigureAwait(false);
++        var partition = PartitionArguments(raw);
++        var plan = new PluginLaunchPlan(Guid.NewGuid(), PluginHostBridge.InstanceId(options.MinecraftDir, options.VersionId),
++            partition.Jvm, partition.Game, ImmutableDictionary<string, string>.Empty.WithComparers(StringComparer.OrdinalIgnoreCase));
++        var chain = await PluginInterceptionRegistry.RunAsync(PluginPermissionNames.LaunchModify, plan,
++            (before, after) => before.OperationId == after.OperationId && before.InstanceId == after.InstanceId &&
++                PluginInterceptionRegistry.ValidArguments(after.JvmArguments, true) &&
++                PluginInterceptionRegistry.ValidArguments(after.GameArguments, false) &&
++                PluginInterceptionRegistry.ValidEnvironment(after.EnvironmentVariables), ct).ConfigureAwait(false);
++        ct.ThrowIfCancellationRequested();
++        if (identity != LaunchIdentity(options)) throw new PluginOperationException("LaunchChanged", "启动选项已变更，请重新准备启动。");
++        chain.Demand();
++        options.PreparedPluginLaunch = chain;
++        options.PreparedPluginIdentity = identity;
++    }
++    public async Task<Models.GameProcessInfo> LaunchAsync(LaunchOptions options, CancellationToken ct = default)
++    {
++        if (options.PreparedPluginLaunch == null) await PrepareLaunchAsync(options, ct).ConfigureAwait(false);
++        ct.ThrowIfCancellationRequested();
++        return Launch(options);
++    }
++    private static string LaunchIdentity(LaunchOptions options) => string.Join("\n", options.MinecraftDir, options.VersionId,
++        options.JavaPath, options.Account.Id, options.Account.Type, options.IsolateVersion, options.CustomJvmArgs);
++    private static void DemandPreparedLaunch(LaunchOptions options)
++    {
++        if (options.PreparedPluginLaunch == null)
++        {
++            if (PluginInterceptionRegistry.HasLaunchInterceptors)
++                throw new PluginOperationException("LaunchPreparationRequired", "请先异步准备启动参数。");
++            return;
++        }
++        options.PreparedPluginLaunch.Demand();
++        if (options.PreparedPluginIdentity != LaunchIdentity(options)) throw new PluginOperationException("LaunchChanged", "启动选项已变更，请重新准备启动。");
++    }
++    private sealed record Partition(ImmutableArray<string> Jvm, ImmutableArray<string> ProtectedJvm,
++        ImmutableArray<string> Entry, ImmutableArray<string> Game, ImmutableArray<string> ProtectedGame);
++    private static Partition PartitionArguments(List<string> arguments)
++    {
++        var cp = arguments.FindIndex(a => a == "-cp");
++        if (cp < 0 || cp + 2 >= arguments.Count) throw new PluginOperationException("InvalidLaunchLayout", "启动入口参数不完整。");
++        static (ImmutableArray<string> Public, ImmutableArray<string> Protected) Split(IEnumerable<string> values, bool jvm)
++        {
++            var tokens = values.ToArray(); var visible = ImmutableArray.CreateBuilder<string>(); var hidden = ImmutableArray.CreateBuilder<string>();
++            for (var i = 0; i < tokens.Length; i++)
++            {
++                var group = new List<string> { tokens[i] };
++                if (tokens[i].StartsWith('-') && !tokens[i].Contains('=') && i + 1 < tokens.Length && !tokens[i + 1].StartsWith('-')) group.Add(tokens[++i]);
++                var target = PluginInterceptionRegistry.ValidArguments(group.ToImmutableArray(), jvm) ? visible : hidden;
++                target.AddRange(group);
++            }
++            return (visible.ToImmutable(), hidden.ToImmutable());
++        }
++        var jvm = Split(arguments.Take(cp), true); var game = Split(arguments.Skip(cp + 3), false);
++        return new(jvm.Public, jvm.Protected, arguments.Skip(cp).Take(3).ToImmutableArray(), game.Public, game.Protected);
++    }
++    private static List<string> ApplyPluginLaunchPlan(LaunchOptions options, List<string> arguments)
++    {
++        if (options.PreparedPluginLaunch == null) return arguments;
++        var fixedArguments = PartitionArguments(arguments); var plan = options.PreparedPluginLaunch.Plan;
++        var result = new List<string>(); result.AddRange(plan.JvmArguments); result.AddRange(fixedArguments.ProtectedJvm);
++        result.AddRange(fixedArguments.Entry); result.AddRange(fixedArguments.ProtectedGame); result.AddRange(plan.GameArguments);
++        return result;
++    }
++}
+diff --git a/Services/LauncherService.cs b/Services/LauncherService.cs
+--- a/Services/LauncherService.cs
++++ b/Services/LauncherService.cs
+@@ -29,7 +29,7 @@
+     }
+ }
+ 
+-public class LauncherService
++public partial class LauncherService
+ {
+     public class LaunchOptions
+     {
+@@ -119,6 +119,8 @@
+         /// 传了也不会有任何效果，BuildArguments 内部会自动判断，不需要调用方关心版本号）。
+         /// </summary>
+         public string? AutoJoinServerAddress { get; set; }
++        internal Plugins.PluginChain<Plugins.PluginLaunchPlan>? PreparedPluginLaunch { get; set; }
++        internal string? PreparedPluginIdentity { get; set; }
+     }
+ 
+     /// <summary>
+@@ -435,7 +437,9 @@
+     /// <summary>启动游戏，返回封装了进程 + 实时输出缓冲的 GameProcessInfo，供进程管理/日志面板使用。</summary>
+     public GameProcessInfo Launch(LaunchOptions opts)
+     {
++        DemandPreparedLaunch(opts);
+         var (mainClass, args) = BuildArguments(opts); // 内部会设置 opts.EffectiveGameDir
++        args = ApplyPluginLaunchPlan(opts, args);
+ 
+         // 启动前执行命令：best-effort，失败只记录不阻断——见 LaunchOptions.PreLaunchCommand 上的注释。
+         if (!string.IsNullOrWhiteSpace(opts.PreLaunchCommand))
+@@ -471,6 +475,8 @@
+             StandardErrorEncoding = Encoding.UTF8
+         };
+         foreach (var a in args) psi.ArgumentList.Add(a);
++        if (opts.PreparedPluginLaunch != null)
++            foreach (var variable in opts.PreparedPluginLaunch.Plan.EnvironmentVariables) psi.Environment[variable.Key] = variable.Value;
+ 
+         // GPU 首选项必须在 javaw.exe 创建之前设置。Windows 图形设置按可执行文件路径保存
+         // GpuPreference；同时给子进程注入 SHIM_MCCOMPAT，兼容一部分 NVIDIA Optimus 机器。
+@@ -508,7 +514,9 @@
+     /// </summary>
+     public string ExportLaunchScript(LaunchOptions opts)
+     {
++        DemandPreparedLaunch(opts);
+         var (_, args) = BuildArguments(opts); // 内部会设置 opts.EffectiveGameDir
++        args = ApplyPluginLaunchPlan(opts, args);
+         var sb = new StringBuilder();
+         sb.AppendLine("@echo off");
+         sb.AppendLine("REM 由 XCL2 (xztx127-craft-launcher 2) 自动生成的启动脚本");
+@@ -755,7 +763,7 @@
+         catch { return false; }
+     }
+ 
+-    private (string mainClass, List<string> args) BuildArguments(LaunchOptions opts)
++    private (string mainClass, List<string> args) BuildArguments(LaunchOptions opts, bool preview = false)
+     {
+         var versionDir = Path.Combine(opts.MinecraftDir, "versions", opts.VersionId);
+ 
+@@ -763,7 +771,7 @@
+         // 文件夹下 (.minecraft/versions/<版本号>/)，不跟其他版本共用；关闭时则沿用旧行为，
+         // 所有版本共用 .minecraft 根目录下同一份 mods 等文件夹。
+         var gameDir = opts.IsolateVersion ? versionDir : opts.MinecraftDir;
+-        Directory.CreateDirectory(gameDir);
++        if (!preview) Directory.CreateDirectory(gameDir);
+         opts.EffectiveGameDir = gameDir;
+ 
+         // 写入游戏语言 + 跳过官方首次启动引导：Minecraft 客户端只认 <gameDir>/options.txt
+@@ -776,13 +784,13 @@
+         // 不受 lang 字段控制。参考 PCL 等主流第三方启动器的做法：预先生成一份"看起来已经
+         // 跑过一次"的 options.txt(onboardAccessibility:false + 一批配套的新手引导已完成
+         // 标记字段)，游戏检测到这些字段就会认为不是第一次启动，直接进主菜单，不再弹出引导页。
+-        if (!string.IsNullOrWhiteSpace(opts.GameLanguage))
++        if (!preview && !string.IsNullOrWhiteSpace(opts.GameLanguage))
+         {
+             try { ApplyGameLanguage(gameDir, opts.GameLanguage!); }
+             catch { /* options.txt 写入失败不应该阻止游戏启动，语言只是体验问题不是功能性问题 */ }
+         }
+ 
+-        if (!string.IsNullOrWhiteSpace(opts.GraphicsApiPreference))
++        if (!preview && !string.IsNullOrWhiteSpace(opts.GraphicsApiPreference))
+         {
+             try { ApplyGraphicsApiPreference(gameDir, opts.GraphicsApiPreference!); }
+             catch (Exception ex)
+diff --git a/Services/ModInstallService.cs b/Services/ModInstallService.cs
+--- a/Services/ModInstallService.cs
++++ b/Services/ModInstallService.cs
+@@ -76,6 +76,9 @@
+             }
+             File.Move(stagedNew, destination);
+             installed = true;
++            foreach (var old in moved.Where(item => !item.Original.Equals(destination, StringComparison.OrdinalIgnoreCase)))
++                Plugins.PluginHostBridge.Current?.NotifyModChange(old.Original, "removed");
++            Plugins.PluginHostBridge.Current?.NotifyModChange(destination, "installed");
+         }
+         catch
+         {
+diff --git a/Services/ModpackInstallService.cs b/Services/ModpackInstallService.cs
+--- a/Services/ModpackInstallService.cs
++++ b/Services/ModpackInstallService.cs
+@@ -186,6 +186,7 @@
+ 
+         var instanceId = MakeUniqueInstanceName(minecraftDir, instanceName);
+         var instanceDir = Path.Combine(minecraftDir, "versions", instanceId);
++        await Plugins.PluginInterceptionRegistry.ValidateInstanceAsync(minecraftDir, instanceId, "modpack", ct);
+ 
+         var createdDir = false;
+         try
+@@ -302,6 +303,7 @@
+                     new Progress<string>(msg => progress?.Report(new ProgressInfo(msg, 0, 1, ""))));
+             }
+ 
++            Plugins.PluginHostBridge.Current?.NotifyInstanceCreated(minecraftDir, instanceId);
+             return new InstallResult(instanceId, instanceDir, req.McVersion, req.Loader, failed);
+         }
+         catch
+diff --git a/Services/ModrinthService.cs b/Services/ModrinthService.cs
+--- a/Services/ModrinthService.cs
++++ b/Services/ModrinthService.cs
+@@ -233,7 +233,8 @@
+             var tmp = destPath + $".tmp{attempt}";
+             try
+             {
+-                using (var resp = await _http.GetAsync(file.Url, HttpCompletionOption.ResponseHeadersRead, ct))
++                var resolved = await Plugins.PluginInterceptionRegistry.PrepareDownloadAsync(file.Url, file.Filename, file.Hashes?.Sha1, ct);
++                using (var resp = await _http.GetAsync(resolved, HttpCompletionOption.ResponseHeadersRead, ct))
+                 {
+                     resp.EnsureSuccessStatusCode();
+                     await using var fs = File.Create(tmp);
+@@ -249,10 +250,11 @@
+ 
+                 if (File.Exists(destPath)) File.Delete(destPath);
+                 File.Move(tmp, destPath);
++                Plugins.PluginHostBridge.Current?.NotifyModChange(destPath, "installed");
+                 progress?.Report("下载完成");
+                 return destPath;
+             }
+-            catch (Exception ex) when (ex is not OperationCanceledException)
++            catch (Exception ex) when (ex is not OperationCanceledException and not Plugins.PluginFlowCanceledException)
+             {
+                 lastError = ex;
+                 TryDelete(tmp);
+diff --git a/Services/Plugins/PluginInterceptionService.cs b/Services/Plugins/PluginInterceptionService.cs
+--- /dev/null
++++ b/Services/Plugins/PluginInterceptionService.cs
+@@ -0,0 +1,145 @@
++using System.Collections.Immutable;
++using System.IO;
++using System.Text.RegularExpressions;
++
++namespace XCL2.App.Services.Plugins;
++
++public sealed record PluginLaunchPlan(Guid OperationId, string InstanceId, ImmutableArray<string> JvmArguments,
++    ImmutableArray<string> GameArguments, ImmutableDictionary<string, string> EnvironmentVariables);
++public sealed record PluginDownloadPlan(Guid OperationId, string Url, string FileName, string? ExpectedSha1);
++public sealed record PluginInstanceCreationPlan(Guid OperationId, string InstanceId, string Name, string Kind);
++public sealed record PluginInterception<T>(bool IsCanceled, string? Reason, T? Replacement)
++{
++    public static PluginInterception<T> Continue(T? replacement = default) => new(false, null, replacement);
++    public static PluginInterception<T> Cancel(string reason) => new(true, reason, default);
++}
++public sealed class PluginFlowCanceledException : PluginOperationException
++{
++    public string PluginId { get; }
++    public string Reason { get; }
++    internal PluginFlowCanceledException(string pluginId, string reason)
++        : base("CanceledByPlugin", Loc.F("Str_Plugin_FlowCanceled", "被插件 {0} 取消：{1}", pluginId, reason))
++    { PluginId = pluginId; Reason = reason; }
++}
++
++public sealed partial class PluginEventService
++{
++    public IDisposable InterceptLaunch(Func<PluginLaunchPlan, CancellationToken, ValueTask<PluginInterception<PluginLaunchPlan>>> callback)
++        => RegisterInterception(PluginPermissionNames.LaunchModify, callback);
++    public IDisposable InterceptDownload(Func<PluginDownloadPlan, CancellationToken, ValueTask<PluginInterception<PluginDownloadPlan>>> callback)
++        => RegisterInterception(PluginPermissionNames.DownloadIntercept, callback);
++    public IDisposable InterceptInstanceCreation(Func<PluginInstanceCreationPlan, CancellationToken, ValueTask<PluginInterception<PluginInstanceCreationPlan>>> callback)
++        => RegisterInterception(PluginPermissionNames.InstanceValidate, callback);
++    private IDisposable RegisterInterception<T>(string permission, Func<T, CancellationToken, ValueTask<PluginInterception<T>>> callback)
++    {
++        ArgumentNullException.ThrowIfNull(callback);
++        _ = _context.Host;
++        _context.Permissions.Demand(permission);
++        if (IsDisposed) throw new ObjectDisposedException(nameof(PluginEventService));
++        return _context.Track(PluginInterceptionRegistry.Register(this, _context, permission, callback));
++    }
++}
++
++internal sealed record PluginAuthorization(PluginContext Context, long Revision, string Permission)
++{
++    internal void Demand()
++    {
++        Context.Permissions.Demand(Permission);
++        if (Revision != Interlocked.Read(ref Context.AuthorizationRevision))
++            throw new PluginOperationException("AuthorizationChanged", "插件授权已变更，请重新执行此操作。");
++    }
++}
++internal sealed record PluginChain<T>(T Plan, ImmutableArray<PluginAuthorization> Authors)
++{
++    internal void Demand() { foreach (var author in Authors) author.Demand(); }
++}
++
++internal static class PluginInterceptionRegistry
++{
++    private sealed record Entry(long Order, PluginEventService Owner, PluginContext Context, string Permission, Delegate Callback);
++    private static readonly object Gate = new();
++    private static readonly List<Entry> Entries = new();
++    private static long _order;
++    internal static IDisposable Register(PluginEventService owner, PluginContext context, string permission, Delegate callback)
++    {
++        var entry = new Entry(Interlocked.Increment(ref _order), owner, context, permission, callback);
++        lock (Gate) Entries.Add(entry);
++        return new PluginRegistration(() => { lock (Gate) Entries.Remove(entry); });
++    }
++    private static Entry[] Snapshot(string permission)
++    {
++        lock (Gate) return Entries.Where(e => e.Permission == permission && !e.Owner.IsDisposed && e.Context.Permissions.Has(permission))
++            .OrderByDescending(e => e.Context.Metadata.Priority).ThenBy(e => e.Context.PluginId, StringComparer.Ordinal).ThenBy(e => e.Order).ToArray();
++    }
++    internal static bool HasLaunchInterceptors => Snapshot(PluginPermissionNames.LaunchModify).Length > 0;
++    internal static bool HasInstanceInterceptors => Snapshot(PluginPermissionNames.InstanceValidate).Length > 0;
++    internal static async Task<PluginChain<T>> RunAsync<T>(string permission, T plan, Func<T, T, bool> validate, CancellationToken ct)
++        where T : class
++    {
++        var authors = ImmutableArray.CreateBuilder<PluginAuthorization>();
++        foreach (var entry in Snapshot(permission))
++        {
++            ct.ThrowIfCancellationRequested();
++            var before = plan;
++            var revision = Interlocked.Read(ref entry.Context.AuthorizationRevision);
++            var result = await entry.Context.Callbacks.InvokeAsync(permission, "Intercept:" + typeof(T).Name,
++                token => ((Func<T, CancellationToken, ValueTask<PluginInterception<T>>>)entry.Callback)(before, token),
++                entry.Context.Host.CallbackTimeout, ct).ConfigureAwait(false);
++            if (!result.Success || result.Value == null) continue;
++            if (result.Value.IsCanceled)
++            {
++                var reason = entry.Context.Host.Safe(result.Value.Reason ?? Loc.T("Str_Plugin_NoReason", "未提供原因"));
++                if (reason.Length > 512) reason = reason[..512];
++                entry.Context.Log("InterventionCanceled: " + typeof(T).Name + "; " + reason);
++                throw new PluginFlowCanceledException(entry.Context.PluginId, reason);
++            }
++            if (result.Value.Replacement == null) continue;
++            if (!validate(before, result.Value.Replacement))
++            { entry.Context.Log("InterventionRejected: " + typeof(T).Name + "; InvalidPlan"); continue; }
++            plan = result.Value.Replacement;
++            authors.Add(new(entry.Context, revision, permission));
++            entry.Context.Log("InterventionApplied: " + typeof(T).Name + "; OperationRecorded");
++        }
++        return new(plan, authors.ToImmutable());
++    }
++
++    internal static async Task<string> PrepareDownloadAsync(string url, string fileName, string? sha1, CancellationToken ct)
++    {
++        // 有查询串、用户信息或已知凭据的地址不进入插件事件，防止签名 URL / 身份信息泄露。
++        if (!IsPublicUrl(url)) return url;
++        var plan = new PluginDownloadPlan(Guid.NewGuid(), url, Path.GetFileName(fileName), sha1);
++        var result = await RunAsync(PluginPermissionNames.DownloadIntercept, plan,
++            (before, after) => before.OperationId == after.OperationId && before.FileName == after.FileName &&
++                before.ExpectedSha1 == after.ExpectedSha1 && IsPublicUrl(after.Url), ct).ConfigureAwait(false);
++        result.Demand();
++        return result.Plan.Url;
++    }
++    internal static bool IsPublicUrl(string url) => Uri.TryCreate(url, UriKind.Absolute, out var uri) &&
++        uri.Scheme is "http" or "https" && uri.UserInfo.Length == 0 && uri.Query.Length == 0 && uri.Fragment.Length == 0 &&
++        (PluginHostBridge.Current == null || PluginHostBridge.Current.Safe(url) == url);
++    internal static async Task ValidateInstanceAsync(string root, string name, string kind, CancellationToken ct)
++    {
++        var plan = new PluginInstanceCreationPlan(Guid.NewGuid(), PluginHostBridge.InstanceId(root, name), name, kind);
++        var result = await RunAsync(PluginPermissionNames.InstanceValidate, plan, (before, after) => before == after, ct).ConfigureAwait(false);
++        result.Demand();
++    }
++    internal static bool ValidArguments(ImmutableArray<string> args, bool jvm)
++    {
++        if (args.IsDefault || args.Length > 4096) return false;
++        return args.All(a => a != null && a.Length <= 8192 && a.IndexOfAny(new[] { '\0', '\r', '\n' }) < 0 &&
++            (PluginHostBridge.Current == null || PluginHostBridge.Current.Safe(a) == a) &&
++            PluginArgumentSyntax.IsPublicArgument(a) && (!jvm || !a.StartsWith('@')) &&
++            !(jvm ? new[] { "-cp", "-classpath", "--class-path", "-jar", "-m", "--module" } : ProtectedGameKeys)
++                .Any(key => a.Equals(key, StringComparison.OrdinalIgnoreCase) || a.StartsWith(key + "=", StringComparison.OrdinalIgnoreCase)));
++    }
++    internal static readonly string[] ProtectedGameKeys = { "--username", "--version", "--gameDir", "--assetsDir", "--assetIndex", "--uuid", "--accessToken", "--userType", "--userProperties", "--profileProperties", "--clientId", "--xuid" };
++    internal static bool ValidEnvironment(ImmutableDictionary<string, string> values)
++    {
++        return values != null && values.Count <= 64 && values.All(pair =>
++            Regex.IsMatch(pair.Key, "\\A[A-Za-z_][A-Za-z0-9_]{0,127}\\z", RegexOptions.CultureInvariant) &&
++            PluginArgumentSyntax.IsPublicArgument(pair.Key) &&
++            !new[] { "JAVA_TOOL_OPTIONS", "JDK_JAVA_OPTIONS", "_JAVA_OPTIONS", "CLASSPATH", "PATH", "PATHEXT", "COMSPEC", "SYSTEMROOT", "WINDIR" }.Contains(pair.Key, StringComparer.OrdinalIgnoreCase) &&
++            pair.Value != null && pair.Value.Length <= 8192 && pair.Value.IndexOfAny(new[] { '\0', '\r', '\n' }) < 0 &&
++            (PluginHostBridge.Current == null || PluginHostBridge.Current.Safe(pair.Value) == pair.Value));
++    }
++}
+diff --git a/Services/Plugins/PluginMetadata.cs b/Services/Plugins/PluginMetadata.cs
+--- a/Services/Plugins/PluginMetadata.cs
++++ b/Services/Plugins/PluginMetadata.cs
+@@ -17,7 +17,7 @@
+ 
+ internal static class PluginApi
+ {
+-    internal static readonly Version Version = new(1, 5);
++    internal static readonly Version Version = new(1, 6);
+ }
+ 
+ internal sealed record PluginSemanticVersion(BigInteger Major, BigInteger Minor, BigInteger Patch, string[] Prerelease)
+diff --git a/Views/MainWindow.xaml.cs b/Views/MainWindow.xaml.cs
+--- a/Views/MainWindow.xaml.cs
++++ b/Views/MainWindow.xaml.cs
+@@ -3581,7 +3581,8 @@
+             // （之前 GBK 编码问题就是在这一步抛异常，导致下面的 Launch 根本没执行到）。
+             // MissingLibrariesException 在这里也可能抛出，但那是"下面 Launch() 也一定会
+             // 遇到的同一个问题"，不属于导出脚本独有的失败，放过它冒泡到下面统一处理。
+-            try { launcher.ExportLaunchScript(options); }
++            try { await launcher.PrepareLaunchAsync(options, cancelToken); launcher.ExportLaunchScript(options); }
++            catch (Services.Plugins.PluginFlowCanceledException) { throw; }
+             catch (MissingLibrariesException) { /* 留给下面 Launch() 统一处理 */ }
+             catch (Exception exportEx)
+             {
+@@ -3640,7 +3641,7 @@
+             GameProcessInfo processInfo;
+             try
+             {
+-                processInfo = launcher.Launch(options);
++                processInfo = await launcher.LaunchAsync(options, cancelToken);
+ 
+                 // Launch() 本身是同步阻塞调用（拼参数+起进程），中间没有 await 让出线程，
+                 // 理论上不会跟"点取消"这个 UI 事件真正并发；但保留这一步兜底检查——万一
+@@ -3692,7 +3693,8 @@
+                 }
+ 
+                 // 补库之后原地重试一次启动，不需要用户再点一次"启动游戏"按钮。
+-                processInfo = launcher.Launch(options);
++                options.PreparedPluginLaunch = null;
++                processInfo = await launcher.LaunchAsync(options, cancelToken);
+ 
+                 if (cancelToken.IsCancellationRequested)
+                 {
+@@ -3865,6 +3867,10 @@
+                 AttachGameExitMonitor(processInfo);
+             }
+         }
++        catch (Services.Plugins.PluginFlowCanceledException canceled)
++        {
++            MessageBoxDialog.ShowInfo(canceled.SafeMessage, Loc.T("Str_Plugin_Canceled", "插件取消了操作"));
++        }
+         catch (Exception ex)
+         {
+             ErrorPresenter.ShowFriendlyError(Loc.T("Str_Cs_Launch_Failed_Check_That_Java_And_The_Ga", "启动失败，请检查 Java、游戏文件是否完整，或查看「日志」页面获取更多信息。"), $"[启动失败] {ex}", "启动失败");
+diff --git a/Views/VersionSelectPage.xaml.cs b/Views/VersionSelectPage.xaml.cs
+--- a/Views/VersionSelectPage.xaml.cs
++++ b/Views/VersionSelectPage.xaml.cs
+@@ -339,7 +339,7 @@
+ 
+         try
+         {
+-            _folderService.ImportVersionFolder(folder.Path, sourceFolder, nameDialog.NewName);
++            await _folderService.ImportVersionFolderAsync(folder.Path, sourceFolder, nameDialog.NewName);
+             _owner.NotifyInstanceImported(folder.Path, nameDialog.NewName);
+             ToastService.ShowSuccess($"已导入实例「{nameDialog.NewName}」");
+         }
+@@ -377,7 +377,7 @@
+         pd.Show();
+         try
+         {
+-            _folderService.ImportVersionZip(folder.Path, pickDialog.FileName, nameDialog.NewName);
++            await _folderService.ImportVersionZipAsync(folder.Path, pickDialog.FileName, nameDialog.NewName);
+             _owner.NotifyInstanceImported(folder.Path, nameDialog.NewName);
+             ToastService.ShowSuccess($"已导入实例「{nameDialog.NewName}」");
+         }

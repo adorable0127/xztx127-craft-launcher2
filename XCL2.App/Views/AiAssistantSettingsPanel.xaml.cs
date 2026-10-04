@@ -31,8 +31,11 @@ public partial class AiAssistantSettingsPanel : UserControl, IOverlayDialog
         InitializeComponent();
         _currentConfig = currentConfig;
         CustomModelsList.ItemsSource = _customModels;
+        ExtraDirectoriesList.ItemsSource = _extraDirs;
         LoadConfig(currentConfig);
     }
+
+    private readonly ObservableCollection<string> _extraDirs = new();
 
     private void LoadConfig(AiAssistantConfig config)
     {
@@ -45,6 +48,16 @@ public partial class AiAssistantSettingsPanel : UserControl, IOverlayDialog
             BaseUrlBox.Text = config.BaseUrl;
             ApiKeyBox.Password = config.ApiKey;
             WorkingDirectoryBox.Text = config.WorkingDirectory ?? "";
+            _extraDirs.Clear();
+            foreach (var d in config.WorkingDirectories ?? new List<string>())
+                if (!string.IsNullOrWhiteSpace(d)) _extraDirs.Add(d);
+            FullAccessCheck.IsChecked = config.FullDiskAccess;
+            AbsoluteAccessCheck.IsChecked = config.FullDiskAccess && config.AbsoluteAccess;
+            AbsoluteAccessCheck.IsEnabled = config.FullDiskAccess;
+            UnrestrictedAccessCheck.IsChecked = config.FullDiskAccess && config.AbsoluteAccess && config.UnrestrictedAccess;
+            UnrestrictedAccessCheck.IsEnabled = config.FullDiskAccess && config.AbsoluteAccess;
+            SystemControlAccessCheck.IsChecked = config.FullDiskAccess && config.AbsoluteAccess && config.UnrestrictedAccess && config.SystemControlAccess;
+            SystemControlAccessCheck.IsEnabled = config.FullDiskAccess && config.AbsoluteAccess && config.UnrestrictedAccess;
 
             _customModels.Clear();
             foreach (var item in (config.CustomModels ?? new List<AiModelDefinition>())
@@ -69,6 +82,10 @@ public partial class AiAssistantSettingsPanel : UserControl, IOverlayDialog
             AllowCrashLogCheck.IsChecked = config.AllowCrashLogReading;
             ClearGuestHistoryCheck.IsChecked = config.ClearHistoryOnGuestSessionEnd;
             PrewarmOnOpenCheck.IsChecked = config.PrewarmSystemPromptOnOpen;
+            PersonaCombo.ItemsSource = AiPersonas.All;
+            PersonaCombo.SelectedValue = AiPersonas.Get(config.PersonaId).Id;
+            CustomSystemPromptBox.Text = config.CustomSystemPrompt ?? "";
+            UpdatePersonaHint();
             EnableDeepThinkingCheck.IsChecked = config.EnableDeepThinking;
             EnableWebSearchCheck.IsChecked = config.EnableWebSearch;
             TokenSaverCheck.IsChecked = config.TokenSaverMode;
@@ -134,6 +151,19 @@ public partial class AiAssistantSettingsPanel : UserControl, IOverlayDialog
     {
         if (_loading) return;
         RefreshTokenSaverAvailability();
+    }
+
+    private void PersonaCombo_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
+        => UpdatePersonaHint();
+
+    private void UpdatePersonaHint()
+    {
+        if (PersonaHintText == null) return;
+        var persona = AiPersonas.Get(PersonaCombo.SelectedValue as string);
+        PersonaHintText.Text = persona.Description;
+        // 只有选「其他」才显示自己的提示词输入区；固定控件尺寸，不改变窗口比例（外层 ScrollViewer 已限高）。
+        if (CustomPromptPanel != null)
+            CustomPromptPanel.Visibility = persona.Id == AiPersonas.Custom ? Visibility.Visible : Visibility.Collapsed;
     }
 
     private void TokenSaverCheck_CheckedChanged(object sender, RoutedEventArgs e)
@@ -412,6 +442,173 @@ public partial class AiAssistantSettingsPanel : UserControl, IOverlayDialog
             WorkingDirectoryBox.Text = dialog.FolderName;
     }
 
+    private void AddExtraDirectory_Click(object sender, RoutedEventArgs e)
+    {
+        var dialog = new OpenFolderDialog { Title = "添加 AI 可访问的目录" };
+        if (dialog.ShowDialog() != true) return;
+        var dir = dialog.FolderName;
+        if (string.IsNullOrWhiteSpace(dir)) return;
+        if (_extraDirs.Contains(dir, StringComparer.OrdinalIgnoreCase) ||
+            string.Equals(dir, WorkingDirectoryBox.Text.Trim(), StringComparison.OrdinalIgnoreCase))
+            return;
+        _extraDirs.Add(dir);
+    }
+
+    private void RemoveExtraDirectory_Click(object sender, RoutedEventArgs e)
+    {
+        if (ExtraDirectoriesList.SelectedItem is string selected) _extraDirs.Remove(selected);
+    }
+
+    /// <summary>开启完全访问：连续两次系统提示，任何一次取消都撤回勾选。</summary>
+    private void FullAccessCheck_Checked(object sender, RoutedEventArgs e)
+    {
+        if (_loading) return;
+
+        var first = MessageBoxDialog.ShowConfirm(
+            "你正在开启【完全访问】。\n\n开启后，AI 助手可以请求读取、列出甚至写入这台电脑上任意位置的文件，" +
+            "包括你的文档、桌面、下载目录等个人文件。\n\n文件内容会发送给 AI 服务（使用自定义 API 时发送到你配置的服务商）。" +
+            "请只在你信任当前所用模型与服务的情况下开启。\n\n是否继续？",
+            "系统提示 1/2：完全访问");
+        if (!first) { RevertFullAccessCheck(); return; }
+
+        var second = MessageBoxDialog.ShowDangerConfirm(
+            "最后确认（2/2）：\n\n· AI 可能误解指令，错误地覆盖或修改文件，且无法撤销；\n" +
+            "· 读取、列出文件不再逐次询问（会记入启动器日志）；每次写入仍会弹窗询问你，请认真看清路径再同意；\n" +
+            "· 系统目录（Windows、Program Files、ProgramData）始终禁止写入；\n" +
+            "· 你可以随时回到这里取消勾选以关闭完全访问。\n\n确定要开启完全访问吗？",
+            "系统提示 2/2：确认开启完全访问", "取消", "确认开启");
+        if (!second) { RevertFullAccessCheck(); return; }
+
+        AbsoluteAccessCheck.IsEnabled = true;
+    }
+
+    private void FullAccessCheck_Unchecked(object sender, RoutedEventArgs e)
+    {
+        // 关闭完全访问时，绝对访问一并关闭并禁用。
+        AbsoluteAccessCheck.IsChecked = false;
+        AbsoluteAccessCheck.IsEnabled = false;
+        UnrestrictedAccessCheck.IsChecked = false;
+        UnrestrictedAccessCheck.IsEnabled = false;
+        SystemControlAccessCheck.IsChecked = false;
+        SystemControlAccessCheck.IsEnabled = false;
+    }
+
+    /// <summary>开启绝对访问：连续两次系统提示，任何一次取消都撤回勾选。</summary>
+    private void AbsoluteAccessCheck_Checked(object sender, RoutedEventArgs e)
+    {
+        if (_loading) return;
+
+        var first = MessageBoxDialog.ShowConfirm(
+            "你正在开启【绝对访问】。\n\n开启后，AI 助手对电脑文件的列出、读取和写入将【不再弹出任何确认】，直接静默执行。\n\n" +
+            "这意味着：AI 一旦误解指令、或被文件里夹带的恶意文字诱导，就可能在你毫不知情的情况下覆盖、改坏你的文件，" +
+            "或把私人文件内容发给 AI 服务。\n\n是否继续？",
+            "系统提示 1/2：绝对访问");
+        if (!first) { RevertAbsoluteAccessCheck(); return; }
+
+        var second = MessageBoxDialog.ShowConfirm(
+            "最后确认（2/2）：\n\n· 每一次操作都会记入启动器日志（前缀「[AI 绝对访问]」），事后可以在日志页查看；\n" +
+            "· 系统目录始终禁止写入；启动器自己的配置/账户目录仍会弹窗确认；\n" +
+            "· 重要文件请先自己备份；\n· 可随时取消勾选恢复为逐次确认。\n\n确定要开启绝对访问吗？",
+            "系统提示 2/2：确认开启绝对访问");
+        if (!second) { RevertAbsoluteAccessCheck(); return; }
+
+        UnrestrictedAccessCheck.IsEnabled = true;
+    }
+
+    private void AbsoluteAccessCheck_Unchecked(object sender, RoutedEventArgs e)
+    {
+        // 关闭绝对访问时，完全绝对访问一并关闭并禁用。
+        UnrestrictedAccessCheck.IsChecked = false;
+        UnrestrictedAccessCheck.IsEnabled = false;
+        SystemControlAccessCheck.IsChecked = false;
+        SystemControlAccessCheck.IsEnabled = false;
+    }
+
+    /// <summary>开启完全绝对访问：连续两次红色警告，任何一次取消都撤回勾选。</summary>
+    private void UnrestrictedAccessCheck_Checked(object sender, RoutedEventArgs e)
+    {
+        if (_loading) return;
+
+        var first = MessageBoxDialog.ShowDangerConfirm(
+            "你正在开启【完全绝对访问】——这是最高风险级别。\n\n开启后，AI 助手可以不经任何确认，直接读取、修改、覆盖这台电脑上的【所有文件】，" +
+            "包括：\n· 应用安装文件（Program Files、ProgramData 及其他软件的安装目录）；\n· Windows 系统文件（Windows、System32 等）；\n" +
+            "· 启动器自己的配置与账户数据（含 API 密钥、登录令牌）。\n\n" +
+            "AI 一旦误解指令、或被文件里夹带的恶意文字诱导，就可能破坏系统或软件、导致电脑无法启动，或把敏感内容发给 AI 服务，且很可能无法恢复。\n\n是否继续？",
+            "危险操作 1/2：完全绝对访问", "取消", "我了解，继续");
+        if (!first) { RevertUnrestrictedAccessCheck(); return; }
+
+        var second = MessageBoxDialog.ShowDangerConfirm(
+            "最后确认（2/2）——此操作极度危险：\n\n· 所有路径保护将被取消，AI 的任何读写都不会再有弹窗；\n" +
+            "· 修改或删除系统文件、程序文件可能让 Windows 或软件无法运行，需要重装系统才能恢复；\n" +
+            "· 每一次操作仍会记入启动器日志（前缀「[AI 绝对访问]」），但记录不能撤销已造成的破坏；\n" +
+            "· 请务必先备份重要数据，并只在你完全信任当前模型与服务的情况下使用；\n· 可随时取消勾选恢复保护。\n\n确定要开启完全绝对访问吗？",
+            "危险操作 2/2：确认开启完全绝对访问", "取消", "确认开启");
+        if (!second) { RevertUnrestrictedAccessCheck(); return; }
+
+        SystemControlAccessCheck.IsEnabled = true;
+    }
+
+    private void UnrestrictedAccessCheck_Unchecked(object sender, RoutedEventArgs e)
+    {
+        // 关闭完全绝对访问时，彻底完全访问一并关闭并禁用。
+        SystemControlAccessCheck.IsChecked = false;
+        SystemControlAccessCheck.IsEnabled = false;
+    }
+
+    /// <summary>开启彻底完全访问：连续三次红色警告，任何一次取消都撤回勾选。</summary>
+    private void SystemControlAccessCheck_Checked(object sender, RoutedEventArgs e)
+    {
+        if (_loading) return;
+
+        var first = MessageBoxDialog.ShowDangerConfirm(
+            "你正在开启【彻底完全访问】——这是最高危的级别。\n\n开启后，AI 助手可以：\n· 直接修改 Windows 注册表（包括开机启动项、系统与软件配置）；\n" +
+            "· 通过 PowerShell / cmd 执行任意命令：删除文件与目录、结束进程、修改系统设置、安装或卸载软件、改动网络与防火墙、创建或删除用户等；\n" +
+            "· 以上全部不再有任何弹窗确认。\n\n是否继续？",
+            "危险操作 1/3：彻底完全访问", "取消", "我了解，继续");
+        if (!first) { RevertSystemControlAccessCheck(); return; }
+
+        var second = MessageBoxDialog.ShowDangerConfirm(
+            "第二次警告（2/3）：\n\n· AI 一旦误解指令，或被网页、文件、日志里夹带的恶意文字诱导，就可能执行破坏性命令；\n" +
+            "· 错误的注册表或系统命令可能让 Windows 无法启动、数据永久丢失，甚至需要重装系统；\n" +
+            "· 启动器无法替你判断某条命令是否安全，也无法撤销已经执行的命令；\n· 如果你不是非常清楚自己在做什么，请不要开启。\n\n仍要继续吗？",
+            "危险操作 2/3：彻底完全访问", "取消", "继续");
+        if (!second) { RevertSystemControlAccessCheck(); return; }
+
+        var third = MessageBoxDialog.ShowDangerConfirm(
+            "最后确认（3/3）——此操作极度危险：\n\n· 每一次注册表修改和命令执行都会记入启动器日志（前缀「[AI 彻底完全访问]」），但记录不能撤销已造成的破坏；\n" +
+            "· 请务必先备份重要数据、创建系统还原点；\n· 只在你完全信任当前模型与服务时使用；\n· 可随时取消勾选立即关闭该能力。\n\n确定要开启彻底完全访问吗？",
+            "危险操作 3/3：确认开启彻底完全访问", "取消", "确认开启");
+        if (!third) RevertSystemControlAccessCheck();
+    }
+
+    private void RevertSystemControlAccessCheck()
+    {
+        _loading = true;
+        try { SystemControlAccessCheck.IsChecked = false; }
+        finally { _loading = false; }
+    }
+
+    private void RevertUnrestrictedAccessCheck()
+    {
+        _loading = true;
+        try { UnrestrictedAccessCheck.IsChecked = false; }
+        finally { _loading = false; }
+    }
+
+    private void RevertAbsoluteAccessCheck()
+    {
+        _loading = true;
+        try { AbsoluteAccessCheck.IsChecked = false; }
+        finally { _loading = false; }
+    }
+
+    private void RevertFullAccessCheck()
+    {
+        _loading = true;
+        try { FullAccessCheck.IsChecked = false; }
+        finally { _loading = false; }
+    }
+
     private void ClearWorkingDirectory_Click(object sender, RoutedEventArgs e)
         => WorkingDirectoryBox.Clear();
 
@@ -424,6 +621,11 @@ public partial class AiAssistantSettingsPanel : UserControl, IOverlayDialog
             BaseUrl = "https://openrouter.ai/api/v1",
             ApiKey = "",
             WorkingDirectory = null,
+            WorkingDirectories = new List<string>(),
+            FullDiskAccess = false,
+            AbsoluteAccess = false,
+            UnrestrictedAccess = false,
+            SystemControlAccess = false,
             RoutingMode = AiRoutingMode.Auto,
             AutoModelRouting = true,
             NormalModelId = AiModelIds.NemotronLightning,
@@ -434,6 +636,8 @@ public partial class AiAssistantSettingsPanel : UserControl, IOverlayDialog
             AllowCrashLogReading = false,
             ClearHistoryOnGuestSessionEnd = true,
             PrewarmSystemPromptOnOpen = true,
+            PersonaId = AiPersonas.Default,
+            CustomSystemPrompt = "",
             EnableDeepThinking = false,
             EnableWebSearch = false,
             TokenSaverMode = true,
@@ -540,6 +744,11 @@ public partial class AiAssistantSettingsPanel : UserControl, IOverlayDialog
             BaseUrl = BaseUrlBox.Text.Trim(),
             ApiKey = ApiKeyBox.Password,
             WorkingDirectory = workingDirectory.Length == 0 ? null : workingDirectory,
+            WorkingDirectories = _extraDirs.ToList(),
+            FullDiskAccess = FullAccessCheck.IsChecked == true,
+            AbsoluteAccess = FullAccessCheck.IsChecked == true && AbsoluteAccessCheck.IsChecked == true,
+            UnrestrictedAccess = FullAccessCheck.IsChecked == true && AbsoluteAccessCheck.IsChecked == true && UnrestrictedAccessCheck.IsChecked == true,
+            SystemControlAccess = FullAccessCheck.IsChecked == true && AbsoluteAccessCheck.IsChecked == true && UnrestrictedAccessCheck.IsChecked == true && SystemControlAccessCheck.IsChecked == true,
             RoutingMode = mode,
             AutoModelRouting = mode == AiRoutingMode.Auto,
             NormalModelId = EnsureSelected(NormalModelCombo, AiModelIds.NemotronLightning),
@@ -551,6 +760,8 @@ public partial class AiAssistantSettingsPanel : UserControl, IOverlayDialog
             AllowCrashLogReading = AllowCrashLogCheck.IsChecked == true,
             ClearHistoryOnGuestSessionEnd = ClearGuestHistoryCheck.IsChecked == true,
             PrewarmSystemPromptOnOpen = PrewarmOnOpenCheck.IsChecked == true,
+            PersonaId = PersonaCombo.SelectedValue as string ?? AiPersonas.Default,
+            CustomSystemPrompt = CustomSystemPromptBox.Text?.Trim() ?? "",
             EnableDeepThinking = EnableDeepThinkingCheck.IsChecked == true,
             EnableWebSearch = EnableWebSearchCheck.IsChecked == true,
             TokenSaverMode = TokenSaverCheck.IsEnabled && TokenSaverCheck.IsChecked == true,
@@ -655,6 +866,11 @@ public partial class AiAssistantSettingsPanel : UserControl, IOverlayDialog
             BaseUrl = BaseUrlBox.Text?.Trim() ?? "",
             ApiKey = ApiKeyBox.Password ?? "",
             WorkingDirectory = string.IsNullOrWhiteSpace(WorkingDirectoryBox.Text) ? null : WorkingDirectoryBox.Text.Trim(),
+            WorkingDirectories = _extraDirs.ToList(),
+            FullDiskAccess = FullAccessCheck.IsChecked == true,
+            AbsoluteAccess = FullAccessCheck.IsChecked == true && AbsoluteAccessCheck.IsChecked == true,
+            UnrestrictedAccess = FullAccessCheck.IsChecked == true && AbsoluteAccessCheck.IsChecked == true && UnrestrictedAccessCheck.IsChecked == true,
+            SystemControlAccess = FullAccessCheck.IsChecked == true && AbsoluteAccessCheck.IsChecked == true && UnrestrictedAccessCheck.IsChecked == true && SystemControlAccessCheck.IsChecked == true,
             CustomModels = _customModels.Select(m => m.Clone()).ToList(),
             RoutingMode = GetRoutingMode(),
             AutoModelRouting = GetRoutingMode() == AiRoutingMode.Auto,
@@ -665,6 +881,8 @@ public partial class AiAssistantSettingsPanel : UserControl, IOverlayDialog
             AllowCrashLogReading = AllowCrashLogCheck.IsChecked == true,
             ClearHistoryOnGuestSessionEnd = ClearGuestHistoryCheck.IsChecked == true,
             PrewarmSystemPromptOnOpen = PrewarmOnOpenCheck.IsChecked == true,
+            PersonaId = PersonaCombo.SelectedValue as string ?? AiPersonas.Default,
+            CustomSystemPrompt = CustomSystemPromptBox.Text?.Trim() ?? "",
             EnableDeepThinking = EnableDeepThinkingCheck.IsChecked == true,
             EnableWebSearch = EnableWebSearchCheck.IsChecked == true,
             TokenSaverMode = TokenSaverCheck.IsEnabled && TokenSaverCheck.IsChecked == true,
@@ -720,6 +938,8 @@ public partial class AiAssistantSettingsPanel : UserControl, IOverlayDialog
             if (GetBool("允许崩溃日志分析") is bool crashLog) config.AllowCrashLogReading = crashLog;
             if (GetBool("访客会话结束清空历史") is bool clearGuest) config.ClearHistoryOnGuestSessionEnd = clearGuest;
             if (GetBool("打开页面预热提示词") is bool prewarm) config.PrewarmSystemPromptOnOpen = prewarm;
+            if (GetStr("AI人格") is string personaId) config.PersonaId = AiPersonas.Get(personaId).Id;
+            if (GetStr("自定义系统提示词") is string customPrompt) config.CustomSystemPrompt = customPrompt;
             if (GetBool("省Token模式") is bool tokenSaver) config.TokenSaverMode = tokenSaver;
 
             // 密钥/接口地址/模型表这几项只有导出时选了"保留"才会出现在文件里；出现才覆盖，
@@ -841,6 +1061,8 @@ public partial class AiAssistantSettingsPanel : UserControl, IOverlayDialog
             ["允许崩溃日志分析"] = AllowCrashLogCheck.IsChecked == true,
             ["访客会话结束清空历史"] = ClearGuestHistoryCheck.IsChecked == true,
             ["打开页面预热提示词"] = PrewarmOnOpenCheck.IsChecked == true,
+            ["AI人格"] = PersonaCombo.SelectedValue as string ?? AiPersonas.Default,
+            ["自定义系统提示词"] = CustomSystemPromptBox.Text?.Trim() ?? "",
             ["省Token模式"] = TokenSaverCheck.IsEnabled && TokenSaverCheck.IsChecked == true,
         };
 

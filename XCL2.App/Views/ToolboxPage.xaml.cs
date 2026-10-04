@@ -40,7 +40,7 @@ public partial class ToolboxPage : UserControl
     /// <summary>加载页面、用代码设置内存优化时机单选框初始状态时，临时置 true 抑制
     /// RadioButton.Checked 事件里的保存逻辑，避免刚打开页面就多写一次配置文件。</summary>
     private bool _suppressMemOptTimingSave;
-    private bool _suppressToolboxTabSelection;
+    private bool _suppressToolboxTabSelection = false;
 
     // ===== Tab 1：成就图片 =====
     private byte[]? _achPreviewBytes;
@@ -164,13 +164,11 @@ public partial class ToolboxPage : UserControl
         int elementLength = System.Globalization.StringInfo.GetNextTextElementLength(text);
         if (elementLength <= 0 || elementLength >= text.Length) return text;
 
-        int codepoint = char.ConvertToUtf32(text, 0);
         var category = System.Globalization.CharUnicodeInfo.GetUnicodeCategory(text, 0);
-        // 表情/符号类图标绝大多数落在 U+2100 以上（杂项符号、表情符号等平面），
-        // 正常的中文/英文标题文字码位都远低于这个范围，用码位 + Unicode 类别双重判断，
-        // 避免把标题本身第一个汉字/字母误判成图标。
-        bool looksLikeIconGlyph = codepoint > 0x2100
-            || category == System.Globalization.UnicodeCategory.OtherSymbol
+        // 只把"符号类"字符（Emoji/箭头/杂项符号等，Unicode 类别 So/Sk）当作图标。
+        // 之前用"码位 > 0x2100"判断，而所有汉字码位都大于它，导致没带图标前缀的标题
+        // （电脑清理、服务器测速、坐标换算……）第一个汉字被误剥掉，显示成"脑清理""务器测速"。
+        bool looksLikeIconGlyph = category == System.Globalization.UnicodeCategory.OtherSymbol
             || category == System.Globalization.UnicodeCategory.ModifierSymbol;
         if (!looksLikeIconGlyph) return text;
 
@@ -250,8 +248,10 @@ public partial class ToolboxPage : UserControl
                 return;
             }
         }
-
-        _lastNonStickyToolboxTab = selected;
+        else if (selected != null)
+        {
+            _lastNonStickyToolboxTab = selected;
+        }
     }
 
     // ============================================================
@@ -1179,7 +1179,7 @@ public partial class ToolboxPage : UserControl
     {
         // 点下拉列表本身也会先触发 LostFocus，用一点延迟关闭，避免点建议项时列表先一步收起、
         // 点击事件落空的问题。
-        Dispatcher.BeginInvoke(new Action(() =>
+        _ = Dispatcher.BeginInvoke(new Action(() =>
         {
             if (!AchSuggestList.IsMouseOver) AchSuggestPopup.IsOpen = false;
         }), System.Windows.Threading.DispatcherPriority.Background);

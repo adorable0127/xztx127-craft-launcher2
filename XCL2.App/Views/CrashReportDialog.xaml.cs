@@ -45,7 +45,7 @@ public partial class CrashReportDialog : OverlayDialogControl
 
     /// <summary>需求：把「日志分析」直接嵌进这个崩溃弹窗，不用再点"查看日志"跳去日志页找。
     /// 复用 LogsPage 崩溃报告分析 Tab 同一套 CrashAnalyzerService，只是这里自动定位到
-    /// _processInfo.GameDir 下本次退出的快照/崩溃文件/hs_err 日志来分析，不需要用户
+    /// _processInfo.GameDir 下最新的一份崩溃文件/hs_err 日志/latest.log 来分析，不需要用户
     /// 自己在下拉框里挑。processInfo 为 null（极端情况下没能拿到进程对象）或者这个目录下
     /// 确实没有任何崩溃文件时，整块分析区域保持折叠不显示，不留一句空话唬人。</summary>
     private void RunInlineAnalysis()
@@ -56,13 +56,11 @@ public partial class CrashReportDialog : OverlayDialogControl
         try
         {
             var analyzer = new CrashAnalyzerService();
-            var files = analyzer.ListCrashFiles(_processInfo.GameDir)
-                .Where(f => f.modifiedAt >= _processInfo.StartedAt.AddSeconds(-3)).ToList();
+            var files = analyzer.ListCrashFiles(_processInfo.GameDir);
             if (files.Count == 0) return;
 
-            // 优先本进程的快照；保存失败时再使用本次启动之后生成的崩溃文件。
-            var latest = files.FirstOrDefault(f => string.Equals(f.path, _processInfo.CrashLogPath, StringComparison.OrdinalIgnoreCase));
-            if (string.IsNullOrEmpty(latest.path)) latest = files[0];
+            // ListCrashFiles 已经按修改时间倒序，第一个就是离这次崩溃最近的一份。
+            var latest = files[0];
             var result = analyzer.Analyze(latest.path);
             if (result.RankedFindings.Count == 0 && result.Findings.Count == 0) return;
 
@@ -81,7 +79,7 @@ public partial class CrashReportDialog : OverlayDialogControl
 
             AnalysisText.Text = string.Join("\n\n", lines);
             AnalysisSourceText.Text = $"分析依据：{Path.GetFileName(latest.path)}（{latest.modifiedAt:yyyy-MM-dd HH:mm}）。" +
-                "这是启发式自动分析，仅供定位问题参考，不保证 100% 准确；完整原文可点下方「查看完整日志」。";
+                "这是启发式自动分析，仅供定位问题参考，不保证 100% 准确；完整原文可点下方「在记事本中查看日志」或「导出完整日志」。";
             AnalysisSection.Visibility = Visibility.Visible;
         }
         catch (Exception ex)
@@ -99,6 +97,27 @@ public partial class CrashReportDialog : OverlayDialogControl
         OverlayDialogService.ShowNonModal(dlg);
     }
 
+    /// <summary>JVM 启动参数错误专用弹窗：Java 虚拟机都没起来，游戏代码根本没跑过，所以没有崩溃报告，
+    /// 也不该再去分析磁盘上可能是上一局遗留的 crash-reports/latest.log（会张冠李戴）。
+    /// 因此关闭自动分析，直接把 <see cref="JvmArgumentDiagnostics"/> 的结论显示在分析区域。</summary>
+    public static void ShowJvmArgumentError(MainWindow owner, GameProcessInfo processInfo, int exitCode,
+        IReadOnlyList<JvmArgIssue> issues)
+    {
+        var message = $"游戏没能启动：Java 虚拟机（JVM）的启动参数有问题（退出码 {exitCode}）。\n\n" +
+                      "这类错误发生在游戏代码运行之前，所以不会有崩溃报告，也不需要提交崩溃报告。按下面的结论修改后重新启动即可。";
+        var dlg = new CrashReportDialog(owner, message, processInfo, suppressAutomaticAnalysis: true, title: "JVM 参数错误");
+        dlg.ShowJvmIssues(issues);
+        OverlayDialogService.ShowNonModal(dlg);
+    }
+
+    private void ShowJvmIssues(IReadOnlyList<JvmArgIssue> issues)
+    {
+        AnalysisText.Text = JvmArgumentDiagnostics.FormatForDialog(issues);
+        AnalysisSourceText.Text = "分析依据：本次游戏进程的控制台输出（JVM 启动阶段的报错）。" +
+            "自定义 JVM 参数在「实例设置 / 设置」里修改，清空后即恢复默认。完整输出可点下方「在记事本中查看日志」。";
+        AnalysisSection.Visibility = Visibility.Visible;
+    }
+
     /// <summary>日志只留下半截、又没有明确异常证据时，不把它包装成“游戏崩溃”。
     /// 正文严格只显示用户要求的一行，同时关闭 OpenGL/自动崩溃分析，避免下面又冒出一堆
     /// 与“可能是手动关闭”互相矛盾的诊断结论。</summary>
@@ -109,16 +128,12 @@ public partial class CrashReportDialog : OverlayDialogControl
         OverlayDialogService.ShowNonModal(dlg);
     }
 
+    /// <summary>"补全 DirectX"：从微软官方下载并静默安装 DirectX 最终用户运行库，不是显卡驱动。</summary>
+    private void InstallDirectX_Click(object sender, RoutedEventArgs e)
+        => DirectXRuntimeInstallService.StartWithConfirmation();
+
     private void InstallOpenGlDriver_Click(object sender, RoutedEventArgs e)
         => WindowsDisplayDriverInstallService.StartWithConfirmation();
-
-    private void ViewLog_Click(object sender, RoutedEventArgs e)
-    {
-        // "查看日志"：直接跳转到日志页——里面的"游戏日志"/"启动器日志"/"崩溃报告分析"三个
-        // 标签已经能分别看到需求要求的三类内容，不需要在这个弹窗里再重复实现一遍只读预览。
-        Close();
-        _owner.NavigateToLogs();
-    }
 
     /// <summary>"在记事本中查看日志"：跟"查看完整日志"（其实是跳转到启动器内部的日志页）
     /// 分开——那个按钮名字容易让人以为点了会拉起系统记事本，其实只是启动器自己的一个页面，

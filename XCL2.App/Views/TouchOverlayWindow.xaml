@@ -72,6 +72,13 @@
     <Grid x:Name="RootGrid">
         <Border x:Name="ViewPad" Background="#01000000"/>
         <Canvas x:Name="ControlCanvas" Background="{x:Null}" ClipToBounds="True"/>
+        <!-- 触摸板：独立的相对位移区。手指在上面滑动 = 移动鼠标指针（菜单里）/ 转动视角（游戏里），
+             轻点 = 鼠标左键。放在右侧中部，避开默认的左下摇杆、右下动作键和底部快捷栏。 -->
+        <Border x:Name="TouchpadPad" Width="220" Height="140" HorizontalAlignment="Right" VerticalAlignment="Center"
+                Margin="0,0,24,0" CornerRadius="12" BorderThickness="1" BorderBrush="#80FFFFFF" Background="#4D000000"
+                Visibility="Collapsed">
+            <TextBlock Text="触摸板" Style="{StaticResource SmallKeyTextStyle}" Opacity="0.6" VerticalAlignment="Top" Margin="0,8,0,0"/>
+        </Border>
         <Border x:Name="RestoreKey" Style="{StaticResource SmallKeyStyle}"
                 HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,8,10,0"
                 Background="#B3000000" Visibility="Collapsed">

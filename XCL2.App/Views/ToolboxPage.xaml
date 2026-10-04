@@ -30,7 +30,7 @@
                     </Border>
                 </Popup>
             </StackPanel>
-            <TabControl x:Name="ToolboxTabControl" Grid.Row="2" SelectionChanged="ToolboxTabControl_SelectionChanged">
+            <TabControl x:Name="ToolboxTabControl" services:PageTransitionBehavior.AnimateSelection="True" Grid.Row="2" SelectionChanged="ToolboxTabControl_SelectionChanged">
                 <TabControl.Template>
                     <ControlTemplate TargetType="TabControl">
                         <Border Background="Transparent">

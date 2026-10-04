@@ -29,21 +29,12 @@ public partial class ServerManagerPage : UserControl
     private readonly ObservableCollection<string> _mcVersions = new();
     private readonly ObservableCollection<ServerCoreBuild> _buildVersions = new();
 
-    // 下载完成后，若需要安装（Forge/NeoForge），暂存下来供"立即运行安装"按钮使用
+    // 旧版支持“下载后手动运行安装器/BuildTools”，新版改为下载队列自动完成整条流水线。
+    // 两套能力都保留：默认自动执行；自动执行失败后把下载产物留在这里，允许用户修复 Java/Git/网络后手动重试。
     private ServerCoreDownloadResult? _pendingInstallResult;
     private string? _pendingInstallTargetDir;
-    /// <summary>Spigot 走 RunSpigotBuildToolsAsync 编译时需要传 MC 版本号（BuildTools 的 --rev 参数），
-    /// Forge/NeoForge 的 RunForgeInstallerAsync 不需要这个，仅在 RequiresBuild 场景下会用到。</summary>
     private string? _pendingInstallMcVersion;
-    /// <summary>
-    /// 修复"核心下载面板下载完成后，服务器不会出现在服务器列表里"：这个面板只负责下载/安装
-    /// 服务端核心文件本身，跟"创建服务器"向导（CreateServerWindow）是两条独立路径——之前
-    /// 只有 CreateServerWindow 那条路径会在成功后调用 ServerInstanceService.Add() 登记一个
-    /// ServerInstance，这里下载完只弹了个"下载完成"的提示框，没有登记，导致"服务器列表"
-    /// 面板永远看不到这个刚下载好的核心。这里在发起下载前记下这次请求的核心类型/MC版本，
-    /// 供下载/安装全部完成后统一调用 RegisterDownloadedInstance 登记。</summary>
     private ServerCoreType _pendingInstallCoreType;
-    private string? _pendingInstallMcVersionForRegister;
 
     // ===== 资源包下载面板：与 DownloadCenterPage 的材质包分类共用 ModrinthService/CurseForgeService/
     // ModSearchService（这几个服务类本身不跟 .minecraft 目录绑定，创建成本也很低，没必要要求
@@ -94,11 +85,17 @@ public partial class ServerManagerPage : UserControl
             action?.Invoke();
         };
 
+        // 后台下载任务（创建服务器/核心下载）完成后会登记新实例，列表需要自动刷新。
+        Loaded += (_, _) => _owner.ServerInstanceService.InstanceAdded += OnInstanceAddedByBackgroundTask;
+        Unloaded += (_, _) => _owner.ServerInstanceService.InstanceAdded -= OnInstanceAddedByBackgroundTask;
+
         _initialized = true;
         Category_Checked(CatHome, new RoutedEventArgs()); // 补上初始化阶段被跳过的那次面板显隐
 
         _ = LoadMcVersionsAsync();
     }
+
+    private void OnInstanceAddedByBackgroundTask() => _ = Dispatcher.BeginInvoke(new Action(RefreshInstanceList));
 
     private void Category_Checked(object sender, RoutedEventArgs e)
     {
@@ -135,6 +132,7 @@ public partial class ServerManagerPage : UserControl
         if (sender is not RadioButton rb || rb.Tag is not string tag) return;
         if (!Enum.TryParse<ServerCoreType>(tag, out var coreType)) return;
         _selectedCoreType = coreType;
+        UiAnimationHelper.Entrance(CorePanel);
 
         // Vanilla 没有单独的"构建版本"概念，隐藏该栏；Spigot 走 BuildTools 本地编译同样没有
         // build 号概念（只需要选 MC 版本），也隐藏；其余类型显示对应标签
@@ -152,9 +150,6 @@ public partial class ServerManagerPage : UserControl
             ServerCoreType.Waterfall => "Build 号",
             _ => "构建版本"
         };
-
-        InstallRequiredPanel.Visibility = Visibility.Collapsed;
-        _pendingInstallResult = null;
 
         await LoadMcVersionsAsync();
     }
@@ -250,7 +245,7 @@ public partial class ServerManagerPage : UserControl
             TargetDirBox.Text = dialog.FolderName;
     }
 
-    private async void DownloadCore_Click(object sender, RoutedEventArgs e)
+    private void DownloadCore_Click(object sender, RoutedEventArgs e)
     {
         if (McVersionCombo.SelectedItem is not string mcVersion)
         {
@@ -288,78 +283,127 @@ public partial class ServerManagerPage : UserControl
         else if (_selectedCoreType == ServerCoreType.NeoForge) req.InstallerVersion = mcVersion;
         else req.BuildOrLoaderVersion = buildVersion;
 
-        DownloadCoreBtn.IsEnabled = false;
-        InstallRequiredPanel.Visibility = Visibility.Collapsed;
-        ProgressPanel.Visibility = Visibility.Visible;
-        ProgressBarCtl.Value = 0;
-
-        var progress = new Progress<ProgressInfo>(p =>
+        // 下载 → (需要时)编译/运行安装器 → 登记服务器实例，整条流水线作为一个任务放进统一下载队列
+        // （标题栏右上角的下载抽屉），不再占用本页的进度条，也不再需要用户在中途再点一次"安装/编译"按钮。
+        var coreType = _selectedCoreType;
+        var queueName = $"服务端核心 {coreType} {mcVersion}";
+        if (DownloadQueueService.Instance.Items.Any(i => i.Name == queueName &&
+                i.Status is DownloadQueueItemStatus.Downloading or DownloadQueueItemStatus.Paused))
         {
-            ProgressStageText.Text = p.Stage;
-            ProgressDetailText.Text = p.CurrentFile;
-            ProgressBarCtl.Maximum = Math.Max(p.Total, 1);
-            ProgressBarCtl.Value = p.Done;
-        });
+            MessageBoxDialog.ShowInfo("这个核心已经在下载列表中了，请等它完成。");
+            return;
+        }
 
-        // 记下这次请求的核心类型/MC版本，供下载/安装全部完成后 RegisterDownloadedInstance 使用
-        // （req.TargetDir 本身已经记录在各分支的 _pendingInstallTargetDir 里，不需要重复存）。
-        _pendingInstallCoreType = _selectedCoreType;
-        _pendingInstallMcVersionForRegister = mcVersion;
-
-        try
+        DownloadQueueService.Instance.StartNew(queueName, async (item, ct) =>
         {
-            var result = await _coreService.DownloadAsync(req, progress);
+            var progress = item.CreateProgress();
+            var textProgress = new Progress<string>(line => item.StatusText = line);
 
-            if (result.RequiresBuild)
+            var result = await _coreService.DownloadAsync(req, progress, ct);
+
+            string launchTarget;
+            bool launchTargetIsScript = false;
+            string? javaPath = null;
+
+            if (result.RequiresBuild || result.RequiresInstall)
             {
-                // Spigot：复用同一个"待安装"面板和按钮，只是文案换成"编译"，
-                // RunInstaller_Click 内部会根据 _pendingInstallResult.RequiresBuild 分流到
-                // RunSpigotBuildToolsAsync 而不是 RunForgeInstallerAsync。
-                _pendingInstallResult = result;
-                _pendingInstallTargetDir = req.TargetDir;
-                _pendingInstallMcVersion = mcVersion;
-                InstallHintText.Text = Loc.T("Str_Cs_Spigot_Doesn_T_Publish_Prebuilt_Files_So", "Spigot 官方不提供预编译文件，需要本地用 BuildTools 编译（需要联网 + 已安装 Git，") +
-                    "耗时可能有几分钟）。点击下方按钮开始编译。";
-                InstallRequiredPanel.Visibility = Visibility.Visible;
-            }
-            else if (result.RequiresInstall)
-            {
-                _pendingInstallResult = result;
-                _pendingInstallTargetDir = req.TargetDir;
-                _pendingInstallMcVersion = null; // Forge/NeoForge 安装器不需要这个，清空避免残留上次 Spigot 流程的值
-                InstallHintText.Text = $"{_selectedCoreType} 官方只提供安装器，需要本地再运行一次才能生成实际可用的服务端文件。" +
-                    "点击下方按钮，使用启动器已配置的 Java 自动完成安装。";
-                InstallRequiredPanel.Visibility = Visibility.Visible;
+                try
+                {
+                    var cfgService = _owner.ConfigService;
+                    javaPath = _javaService.FindJava(cfgService.Config.JavaPath, result.RequiredJavaMajorVersion, cfgService)
+                        ?? _javaService.FindJava(cfgService.Config.JavaPath, cfgService.Config.PreferredJavaMajorVersion, cfgService);
+                    if (javaPath == null)
+                        throw new InvalidOperationException("没有找到可用的 Java，无法运行安装器。请先在「设置」页配置或下载 Java 后再试。");
+
+                    string resultPath;
+                    if (result.RequiresBuild)
+                    {
+                        item.StatusText = Loc.T("Str_Cs_Building_Spigot_With_Buildtools", "正在用 BuildTools 编译 Spigot");
+                        resultPath = await _coreService.RunSpigotBuildToolsAsync(
+                            result.DownloadedFilePath, req.TargetDir, javaPath, mcVersion, textProgress, ct);
+                    }
+                    else
+                    {
+                        item.StatusText = Loc.T("Str_Cs_Running_The_Installer", "正在运行安装器");
+                        resultPath = await _coreService.RunForgeInstallerAsync(
+                            result.DownloadedFilePath, req.TargetDir, javaPath, textProgress, ct);
+                    }
+
+                    launchTarget = Path.GetFileName(resultPath);
+                    launchTargetIsScript = File.Exists(resultPath) &&
+                        (resultPath.EndsWith("run.bat", StringComparison.OrdinalIgnoreCase) ||
+                         resultPath.EndsWith("run.sh", StringComparison.OrdinalIgnoreCase));
+
+                    await _owner.Dispatcher.InvokeAsync(() =>
+                    {
+                        if (ReferenceEquals(_pendingInstallResult, result))
+                        {
+                            _pendingInstallResult = null;
+                            _pendingInstallTargetDir = null;
+                            _pendingInstallMcVersion = null;
+                            InstallRequiredPanel.Visibility = Visibility.Collapsed;
+                        }
+                    });
+                }
+                catch
+                {
+                    // 自动流水线失败时不丢弃已经下载好的 installer/BuildTools。
+                    // 把旧版的手动执行入口恢复成真正可用的“修复环境后重试”路径。
+                    await _owner.Dispatcher.InvokeAsync(() =>
+                    {
+                        _pendingInstallResult = result;
+                        _pendingInstallTargetDir = req.TargetDir;
+                        _pendingInstallMcVersion = mcVersion;
+                        _pendingInstallCoreType = coreType;
+                        InstallHintText.Text = result.RequiresBuild
+                            ? "BuildTools 已下载，但自动编译失败。请确认已安装 Git、Java 版本正确且网络可用，然后点击下方按钮重试。"
+                            : "安装器已下载，但自动安装失败。请确认 Java 版本正确且网络可用，然后点击下方按钮重试。";
+                        RunInstallerBtn.Content = result.RequiresBuild ? "重新编译 Spigot" : "重新运行安装器";
+                        InstallRequiredPanel.Visibility = Visibility.Visible;
+                    });
+                    throw;
+                }
             }
             else
             {
-                // 不需要额外安装步骤（Vanilla/Paper/Folia/Purpur/Fabric/Velocity/Waterfall）：
-                // 下载即可用，立即登记成一个服务器实例，用户不需要再手动去"创建服务器"重复一遍。
-                var registered = RegisterDownloadedInstance(req.TargetDir, _selectedCoreType, mcVersion,
-                    result.ServerJarFileName ?? "server.jar", isScript: false, result.RequiredJavaMajorVersion);
-
-                MessageBoxDialog.ShowSuccess(registered
-                        ? $"服务端核心下载完成，已自动添加到「服务器列表」：\n{result.DownloadedFilePath}"
-                        : $"服务端核心下载完成：\n{result.DownloadedFilePath}\n\n（未能自动添加到服务器列表，可以在「创建服务器」里手动指向这个目录。）");
+                launchTarget = result.ServerJarFileName ?? "server.jar";
             }
-        }
-        catch (Exception ex)
-        {
-            ErrorPresenter.ShowFriendlyError(Loc.T("Str_Cs_Download_Failed_This_Is_Usually_A_Networ", "下载失败，可能是网络连接问题或下载源暂时不可用，请检查网络后重试。"), $"[下载失败] {ex}", "下载失败");
-        }
-        finally
-        {
-            DownloadCoreBtn.IsEnabled = true;
-            ProgressPanel.Visibility = Visibility.Collapsed;
-        }
+
+            item.ProgressPercent = 100;
+
+            await _owner.Dispatcher.InvokeAsync(() =>
+            {
+                var registered = RegisterDownloadedInstance(req.TargetDir, coreType, mcVersion,
+                    launchTarget, launchTargetIsScript, result.RequiredJavaMajorVersion, javaPath);
+                var fullDir = Path.GetFullPath(req.TargetDir);
+                var instance = _owner.ServerInstanceService.Instances.FirstOrDefault(i =>
+                    string.Equals(Path.GetFullPath(i.Directory), fullDir, StringComparison.OrdinalIgnoreCase));
+                if (registered && instance != null)
+                    ServerPostInstallPrompt.AskConfigurePort(_owner, instance, "服务端核心已安装完成，并已添加到「服务器列表」。");
+                else
+                {
+                    _owner.EnsureVisibleForDialog();
+                    MessageBoxDialog.ShowSuccess($"服务端核心已安装完成：\n{req.TargetDir}\n\n（未能自动添加到服务器列表，可以在「创建服务器」里手动指向这个目录。）");
+                }
+            });
+        }, supportsPause: false);
     }
 
+    /// <summary>
+    /// 手动重试旧版安装器/BuildTools 流程。新版仍优先走下载队列自动安装；
+    /// 只有自动流程失败并保留了下载产物时，此入口才会出现。
+    /// </summary>
     private async void RunInstaller_Click(object sender, RoutedEventArgs e)
     {
-        if (_pendingInstallResult == null || _pendingInstallTargetDir == null) return;
+        var result = _pendingInstallResult;
+        var targetDir = _pendingInstallTargetDir;
+        var mcVersion = _pendingInstallMcVersion;
+        var coreType = _pendingInstallCoreType;
+        if (result == null || string.IsNullOrWhiteSpace(targetDir)) return;
 
-        var javaPath = _javaService.FindJava(_owner.ConfigService.Config.JavaPath,
-            _owner.ConfigService.Config.PreferredJavaMajorVersion, _owner.ConfigService);
+        var cfgService = _owner.ConfigService;
+        var javaPath = _javaService.FindJava(cfgService.Config.JavaPath, result.RequiredJavaMajorVersion, cfgService)
+            ?? _javaService.FindJava(cfgService.Config.JavaPath, cfgService.Config.PreferredJavaMajorVersion, cfgService);
         if (javaPath == null)
         {
             MessageBoxDialog.ShowWarning(
@@ -370,37 +414,31 @@ public partial class ServerManagerPage : UserControl
 
         RunInstallerBtn.IsEnabled = false;
         ProgressPanel.Visibility = Visibility.Visible;
-        ProgressStageText.Text = _pendingInstallResult.RequiresBuild ? Loc.T("Str_Cs_Building_Spigot_With_Buildtools", "正在用 BuildTools 编译 Spigot") : Loc.T("Str_Cs_Running_The_Installer", "正在运行安装器");
-        ProgressDetailText.Text = _pendingInstallResult.RequiresBuild
-            ? "首次编译需要联网拉取源码并本地反编译/打补丁，可能需要几分钟，请耐心等待..."
-            : "";
+        ProgressStageText.Text = result.RequiresBuild
+            ? Loc.T("Str_Cs_Building_Spigot_With_Buildtools", "正在用 BuildTools 编译 Spigot")
+            : Loc.T("Str_Cs_Running_The_Installer", "正在运行安装器");
+        ProgressDetailText.Text = result.RequiresBuild
+            ? "正在手动重试编译；首次编译可能需要几分钟。"
+            : "正在手动重试安装；首次安装可能需要下载额外库文件。";
         ProgressBarCtl.IsIndeterminate = true;
-
         var progress = new Progress<string>(line => ProgressDetailText.Text = line);
 
         try
         {
             string resultPath;
-            if (_pendingInstallResult.RequiresBuild)
+            if (result.RequiresBuild)
             {
-                if (string.IsNullOrEmpty(_pendingInstallMcVersion))
-                    throw new InvalidOperationException("内部错误：缺少 Spigot 编译所需的 MC 版本号，请重新走一遍下载流程。");
+                if (string.IsNullOrWhiteSpace(mcVersion))
+                    throw new InvalidOperationException("内部错误：缺少 Spigot 编译所需的 Minecraft 版本号。");
                 resultPath = await _coreService.RunSpigotBuildToolsAsync(
-                    _pendingInstallResult.DownloadedFilePath, _pendingInstallTargetDir, javaPath,
-                    _pendingInstallMcVersion, progress);
+                    result.DownloadedFilePath, targetDir, javaPath, mcVersion, progress);
             }
             else
             {
                 resultPath = await _coreService.RunForgeInstallerAsync(
-                    _pendingInstallResult.DownloadedFilePath, _pendingInstallTargetDir, javaPath, progress);
+                    result.DownloadedFilePath, targetDir, javaPath, progress);
             }
 
-            InstallRequiredPanel.Visibility = Visibility.Collapsed;
-
-            // 同"直接下载即可用"分支一样，安装器/BuildTools 跑完之后核心才算真正就绪，
-            // 这里补上登记服务器实例这一步，之前这里只弹了个提示框，没有调用
-            // ServerInstanceService.Add，导致 Forge/NeoForge/Spigot 下载完同样不会出现在
-            // "服务器列表"里。
             string launchTarget;
             bool launchTargetIsScript;
             if (File.Exists(resultPath) &&
@@ -410,30 +448,50 @@ public partial class ServerManagerPage : UserControl
                 launchTarget = Path.GetFileName(resultPath);
                 launchTargetIsScript = true;
             }
-            else
+            else if (File.Exists(resultPath) && resultPath.EndsWith(".jar", StringComparison.OrdinalIgnoreCase))
             {
                 launchTarget = Path.GetFileName(resultPath);
                 launchTargetIsScript = false;
             }
+            else
+            {
+                var fallbackJar = Directory.Exists(targetDir)
+                    ? Directory.GetFiles(targetDir, "*.jar")
+                        .Select(Path.GetFileName)
+                        .FirstOrDefault(f => f != null && !f.Contains("installer", StringComparison.OrdinalIgnoreCase) &&
+                            !f.Equals(Path.GetFileName(result.DownloadedFilePath), StringComparison.OrdinalIgnoreCase))
+                    : null;
+                if (fallbackJar == null)
+                    throw new InvalidOperationException("安装/编译完成，但没有找到可识别的启动文件。请检查服务器目录。");
+                launchTarget = fallbackJar;
+                launchTargetIsScript = false;
+            }
 
-            var registered = RegisterDownloadedInstance(_pendingInstallTargetDir, _pendingInstallCoreType,
-                _pendingInstallMcVersionForRegister ?? "", launchTarget, launchTargetIsScript,
-                _pendingInstallResult.RequiredJavaMajorVersion, javaPath);
+            var registered = RegisterDownloadedInstance(targetDir, coreType, mcVersion ?? "",
+                launchTarget, launchTargetIsScript, result.RequiredJavaMajorVersion, javaPath);
+            var fullDir = Path.GetFullPath(targetDir);
+            var instance = _owner.ServerInstanceService.Instances.FirstOrDefault(i =>
+                string.Equals(Path.GetFullPath(i.Directory), fullDir, StringComparison.OrdinalIgnoreCase));
 
-            MessageBoxDialog.ShowSuccess(registered
-                    ? $"{(_pendingInstallResult.RequiresBuild ? Loc.T("Str_Cs_Build", "编译") : Loc.T("Str_Common_Install", "安装"))}完成！服务端已生成到：\n{_pendingInstallTargetDir}\n\n生成文件：{resultPath}\n\n已自动添加到「服务器列表」。"
-                    : $"{(_pendingInstallResult.RequiresBuild ? Loc.T("Str_Cs_Build", "编译") : Loc.T("Str_Common_Install", "安装"))}完成！服务端已生成到：\n{_pendingInstallTargetDir}\n\n生成文件：{resultPath}");
             _pendingInstallResult = null;
+            _pendingInstallTargetDir = null;
             _pendingInstallMcVersion = null;
+            InstallRequiredPanel.Visibility = Visibility.Collapsed;
+
+            if (registered && instance != null)
+                ServerPostInstallPrompt.AskConfigurePort(_owner, instance, "手动重试成功，服务端已安装并添加到「服务器列表」。");
+            else
+                MessageBoxDialog.ShowSuccess($"安装/编译完成：\n{targetDir}\n\n生成文件：{resultPath}");
         }
         catch (Exception ex)
         {
-            var isBuild = _pendingInstallResult?.RequiresBuild == true;
+            var isBuild = result.RequiresBuild;
             ErrorPresenter.ShowFriendlyError(
                 isBuild
-                    ? "编译失败，可能是网络连接问题、缺少 Git，或该 MC 版本 BuildTools 不再支持，请检查后重试。"
-                    : "安装失败，可能是网络连接问题、下载源暂时不可用，或安装文件已损坏，请检查网络后重试。",
-                $"[{(isBuild ? Loc.T("Str_Cs_Build", "编译") : Loc.T("Str_Common_Install", "安装"))}失败] {ex}", isBuild ? "编译失败" : "安装失败");
+                    ? "编译失败，可能是网络连接问题、缺少 Git，或该 Minecraft 版本 BuildTools 不再支持，请检查后重试。"
+                    : "安装失败，可能是网络连接问题、Java 不匹配、下载源暂时不可用，或安装文件已损坏，请检查后重试。",
+                $"[{(isBuild ? Loc.T("Str_Cs_Build", "编译") : Loc.T("Str_Common_Install", "安装"))}失败] {ex}",
+                isBuild ? "编译失败" : "安装失败");
         }
         finally
         {
@@ -711,7 +769,8 @@ public partial class ServerManagerPage : UserControl
         // 连接地址：修复"新增出来的服务器没有 IP 地址"——之前卡片完全不展示怎么连进这个服务器，
         // 这里读取 server.properties 的 server-port + 本机局域网 IP 拼出连接地址；
         // 未运行时也照样展示（server.properties 在核心下载完成后就已经存在，不需要等服务器启动）。
-        var connectionText = ServerConnectionInfoService.Resolve(instance);
+        var connectionText = ServerConnectionInfoService.Resolve(instance,
+            _owner.ServerProcessManager.GetRunning(instance.Id)?.ServerPort);
         var addressLine = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 4, 0, 0) };
         addressLine.Children.Add(new TextBlock
         {
@@ -880,8 +939,8 @@ public partial class ServerManagerPage : UserControl
     /// </summary>
     private void OpenServerProperties(ServerInstance instance)
     {
-        var window = new ServerPropertiesWindow(instance.Directory);
-        window.ShowDialog();
+        var window = new ServerPropertiesWindow(instance, _owner.ServerInstanceService, _owner.ServerProcessManager);
+        if (window.ShowDialog() == true) RefreshInstanceList();
     }
 
     private void SelectInstanceJava(ServerInstance instance)
@@ -906,7 +965,11 @@ public partial class ServerManagerPage : UserControl
     {
         try
         {
-            _owner.ServerProcessManager.Start(instance);
+            var previousPort = ServerPortService.ReadPort(instance);
+            var process = _owner.ServerProcessManager.Start(instance);
+            _owner.ServerInstanceService.Update(instance);
+            if (process.ServerPort != previousPort)
+                ToastService.ShowWarning($"端口 {previousPort} 已占用或与其他服务器冲突，本次使用 {process.ServerPort}。");
             RefreshInstanceList();
             OpenConsole(instance);
             MaybeShowNetworkGuide();

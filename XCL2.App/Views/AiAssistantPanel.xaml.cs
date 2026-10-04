@@ -60,6 +60,8 @@ public partial class AiAssistantPanel : UserControl
     {
         _service = service;
         _service.ConfirmAccessRequest = (title, msg) => MessageBoxDialog.ShowConfirm(msg, title);
+        // 模型发起 XCL2_ASK 时，在输入框位置弹出提问卡片，等用户作答后再继续。
+        _service.AskQuestionAsync = ShowQuestionAsync;
         ApplyConfig(config);
 
         AiChatSession? saved = null;
@@ -76,6 +78,25 @@ public partial class AiAssistantPanel : UserControl
         // 返回的 Task——WarmUpAsync 内部已经吞掉了所有异常，这里不需要再 catch 一次。
         if (_config.PrewarmSystemPromptOnOpen)
             _ = _service.WarmUpAsync();
+    }
+
+    /// <summary>
+    /// 显示 AI 提问卡片（覆盖输入框）并等待作答。作答期间禁用输入区，避免用户同时在底下打字发送。
+    /// 返回 null = 用户点了“忽略”；用户点“停止”会让 ct 取消 → 抛 OperationCanceledException，
+    /// 由 GenerateAsync 现有的取消分支处理。
+    /// </summary>
+    private async Task<AiQuestionAnswer?> ShowQuestionAsync(AiQuestionSet set, CancellationToken ct)
+    {
+        InputArea.IsEnabled = false;
+        try
+        {
+            ScrollToBottom();
+            return await QuestionCard.AskAsync(set, ct);
+        }
+        finally
+        {
+            InputArea.IsEnabled = true;
+        }
     }
 
     /// <summary>热更新设置，不重建/切换当前 Session。</summary>

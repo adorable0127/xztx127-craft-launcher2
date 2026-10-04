@@ -232,6 +232,18 @@ public partial class StickyNotesTool : UserControl
         if (_currentFile == null) return;
         SaveCurrent();
         var styleKey = (NoteStyleCombo.SelectedItem as ComboBoxItem)?.Tag?.ToString() ?? StickyNoteWindow.ReadStyleKey(_currentFile);
+        var existing = StickyNoteWindow.OpenWindows.FirstOrDefault(w =>
+            string.Equals(w.FilePath, _currentFile, StringComparison.OrdinalIgnoreCase));
+        if (existing != null)
+        {
+            existing.ApplyStyle(styleKey);
+            existing.Topmost = true;
+            if (existing.WindowState == WindowState.Minimized) existing.WindowState = WindowState.Normal;
+            existing.Show();
+            existing.Activate();
+            NoteStatusText.Text = $"已显示桌面便签：{Path.GetFileName(_currentFile)}";
+            return;
+        }
         var win = new StickyNoteWindow(_currentFile, styleKey) { Topmost = true };
         win.Show();
         NoteStatusText.Text = $"已弹出桌面便签：{Path.GetFileName(_currentFile)}（窗口置顶，可拖动）";

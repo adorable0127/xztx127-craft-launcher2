@@ -10,7 +10,7 @@ using XCL2.App.Services;
 
 namespace XCL2.App.Views;
 
-public sealed class TouchControlsSettingsWindow : Window
+public sealed class TouchControlsSettingsWindow : Window, IGlobalWindowTreatmentExempt
 {
     private readonly ObservableCollection<TouchControlDefinition> _rows = new(TouchControlSettingsService.Load());
     private readonly DataGrid _grid = new() { AutoGenerateColumns = false, CanUserAddRows = false,
@@ -18,6 +18,7 @@ public sealed class TouchControlsSettingsWindow : Window
         HorizontalScrollBarVisibility = ScrollBarVisibility.Auto, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
     private readonly TextBlock _status = new() { TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 8, 0, 8) };
     private TouchControlDefinition? _recordingRow;
+    private CheckBox _touchpadCheck = null!;
     private Style _textStyle = null!;
     private Style _editorStyle = null!;
     private Style _comboStyle = null!;
@@ -30,22 +31,51 @@ public sealed class TouchControlsSettingsWindow : Window
         Width = Math.Min(1220, SystemParameters.WorkArea.Width);
         Height = Math.Min(720, SystemParameters.WorkArea.Height);
         WindowStartupLocation = WindowStartupLocation.CenterScreen;
-        SetResourceReference(BackgroundProperty, "SideBrush");
-        SetResourceReference(ForegroundProperty, "TextPrimaryBrush");
+        Resources.MergedDictionaries.Add(new ResourceDictionary
+        {
+            Source = new Uri("/XCL2;component/Views/TouchControlsGridStyles.xaml", UriKind.Relative)
+        });
+        Style = new Style(typeof(Window));
+        Resources[typeof(DataGrid)] = new Style(typeof(DataGrid));
+        UpdateEditorPalette();
+        Loaded += (_, _) => UpdateEditorPalette();
+        SetResourceReference(BackgroundProperty, "TouchEditorSurfaceBrush");
+        SetResourceReference(ForegroundProperty, "TouchEditorTextBrush");
+        Opacity = 1;
+        ThemeService.AppearanceChanged += UpdateEditorPalette;
+        Closed += (_, _) => ThemeService.AppearanceChanged -= UpdateEditorPalette;
+        _grid.Resources = Resources;
         ApplyGridTheme();
         var root = new DockPanel { Margin = new Thickness(16) };
+        root.SetResourceReference(Panel.BackgroundProperty, "TouchEditorSurfaceBrush");
         Content = root;
-        var hint = new TextBlock { Text = "双击单元格编辑。坐标/宽高使用 DIP；右/下锚点从右/下边缘计量，底部居中 X 为中心偏移。\n菜单动作：背包、ESC 设为“切换”，聊天设为“打开”。绑定与游戏设置保持一致，保存后立即生效。",
+        var hint = new TextBlock { Text = "双击单元格编辑。坐标/宽高使用 DIP；右/下锚点从右/下边缘计量，底部居中 X 为中心偏移。\n默认 E 键仅在游戏中显示；背包可用 ESC 关闭。绑定与游戏设置保持一致，保存后立即生效。",
             TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 0, 0, 12) };
+        hint.SetResourceReference(TextBlock.ForegroundProperty, "TouchEditorSecondaryTextBrush");
+        _status.SetResourceReference(TextBlock.ForegroundProperty, "TouchEditorSecondaryTextBrush");
         DockPanel.SetDock(hint, Dock.Top); root.Children.Add(hint);
+        _touchpadCheck = new CheckBox
+        {
+            Content = "显示触摸板（默认隐藏；开启后右侧会出现一块相对位移区，滑动=移动指针/转视角，轻点=左键）",
+            IsChecked = TouchControlSettingsService.TouchpadEnabled, Margin = new Thickness(0, 0, 0, 10)
+        };
+        _touchpadCheck.SetResourceReference(Control.ForegroundProperty, "TouchEditorTextBrush");
+        DockPanel.SetDock(_touchpadCheck, Dock.Top); root.Children.Add(_touchpadCheck);
         var footer = new StackPanel();
         DockPanel.SetDock(footer, Dock.Bottom); root.Children.Add(footer);
         footer.Children.Add(_status);
         var actions = new WrapPanel(); footer.Children.Add(actions);
-        void Button(string label, Action action)
+        void Button(string label, Action action, bool primary = false)
         {
-            var button = new Button { Content = label, Padding = new Thickness(12, 8, 12, 8), Margin = new Thickness(0, 0, 8, 6) };
-            button.Click += (_, _) => { _recordingRow = null; action(); }; actions.Children.Add(button);
+            var button = new Button { Content = label, Style = (Style)FindResource(primary ? "TouchEditorPrimaryButton" : "TouchEditorButton"),
+                Padding = new Thickness(12, 8, 12, 8), Margin = new Thickness(0, 0, 8, 6) };
+            button.Click += (_, _) =>
+            {
+                _recordingRow = null;
+                _status.SetResourceReference(TextBlock.ForegroundProperty, "TouchEditorSecondaryTextBrush");
+                action();
+            };
+            actions.Children.Add(button);
         }
         Button("添加组件", () => { if (!Commit()) return; var row = new TouchControlDefinition(); _rows.Add(row); _grid.SelectedItem = row; _grid.ScrollIntoView(row); });
         Button("删除选中", () => { if (Commit() && _grid.SelectedItem is TouchControlDefinition row) _rows.Remove(row); });
@@ -55,8 +85,8 @@ public sealed class TouchControlsSettingsWindow : Window
             _recordingRow = (TouchControlDefinition)_grid.SelectedItem; _status.Text = "请按键（支持 Ctrl/Shift/Alt 组合；ESC 也可录入）。";
         });
         Button("恢复默认", () => { _grid.CancelEdit(); _grid.CancelEdit(DataGridEditingUnit.Row); _rows.Clear();
-            foreach (var row in TouchControlSettingsService.CreateDefaults()) _rows.Add(row); _status.Text = "已载入默认按键，保存后生效。"; });
-        Button("保存", Save);
+            foreach (var row in TouchControlSettingsService.CreateDefaults()) _rows.Add(row); _touchpadCheck.IsChecked = false; _status.Text = "已载入默认按键（触摸板默认隐藏），保存后生效。"; });
+        Button("保存", Save, primary: true);
         Button("取消", () => Close());
         _grid.ItemsSource = _rows;
         root.Children.Add(_grid);
@@ -83,35 +113,62 @@ public sealed class TouchControlsSettingsWindow : Window
         PreviewKeyDown += RecordKey;
     }
 
+    private void UpdateEditorPalette()
+    {
+        // 整个编辑器（含按钮及模板内的文字）使用独立不透明配色。
+        // 浅色使用灰蓝底和深灰字，不使用全局的透明文字、玻璃背景或皮肤强调色。
+        var dark = ThemeService.CurrentIsDarkMode;
+        void SetBrush(string key, string lightColor, string darkColor)
+        {
+            var brush = new SolidColorBrush((Color)ColorConverter.ConvertFromString(dark ? darkColor : lightColor)!);
+            brush.Freeze();
+            Resources[key] = brush;
+        }
+        SetBrush("TouchEditorSurfaceBrush", "#E8EDF3", "#0F172A");
+        SetBrush("TouchEditorBackgroundBrush", "#F5F7FA", "#1E293B");
+        SetBrush("TouchEditorAlternateRowBrush", "#EAF0F6", "#253348");
+        SetBrush("TouchEditorHeaderBrush", "#D5DFEA", "#162238");
+        SetBrush("TouchEditorTextBrush", "#17212F", "#F1F5F9");
+        SetBrush("TouchEditorSecondaryTextBrush", "#334155", "#CBD5E1");
+        SetBrush("TouchEditorBorderBrush", "#94A3B8", "#64748B");
+        SetBrush("TouchEditorButtonBrush", "#DAE3ED", "#334155");
+        SetBrush("TouchEditorButtonHoverBrush", "#C5D3E3", "#475569");
+        SetBrush("TouchEditorButtonPressedBrush", "#B4C5DA", "#52657F");
+        SetBrush("TouchEditorFocusBrush", "#1D4ED8", "#93C5FD");
+        SetBrush("TouchEditorErrorBrush", "#B91C1C", "#FCA5A5");
+
+        // 系统模板及滚动条仍会引用这些公共键；只在本窗口中提供不透明的替代值。
+        Resources["TextPrimaryBrush"] = Resources["TouchEditorTextBrush"];
+        Resources["TextSecondaryBrush"] = Resources["TouchEditorSecondaryTextBrush"];
+        Resources["PanelBrush"] = Resources["TouchEditorBackgroundBrush"];
+        Resources["SideBrush"] = Resources["TouchEditorSurfaceBrush"];
+        Resources["BorderBrush2"] = Resources["TouchEditorBorderBrush"];
+        Resources["AccentBrush"] = Resources["TouchEditorFocusBrush"];
+    }
+
     private void ApplyGridTheme()
     {
-        _grid.Resources.MergedDictionaries.Add(new ResourceDictionary
-        {
-            Source = new Uri("/XCL2;component/Views/TouchControlsGridStyles.xaml", UriKind.Relative)
-        });
         // 表格的系统默认白底不会随应用主题变化，所有表面及文字统一使用动态资源。
-        _grid.SetResourceReference(Control.BackgroundProperty, "PanelBrush");
-        _grid.SetResourceReference(Control.ForegroundProperty, "TextPrimaryBrush");
-        _grid.SetResourceReference(Control.BorderBrushProperty, "DividerBrush");
-        _grid.SetResourceReference(DataGrid.HorizontalGridLinesBrushProperty, "DividerBrush");
-        _grid.SetResourceReference(DataGrid.VerticalGridLinesBrushProperty, "DividerBrush");
-        _grid.RowBackground = Brushes.Transparent;
+        _grid.SetResourceReference(Control.BackgroundProperty, "TouchEditorBackgroundBrush");
+        _grid.SetResourceReference(Control.ForegroundProperty, "TouchEditorTextBrush");
+        _grid.SetResourceReference(Control.BorderBrushProperty, "TouchEditorBorderBrush");
+        _grid.SetResourceReference(DataGrid.HorizontalGridLinesBrushProperty, "TouchEditorBorderBrush");
+        _grid.SetResourceReference(DataGrid.VerticalGridLinesBrushProperty, "TouchEditorBorderBrush");
+        _grid.SetResourceReference(DataGrid.RowBackgroundProperty, "TouchEditorBackgroundBrush");
+        _grid.SetResourceReference(DataGrid.AlternatingRowBackgroundProperty, "TouchEditorAlternateRowBrush");
+        _grid.AlternationCount = 2;
+        _grid.BorderThickness = new Thickness(1);
         _grid.HeadersVisibility = DataGridHeadersVisibility.Column;
         _grid.GridLinesVisibility = DataGridGridLinesVisibility.Horizontal;
 
         static Setter Resource(DependencyProperty property, string key)
             => new(property, new DynamicResourceExtension(key));
-        var header = new Style(typeof(DataGridColumnHeader));
-        header.Setters.Add(Resource(Control.BackgroundProperty, "SideBrush"));
-        header.Setters.Add(Resource(Control.ForegroundProperty, "TextPrimaryBrush"));
-        header.Setters.Add(Resource(Control.BorderBrushProperty, "DividerBrush"));
-        header.Setters.Add(new Setter(Control.PaddingProperty, new Thickness(8, 10, 8, 10)));
-        header.Setters.Add(new Setter(Control.BorderThicknessProperty, new Thickness(0, 0, 1, 1)));
-        _grid.ColumnHeaderStyle = header;
+        _grid.ColumnHeaderStyle = (Style)FindResource("TouchEditorColumnHeader");
 
         // 使用独立的不透明配色；皮肤的强调色和文字透明度不能降低选中态对比度。
         var selectionBackground = (Brush)_grid.FindResource("TouchGridSelectionBrush");
         var rowStyle = new Style(typeof(DataGridRow));
+        rowStyle.Setters.Add(Resource(Control.ForegroundProperty, "TouchEditorTextBrush"));
         var rowSelected = new Trigger { Property = DataGridRow.IsSelectedProperty, Value = true };
         rowSelected.Setters.Add(new Setter(Control.BackgroundProperty, selectionBackground));
         rowSelected.Setters.Add(new Setter(Control.ForegroundProperty, Brushes.White));
@@ -119,7 +176,7 @@ public sealed class TouchControlsSettingsWindow : Window
         _grid.RowStyle = rowStyle;
 
         var cell = new Style(typeof(DataGridCell));
-        cell.Setters.Add(Resource(Control.ForegroundProperty, "TextPrimaryBrush"));
+        cell.Setters.Add(Resource(Control.ForegroundProperty, "TouchEditorTextBrush"));
         cell.Setters.Add(new Setter(Control.BackgroundProperty, Brushes.Transparent));
         cell.Setters.Add(new Setter(Control.BorderThicknessProperty, new Thickness(1)));
         cell.Setters.Add(new Setter(Control.BorderBrushProperty, Brushes.Transparent));
@@ -128,7 +185,7 @@ public sealed class TouchControlsSettingsWindow : Window
         selected.Setters.Add(new Setter(Control.ForegroundProperty, Brushes.White));
         cell.Triggers.Add(selected);
         var focused = new Trigger { Property = UIElement.IsKeyboardFocusWithinProperty, Value = true };
-        focused.Setters.Add(new Setter(Control.BorderBrushProperty, new SolidColorBrush(Color.FromRgb(147, 197, 253))));
+        focused.Setters.Add(Resource(Control.BorderBrushProperty, "TouchEditorFocusBrush"));
         cell.Triggers.Add(focused);
         _grid.CellStyle = cell;
 
@@ -138,13 +195,8 @@ public sealed class TouchControlsSettingsWindow : Window
             new Binding("Foreground") { RelativeSource = new RelativeSource(RelativeSourceMode.FindAncestor, typeof(DataGridCell), 1) }));
         _textStyle.Setters.Add(new Setter(FrameworkElement.VerticalAlignmentProperty, VerticalAlignment.Center));
         _textStyle.Setters.Add(new Setter(FrameworkElement.MarginProperty, new Thickness(8, 4, 8, 4)));
-        _editorStyle = new Style(typeof(TextBox), (Style)FindResource(typeof(TextBox)));
-        _editorStyle.Setters.Add(new Setter(Control.PaddingProperty, new Thickness(6, 4, 6, 4)));
-        _editorStyle.Setters.Add(new Setter(Control.BackgroundProperty, selectionBackground));
-        _editorStyle.Setters.Add(new Setter(Control.ForegroundProperty, Brushes.White));
-        _editorStyle.Setters.Add(new Setter(TextBox.CaretBrushProperty, Brushes.White));
-        _editorStyle.Setters.Add(new Setter(TextBox.SelectionBrushProperty, Brushes.CornflowerBlue));
-        _comboStyle = new Style(typeof(ComboBox), (Style)FindResource(typeof(ComboBox)));
+        _editorStyle = (Style)FindResource("TouchGridTextEditor");
+        _comboStyle = (Style)_grid.FindResource("TouchGridComboEditor");
         _comboDisplayStyle = (Style)_grid.FindResource("TouchGridComboDisplay");
     }
 
@@ -186,9 +238,10 @@ public sealed class TouchControlsSettingsWindow : Window
         if (!Commit()) return;
         try
         {
+            TouchControlSettingsService.SaveTouchpadEnabled(_touchpadCheck.IsChecked == true, notify: false);
             TouchControlSettingsService.Save(_rows);
             DialogResult = true;
         }
-        catch (Exception ex) { _status.SetResourceReference(TextBlock.ForegroundProperty, "DangerBrush"); _status.Text = ex.Message; }
+        catch (Exception ex) { _status.SetResourceReference(TextBlock.ForegroundProperty, "TouchEditorErrorBrush"); _status.Text = ex.Message; }
     }
 }

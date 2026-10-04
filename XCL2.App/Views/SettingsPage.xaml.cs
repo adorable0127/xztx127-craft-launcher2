@@ -25,6 +25,10 @@ public class JavaListItem
 
 public partial class SettingsPage : UserControl
 {
+    /// <summary>"补全 DirectX"：与崩溃弹窗里的按钮共用同一个安装服务（先确认，再从微软官方下载静默安装）。</summary>
+    private void InstallDirectX_Click(object sender, RoutedEventArgs e)
+        => DirectXRuntimeInstallService.StartWithConfirmation();
+
     private void InstallDisplayDriver_Click(object sender, RoutedEventArgs e)
         => WindowsDisplayDriverInstallService.StartWithConfirmation();
 
@@ -37,21 +41,6 @@ public partial class SettingsPage : UserControl
             ToastService.ShowSuccess("百宝箱布局已保存，重新打开百宝箱即可看到新顺序。");
         }
     }
-
-    /// <summary>"插件管理"弹窗在这里额外开一个入口：原来的唯一入口挂在「实验性功能」
-    /// 窗口里（见 ExperimentalFeaturesWindow.PluginManager_Click），而「实验性功能」按钮
-    /// 本身只在启动器界面语言是简体中文、且没开简洁模式时才显示（见
-    /// LocalizationService.ExperimentalFeaturesLanguageGate）。插件的启用/禁用、查看加载
-    /// 状态属于基础的插件管理能力，不应该跟着一批"实验性"功能一起被这层语言/模式门控
-    /// 挡住，所以在"设置"页里单独放一个不受这些门控影响的按钮，直接复用同一个
-    /// PluginManagerDialog，不重复实现。</summary>
-    private void OpenPluginManagerButton_Click(object sender, RoutedEventArgs e)
-    {
-        new PluginManagerDialog(_owner).ShowDialog();
-    }
-
-    private void OpenTouchControlsSettings_Click(object sender, RoutedEventArgs e)
-        => new TouchControlsSettingsWindow { Owner = _owner }.ShowDialog();
 
     private readonly MainWindow _owner;
 
@@ -93,6 +82,7 @@ public partial class SettingsPage : UserControl
     {
         _owner = owner; // 统一先于 InitializeComponent 赋值，避免控件初始化时触发的事件访问到未赋值字段
         InitializeComponent();
+        InitializePluginSettings();
         var cfg = _owner.ConfigService.Config;
         _pendingHiddenFeatureKeys = new HashSet<string>(cfg.HiddenFeatureKeys, StringComparer.OrdinalIgnoreCase);
         _pendingHiddenSettingKeys = new HashSet<string>(cfg.HiddenSettingKeys, StringComparer.OrdinalIgnoreCase);
@@ -119,7 +109,7 @@ public partial class SettingsPage : UserControl
                 var backup = _owner.ConfigService.CreateSettingsOpenBackup();
                 if (_owner.ConfigService.RecordSettingsPageOpenAndShouldShowRestoreTip())
                 {
-                    Dispatcher.BeginInvoke(new Action(() => MessageBoxDialog.ShowInfo(
+                    _ = Dispatcher.BeginInvoke(new Action(() => MessageBoxDialog.ShowInfo(
                         $"你知道吗？如果你修改错误设置，可以在下面的文件夹里找到自动备份的 config，复制一份并替换 config 就可以还原了！\n\n{Path.GetDirectoryName(backup)}",
                         "设置备份提示")), DispatcherPriority.ContextIdle);
                 }
@@ -138,7 +128,6 @@ public partial class SettingsPage : UserControl
         SourceCombo.SelectedIndex = cfg.Source == DownloadSource.Official ? 1 : 0;
         SelectComboByTag(GameLanguageCombo, cfg.GameLanguage);
         GameVersionTypeLabelBox.Text = cfg.GameVersionTypeLabel;
-        CustomWindowTitleTextBox.Text = cfg.CustomWindowTitleText;
         PageAnimationsCheck.IsChecked = cfg.EnablePageAnimations;
         WindowAnimationsCheck.IsChecked = cfg.EnableUiAnimations;
         LowPerformanceModeCheck.IsChecked = cfg.LowPerformanceMode;
@@ -234,7 +223,6 @@ public partial class SettingsPage : UserControl
         SelectComboByTag(ZipDropDefaultCombo, cfg.ZipDropDefault.ToString());
         SelectComboByTag(ServerJarDropCombo, cfg.ServerPageJarDropTarget.ToString());
         SelectComboByTag(DefaultJarDropCombo, cfg.DefaultJarDropTarget.ToString());
-        SelectComboByTag(PluginLaunchModeCombo, cfg.PluginLaunchMode.ToString());
         IsolateResourcePacksCheck.IsChecked = cfg.IsolateResourcePacksByDefault;
         // CurseForge 地图下载走内置 Key，不再需要在这里读取/展示用户配置状态（见下方删除说明）。
 
@@ -578,7 +566,7 @@ public partial class SettingsPage : UserControl
 
     private void MarkCurrentUiAsSaved()
     {
-        Dispatcher.BeginInvoke(new Action(() =>
+        _ = Dispatcher.BeginInvoke(new Action(() =>
         {
             _lastSavedUiFingerprint = BuildSettingsUiFingerprint();
             _uiFingerprintReady = true;
@@ -654,7 +642,8 @@ public partial class SettingsPage : UserControl
                 ToastService.ShowActionPrompt(
                     "设置已修改，是否保存？", "保存", () => PerformSave(),
                     "撤销", DiscardChanges,
-                    key: "settings-dirty");
+                    key: "settings-dirty",
+                    autoDismissSeconds: 5, dismissible: true);
             }
         }
     }
@@ -1288,14 +1277,6 @@ public partial class SettingsPage : UserControl
         OverlayDialogService.ShowModal(dlg);
     }
 
-    /// <summary>「恢复默认」：只清空这一个输入框（不影响其它设置项），保存后立即生效——
-    /// 跟 GameVersionTypeLabelBox 那种"留空即兜底"不同，这里没有让用户自己手动删空
-    /// 文字这一步，因为大多数人不会知道"留空 = 恢复默认"这个隐藏规则，直接给个按钮更直观。</summary>
-    private void ResetWindowTitleButton_Click(object sender, RoutedEventArgs e)
-    {
-        CustomWindowTitleTextBox.Text = "";
-    }
-
     private void ReopenWizard_Click(object sender, RoutedEventArgs e)
     {
         var wizard = new FirstRunWizardWindow(_owner);
@@ -1304,7 +1285,6 @@ public partial class SettingsPage : UserControl
         // 避免用户看到的还是打开向导之前的旧值。
         SelectComboByTag(GameLanguageCombo, _owner.ConfigService.Config.GameLanguage);
         GameVersionTypeLabelBox.Text = _owner.ConfigService.Config.GameVersionTypeLabel;
-        CustomWindowTitleTextBox.Text = _owner.ConfigService.Config.CustomWindowTitleText;
         StatusText.Text = Loc.T("Str_Cs_Setup_Is_Complete_And_The_Related_Settin", "新手引导已完成，相关设置已自动刷新。");
     }
 
@@ -1667,7 +1647,6 @@ public partial class SettingsPage : UserControl
         cfg.Source = DownloadSource.Official;
         cfg.GameLanguage = "zh_cn";
         cfg.GameVersionTypeLabel = "XCL2";
-        cfg.CustomWindowTitleText = null;
         cfg.EnablePageAnimations = true;
         cfg.LowPerformanceMode = false;
         cfg.AlwaysOnTop = false;
@@ -1695,7 +1674,6 @@ public partial class SettingsPage : UserControl
         
         // 保存配置
         _owner.ConfigService.Save();
-        _owner.ApplyWindowTitle();
         
         // 刷新界面反映默认值
         _owner.NavigateToSettings();
@@ -1951,8 +1929,6 @@ public partial class SettingsPage : UserControl
         cfg.Source = SourceCombo.SelectedIndex == 1 ? DownloadSource.Official : DownloadSource.BMCLAPI;
         if ((GameLanguageCombo.SelectedItem as ComboBoxItem)?.Tag is string lang) cfg.GameLanguage = lang;
         cfg.GameVersionTypeLabel = GameVersionTypeLabelBox.Text?.Trim() ?? "";
-        cfg.CustomWindowTitleText = string.IsNullOrWhiteSpace(CustomWindowTitleTextBox.Text) ? null : CustomWindowTitleTextBox.Text.Trim();
-        _owner.ApplyWindowTitle();
         cfg.EnablePageAnimations = PageAnimationsCheck.IsChecked == true;
         cfg.EnableUiAnimations = WindowAnimationsCheck.IsChecked == true;
         cfg.LowPerformanceMode = LowPerformanceModeCheck.IsChecked == true;
@@ -2039,7 +2015,7 @@ public partial class SettingsPage : UserControl
              (cfg.EnableGlobalWindowTransparency && cfg.GlobalWindowOpacityPercent <= 65)))
         {
             _transparencyReadabilityWarningShown = true;
-            Dispatcher.BeginInvoke(new Action(() => MessageBoxDialog.ShowInfo(
+            _ = Dispatcher.BeginInvoke(new Action(() => MessageBoxDialog.ShowInfo(
                 $"当前配置：面板透明度 {cfg.WindowOpacityPercent}%，整窗透明度 {cfg.GlobalWindowOpacityPercent}%，文字透明度 {cfg.TextOpacityPercent}%。\n\n如果造成有些文字看不清楚，可以在设置里找到“文字透明度设置”进行单独设置。",
                 "透明度可读性提示")), DispatcherPriority.Background);
         }
@@ -2062,9 +2038,6 @@ public partial class SettingsPage : UserControl
             cfg.ServerPageJarDropTarget = srvJar;
         if (Enum.TryParse<DropJarTarget>(TagOf(DefaultJarDropCombo), out var defJar))
             cfg.DefaultJarDropTarget = defJar;
-        if (Enum.TryParse<PluginLaunchMode>(TagOf(PluginLaunchModeCombo), out var pluginMode))
-            cfg.PluginLaunchMode = pluginMode;
-        _owner.Plugins.StartPolicy = cfg.PluginLaunchMode;
         cfg.IsolateResourcePacksByDefault = IsolateResourcePacksCheck.IsChecked == true;
 
         cfg.EnableMultiThreadDownload = MultiThreadDownloadCheck.IsChecked == true;
@@ -2846,6 +2819,7 @@ public partial class SettingsPage : UserControl
             // 多选导入时，最后成功的那一张作为当前显示的背景（上面的循环已经把它套上去了），
             // 视觉上跟用户的预期一致：刚导完看到的就是刚导进来的图。
             cfg.CustomBackgroundImagePath = imported[^1];
+            cfg.CustomBackgroundDeselected = false;
             cfg.CustomBackgroundFrostPercent = Math.Clamp((int)CustomBackgroundFrostSlider.Value, 25, 100);
             _owner.PreviewCustomBackgroundFrost(cfg.CustomBackgroundFrostPercent);
 
@@ -2902,6 +2876,7 @@ public partial class SettingsPage : UserControl
         }
         cfg.CustomBackgroundImageCandidates.Clear();
         cfg.CustomBackgroundImagePath = null;
+        cfg.CustomBackgroundDeselected = false;
         cfg.BackgroundRotationLastDate = null;
         cfg.BackgroundRotationIndex = 0;
 
@@ -3035,6 +3010,7 @@ public partial class SettingsPage : UserControl
         }
 
         cfg.CustomBackgroundImagePath = path;
+        cfg.CustomBackgroundDeselected = false;
         // 轮换下标跟着走，这样"每天轮换"下一次前进是从用户刚点的这一张往后数，
         // 而不是从一个用户完全看不见的旧下标继续，顺序才符合直觉。
         var idx = cfg.CustomBackgroundImageCandidates.FindIndex(
@@ -3042,6 +3018,26 @@ public partial class SettingsPage : UserControl
         if (idx >= 0) cfg.BackgroundRotationIndex = idx;
         _owner.ConfigService.Save();
         RunWithoutDirtyTracking(RefreshBackgroundCandidateUi);
+    }
+
+    /// <summary>点击列表里"当前已选中"的那一条 = 取消选择：候选池保留，但不再显示毛玻璃背景图片。
+    /// ListBox 对已选中项再点一次不会触发 SelectionChanged，所以在 PreviewMouseLeftButtonDown 里
+    /// 自己判断。再点任意一条即重新选中并启用。</summary>
+    private void CustomBackgroundCandidateList_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        var dep = e.OriginalSource as DependencyObject;
+        while (dep != null && dep is not ListBoxItem)
+            dep = System.Windows.Media.VisualTreeHelper.GetParent(dep);
+        if (dep is not ListBoxItem { IsSelected: true, Tag: string path }) return;
+
+        var cfg = _owner.ConfigService.Config;
+        if (!string.Equals(cfg.CustomBackgroundImagePath, path, StringComparison.OrdinalIgnoreCase)) return;
+
+        e.Handled = true;
+        cfg.CustomBackgroundDeselected = true;
+        cfg.CustomBackgroundImagePath = null;
+        ApplyResolvedBackground();
+        ToastService.ShowInfo("已取消选择，当前不使用背景图片");
     }
 
     /// <summary>「背景选择方式」下拉框：改完立即解析并应用一次，不用等点保存——

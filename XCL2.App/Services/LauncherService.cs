@@ -29,7 +29,7 @@ public class MissingLibrariesException : InvalidOperationException
     }
 }
 
-public class LauncherService
+public partial class LauncherService
 {
     public class LaunchOptions
     {
@@ -47,6 +47,9 @@ public class LauncherService
 
         /// <summary>是否额外弹出一个独立 CMD 窗口，实时镜像游戏控制台输出，方便在命令行里直接查看日志。</summary>
         public bool ShowConsoleWindow { get; set; } = false;
+
+        /// <summary>本次实际选择的触屏模式，用于 JVM 启动前准备 GLFW 输入兼容设置。</summary>
+        public bool UseTouchMode { get; set; }
 
         /// <summary>
         /// 是否对这个版本启用"版本隔离"：开启后 --gameDir 会指向
@@ -116,6 +119,8 @@ public class LauncherService
         /// 传了也不会有任何效果，BuildArguments 内部会自动判断，不需要调用方关心版本号）。
         /// </summary>
         public string? AutoJoinServerAddress { get; set; }
+        internal Plugins.PluginChain<Plugins.PluginLaunchPlan>? PreparedPluginLaunch { get; set; }
+        internal string? PreparedPluginIdentity { get; set; }
     }
 
     /// <summary>
@@ -431,14 +436,14 @@ public class LauncherService
 
     /// <summary>启动游戏，返回封装了进程 + 实时输出缓冲的 GameProcessInfo，供进程管理/日志面板使用。</summary>
     public GameProcessInfo Launch(LaunchOptions opts)
-    {
-        ArgumentNullException.ThrowIfNull(opts);
-        return Plugins.PluginRuntimeRegistry.Launch(opts, () => LaunchBuiltIn(opts));
-    }
+        => Plugins.PluginRuntimeRegistry.Launch(opts, () => LaunchBuiltIn(opts));
 
+    /// <summary>内置 Java 启动内核。公开 Launch 先经过旧版插件中间件链；next() 最终落到这里。</summary>
     private GameProcessInfo LaunchBuiltIn(LaunchOptions opts)
     {
+        DemandPreparedLaunch(opts);
         var (mainClass, args) = BuildArguments(opts); // 内部会设置 opts.EffectiveGameDir
+        args = ApplyPluginLaunchPlan(opts, args);
 
         // 启动前执行命令：best-effort，失败只记录不阻断——见 LaunchOptions.PreLaunchCommand 上的注释。
         if (!string.IsNullOrWhiteSpace(opts.PreLaunchCommand))
@@ -474,17 +479,33 @@ public class LauncherService
             StandardErrorEncoding = Encoding.UTF8
         };
         foreach (var a in args) psi.ArgumentList.Add(a);
+        if (opts.PreparedPluginLaunch != null)
+            foreach (var variable in opts.PreparedPluginLaunch.Plan.EnvironmentVariables) psi.Environment[variable.Key] = variable.Value;
 
         // GPU 首选项必须在 javaw.exe 创建之前设置。Windows 图形设置按可执行文件路径保存
         // GpuPreference；同时给子进程注入 SHIM_MCCOMPAT，兼容一部分 NVIDIA Optimus 机器。
         // 任何注册表/驱动兼容性异常都只记录日志，不得阻止 Minecraft 正常启动。
         HighPerformanceGpuService.ApplyForLaunch(psi, opts.JavaPath, opts.UseHighPerformanceGpu);
 
+        bool? originalTouchInput = null;
+        if (opts.UseTouchMode)
+        {
+            originalTouchInput = TouchVersionPolicy.Resolve(opts.MinecraftDir, opts.VersionId);
+            // 仅在明确选择触屏时恢复旧触屏包留下的覆盖；键鼠启动不读写这些设置。
+            GlfwTouchLaunchCompatibility.RestorePreviousOverride(opts.EffectiveGameDir);
+        }
+
         var process = new Process { StartInfo = psi, EnableRaisingEvents = true };
         process.Start();
 
-        var info = new GameProcessInfo(process, opts.VersionId, opts.Account.DisplayLabel, opts.EffectiveGameDir);
+        var info = new GameProcessInfo(process, opts.VersionId, opts.Account.DisplayLabel, opts.EffectiveGameDir)
+        {
+            UseOriginalTouchInput = originalTouchInput,
+            TouchModeRequestedAtLaunch = opts.UseTouchMode,
+            TouchModeEnabled = opts.UseTouchMode
+        };
         info.BeginReadOutput();
+        Plugins.PluginHostBridge.Current?.WatchGame(info, opts.MinecraftDir);
         return info;
     }
 
@@ -497,7 +518,9 @@ public class LauncherService
     /// </summary>
     public string ExportLaunchScript(LaunchOptions opts)
     {
+        DemandPreparedLaunch(opts);
         var (_, args) = BuildArguments(opts); // 内部会设置 opts.EffectiveGameDir
+        args = ApplyPluginLaunchPlan(opts, args);
         var sb = new StringBuilder();
         sb.AppendLine("@echo off");
         sb.AppendLine("REM 由 XCL2 (xztx127-craft-launcher 2) 自动生成的启动脚本");
@@ -647,10 +670,12 @@ public class LauncherService
 
     /// <summary>
     /// 优先按预期文件名查找；改名后的版本文件夹里，内部的 json/jar 文件名不会跟着文件夹名一起变，
-    /// 所以找不到时退而求其次——如果该目录下这种后缀的文件就唯一一个，直接认它就是。
+    /// json 与实例列表共用版本元数据识别规则；jar 找不到预期名称时使用唯一的同后缀文件。
     /// </summary>
-    private static string? ResolveVersionFile(string dir, string preferredBaseName, string extension)
+    internal static string? ResolveVersionFile(string dir, string preferredBaseName, string extension)
     {
+        if (string.Equals(extension, "json", StringComparison.OrdinalIgnoreCase))
+            return FolderService.ResolveVersionJson(dir, preferredBaseName);
         var exact = Path.Combine(dir, $"{preferredBaseName}.{extension}");
         if (File.Exists(exact)) return exact;
         if (!Directory.Exists(dir)) return null;
@@ -742,7 +767,7 @@ public class LauncherService
         catch { return false; }
     }
 
-    private (string mainClass, List<string> args) BuildArguments(LaunchOptions opts)
+    private (string mainClass, List<string> args) BuildArguments(LaunchOptions opts, bool preview = false)
     {
         var versionDir = Path.Combine(opts.MinecraftDir, "versions", opts.VersionId);
 
@@ -750,7 +775,7 @@ public class LauncherService
         // 文件夹下 (.minecraft/versions/<版本号>/)，不跟其他版本共用；关闭时则沿用旧行为，
         // 所有版本共用 .minecraft 根目录下同一份 mods 等文件夹。
         var gameDir = opts.IsolateVersion ? versionDir : opts.MinecraftDir;
-        Directory.CreateDirectory(gameDir);
+        if (!preview) Directory.CreateDirectory(gameDir);
         opts.EffectiveGameDir = gameDir;
 
         // 写入游戏语言 + 跳过官方首次启动引导：Minecraft 客户端只认 <gameDir>/options.txt
@@ -763,13 +788,13 @@ public class LauncherService
         // 不受 lang 字段控制。参考 PCL 等主流第三方启动器的做法：预先生成一份"看起来已经
         // 跑过一次"的 options.txt(onboardAccessibility:false + 一批配套的新手引导已完成
         // 标记字段)，游戏检测到这些字段就会认为不是第一次启动，直接进主菜单，不再弹出引导页。
-        if (!string.IsNullOrWhiteSpace(opts.GameLanguage))
+        if (!preview && !string.IsNullOrWhiteSpace(opts.GameLanguage))
         {
             try { ApplyGameLanguage(gameDir, opts.GameLanguage!); }
             catch { /* options.txt 写入失败不应该阻止游戏启动，语言只是体验问题不是功能性问题 */ }
         }
 
-        if (!string.IsNullOrWhiteSpace(opts.GraphicsApiPreference))
+        if (!preview && !string.IsNullOrWhiteSpace(opts.GraphicsApiPreference))
         {
             try { ApplyGraphicsApiPreference(gameDir, opts.GraphicsApiPreference!); }
             catch (Exception ex)
@@ -1037,6 +1062,13 @@ public class LauncherService
             // 多个模块路径条目——Windows 上是分号 ';'，直接给固定值即可，不需要跟着 classpath
             // 变量走(那个是给 -cp 用的完整分类路径字符串，两者含义不同，不能混用)。
             ["classpath_separator"] = ";",
+            // 老版本(1.6~1.12)version json 用 minecraftArguments 字符串，里面会出现这些占位符。
+            // 其中 --userProperties 是 1.7.x/1.8.x 的必填项，缺了会直接
+            // MissingRequiredOptionException ['userProperties'] 退出码 1。
+            ["user_properties"] = "{}",
+            ["profile_properties"] = "{}",
+            ["auth_session"] = "0",
+            ["game_assets"] = Path.Combine(opts.MinecraftDir, "assets"),
         };
         var resolvedJvmArgsFromJson = jvmArgsFromJson
             .Select(a => SubstituteVariables(a, variables))
@@ -1148,6 +1180,20 @@ public class LauncherService
         var gameArgsFromJson = new List<string>();
         if (parent?.Arguments?.Game != null) gameArgsFromJson.AddRange(ParseArgumentEntries(parent.Arguments.Game, currentFeatures));
         if (detail.Arguments?.Game != null) gameArgsFromJson.AddRange(ParseArgumentEntries(detail.Arguments.Game, currentFeatures));
+
+        // 老格式 minecraftArguments（单个字符串）：之前完全没读，导致两类问题——
+        //  1) 1.7.x/1.8.x 必填的 --userProperties 缺失，游戏一启动就 MissingRequiredOptionException 退出；
+        //  2) OptiFine/老 Forge/LiteLoader 靠 "--tweakClass xxx" 注入，没传就等于启动原版。
+        // 当前版本自己声明了就用当前的（loader json 通常是完整覆盖），否则回退到父版本的。
+        // 新格式(arguments.game)已有内容时不再重复读取，避免同一参数出现两次。
+        var legacyArgsText = !string.IsNullOrWhiteSpace(detail.MinecraftArgumentsLegacy)
+            ? detail.MinecraftArgumentsLegacy
+            : parent?.MinecraftArgumentsLegacy;
+        if (!string.IsNullOrWhiteSpace(legacyArgsText) && gameArgsFromJson.Count == 0)
+        {
+            try { gameArgsFromJson.AddRange(SplitArgsRespectingQuotes(legacyArgsText!)); }
+            catch (Exception ex) { System.Diagnostics.Debug.WriteLine($"[XCL2] minecraftArguments 解析失败，已忽略: {ex.Message}"); }
+        }
 
         // 双保险：上面 ParseArgumentEntries 已经按 features.is_demo_user 正确过滤了 --demo，
         // 理论上不会再混进来；这里再显式剔除一次，防止极端情况下（比如某个 version json

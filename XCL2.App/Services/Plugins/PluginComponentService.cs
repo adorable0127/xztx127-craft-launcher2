@@ -88,6 +88,7 @@ public sealed class PluginComponentService : IDisposable
         IDisposable? result = null;
         _context.Ui.Invoke(() =>
         {
+            _context.Permissions.Demand(PluginPermissionNames.UiComponents);
             if (_disposed) throw new ObjectDisposedException(nameof(PluginComponentService));
             if (!_definitions.TryAdd(definition.Id, definition)) throw new ArgumentException($"组件注册重复：{definition.Id}");
             PluginComponentRegistry.Add(this);
@@ -101,6 +102,7 @@ public sealed class PluginComponentService : IDisposable
     /// <summary>检查当前已经加载的视图。命名选择器须唯一；匿名控件使用返回的路径。</summary>
     public IReadOnlyList<PluginComponentInfo> Inspect(string target)
     {
+        _context.Permissions.Demand(PluginPermissionNames.UiComponents);
         IReadOnlyList<PluginComponentInfo> result = Array.Empty<PluginComponentInfo>();
         _context.Ui.Invoke(() => result = PluginComponentRegistry.Roots().Where(r => PluginComponentRegistry.Matches(r, target))
             .SelectMany(r => PluginComponentRegistry.Tree(r).Select(n => new PluginComponentInfo(n.Path, n.Element.Name,
@@ -110,7 +112,13 @@ public sealed class PluginComponentService : IDisposable
         return result;
     }
     /// <summary>宿主动态重建组件后可显式重新应用当前注册。</summary>
-    public void Refresh() => _context.Ui.Invoke(PluginComponentRegistry.Refresh);
+    public void Refresh() => _context.Ui.Invoke(() => { _context.Permissions.Demand(PluginPermissionNames.UiComponents); PluginComponentRegistry.Refresh(); });
+
+    internal void Revoke() => _context.Ui.Invoke(() =>
+    {
+        _definitions.Clear();
+        PluginComponentRegistry.Remove(this);
+    });
 
     public void Dispose() => _context.Ui.Invoke(() =>
     {
@@ -199,7 +207,7 @@ internal static class PluginComponentRegistry
         var host = new Host(root);
         Hosts.Add(root, host);
         HostRefs.Add(new WeakReference<Host>(host));
-        root.Unloaded += (_, _) => root.Dispatcher.BeginInvoke(new Action(() =>
+        root.Unloaded += (_, _) => _ = root.Dispatcher.BeginInvoke(new Action(() =>
         {
             if (root.IsLoaded || _refreshing) return;
             Undo(host);
@@ -209,7 +217,7 @@ internal static class PluginComponentRegistry
     {
         if (_queued || Application.Current == null) return;
         _queued = true;
-        Application.Current.Dispatcher.BeginInvoke(new Action(() => { _queued = false; Refresh(); }), DispatcherPriority.Loaded);
+        _ = Application.Current.Dispatcher.BeginInvoke(new Action(() => { _queued = false; Refresh(); }), DispatcherPriority.Loaded);
     }
     internal static void Refresh()
     {

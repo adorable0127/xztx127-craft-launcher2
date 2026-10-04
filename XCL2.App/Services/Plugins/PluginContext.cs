@@ -22,7 +22,28 @@ public sealed class PluginContext : IDisposable
     public Action<string> Log { get; }
 
     /// <summary>UI 注册 API 版本；原有 IPlugin 契约保持兼容。</summary>
-    public Version ApiVersion { get; } = new(1, 3);
+    public Version ApiVersion => PluginApi.Version;
+
+    public PluginMetadata Metadata { get; private set; }
+    private System.Collections.Immutable.ImmutableHashSet<string> _grantedPermissions =
+        System.Collections.Immutable.ImmutableHashSet<string>.Empty;
+    internal System.Collections.Immutable.ImmutableHashSet<string> GrantedPermissions => System.Threading.Volatile.Read(ref _grantedPermissions);
+    internal long AuthorizationRevision;
+    internal event Action? AuthorizationChanged;
+    internal void BindMetadata(PluginMetadata metadata, IEnumerable<string> granted)
+    {
+        Metadata = metadata;
+        UpdatePermissions(granted);
+    }
+    internal void UpdatePermissions(IEnumerable<string> granted)
+    {
+        System.Threading.Volatile.Write(ref _grantedPermissions,
+            System.Collections.Immutable.ImmutableHashSet.CreateRange(StringComparer.Ordinal, granted));
+        System.Threading.Interlocked.Increment(ref AuthorizationRevision);
+        if (Ui != null && !Permissions.Has(PluginPermissionNames.UiBasic)) Ui.Revoke();
+        if (Components != null && !Permissions.Has(PluginPermissionNames.UiComponents)) { Components.Revoke(); Runtime.Revoke(); }
+        AuthorizationChanged?.Invoke();
+    }
 
     /// <summary>注册弹窗、按钮、选项、面板和弹窗生命周期订阅。</summary>
     public PluginUiService Ui { get; }
@@ -32,8 +53,65 @@ public sealed class PluginContext : IDisposable
 
     /// <summary>启动内核、头像和实时 3D 渲染后端扩展。</summary>
     public PluginRuntimeService Runtime { get; }
-
-    public void Dispose() => Ui.Dispose();
+    public PluginPermissionService Permissions { get; }
+    public PluginLauncherService Launcher { get; }
+    public PluginEventService Events { get; }
+    public PluginProviderService Providers { get; }
+    public PluginNetworkService Network { get; }
+    public PluginMessageService Messages { get; }
+    private PluginHostBridge? _host;
+    private PluginCallbackRunner? _callbacks;
+    private readonly object _lifetimeGate = new();
+    private readonly List<IDisposable> _registrations = new();
+    private int _disposed;
+    private int _businessDisabled;
+    internal bool IsStopped => System.Threading.Volatile.Read(ref _disposed) != 0 || Stopping.IsCancellationRequested;
+    internal bool BusinessDisabled => System.Threading.Volatile.Read(ref _businessDisabled) != 0;
+    internal PluginHostBridge Host => _host ?? throw new PluginHostUnavailableException();
+    internal TimeSpan CallbackTimeout => _host?.CallbackTimeout ?? TimeSpan.FromSeconds(3);
+    internal string Safe(string? text) => _host?.Safe(text) ?? text ?? "";
+    internal void BindHost(PluginHostBridge host) { _host = host; }
+    internal PluginCallbackRunner Callbacks
+    {
+        get { lock (_lifetimeGate) { EnsureActive(); return _callbacks ??= new PluginCallbackRunner(this); } }
+    }
+    internal void EnsureActive() { if (IsStopped) throw new ObjectDisposedException(nameof(PluginContext)); }
+    internal void DisableBusiness()
+    {
+        if (System.Threading.Interlocked.Exchange(ref _businessDisabled, 1) != 0) return;
+        System.Threading.Interlocked.Increment(ref AuthorizationRevision);
+        Log("CallbackUnresponsive: 已暂停此插件的新业务回调，请在插件管理中重新加载。");
+        AuthorizationChanged?.Invoke();
+    }
+    internal IDisposable Track(IDisposable registration)
+    {
+        IDisposable? tracked = null;
+        tracked = new PluginRegistration(() =>
+        {
+            lock (_lifetimeGate) _registrations.Remove(tracked!);
+            registration.Dispose();
+        });
+        lock (_lifetimeGate)
+        {
+            if (IsStopped) { registration.Dispose(); throw new ObjectDisposedException(nameof(PluginContext)); }
+            _registrations.Add(tracked);
+        }
+        return tracked;
+    }
+    public void Dispose()
+    {
+        if (System.Threading.Interlocked.Exchange(ref _disposed, 1) != 0) return;
+        try { Ui.Dispose(); }
+        finally
+        {
+            Events.Dispose();
+            IDisposable[] registrations;
+            lock (_lifetimeGate) { registrations = _registrations.ToArray(); _registrations.Clear(); _callbacks?.Dispose(); }
+            foreach (var registration in registrations)
+                try { registration.Dispose(); } catch (Exception ex) { Log("CleanupFailed: " + ex.GetType().Name); }
+            _host = null;
+        }
+    }
 
     /// <summary>插件停止时取消，后台任务应传入此令牌。</summary>
     public System.Threading.CancellationToken Stopping => Ui.Stopping;
@@ -42,11 +120,18 @@ public sealed class PluginContext : IDisposable
     {
         Config = config;
         DataDirectory = dataDirectory;
-        Log = log;
+        Log = message => log(PluginHostBridge.Current?.Safe(message) ?? message);
         PluginId = pluginId;
+        Metadata = PluginManifestReader.Legacy(pluginId, pluginId, "0.0.0");
         Ui = new PluginUiService(this);
         Components = new PluginComponentService(this);
         Runtime = new PluginRuntimeService(this);
+        Permissions = new PluginPermissionService(this);
+        Launcher = new PluginLauncherService(this);
+        Events = new PluginEventService(this);
+        Providers = new PluginProviderService(this);
+        Network = new PluginNetworkService(this);
+        Messages = new PluginMessageService(this);
     }
 
     /// <summary>原安装等于 IPlugin.Id，副本含独立实例后缀。使用此 Id 隔离注册项，方便插件代码里不用额外持有 IPlugin 引用

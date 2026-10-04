@@ -104,6 +104,7 @@ public class LocalModService
         if (!filePath.EndsWith(DisabledSuffix, StringComparison.OrdinalIgnoreCase)) return filePath;
         var newPath = filePath[..^DisabledSuffix.Length];
         MoveWithoutOverwrite(filePath, newPath);
+        Plugins.PluginHostBridge.Current?.NotifyModChange(newPath, "enabled", true);
         return newPath;
     }
 
@@ -113,13 +114,16 @@ public class LocalModService
         if (filePath.EndsWith(DisabledSuffix, StringComparison.OrdinalIgnoreCase)) return filePath;
         var newPath = filePath + DisabledSuffix;
         MoveWithoutOverwrite(filePath, newPath);
+        Plugins.PluginHostBridge.Current?.NotifyModChange(newPath, "enabled", false);
         return newPath;
     }
 
     /// <summary>删除一个 mod 文件（无论是否处于禁用状态）。调用方负责在删除前跟用户做二次确认。</summary>
     public void Delete(string filePath)
     {
-        if (File.Exists(filePath)) File.Delete(filePath);
+        if (!File.Exists(filePath)) return;
+        File.Delete(filePath);
+        Plugins.PluginHostBridge.Current?.NotifyModChange(filePath, "removed");
     }
 
     private static void MoveWithoutOverwrite(string source, string dest)

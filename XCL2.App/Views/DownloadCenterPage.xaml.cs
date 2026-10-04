@@ -219,6 +219,7 @@ public partial class DownloadCenterPage : UserControl
         };
 
         _initialized = true;
+        InitializePluginSources();
         Category_Checked(CatVersion, new RoutedEventArgs()); // 补上初始化阶段被跳过的那次面板显隐
     }
 
@@ -559,9 +560,12 @@ public partial class DownloadCenterPage : UserControl
     /// </summary>
     private void SourceCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        if (!_initialized) return;
+        if (!_initialized || _pluginSourcesUpdating) return;
         if (_owner?.ConfigService?.Config == null) return; // 控件初始化早于字段赋值时的防御
-        _owner.ConfigService.Config.Source = SourceCombo.SelectedIndex == 1 ? DownloadSource.BMCLAPI : DownloadSource.Official;
+        var providerTag = (SourceCombo.SelectedItem as ComboBoxItem)?.Tag as string;
+        _owner.ConfigService.Config.PluginDownloadProviderId = providerTag?.StartsWith("plugin:", StringComparison.Ordinal) == true ? providerTag[7..] : null;
+        if (_owner.ConfigService.Config.PluginDownloadProviderId == null)
+            _owner.ConfigService.Config.Source = SourceCombo.SelectedIndex == 1 ? DownloadSource.BMCLAPI : DownloadSource.Official;
         _owner.ConfigService.Save();
         _ = FetchOnlineAsync();
     }
@@ -676,6 +680,11 @@ public partial class DownloadCenterPage : UserControl
 
         var choiceDialog = new LoaderChoiceDialog(entry.Id);
         if (OverlayDialogService.ShowModal(choiceDialog) != true) return; // 用户点了"取消"
+        if (choiceDialog.SelectedPluginLoaderId != null)
+        {
+            await OverlayDialogService.ShowModalAsync(new PluginLoaderInstallDialog(_owner, choiceDialog.SelectedPluginLoaderId, entry.Id));
+            return;
+        }
 
         // LiteLoader/Cleanroom/LabyMod 目前只在 LoaderChoiceDialog 里做了"能不能装"的探测和置灰，
         // InstallClientLoaderWindow 那边的三级联动安装流程还没有对应实现（不像 Fabric/Forge/
@@ -1493,17 +1502,9 @@ public partial class DownloadCenterPage : UserControl
                 var progress = new Progress<string>(msg => queueItem.StatusText = msg);
                 var result = await _modpackService.ImportMrpackAsync(tempMrpackPath, targetVersionDir, progress, ct);
 
-                // 新建模式下，把新版本目录追加进这个 GameFolder 的可选版本列表，这样"版本选择"页
-                // 下次打开就能直接看到，不需要用户手动去点"刷新"才发现整合包装到哪了。
-                if (targetDialog.IsNewVersion)
-                {
-                    var cfg = _owner.ConfigService.Config;
-                    cfg.SelectedFolderPath = folder.Path;
-                    _owner.ConfigService.Save();
-                }
-
                 await _owner.Dispatcher.InvokeAsync(() =>
                 {
+                    _owner.NotifyInstanceImported(folder.Path, targetDialog.TargetVersionId);
                     _owner.EnsureVisibleForDialog();
                     if (result.FailedFiles.Count > 0)
                     {
@@ -1664,11 +1665,9 @@ public partial class DownloadCenterPage : UserControl
             var hasChinese = keyword.Any(ch => ch is >= '\u4e00' and <= '\u9fff');
             if (outcome.TranslatedFrom != null)
             {
-                ModTranslationHintText.Text = outcome.UsedTranslationFallback
-                    ? $"“{outcome.TranslatedFrom}” 已自动翻译为 “{outcome.TranslatedKeyword}” 补充搜索，匹配结果优先，低匹配候选保留在后。"
-                    : !string.IsNullOrWhiteSpace(outcome.TranslatedKeyword)
-                        ? $"“{outcome.TranslatedFrom}” 已自动转换为 “{outcome.TranslatedKeyword}” 后优先搜索 Modrinth / CurseForge。"
-                        : $"“{outcome.TranslatedFrom}” 已自动按对应的英文名搜索。";
+                ModTranslationHintText.Text = !string.IsNullOrWhiteSpace(outcome.TranslatedKeyword)
+                    ? $"“{outcome.TranslatedFrom}” 已自动转换为 “{outcome.TranslatedKeyword}” 后优先搜索 Modrinth / CurseForge。"
+                    : $"“{outcome.TranslatedFrom}” 已自动按对应的英文名搜索。";
                 ModTranslationHintText.Visibility = Visibility.Visible;
             }
             else if (hasChinese && outcome.Items.Count == 0)

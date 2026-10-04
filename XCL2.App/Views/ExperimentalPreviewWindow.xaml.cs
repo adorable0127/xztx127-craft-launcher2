@@ -18,7 +18,7 @@ public partial class ExperimentalPreviewWindow : Window
         _previewHome = new HomePage(owner);
         // 修复"按钮显示状态"+"套娃假死"问题：这份内层 HomePage 实际上已经在被预览窗口
         // 打开了，把它自己的「新界面预览」按钮同步成已选中并禁用，见该方法上的详细注释。
-        _previewHome.ConfigureAsEmbeddedPreview();
+        _previewHome.ConfigureAsEmbeddedPreview(this);
         PreviewContent.Content = _previewHome;
     }
 

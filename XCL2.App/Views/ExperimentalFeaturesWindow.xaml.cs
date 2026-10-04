@@ -34,6 +34,11 @@ public partial class ExperimentalFeaturesWindow : OverlayDialogControl
     /// "初步测试版功能"下唯一的子功能入口：多加载器合装。打开专门的
     /// MultiLoaderInstallWindow，那边有自己独立的风险提示 + token 校验，这里不重复处理。
     /// </summary>
+    private void PluginManager_Click(object sender, RoutedEventArgs e)
+    {
+        OverlayDialogService.ShowModal(new PluginManagerDialog(_owner));
+    }
+
     private void MultiLoaderFeature_Click(object sender, RoutedEventArgs e)
     {
         var window = new MultiLoaderInstallWindow(_owner) ;
@@ -47,12 +52,5 @@ public partial class ExperimentalFeaturesWindow : OverlayDialogControl
         {
             _owner.RefreshVersionsPageIfActive();
         }
-    }
-
-    /// <summary>打开"插件管理"弹窗——第三方插件系统的唯一入口，见
-    /// PluginManagerDialog / Services/Plugins/PluginManager.cs 类头注释。</summary>
-    private void PluginManager_Click(object sender, RoutedEventArgs e)
-    {
-        new PluginManagerDialog(_owner).ShowDialog();
     }
 }

@@ -45,41 +45,32 @@ public static class BedrockPackageRegistrationHelper
     /// </summary>
     public static bool IsDeveloperModeEnabled()
     {
-        string script = @"
-            $paths = @(
-                'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\AppModelUnlock',
-                'HKLM:\SOFTWARE\Policies\Microsoft\Windows\Appx'
-            )
-            $valueName = 'AllowDevelopmentWithoutDevLicense'
-            foreach ($path in $paths) {
-                try {
-                    $value = Get-ItemProperty -Path $path -Name $valueName -ErrorAction Stop
-                    if ($value.$valueName -eq 1) { Write-Output 'true'; return }
-                } catch { continue }
-            }
-            Write-Output 'false'
-        ";
+        // 直接用注册表 API 读取，不再启动 powershell.exe（脚本调用容易被安全软件启发式拦截）。
+        // 同时检查 64 位视图，避免 32 位进程被重定向到 WOW6432Node 读不到值。
+        const string valueName = "AllowDevelopmentWithoutDevLicense";
+        string[] subKeys =
+        {
+            @"SOFTWARE\Microsoft\Windows\CurrentVersion\AppModelUnlock",
+            @"SOFTWARE\Policies\Microsoft\Windows\Appx",
+        };
         try
         {
-            var bytes = System.Text.Encoding.Unicode.GetBytes(script);
-            var encoded = Convert.ToBase64String(bytes);
-            var psi = new ProcessStartInfo("powershell.exe",
-                $"-NoProfile -ExecutionPolicy Bypass -EncodedCommand {encoded}")
+            using var baseKey = Microsoft.Win32.RegistryKey.OpenBaseKey(
+                Microsoft.Win32.RegistryHive.LocalMachine, Microsoft.Win32.RegistryView.Registry64);
+            foreach (var subKey in subKeys)
             {
-                UseShellExecute = false,
-                RedirectStandardOutput = true,
-                CreateNoWindow = true,
-            };
-            using var proc = Process.Start(psi);
-            if (proc == null) return false;
-            var output = proc.StandardOutput.ReadToEnd().Trim();
-            proc.WaitForExit();
-            return string.Equals(output, "true", StringComparison.OrdinalIgnoreCase);
+                try
+                {
+                    using var key = baseKey.OpenSubKey(subKey, writable: false);
+                    var value = key?.GetValue(valueName);
+                    if (value is int i && i == 1) return true;
+                    if (value is long l && l == 1) return true;
+                }
+                catch { /* 单个键读不了就看下一个 */ }
+            }
         }
-        catch
-        {
-            return false;
-        }
+        catch { }
+        return false;
     }
 
     /// <summary>打开"系统 - 开发者选项"设置页，引导用户手动开启。</summary>

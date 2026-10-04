@@ -31,6 +31,9 @@ namespace XCL2.App.Services;
 /// </summary>
 public class ClientLoaderInstallService : IDisposable
 {
+    /// <summary>安装过程中一确定将要写入的版本 ID 就触发，让下载队列能提前拦住对该版本的启动。</summary>
+    public event Action<string>? InstallationTargetResolved;
+
     /// <summary>
     /// 跟 LauncherService 里同名方法逻辑一致（该文件改名容错查找）：优先按"文件夹名/版本 id"找精确
     /// 文件名，找不到就退化为"文件夹里唯一一个该后缀的文件"。做成独立实例时需要把原版 client.jar
@@ -362,6 +365,7 @@ public class ClientLoaderInstallService : IDisposable
         var versionId = string.IsNullOrWhiteSpace(customInstanceName)
             ? defaultVersionId
             : ModpackInstallService.MakeUniqueInstanceName(minecraftDir, customInstanceName);
+        InstallationTargetResolved?.Invoke(versionId);
         var versionDir = Path.Combine(minecraftDir, "versions", versionId);
         Directory.CreateDirectory(versionDir);
 
@@ -634,6 +638,7 @@ public class ClientLoaderInstallService : IDisposable
         var versionId = string.IsNullOrWhiteSpace(customInstanceName)
             ? defaultVersionId
             : ModpackInstallService.MakeUniqueInstanceName(minecraftDir, customInstanceName);
+        InstallationTargetResolved?.Invoke(versionId);
         var versionDir = Path.Combine(minecraftDir, "versions", versionId);
         Directory.CreateDirectory(versionDir);
 
@@ -715,7 +720,7 @@ public class ClientLoaderInstallService : IDisposable
                         apiProgress, saveName: null, ct);
                 }
             }
-            catch (Exception ex) when (ex is not OperationCanceledException)
+            catch (Exception ex) when (ex is not OperationCanceledException and not Plugins.PluginFlowCanceledException)
             {
                 // 同上：Fabric API 下载失败不应该让整个安装抛异常，只在进度里提示一下，
                 // 让用户知道"loader 装好了，但 Fabric API 这一步没成功"，而不是笼统地报"安装失败"。
@@ -788,6 +793,7 @@ public class ClientLoaderInstallService : IDisposable
         var versionId = string.IsNullOrWhiteSpace(customInstanceName)
             ? defaultVersionId
             : ModpackInstallService.MakeUniqueInstanceName(minecraftDir, customInstanceName);
+        InstallationTargetResolved?.Invoke(versionId);
         var versionDir = Path.Combine(minecraftDir, "versions", versionId);
         Directory.CreateDirectory(versionDir);
 
@@ -859,7 +865,7 @@ public class ClientLoaderInstallService : IDisposable
                         qslProgress, saveName: null, ct);
                 }
             }
-            catch (Exception ex) when (ex is not OperationCanceledException)
+            catch (Exception ex) when (ex is not OperationCanceledException and not Plugins.PluginFlowCanceledException)
             {
                 // 同上：QSL 下载失败不应该让整个安装抛异常，只在进度里提示一下，
                 // 让用户知道"loader 装好了，但 QSL 这一步没成功"，而不是笼统地报"安装失败"。
@@ -890,6 +896,7 @@ public class ClientLoaderInstallService : IDisposable
     {
         if (coreType is not (ServerCoreType.Forge or ServerCoreType.NeoForge))
             throw new ArgumentException("只支持 Forge/NeoForge。", nameof(coreType));
+        if (!string.IsNullOrWhiteSpace(customInstanceName)) InstallationTargetResolved?.Invoke(customInstanceName);
         if (!File.Exists(javaExePath))
             throw new FileNotFoundException("找不到可用的 Java，无法运行加载器安装器。", javaExePath);
 
@@ -1196,6 +1203,7 @@ public class ClientLoaderInstallService : IDisposable
         var versionId = string.IsNullOrWhiteSpace(customInstanceName)
             ? ModpackInstallService.MakeUniqueInstanceName(minecraftDir, defaultVersionId)
             : ModpackInstallService.MakeUniqueInstanceName(minecraftDir, customInstanceName);
+        InstallationTargetResolved?.Invoke(versionId);
         var versionDir = Path.Combine(minecraftDir, "versions", versionId);
         Directory.CreateDirectory(versionDir);
 
@@ -1225,6 +1233,23 @@ public class ClientLoaderInstallService : IDisposable
         };
         vanillaDetail.Libraries ??= new List<LibraryEntry>();
         vanillaDetail.Libraries.Insert(0, launchwrapperLib);
+
+        // 根因（"装完 OptiFine 启动还是原版"）：mainClass 换成了 launchwrapper，但从没告诉它
+        // 要加载哪个 tweaker，LaunchWrapper 就只是原样启动原版。必须给游戏参数追加
+        // --tweakClass optifine.OptiFineTweaker（官方安装器生成的 json 也是这么写的）。
+        const string OptiFineTweaker = "optifine.OptiFineTweaker";
+        if (!string.IsNullOrWhiteSpace(vanillaDetail.MinecraftArgumentsLegacy))
+        {
+            if (!vanillaDetail.MinecraftArgumentsLegacy.Contains(OptiFineTweaker, StringComparison.Ordinal))
+                vanillaDetail.MinecraftArgumentsLegacy += " --tweakClass " + OptiFineTweaker;
+        }
+        else
+        {
+            vanillaDetail.Arguments ??= new ArgumentsSpec();
+            vanillaDetail.Arguments.Game ??= new List<object>();
+            vanillaDetail.Arguments.Game.Add("--tweakClass");
+            vanillaDetail.Arguments.Game.Add(OptiFineTweaker);
+        }
 
         var finalJson = JsonSerializer.Serialize(vanillaDetail,
             new JsonSerializerOptions { WriteIndented = true, DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull });
@@ -1456,7 +1481,8 @@ public class ClientLoaderInstallService : IDisposable
                 attemptCts.CancelAfter(SingleAttemptTimeout);
                 try
                 {
-                    using (var resp = await _http.GetAsync(candidateUrl, HttpCompletionOption.ResponseHeadersRead, attemptCts.Token))
+                    var resolved = await Plugins.PluginInterceptionRegistry.PrepareDownloadAsync(candidateUrl, Path.GetFileName(destPath), null, ct);
+                    using (var resp = await _http.GetAsync(resolved, HttpCompletionOption.ResponseHeadersRead, attemptCts.Token))
                     {
                         resp.EnsureSuccessStatusCode();
                         await using var fs = File.Create(tmp);
@@ -1479,7 +1505,7 @@ public class ClientLoaderInstallService : IDisposable
                         $"下载单次尝试超时（{SingleAttemptTimeout.TotalSeconds:0}秒内无响应）: {candidateUrl}");
                     TryDelete(tmp);
                 }
-                catch (Exception ex) when (ex is not OperationCanceledException)
+                catch (Exception ex) when (ex is not OperationCanceledException and not Plugins.PluginFlowCanceledException)
                 {
                     lastError = ex;
                     TryDelete(tmp);

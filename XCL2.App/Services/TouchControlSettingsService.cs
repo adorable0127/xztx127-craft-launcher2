@@ -16,6 +16,45 @@ public static class TouchControlSettingsService
     };
     public static event Action? Changed;
 
+    // 触摸板（相对位移区）是否显示：默认隐藏，在「触屏按键与布局设置」里开启。
+    // 与按键布局分开存一个小文件，不改动 touch-controls.json 的格式，旧配置照常可用。
+    private static readonly string TouchpadFilePath = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "XCL2", "touch-pad.json");
+    private sealed class TouchpadSettings { public bool Enabled { get; set; } }
+    private static bool? _touchpadEnabled;
+
+    public static bool TouchpadEnabled
+    {
+        get
+        {
+            if (_touchpadEnabled is { } cached) return cached;
+            var value = false;
+            try
+            {
+                if (File.Exists(TouchpadFilePath))
+                    value = JsonSerializer.Deserialize<TouchpadSettings>(File.ReadAllText(TouchpadFilePath))?.Enabled ?? false;
+            }
+            catch (Exception ex) { ErrorPresenter.LogTechnicalDetail($"[读取触摸板显示设置]\n{ex}"); }
+            _touchpadEnabled = value;
+            return value;
+        }
+    }
+
+    /// <summary>保存触摸板显示开关；notify 为 false 时不触发 Changed（调用方随后还会保存按键并触发一次）。</summary>
+    public static void SaveTouchpadEnabled(bool enabled, bool notify = true)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(TouchpadFilePath)!);
+        var temporary = TouchpadFilePath + "." + Guid.NewGuid().ToString("N") + ".tmp";
+        try
+        {
+            File.WriteAllText(temporary, JsonSerializer.Serialize(new TouchpadSettings { Enabled = enabled }, JsonOptions));
+            File.Move(temporary, TouchpadFilePath, overwrite: true);
+        }
+        finally { if (File.Exists(temporary)) File.Delete(temporary); }
+        _touchpadEnabled = enabled;
+        if (notify) Changed?.Invoke();
+    }
+
     public static List<TouchControlDefinition> Load()
     {
         try
@@ -23,7 +62,11 @@ public static class TouchControlSettingsService
             if (File.Exists(FilePath))
             {
                 var controls = JsonSerializer.Deserialize<List<TouchControlDefinition>>(File.ReadAllText(FilePath), JsonOptions);
-                if (controls != null && Validate(controls) == null) return controls;
+                if (controls != null && Validate(controls) == null)
+                {
+                    // 已保存布局按用户设置加载，不在读取时改写 E 键或其它按键的显示范围。
+                    return controls;
+                }
                 LauncherLogService.AppendLine("[触屏设置] 按键配置无效，本次使用默认布局，原文件未覆盖。");
             }
         }

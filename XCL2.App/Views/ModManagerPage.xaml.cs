@@ -31,10 +31,24 @@ public partial class ModManagerPage : UserControl
     private readonly ObservableCollection<GameVersion> _versions = new();
     private readonly ObservableCollection<LocalModDisplayItem> _mods = new();
 
+    // 监视当前实例的 mods 文件夹：不管是拖拽导入、下载、还是用户手动往文件夹里丢文件，
+    // 只要内容变了就自动刷新列表。防抖是因为复制一个 jar 会连续触发好几次文件事件。
+    private FileSystemWatcher? _modsWatcher;
+    private string? _watchedModsDir;
+    private readonly System.Windows.Threading.DispatcherTimer _watchDebounce;
+
     public ModManagerPage(MainWindow owner)
     {
         _owner = owner;
         InitializeComponent();
+
+        _watchDebounce = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromMilliseconds(400) };
+        _watchDebounce.Tick += (_, _) =>
+        {
+            _watchDebounce.Stop();
+            RefreshMods();
+        };
+        Unloaded += (_, _) => StopWatchingMods();
 
         FolderCombo.ItemsSource = _folders;
         VersionCombo.ItemsSource = _versions;
@@ -105,8 +119,71 @@ public partial class ModManagerPage : UserControl
         return isolate ? Path.Combine(folder.Path, "versions", version.Id) : folder.Path;
     }
 
+    /// <summary>供主窗口调用：拖拽导入等操作装完文件后，如果用户正停在这个页面，立刻刷新列表。</summary>
+    public void RefreshFromExternalChange()
+    {
+        if (Dispatcher.CheckAccess()) RefreshMods();
+        else _ = Dispatcher.BeginInvoke(new Action(RefreshMods));
+    }
+
+    /// <summary>实例导入后刷新目录和版本选项，使新实例立即可选。</summary>
+    internal void RefreshVersionsFromExternalChange()
+    {
+        if (Dispatcher.CheckAccess()) LoadFolders();
+        else _ = Dispatcher.BeginInvoke(new Action(LoadFolders));
+    }
+
+    private void WatchModsDir(string gameDir)
+    {
+        var modsDir = Path.Combine(gameDir, "mods");
+        if (_modsWatcher != null && string.Equals(_watchedModsDir, modsDir, StringComparison.OrdinalIgnoreCase)) return;
+
+        StopWatchingMods();
+        try
+        {
+            if (!Directory.Exists(modsDir)) return;
+
+            var watcher = new FileSystemWatcher(modsDir)
+            {
+                NotifyFilter = NotifyFilters.FileName | NotifyFilters.LastWrite | NotifyFilters.Size,
+                IncludeSubdirectories = false,
+            };
+            void OnChanged() => Dispatcher.BeginInvoke(new Action(() =>
+            {
+                _watchDebounce.Stop();
+                _watchDebounce.Start();
+            }));
+            watcher.Created += (_, _) => OnChanged();
+            watcher.Deleted += (_, _) => OnChanged();
+            watcher.Changed += (_, _) => OnChanged();
+            watcher.Renamed += (_, _) => OnChanged();
+            watcher.EnableRaisingEvents = true;
+
+            _modsWatcher = watcher;
+            _watchedModsDir = modsDir;
+        }
+        catch
+        {
+            // 监视失败（权限/网络盘等）不影响功能，用户仍然可以手动点刷新。
+        }
+    }
+
+    private void StopWatchingMods()
+    {
+        _watchDebounce.Stop();
+        if (_modsWatcher != null)
+        {
+            _modsWatcher.EnableRaisingEvents = false;
+            _modsWatcher.Dispose();
+            _modsWatcher = null;
+        }
+        _watchedModsDir = null;
+    }
+
     private void RefreshMods()
     {
+        // 显式刷新会取消还在排队的"文件变化"刷新，避免同一件事刷两遍。
+        _watchDebounce.Stop();
         _mods.Clear();
         var gameDir = GetEffectiveGameDir();
         if (gameDir == null)
@@ -114,6 +191,8 @@ public partial class ModManagerPage : UserControl
             UpdateEmptyHint();
             return;
         }
+
+        WatchModsDir(gameDir);
 
         try
         {
@@ -188,7 +267,12 @@ public partial class ModManagerPage : UserControl
             return;
         }
 
-        var warnWin = new ModDependencyWarningWindow(analysis, gameDir, enabledMods);
+        // 把当前实例的游戏版本和加载器传给弹窗：下载前置时必须按它们过滤，
+        // 否则 Fabric 实例可能下到 NeoForge/Forge 版的前置。
+        var selectedVersion = VersionCombo.SelectedItem as GameVersion;
+        var warnWin = new ModDependencyWarningWindow(analysis, gameDir, enabledMods,
+            selectedVersion?.McVersion, selectedVersion?.ModLoader);
+        warnWin.ModsChanged += (_, _) => RefreshMods();   // 下载/删除后立刻刷新，不用等弹窗关闭
         warnWin.ShowDialog();
         RefreshMods(); // 用户可能在弹窗里下载了前置或删除了 mod，刷新列表让状态保持一致
     }

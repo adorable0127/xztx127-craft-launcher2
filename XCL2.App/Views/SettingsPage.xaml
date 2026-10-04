@@ -263,17 +263,6 @@
             <TextBlock Text="{DynamicResource Str_Ui_In_Game_Watermark_Text_Shown_In_The_Bott}" Margin="0,0,0,4"/>
             <TextBox x:Name="GameVersionTypeLabelBox" Width="220" HorizontalAlignment="Left" Margin="0,0,0,20"/>
 
-            <!-- 启动器"标题栏"（自绘标题栏左上角文字）/"任务栏、Alt-Tab"显示的文字：
-                 两处其实是同一个 Win32 Title，改这一项同时生效，见 AppConfig.CustomWindowTitleText
-                 和 MainWindow.ApplyWindowTitle 注释。留空 = 沿用默认（当前就是这样，随界面语言
-                 自动切换），填了任意文字之后固定显示这段文字，不再随语言切换改变。 -->
-            <TextBlock Text="{DynamicResource Str_Ui_Window_Title_Bar_And_Taskbar_Text}" Margin="0,0,0,4"/>
-            <StackPanel Orientation="Horizontal" Margin="0,0,0,20">
-                <TextBox x:Name="CustomWindowTitleTextBox" Width="220" HorizontalAlignment="Left"/>
-                <Button x:Name="ResetWindowTitleButton" Content="{DynamicResource Str_Ui_Restore_Default}"
-                        Padding="10,4" Margin="10,0,0,0" Click="ResetWindowTitleButton_Click"/>
-            </StackPanel>
-
             <!-- 界面切换动画开关：控制左侧导航栏切页时右侧内容区的淡入过渡效果。
                  默认开启；觉得切页慢/动画多余的用户可以关掉，关闭后切页恢复瞬间直接替换，
                  不跑任何动画。见 MainWindow.SetMainContent。 -->
@@ -304,9 +293,6 @@
                 <TextBlock Text="视角灵敏度" VerticalAlignment="Center" Margin="14,0,6,0"/>
                 <TextBox x:Name="TouchSensitivityBox" Width="60" VerticalAlignment="Center"/>
             </StackPanel>
-
-            <Button Content="触屏按键与组件布局设置…" HorizontalAlignment="Left"
-                    Padding="12,7" Margin="0,0,0,12" Click="OpenTouchControlsSettings_Click"/>
 
             <!-- 下载中心 Mod 搜索结果的图标显示开关：图标从 Modrinth/CurseForge 抓取，
                  默认显示；网络较差或者不喜欢列表里混图片的用户可以关掉，只影响图标渲染，
@@ -367,24 +353,6 @@
                     <ComboBoxItem Content="{DynamicResource Str_Ui_Install_To_Server}" Tag="Server"/>
                     <ComboBoxItem Content="{DynamicResource Str_Ui_Ask_Every_Time}" Tag="Ask"/>
                 </ComboBox>
-            </StackPanel>
-
-            <TextBlock Text="第三方插件" FontWeight="Bold" FontSize="14" Margin="0,14,0,4"/>
-            <TextBlock Text="拖入 DLL 或 EXE 后会先提示确认来源。以下设置决定插件何时运行。"
-                       FontSize="11" TextWrapping="Wrap" Margin="0,0,0,8"
-                       Foreground="{DynamicResource TextSecondaryBrush}"/>
-            <StackPanel Orientation="Horizontal" Margin="0,0,0,12">
-                <TextBlock Text="插件启动方式" VerticalAlignment="Center" Width="200"/>
-                <ComboBox x:Name="PluginLaunchModeCombo" Width="260">
-                    <ComboBoxItem Content="每次打开启动器时启动（默认）" Tag="EachLaunch"/>
-                    <ComboBoxItem Content="只在导入时启动一次" Tag="OnceOnImport"/>
-                </ComboBox>
-            </StackPanel>
-            <StackPanel Orientation="Horizontal" Margin="0,0,0,20">
-                <TextBlock Text="已安装的插件" VerticalAlignment="Center" Width="200"/>
-                <Button x:Name="OpenPluginManagerButton" Content="插件管理…" Width="140"
-                        Click="OpenPluginManagerButton_Click"
-                        ToolTip="查看已安装插件、启用/禁用、重新扫描——不需要先打开「实验性功能」。"/>
             </StackPanel>
 
             <!-- 资源包下载作用域：独立于上面的"版本隔离"总开关。默认勾选(材质包/数据包/光影包都
@@ -524,7 +492,8 @@
                     <ListBox x:Name="CustomBackgroundCandidateList" Width="300" Height="94" Padding="2"
                              ScrollViewer.VerticalScrollBarVisibility="Auto"
                              SelectionChanged="CustomBackgroundCandidateList_SelectionChanged"
-                             ToolTip="点一条即把它设为当前背景（固定模式下长期使用这一张；每天轮换模式下只是立刻预览一下）。"/>
+                             PreviewMouseLeftButtonDown="CustomBackgroundCandidateList_PreviewMouseLeftButtonDown"
+                             ToolTip="点一条即把它设为当前背景，再点一次已选中的那一条可取消选择（固定模式下长期使用这一张；每天轮换模式下只是立刻预览一下）。"/>
                 </StackPanel>
                 <StackPanel Orientation="Horizontal" Margin="0,0,0,4">
                     <TextBlock Text="背景选择方式" VerticalAlignment="Center" Width="200"/>
@@ -775,113 +744,124 @@
                 </StackPanel>
             </Grid>
 
-            <!-- 配色皮肤：色系(White/Blue/Yellow/Purple/Pink)，跟明暗是两个独立维度。
-                 具体显示成浅色版还是深色版由 IsDarkMode 决定。这里选的只是色相，不管深浅。
-                 “自定义”不会替换/隐藏原来的预设选择控件，只在 UiSkinCombo 正下方展开独立
-                 CustomThemeSettingsPanel；用户真正选定/应用颜色之前也不算一次已提交的设置修改。 -->
-            <TextBlock Text="{DynamicResource Str_Ui_Colour_Theme}" FontSize="14" FontWeight="Bold" Margin="0,0,0,4"/>
-            <ComboBox x:Name="UiSkinCombo" Style="{StaticResource TallPopupComboBox}" Padding="8" Margin="0,0,0,20" HorizontalAlignment="Left" MinWidth="180"
-                      SelectionChanged="UiSkinCombo_SelectionChanged"
-                      ToolTip="{DynamicResource Str_Ui_Changes_The_Launcher_S_Colour_Family_Eac}"/>
-
-            <!-- “自定义”只负责展开下方的调色区域，不会在用户尚未挑选/应用颜色时就把 Custom
-                 当成一次已决定的设置并触发自动保存。真正选择预设色块、使用 RGB 或应用合法颜色后
-                 才提交为自定义主题。面板固定显示在“配色皮肤”下方，不替换任何预设主题位置。 -->
-            <Border x:Name="CustomThemeSettingsPanel" Visibility="Collapsed" Margin="0,8,0,14" Padding="14"
-                    services:ScrollWheelBehavior.ContainWheel="True"
-                    Background="{DynamicResource SideBrush}" BorderBrush="{DynamicResource BorderBrush2}"
-                    BorderThickness="1" CornerRadius="10" MaxWidth="620" HorizontalAlignment="Left">
-                <StackPanel>
-                    <Grid Margin="0,0,0,10">
-                        <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                        <StackPanel>
-                            <TextBlock Text="自定义颜色" FontSize="14" FontWeight="SemiBold"/>
-                            <TextBlock Text="选择颜色后会同时应用到强调色、按钮、悬停和光晕，选好后会立即预览；保存设置后下次启动继续使用。"
-                                       Margin="0,3,18,0" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap"/>
+            <!-- 配色与插件：宽屏时左右并排，窄屏时自动换行。插件管理不再追加到设置页最底部。 -->
+            <WrapPanel Margin="0,0,0,20">
+                <StackPanel Width="620" Margin="0,0,20,0">
+                <!-- 配色皮肤：色系(White/Blue/Yellow/Purple/Pink)，跟明暗是两个独立维度。
+                     具体显示成浅色版还是深色版由 IsDarkMode 决定。这里选的只是色相，不管深浅。
+                     “自定义”不会替换/隐藏原来的预设选择控件，只在 UiSkinCombo 正下方展开独立
+                     CustomThemeSettingsPanel；用户真正选定/应用颜色之前也不算一次已提交的设置修改。 -->
+                <TextBlock Text="{DynamicResource Str_Ui_Colour_Theme}" FontSize="14" FontWeight="Bold" Margin="0,0,0,4"/>
+                <ComboBox x:Name="UiSkinCombo" Style="{StaticResource TallPopupComboBox}" Padding="8" Margin="0,0,0,20" HorizontalAlignment="Left" MinWidth="180"
+                          SelectionChanged="UiSkinCombo_SelectionChanged"
+                          ToolTip="{DynamicResource Str_Ui_Changes_The_Launcher_S_Colour_Family_Eac}"/>
+    
+                <!-- “自定义”只负责展开下方的调色区域，不会在用户尚未挑选/应用颜色时就把 Custom
+                     当成一次已决定的设置并触发自动保存。真正选择预设色块、使用 RGB 或应用合法颜色后
+                     才提交为自定义主题。面板固定显示在“配色皮肤”下方，不替换任何预设主题位置。 -->
+                <Border x:Name="CustomThemeSettingsPanel" Visibility="Collapsed" Margin="0,8,0,14" Padding="14"
+                        services:ScrollWheelBehavior.ContainWheel="True"
+                        Background="{DynamicResource SideBrush}" BorderBrush="{DynamicResource BorderBrush2}"
+                        BorderThickness="1" CornerRadius="10" MaxWidth="620" HorizontalAlignment="Left">
+                    <StackPanel>
+                        <Grid Margin="0,0,0,10">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                            <StackPanel>
+                                <TextBlock Text="自定义颜色" FontSize="14" FontWeight="SemiBold"/>
+                                <TextBlock Text="选择颜色后会同时应用到强调色、按钮、悬停和光晕，选好后会立即预览；保存设置后下次启动继续使用。"
+                                           Margin="0,3,18,0" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap"/>
+                            </StackPanel>
+                            <Border x:Name="CustomAccentColorPreview" Grid.Column="1" Width="36" Height="36" CornerRadius="8"
+                                    BorderBrush="{DynamicResource BorderBrush2}" BorderThickness="1" ToolTip="当前自定义主题颜色"/>
+                        </Grid>
+    
+                        <Grid Margin="0,0,0,10">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto"/><ColumnDefinition Width="150"/><ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Text="颜色值" VerticalAlignment="Center" Margin="0,0,10,0"/>
+                            <TextBox x:Name="CustomAccentColorBox" Grid.Column="1" Padding="7" ToolTip="例如 #4C9AFF，输入/粘贴后会自动预览生效"
+                                     TextChanged="CustomAccentColorBox_TextChanged"/>
+                            <Button Grid.Column="2" Content="应用主题" Style="{StaticResource PrimaryButton}" Margin="8,0,0,0" Padding="12,6"
+                                    Click="CustomAccentColorApply_Click"/>
+                        </Grid>
+    
+                        <TextBlock Text="预设颜色" FontWeight="SemiBold" Margin="0,0,0,5"/>
+                        <UniformGrid Columns="6" Rows="2" Margin="0,0,0,10">
+                            <Button Tag="#4C9AFF" Background="#4C9AFF" Height="30" Margin="2" Click="AccentSwatch_Click" ToolTip="#4C9AFF"/>
+                            <Button Tag="#7C5CFC" Background="#7C5CFC" Height="30" Margin="2" Click="AccentSwatch_Click" ToolTip="#7C5CFC"/>
+                            <Button Tag="#D946EF" Background="#D946EF" Height="30" Margin="2" Click="AccentSwatch_Click" ToolTip="#D946EF"/>
+                            <Button Tag="#EC4899" Background="#EC4899" Height="30" Margin="2" Click="AccentSwatch_Click" ToolTip="#EC4899"/>
+                            <Button Tag="#EF4444" Background="#EF4444" Height="30" Margin="2" Click="AccentSwatch_Click" ToolTip="#EF4444"/>
+                            <Button Tag="#F97316" Background="#F97316" Height="30" Margin="2" Click="AccentSwatch_Click" ToolTip="#F97316"/>
+                            <Button Tag="#EAB308" Background="#EAB308" Height="30" Margin="2" Click="AccentSwatch_Click" ToolTip="#EAB308"/>
+                            <Button Tag="#22C55E" Background="#22C55E" Height="30" Margin="2" Click="AccentSwatch_Click" ToolTip="#22C55E"/>
+                            <Button Tag="#14B8A6" Background="#14B8A6" Height="30" Margin="2" Click="AccentSwatch_Click" ToolTip="#14B8A6"/>
+                            <Button Tag="#06B6D4" Background="#06B6D4" Height="30" Margin="2" Click="AccentSwatch_Click" ToolTip="#06B6D4"/>
+                            <Button Tag="#64748B" Background="#64748B" Height="30" Margin="2" Click="AccentSwatch_Click" ToolTip="#64748B"/>
+                            <Button Tag="#111827" Background="#111827" Height="30" Margin="2" Click="AccentSwatch_Click" ToolTip="#111827"/>
+                        </UniformGrid>
+    
+                        <Grid Margin="0,2,0,4">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="20"/><ColumnDefinition Width="*"/><ColumnDefinition Width="42"/></Grid.ColumnDefinitions>
+                            <TextBlock Text="R" VerticalAlignment="Center"/>
+                            <Slider x:Name="AccentRSlider" Grid.Column="1" Minimum="0" Maximum="255" TickFrequency="1" ValueChanged="AccentRgbSlider_ValueChanged"/>
+                            <TextBlock x:Name="AccentRText" Grid.Column="2" Text="76" HorizontalAlignment="Right" VerticalAlignment="Center"/>
+                        </Grid>
+                        <Grid Margin="0,2,0,4">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="20"/><ColumnDefinition Width="*"/><ColumnDefinition Width="42"/></Grid.ColumnDefinitions>
+                            <TextBlock Text="G" VerticalAlignment="Center"/>
+                            <Slider x:Name="AccentGSlider" Grid.Column="1" Minimum="0" Maximum="255" TickFrequency="1" ValueChanged="AccentRgbSlider_ValueChanged"/>
+                            <TextBlock x:Name="AccentGText" Grid.Column="2" Text="154" HorizontalAlignment="Right" VerticalAlignment="Center"/>
+                        </Grid>
+                        <Grid Margin="0,2,0,10">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="20"/><ColumnDefinition Width="*"/><ColumnDefinition Width="42"/></Grid.ColumnDefinitions>
+                            <TextBlock Text="B" VerticalAlignment="Center"/>
+                            <Slider x:Name="AccentBSlider" Grid.Column="1" Minimum="0" Maximum="255" TickFrequency="1" ValueChanged="AccentRgbSlider_ValueChanged"/>
+                            <TextBlock x:Name="AccentBText" Grid.Column="2" Text="255" HorizontalAlignment="Right" VerticalAlignment="Center"/>
+                        </Grid>
+                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                            <Border x:Name="AccentPickerPreview" Width="38" Height="30" CornerRadius="6" Margin="0,0,8,0"
+                                    BorderBrush="{DynamicResource BorderBrush2}" BorderThickness="1"/>
+                            <Button Content="使用 RGB 颜色" Style="{StaticResource PrimaryButton}" Padding="12,6" Click="AccentPickerUse_Click"/>
                         </StackPanel>
-                        <Border x:Name="CustomAccentColorPreview" Grid.Column="1" Width="36" Height="36" CornerRadius="8"
-                                BorderBrush="{DynamicResource BorderBrush2}" BorderThickness="1" ToolTip="当前自定义主题颜色"/>
-                    </Grid>
-
-                    <Grid Margin="0,0,0,10">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="Auto"/><ColumnDefinition Width="150"/><ColumnDefinition Width="Auto"/>
-                        </Grid.ColumnDefinitions>
-                        <TextBlock Text="颜色值" VerticalAlignment="Center" Margin="0,0,10,0"/>
-                        <TextBox x:Name="CustomAccentColorBox" Grid.Column="1" Padding="7" ToolTip="例如 #4C9AFF，输入/粘贴后会自动预览生效"
-                                 TextChanged="CustomAccentColorBox_TextChanged"/>
-                        <Button Grid.Column="2" Content="应用主题" Style="{StaticResource PrimaryButton}" Margin="8,0,0,0" Padding="12,6"
-                                Click="CustomAccentColorApply_Click"/>
-                    </Grid>
-
-                    <TextBlock Text="预设颜色" FontWeight="SemiBold" Margin="0,0,0,5"/>
-                    <UniformGrid Columns="6" Rows="2" Margin="0,0,0,10">
-                        <Button Tag="#4C9AFF" Background="#4C9AFF" Height="30" Margin="2" Click="AccentSwatch_Click" ToolTip="#4C9AFF"/>
-                        <Button Tag="#7C5CFC" Background="#7C5CFC" Height="30" Margin="2" Click="AccentSwatch_Click" ToolTip="#7C5CFC"/>
-                        <Button Tag="#D946EF" Background="#D946EF" Height="30" Margin="2" Click="AccentSwatch_Click" ToolTip="#D946EF"/>
-                        <Button Tag="#EC4899" Background="#EC4899" Height="30" Margin="2" Click="AccentSwatch_Click" ToolTip="#EC4899"/>
-                        <Button Tag="#EF4444" Background="#EF4444" Height="30" Margin="2" Click="AccentSwatch_Click" ToolTip="#EF4444"/>
-                        <Button Tag="#F97316" Background="#F97316" Height="30" Margin="2" Click="AccentSwatch_Click" ToolTip="#F97316"/>
-                        <Button Tag="#EAB308" Background="#EAB308" Height="30" Margin="2" Click="AccentSwatch_Click" ToolTip="#EAB308"/>
-                        <Button Tag="#22C55E" Background="#22C55E" Height="30" Margin="2" Click="AccentSwatch_Click" ToolTip="#22C55E"/>
-                        <Button Tag="#14B8A6" Background="#14B8A6" Height="30" Margin="2" Click="AccentSwatch_Click" ToolTip="#14B8A6"/>
-                        <Button Tag="#06B6D4" Background="#06B6D4" Height="30" Margin="2" Click="AccentSwatch_Click" ToolTip="#06B6D4"/>
-                        <Button Tag="#64748B" Background="#64748B" Height="30" Margin="2" Click="AccentSwatch_Click" ToolTip="#64748B"/>
-                        <Button Tag="#111827" Background="#111827" Height="30" Margin="2" Click="AccentSwatch_Click" ToolTip="#111827"/>
-                    </UniformGrid>
-
-                    <Grid Margin="0,2,0,4">
-                        <Grid.ColumnDefinitions><ColumnDefinition Width="20"/><ColumnDefinition Width="*"/><ColumnDefinition Width="42"/></Grid.ColumnDefinitions>
-                        <TextBlock Text="R" VerticalAlignment="Center"/>
-                        <Slider x:Name="AccentRSlider" Grid.Column="1" Minimum="0" Maximum="255" TickFrequency="1" ValueChanged="AccentRgbSlider_ValueChanged"/>
-                        <TextBlock x:Name="AccentRText" Grid.Column="2" Text="76" HorizontalAlignment="Right" VerticalAlignment="Center"/>
-                    </Grid>
-                    <Grid Margin="0,2,0,4">
-                        <Grid.ColumnDefinitions><ColumnDefinition Width="20"/><ColumnDefinition Width="*"/><ColumnDefinition Width="42"/></Grid.ColumnDefinitions>
-                        <TextBlock Text="G" VerticalAlignment="Center"/>
-                        <Slider x:Name="AccentGSlider" Grid.Column="1" Minimum="0" Maximum="255" TickFrequency="1" ValueChanged="AccentRgbSlider_ValueChanged"/>
-                        <TextBlock x:Name="AccentGText" Grid.Column="2" Text="154" HorizontalAlignment="Right" VerticalAlignment="Center"/>
-                    </Grid>
-                    <Grid Margin="0,2,0,10">
-                        <Grid.ColumnDefinitions><ColumnDefinition Width="20"/><ColumnDefinition Width="*"/><ColumnDefinition Width="42"/></Grid.ColumnDefinitions>
-                        <TextBlock Text="B" VerticalAlignment="Center"/>
-                        <Slider x:Name="AccentBSlider" Grid.Column="1" Minimum="0" Maximum="255" TickFrequency="1" ValueChanged="AccentRgbSlider_ValueChanged"/>
-                        <TextBlock x:Name="AccentBText" Grid.Column="2" Text="255" HorizontalAlignment="Right" VerticalAlignment="Center"/>
-                    </Grid>
-                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
-                        <Border x:Name="AccentPickerPreview" Width="38" Height="30" CornerRadius="6" Margin="0,0,8,0"
-                                BorderBrush="{DynamicResource BorderBrush2}" BorderThickness="1"/>
-                        <Button Content="使用 RGB 颜色" Style="{StaticResource PrimaryButton}" Padding="12,6" Click="AccentPickerUse_Click"/>
                     </StackPanel>
+                </Border>
+                <TextBlock Text="选择预设主题会立即预览对应配色；选择“自定义”只展开下方调色区域，选定颜色后才算真正修改。"
+                           FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,12" TextWrapping="Wrap"/>
+    
+                <!-- 配色的"固定 / 每天轮换"：跟上面的背景图片是同一套规则（候选池 + 选择方式），
+                     只轮换色系(色相)，不动深浅色——深浅有它自己的「自动循环」和「跟随系统」两套
+                     机制（就在下面那一段），掺在一起会互相覆盖。勾选少于两个候选色系时轮换没有
+                     对象可换，下拉框会被禁用并给出说明。 -->
+                <StackPanel x:Name="UiSkinRotationPanel" Margin="0,0,0,20">
+                    <StackPanel Orientation="Horizontal" Margin="0,0,0,4">
+                        <TextBlock Text="配色选择方式" VerticalAlignment="Center" Width="200"/>
+                        <ComboBox x:Name="UiSkinRotationModeCombo" Style="{StaticResource TallPopupComboBox}"
+                                  Width="220" Padding="8" SelectionChanged="UiSkinRotationModeCombo_SelectionChanged">
+                            <ComboBoxItem Content="固定使用上面选的配色" Tag="Fixed"/>
+                            <ComboBoxItem Content="每天自动轮换" Tag="Daily"/>
+                        </ComboBox>
+                    </StackPanel>
+                    <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
+                        <TextBlock Text="参与轮换的配色" VerticalAlignment="Top" Width="200" Margin="0,6,0,0"/>
+                        <ListBox x:Name="UiSkinCandidateList" Width="300" Height="128" Padding="2"
+                                 SelectionMode="Multiple"
+                                 ScrollViewer.VerticalScrollBarVisibility="Auto"
+                                 SelectionChanged="UiSkinCandidateList_SelectionChanged"
+                                 ToolTip="按住 Ctrl 多选；至少选两个，每天轮换才有意义。"/>
+                    </StackPanel>
+                    <TextBlock x:Name="UiSkinRotationHintText" Margin="200,0,0,0" FontSize="11"
+                               Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap"/>
                 </StackPanel>
-            </Border>
-            <TextBlock Text="选择预设主题会立即预览对应配色；选择“自定义”只展开下方调色区域，选定颜色后才算真正修改。"
-                       FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,12" TextWrapping="Wrap"/>
+                </StackPanel>
 
-            <!-- 配色的"固定 / 每天轮换"：跟上面的背景图片是同一套规则（候选池 + 选择方式），
-                 只轮换色系(色相)，不动深浅色——深浅有它自己的「自动循环」和「跟随系统」两套
-                 机制（就在下面那一段），掺在一起会互相覆盖。勾选少于两个候选色系时轮换没有
-                 对象可换，下拉框会被禁用并给出说明。 -->
-            <StackPanel x:Name="UiSkinRotationPanel" Margin="0,0,0,20">
-                <StackPanel Orientation="Horizontal" Margin="0,0,0,4">
-                    <TextBlock Text="配色选择方式" VerticalAlignment="Center" Width="200"/>
-                    <ComboBox x:Name="UiSkinRotationModeCombo" Style="{StaticResource TallPopupComboBox}"
-                              Width="220" Padding="8" SelectionChanged="UiSkinRotationModeCombo_SelectionChanged">
-                        <ComboBoxItem Content="固定使用上面选的配色" Tag="Fixed"/>
-                        <ComboBoxItem Content="每天自动轮换" Tag="Daily"/>
-                    </ComboBox>
-                </StackPanel>
-                <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
-                    <TextBlock Text="参与轮换的配色" VerticalAlignment="Top" Width="200" Margin="0,6,0,0"/>
-                    <ListBox x:Name="UiSkinCandidateList" Width="300" Height="128" Padding="2"
-                             SelectionMode="Multiple"
-                             ScrollViewer.VerticalScrollBarVisibility="Auto"
-                             SelectionChanged="UiSkinCandidateList_SelectionChanged"
-                             ToolTip="按住 Ctrl 多选；至少选两个，每天轮换才有意义。"/>
-                </StackPanel>
-                <TextBlock x:Name="UiSkinRotationHintText" Margin="200,0,0,0" FontSize="11"
-                           Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap"/>
-            </StackPanel>
+                <Border Width="520" Padding="16" Margin="0,0,0,20" VerticalAlignment="Top"
+                        Background="{DynamicResource SideBrush}" BorderBrush="{DynamicResource BorderBrush2}"
+                        BorderThickness="1" CornerRadius="10">
+                    <StackPanel x:Name="PluginSettingsHost"/>
+                </Border>
+            </WrapPanel>
 
             <!-- 自动循环：开启后由系统时间自动决定深浅色模式，不需要手动点主界面的
                  「模式设置」按钮。这两个小时数只在这里设置，主界面按钮只负责开关这个功能
@@ -1040,7 +1020,13 @@
             <TextBlock Text="如果游戏提示 OpenGL 版本过低，可通过 Windows Update 查找与本机硬件匹配的显示驱动。硬件不支持的 OpenGL 版本无法仅靠驱动升级获得。"
                        TextWrapping="Wrap" FontSize="11" Margin="0,0,0,8"/>
             <Button Content="一键尝试安装 OpenGL 显卡驱动" HorizontalAlignment="Left" Padding="12,8"
-                    Click="InstallDisplayDriver_Click" Margin="0,0,0,20"/>
+                    Click="InstallDisplayDriver_Click" Margin="0,0,0,8"/>
+
+            <TextBlock Text="DirectX 运行库" FontSize="14" FontWeight="Bold" Margin="0,8,0,6"/>
+            <TextBlock Text="如果游戏或原生库提示缺少 d3dx9 / d3dcompiler / xinput 等 DLL，可以从微软官方下载并安装 DirectX 运行库（不是显卡驱动）。"
+                       TextWrapping="Wrap" FontSize="11" Margin="0,0,0,8"/>
+            <Button Content="补全 DirectX" HorizontalAlignment="Left" Padding="12,8"
+                    ToolTip="从微软官方安装 DirectX 运行库" Click="InstallDirectX_Click" Margin="0,0,0,20"/>
 
             <!-- 更新日志：两个入口分别打开两个**互相独立**的窗口（Views/ChangelogWindow），
                  可以同时开着对照看，关掉一个不影响另一个。一个指向 XCL 自己的 GitHub

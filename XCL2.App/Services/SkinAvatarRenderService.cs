@@ -27,14 +27,11 @@ public static class SkinAvatarRenderService
     /// 没有单独暴露这个开关，这里默认 true——大多数玩家的第二层头饰是空白透明的，
     /// 叠加上去不会有任何视觉差异；有头饰的玩家叠加上去才是"完整"的头像。</param>
     public static byte[] RenderFaceAvatar(byte[] skinPngBytes, int outputSize, bool includeHatLayer = true)
-    {
-        ArgumentNullException.ThrowIfNull(skinPngBytes);
-        if (outputSize <= 0) throw new ArgumentOutOfRangeException(nameof(outputSize));
-        return Plugins.PluginRuntimeRegistry.RenderAvatar(skinPngBytes, outputSize, includeHatLayer,
-            () => RenderBuiltIn(skinPngBytes, outputSize, includeHatLayer));
-    }
+        => Plugins.PluginRuntimeRegistry.RenderAvatar(skinPngBytes, outputSize, includeHatLayer,
+            () => RenderFaceAvatarBuiltIn(skinPngBytes, outputSize, includeHatLayer));
 
-    private static byte[] RenderBuiltIn(byte[] skinPngBytes, int outputSize, bool includeHatLayer)
+    /// <summary>内置头像渲染器。公开入口先经过插件渲染链；next() 最终落到这里。</summary>
+    private static byte[] RenderFaceAvatarBuiltIn(byte[] skinPngBytes, int outputSize, bool includeHatLayer)
     {
         using var ms = new MemoryStream(skinPngBytes);
         var decoder = new PngBitmapDecoder(ms, BitmapCreateOptions.PreservePixelFormat, BitmapCacheOption.OnLoad);

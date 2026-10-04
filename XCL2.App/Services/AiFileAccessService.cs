@@ -5,6 +5,8 @@ using System.IO;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using System.Diagnostics;
+using Microsoft.Win32;
 using XCL2.App.Models;
 
 namespace XCL2.App.Services;
@@ -168,64 +170,86 @@ public static class AiFileAccessService
     private const int MaxWorkspaceReadChars = 40000;
     private const int MaxWorkspaceWriteChars = 200000;
 
-    private static bool TryGetWorkspaceRoot(out string root, out string error)
+    // ===== 多目录 / 完全访问 =====
+
+    /// <summary>当前已批准且仍存在的目录（主目录在前）。</summary>
+    public static List<string> GetApprovedRoots()
     {
-        root = "";
-        error = "";
-        var configured = ConfigService.Active?.Config.AiAssistant?.WorkingDirectory;
-        if (string.IsNullOrWhiteSpace(configured))
+        var result = new List<string>();
+        var ai = ConfigService.Active?.Config.AiAssistant;
+        if (ai == null) return result;
+        var candidates = new List<string>();
+        if (!string.IsNullOrWhiteSpace(ai.WorkingDirectory)) candidates.Add(ai.WorkingDirectory!);
+        if (ai.WorkingDirectories != null) candidates.AddRange(ai.WorkingDirectories);
+        foreach (var c in candidates)
         {
-            error = "用户尚未在 AI 设置中指定工作目录，文件工具处于关闭状态。";
-            return false;
-        }
-        try
-        {
-            root = Path.GetFullPath(configured);
-            if (!Directory.Exists(root))
+            if (string.IsNullOrWhiteSpace(c)) continue;
+            try
             {
-                error = "设置的 AI 工作目录已经不存在，请用户重新选择目录。";
-                return false;
+                var full = Path.GetFullPath(c.Trim());
+                if (Directory.Exists(full) && !result.Contains(full, StringComparer.OrdinalIgnoreCase))
+                    result.Add(full);
             }
-            return true;
+            catch { /* 无效路径直接忽略 */ }
         }
-        catch
-        {
-            error = "AI 工作目录路径无效，请用户重新选择目录。";
-            return false;
-        }
+        return result;
     }
 
-    private static bool TryResolveWorkspacePath(string? relativePath, bool allowRoot, out string fullPath, out string error)
+    public static bool IsFullAccess()
+        => ConfigService.Active?.Config.AiAssistant?.FullDiskAccess == true;
+
+    private static bool IsInside(string root, string candidate)
+    {
+        var rootWithSlash = root.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
+        return candidate.StartsWith(rootWithSlash, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(candidate.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar),
+                root.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar), StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>系统关键目录：即使完全访问，也不允许 AI 写入（读取仍需用户逐次确认）。</summary>
+    private static bool IsProtectedForWrite(string fullPath)
+    {
+        if (IsUnrestrictedAccess()) return false; // 完全绝对访问：不保护任何路径
+        var protectedRoots = new[]
+        {
+            Environment.GetFolderPath(Environment.SpecialFolder.Windows),
+            Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),
+            Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86),
+            Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
+        };
+        return protectedRoots.Any(r => !string.IsNullOrWhiteSpace(r) && IsInside(Path.GetFullPath(r), fullPath));
+    }
+
+    private static bool TryResolveWorkspacePath(string? inputPath, bool allowRoot, out string fullPath, out string error)
     {
         fullPath = "";
         error = "";
-        if (!TryGetWorkspaceRoot(out var root, out error)) return false;
+        var roots = GetApprovedRoots();
+        var full = IsFullAccess();
+        if (roots.Count == 0 && !full)
+        {
+            error = "用户尚未在 AI 设置中批准任何目录，文件工具处于关闭状态。可以用 request_directory 向用户申请一个目录。";
+            return false;
+        }
 
-        var rel = (relativePath ?? "").Trim();
-        if (rel.Length == 0 && allowRoot)
+        var raw = (inputPath ?? "").Trim();
+        if (raw.Length == 0)
         {
-            fullPath = root;
+            if (!allowRoot) { error = "没有提供路径。"; return false; }
+            if (roots.Count == 0) { error = "没有主目录，请提供绝对路径。"; return false; }
+            fullPath = roots[0];
             return true;
-        }
-        if (rel.Length == 0)
-        {
-            error = "没有提供相对路径。";
-            return false;
-        }
-        if (Path.IsPathRooted(rel))
-        {
-            error = "只允许使用相对于工作目录的路径，不能使用绝对路径。";
-            return false;
         }
 
         try
         {
-            var candidate = Path.GetFullPath(Path.Combine(root, rel));
-            var rootWithSlash = root.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
-            if (!candidate.StartsWith(rootWithSlash, StringComparison.OrdinalIgnoreCase) &&
-                !string.Equals(candidate, root, StringComparison.OrdinalIgnoreCase))
+            var candidate = Path.IsPathRooted(raw)
+                ? Path.GetFullPath(raw)
+                : Path.GetFullPath(Path.Combine(roots.Count > 0 ? roots[0] : Environment.CurrentDirectory, raw));
+
+            if (!full && !roots.Any(r => IsInside(r, candidate)))
             {
-                error = "路径试图越过 AI 工作目录边界，已拒绝。";
+                error = "路径不在已批准的目录内，已拒绝。可以用 request_directory 向用户申请该目录。";
                 return false;
             }
             fullPath = candidate;
@@ -233,13 +257,98 @@ public static class AiFileAccessService
         }
         catch
         {
-            error = "相对路径无效。";
+            error = "路径无效。";
             return false;
         }
     }
 
-    private static string WorkspaceRelative(string root, string fullPath)
-        => Path.GetRelativePath(root, fullPath).Replace('\\', '/');
+    /// <summary>绝对访问是否生效：必须同时开启完全访问。</summary>
+    public static bool IsAbsoluteAccess()
+    {
+        var ai = ConfigService.Active?.Config.AiAssistant;
+        return ai != null && ai.FullDiskAccess && ai.AbsoluteAccess;
+    }
+
+    /// <summary>彻底完全访问是否生效：必须同时开启完全访问、绝对访问、完全绝对访问。生效后 AI 可改注册表、执行系统命令。</summary>
+    public static bool IsSystemControlAccess()
+    {
+        var ai = ConfigService.Active?.Config.AiAssistant;
+        return ai != null && ai.FullDiskAccess && ai.AbsoluteAccess && ai.UnrestrictedAccess && ai.SystemControlAccess;
+    }
+
+    /// <summary>完全绝对访问是否生效：必须同时开启完全访问和绝对访问。生效后不再有任何受保护路径。</summary>
+    public static bool IsUnrestrictedAccess()
+    {
+        var ai = ConfigService.Active?.Config.AiAssistant;
+        return ai != null && ai.FullDiskAccess && ai.AbsoluteAccess && ai.UnrestrictedAccess;
+    }
+
+    /// <summary>启动器自己的配置/账户/密钥所在位置（含 API 密钥、登录令牌）：
+    /// 即使是绝对访问，也不允许静默读写，仍然走弹窗确认。</summary>
+    private static bool IsLauncherPrivatePath(string fullPath)
+    {
+        try
+        {
+            var privateRoots = new List<string> { App.DataDir, AppContext.BaseDirectory + "XCL2" };
+            var cfg = ConfigService.Active;
+            if (cfg != null)
+            {
+                foreach (var p in new[] { cfg.ConfigPath, cfg.MirrorConfigPath, cfg.LegacyMirrorConfigPath, cfg.LegacyConfigPath })
+                {
+                    var dir = Path.GetDirectoryName(p);
+                    if (!string.IsNullOrWhiteSpace(dir)) privateRoots.Add(dir);
+                }
+            }
+            return privateRoots.Any(r => !string.IsNullOrWhiteSpace(r) && IsInside(Path.GetFullPath(r), fullPath));
+        }
+        catch { return true; /* 判断不了就按敏感处理，退回弹窗确认 */ }
+    }
+
+    private static void AuditLog(string message)
+    {
+        try { LauncherLogService.AppendLine("[AI 绝对访问] " + message); } catch { }
+    }
+
+    private static void AuditSystemLog(string message)
+    {
+        try { LauncherLogService.AppendLine("[AI 彻底完全访问] " + message); } catch { }
+    }
+
+    private static void AuditFullAccessLog(string message)
+    {
+        try { LauncherLogService.AppendLine("[AI 完全访问] " + message); } catch { }
+    }
+
+    /// <summary>文件类操作的统一确认入口：绝对访问下静默通过并记日志；否则弹窗。</summary>
+    private static bool ConfirmFileAction(ConfirmCallback confirm, string title, string message, string logAction, string targetPath, bool isWrite = false)
+    {
+        if (IsAbsoluteAccess() && (IsUnrestrictedAccess() || !IsLauncherPrivatePath(targetPath)))
+        {
+            AuditLog($"{logAction}：{targetPath}（未弹窗，{(IsUnrestrictedAccess() ? "完全绝对访问" : "绝对访问")}已授权）");
+            return true;
+        }
+        // 完全访问（未开启绝对访问）：读取/列出这类低风险操作不再弹窗，仅记日志；
+        // 写入仍逐次确认。启动器自己的配置/账户目录（含密钥）读取仍然弹窗。
+        if (!isWrite && IsFullAccess() && !IsLauncherPrivatePath(targetPath))
+        {
+            AuditFullAccessLog($"{logAction}：{targetPath}（未弹窗，完全访问下读取免确认）");
+            return true;
+        }
+        return confirm(title, message);
+    }
+
+    private static bool LooksBinary(string file)
+    {
+        try
+        {
+            using var fs = File.OpenRead(file);
+            var buf = new byte[Math.Min(4096, (int)Math.Min(fs.Length, 4096))];
+            var n = fs.Read(buf, 0, buf.Length);
+            for (var i = 0; i < n; i++) if (buf[i] == 0) return true;
+        }
+        catch { }
+        return false;
+    }
 
     /// <summary>
     /// 处理一次模型回复：如果末尾带访问请求标记，摘掉标记、弹确认框、按结果执行或拒绝，
@@ -332,36 +441,100 @@ public static class AiFileAccessService
                 return (displayText, $"系统：已按用户授权把【{writable.Label}】改为 {applied} 并保存。请照此回复用户，确认这项设置已经生效。");
             }
 
+            case "request_directory":
+            {
+                if (string.IsNullOrWhiteSpace(path) || !Path.IsPathRooted(path))
+                    return (displayText, "系统：request_directory 需要提供一个绝对路径，未执行。");
+                string dirFull;
+                try { dirFull = Path.GetFullPath(path.Trim()); }
+                catch { return (displayText, "系统：目录路径无效，未执行。"); }
+                if (!Directory.Exists(dirFull))
+                    return (displayText, "系统：该目录不存在，未执行。请让用户确认路径。");
+                var aiCfg = ConfigService.Active?.Config.AiAssistant;
+                if (aiCfg == null)
+                    return (displayText, "系统：当前无法访问启动器配置（未初始化），未执行。");
+                // 防止绕过"完全访问"的两次确认：磁盘根目录、用户主目录、系统关键目录
+                // 这类"等同于整台电脑"的范围，只能由用户在设置里开启完全访问来授予。
+                var userProfile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+                var tooBroad = string.Equals(dirFull.TrimEnd('\\', '/'), Path.GetPathRoot(dirFull)?.TrimEnd('\\', '/'), StringComparison.OrdinalIgnoreCase)
+                    || (!string.IsNullOrWhiteSpace(userProfile) && string.Equals(dirFull.TrimEnd('\\', '/'), Path.GetFullPath(userProfile).TrimEnd('\\', '/'), StringComparison.OrdinalIgnoreCase))
+                    || IsProtectedForWrite(dirFull);
+                if (tooBroad && !IsFullAccess())
+                    return (displayText, "系统：该目录范围过大（磁盘根目录、用户主目录或系统目录），不能通过申请授予。请申请更具体的子目录，或请用户自己在 AI 设置里开启「完全访问」。");
+
+                if (GetApprovedRoots().Any(r => IsInside(r, dirFull)))
+                    return (displayText, $"系统：该目录已经在已批准范围内：{dirFull}，无需再次申请，可直接使用。");
+
+                var reason = string.IsNullOrWhiteSpace(content) ? "（AI 未说明原因）" : content.Trim();
+                if (!confirm("AI 请求使用目录",
+                        $"AI 助手申请把下面这个目录加入可访问范围：\n{dirFull}\n\n理由：{reason}\n\n同意后，AI 之后可以在这个目录内发起列出/读取/写入请求（每次具体操作仍会再弹窗确认）。你可以随时在 AI 设置里移除。\n\n是否同意？"))
+                    return (displayText, "用户拒绝了这个目录的使用申请，未做任何改动。请不要再次申请同一个目录，也不要猜测里面的内容。");
+
+                aiCfg.WorkingDirectories ??= new List<string>();
+                aiCfg.WorkingDirectories.Add(dirFull);
+                ConfigService.Active!.Save();
+                return (displayText, $"系统：用户已批准目录 {dirFull}。现在可以在其中发起 list_workspace / read_workspace_file / write_workspace_file 请求（传绝对路径），每次操作仍会单独确认。");
+            }
+
             case "list_workspace":
             {
+                var roots = GetApprovedRoots();
+                var rawPath = (path ?? "").Trim();
+
+                // 不带路径：多目录/完全访问时先告诉 AI 有哪些入口，而不是只列主目录。
+                if (rawPath.Length == 0 && (roots.Count > 1 || (roots.Count == 0 && IsFullAccess())))
+                {
+                    if (!ConfirmFileAction(confirm, "AI 请求访问目录", roots.Count > 1
+                            ? "AI 助手想查看已批准的目录列表。\n\n是否同意？"
+                            : "AI 助手想查看这台电脑的磁盘列表。\n\n是否同意？",
+                            "查看目录入口列表", roots.Count > 1 ? "(已批准目录)" : "(磁盘列表)"))
+                        return (displayText, "用户拒绝了这次请求。请不要假设有哪些目录。");
+                    string[] roots2 = roots.Count > 1
+                        ? roots.ToArray()
+                        : DriveInfo.GetDrives().Where(d => d.IsReady).Select(d => d.Name).ToArray();
+                    return (displayText, "系统：用户已同意。可用入口：\n" + string.Join("\n", roots2.Select(r => "[目录] " + r)) +
+                        "\n请用绝对路径继续。");
+                }
+
                 if (!TryResolveWorkspacePath(path, allowRoot: true, out var folder, out var pathError))
-                    return (displayText, $"系统：无法列出工作目录：{pathError}");
+                    return (displayText, $"系统：无法列出目录：{pathError}");
                 if (!Directory.Exists(folder))
                     return (displayText, "系统：请求列出的路径不是目录或已经不存在。");
-                if (!confirm("AI 请求访问工作目录", $"AI 助手想列出工作目录中的文件：\n{folder}\n\n是否同意？"))
-                    return (displayText, "用户拒绝了列出工作目录的请求。请不要假设目录中有哪些文件。");
+                if (!ConfirmFileAction(confirm, "AI 请求访问目录", $"AI 助手想列出目录中的文件：\n{folder}\n\n是否同意？", "列出目录", folder))
+                    return (displayText, "用户拒绝了列出目录的请求。请不要假设目录中有哪些文件。");
 
-                var workspaceRoot = Path.GetFullPath(ConfigService.Active!.Config.AiAssistant!.WorkingDirectory!);
-                var entries = Directory.EnumerateFileSystemEntries(folder)
-                    .OrderBy(x => x, StringComparer.OrdinalIgnoreCase)
-                    .Take(200)
-                    .Select(x => (Directory.Exists(x) ? "[目录] " : "[文件] ") + WorkspaceRelative(workspaceRoot, x))
-                    .ToArray();
+                string[] entries;
+                try
+                {
+                    entries = Directory.EnumerateFileSystemEntries(folder)
+                        .OrderBy(x => x, StringComparer.OrdinalIgnoreCase)
+                        .Take(200)
+                        .Select(x => (Directory.Exists(x) ? "[目录] " : "[文件] ") + x)
+                        .ToArray();
+                }
+                catch (Exception ex) { return (displayText, $"系统：用户已同意，但读取目录失败：{ex.Message}"); }
                 var text = entries.Length == 0 ? "(目录为空)" : string.Join("\n", entries);
-                return (displayText, $"系统：用户已同意。工作目录内容（最多 200 项）：\n{text}\n请据此继续；仍不能访问工作目录以外的路径。");
+                return (displayText, $"系统：用户已同意。目录内容（最多 200 项）：\n{text}\n请据此继续；仍只能访问已批准的范围{(IsFullAccess() ? "（当前为完全访问模式）" : "")}。");
             }
 
             case "read_workspace_file":
             {
                 if (!TryResolveWorkspacePath(path, allowRoot: false, out var file, out var pathError))
-                    return (displayText, $"系统：无法读取工作目录文件：{pathError}");
+                    return (displayText, $"系统：无法读取文件：{pathError}");
                 if (!File.Exists(file))
                     return (displayText, "系统：请求读取的文件不存在。");
-                if (!confirm("AI 请求读取工作目录文件", $"AI 助手想读取：\n{file}\n\n是否同意？"))
-                    return (displayText, "用户拒绝了读取该工作目录文件的请求。请不要猜测文件内容。");
+                if (!ConfirmFileAction(confirm, "AI 请求读取文件", $"AI 助手想读取：\n{file}\n\n是否同意？", "读取文件", file))
+                    return (displayText, "用户拒绝了读取该文件的请求。请不要猜测文件内容。");
+                if (LooksBinary(file))
+                    return (displayText, "系统：该文件看起来是二进制文件，不提供读取。请只处理文本文件。");
                 string text;
                 try { text = File.ReadAllText(file); }
-                catch (Exception ex) { return (displayText, $"系统：读取文件失败：{ex.Message}"); }
+                catch (Exception ex)
+                {
+                    if (IsAbsoluteAccess()) AuditLog($"读取失败：{file}（{ex.Message}）");
+                    return (displayText, $"系统：读取文件失败：{ex.Message}");
+                }
+                if (IsAbsoluteAccess()) AuditLog($"读取完成：{file}（{text.Length} 字符）");
                 if (text.Length > MaxWorkspaceReadChars)
                     text = text[..MaxWorkspaceReadChars] + $"\n……（文件过长，仅提供前 {MaxWorkspaceReadChars} 字符）";
                 return (displayText, $"系统：用户已同意读取文件 {path}。内容如下：\n```text\n{text}\n```\n请基于内容继续回答。若要修改，必须另行发起写入请求并再次获得确认。");
@@ -370,15 +543,22 @@ public static class AiFileAccessService
             case "write_workspace_file":
             {
                 if (!TryResolveWorkspacePath(path, allowRoot: false, out var file, out var pathError))
-                    return (displayText, $"系统：无法写入工作目录文件：{pathError}");
+                    return (displayText, $"系统：无法写入文件：{pathError}");
                 if (content == null)
                     return (displayText, "系统：写入请求缺少 content，未执行。");
                 if (content.Length > MaxWorkspaceWriteChars)
                     return (displayText, $"系统：单次写入超过 {MaxWorkspaceWriteChars} 字符上限，未执行。请缩小修改范围。");
 
+                if (IsProtectedForWrite(file))
+                {
+                    if (IsAbsoluteAccess()) AuditLog($"已拒绝写入系统目录：{file}");
+                }
+                if (IsProtectedForWrite(file))
+                    return (displayText, "系统：该位置属于系统关键目录（Windows / Program Files / ProgramData），即使在完全访问模式下也不允许写入（需要用户在设置里开启最高级别的「完全绝对访问」才可修改），未执行。");
+
                 var existed = File.Exists(file);
                 var verb = existed ? "覆盖" : "创建";
-                if (!confirm("AI 请求写入工作目录", $"AI 助手想{verb}文件：\n{file}\n\n内容长度：{content.Length} 字符。是否同意？"))
+                if (!ConfirmFileAction(confirm, "AI 请求写入文件", $"AI 助手想{verb}文件：\n{file}\n\n内容长度：{content.Length} 字符。是否同意？", $"{verb}文件（{content.Length} 字符）", file, isWrite: true))
                     return (displayText, $"用户拒绝了{verb}文件的请求，磁盘内容保持不变。");
                 try
                 {
@@ -388,14 +568,178 @@ public static class AiFileAccessService
                 }
                 catch (Exception ex)
                 {
+                    if (IsAbsoluteAccess()) AuditLog($"{verb}失败：{file}（{ex.Message}）");
                     return (displayText, $"系统：用户同意了，但写入失败：{ex.Message}");
                 }
+                if (IsAbsoluteAccess()) AuditLog($"{verb}完成：{file}（{content.Length} 字符）");
                 return (displayText, $"系统：已按用户授权{verb}工作目录文件：{path}。请确认操作完成，并说明修改的内容。不要声称执行了编译/测试，除非用户另外提供了实际结果。");
+            }
+
+            case "registry_read":
+            case "registry_write":
+            case "run_command":
+            {
+                if (!IsSystemControlAccess())
+                    return (displayText, "系统：注册表与系统命令能力未开启，未执行。需要用户在 AI 设置里依次开启「完全访问 → 绝对访问 → 完全绝对访问 → 彻底完全访问」。请告诉用户这一点，不要尝试用别的方式绕过。");
+                try
+                {
+                    return action switch
+                    {
+                        "registry_read" => (displayText, RegistryRead(path, key ?? value)),
+                        "registry_write" => (displayText, RegistryWrite(path, key, value, root.TryGetProperty("type", out var tp) ? tp.GetString() : null)),
+                        _ => (displayText, RunSystemCommand(
+                            root.TryGetProperty("shell", out var sh) ? sh.GetString() : null,
+                            root.TryGetProperty("command", out var cm) ? cm.GetString() : content,
+                            root.TryGetProperty("timeout_seconds", out var to) && to.ValueKind == JsonValueKind.Number ? to.GetInt32() : 30))
+                    };
+                }
+                catch (Exception ex)
+                {
+                    AuditSystemLog($"{action} 失败：{ex.Message}");
+                    return (displayText, $"系统：{action} 执行失败：{ex.Message}");
+                }
             }
 
             default:
                 // 未知 action：当成没有这个能力，摘掉标记就好，不打断正常回复。
                 return (displayText, null);
         }
+    }
+
+    // ===== 彻底完全访问：注册表 / 系统命令 =====
+
+    private const int MaxCommandOutputChars = 8000;
+
+    private static bool TryOpenRegistryKey(string? fullPath, bool writable, bool create, out RegistryKey? key, out string? subPath, out string error)
+    {
+        key = null; subPath = null; error = "";
+        if (string.IsNullOrWhiteSpace(fullPath)) { error = "没有提供注册表路径。"; return false; }
+        var parts = fullPath.Trim().Trim('\\').Split('\\', 2);
+        var hiveName = parts[0].ToUpperInvariant();
+        subPath = parts.Length > 1 ? parts[1] : "";
+        Microsoft.Win32.RegistryHive? hive = hiveName switch
+        {
+            "HKEY_CURRENT_USER" or "HKCU" => Microsoft.Win32.RegistryHive.CurrentUser,
+            "HKEY_LOCAL_MACHINE" or "HKLM" => Microsoft.Win32.RegistryHive.LocalMachine,
+            "HKEY_CLASSES_ROOT" or "HKCR" => Microsoft.Win32.RegistryHive.ClassesRoot,
+            "HKEY_USERS" or "HKU" => Microsoft.Win32.RegistryHive.Users,
+            "HKEY_CURRENT_CONFIG" or "HKCC" => Microsoft.Win32.RegistryHive.CurrentConfig,
+            _ => null
+        };
+        if (hive == null) { error = "注册表路径必须以 HKEY_CURRENT_USER / HKEY_LOCAL_MACHINE / HKEY_CLASSES_ROOT / HKEY_USERS / HKEY_CURRENT_CONFIG（或 HKCU/HKLM/HKCR/HKU/HKCC）开头。"; return false; }
+        using var baseKey = RegistryKey.OpenBaseKey(hive.Value, RegistryView.Registry64);
+        key = subPath.Length == 0 ? baseKey.OpenSubKey("", writable)
+            : create ? baseKey.CreateSubKey(subPath, writable) : baseKey.OpenSubKey(subPath, writable);
+        if (key == null) { error = "注册表项不存在或无权访问。"; return false; }
+        return true;
+    }
+
+    private static string RegistryRead(string? path, string? valueName)
+    {
+        if (!TryOpenRegistryKey(path, false, false, out var key, out _, out var error))
+            return $"系统：读取注册表失败：{error}";
+        using (key)
+        {
+            if (!string.IsNullOrEmpty(valueName))
+            {
+                var v = key!.GetValue(valueName, null, RegistryValueOptions.DoNotExpandEnvironmentNames);
+                if (v == null) return $"系统：注册表值不存在：{path} -> {valueName}";
+                var kind = key.GetValueKind(valueName);
+                AuditSystemLog($"读取注册表值：{path} -> {valueName}");
+                return $"系统：{path} -> {valueName}（{kind}）= {FormatRegistryValue(v)}";
+            }
+            var names = key!.GetValueNames().Take(100).Select(n => (n.Length == 0 ? "(默认)" : n) + $"（{key.GetValueKind(n)}）");
+            var subs = key.GetSubKeyNames().Take(100).Select(n => "[子项] " + n);
+            AuditSystemLog($"列出注册表项：{path}");
+            return $"系统：{path}\n值：\n{string.Join("\n", names)}\n子项：\n{string.Join("\n", subs)}\n（各最多 100 项）";
+        }
+    }
+
+    private static string FormatRegistryValue(object v) => v switch
+    {
+        byte[] b => BitConverter.ToString(b.Take(256).ToArray()) + (b.Length > 256 ? "…" : ""),
+        string[] arr => string.Join(" | ", arr),
+        _ => v.ToString() ?? ""
+    };
+
+    private static string RegistryWrite(string? path, string? valueName, string? value, string? type)
+    {
+        if (valueName == null) return "系统：registry_write 缺少值名称（key 字段，默认值请传空字符串）。";
+        if (!TryOpenRegistryKey(path, true, true, out var key, out _, out var error))
+            return $"系统：写入注册表失败：{error}（修改 HKEY_LOCAL_MACHINE 通常需要以管理员身份运行启动器）";
+        using (key)
+        {
+            var text = value ?? "";
+            switch ((type ?? "String").ToLowerInvariant())
+            {
+                case "dword": key!.SetValue(valueName, unchecked((int)uint.Parse(text)), RegistryValueKind.DWord); break;
+                case "qword": key!.SetValue(valueName, unchecked((long)ulong.Parse(text)), RegistryValueKind.QWord); break;
+                case "expandstring": key!.SetValue(valueName, text, RegistryValueKind.ExpandString); break;
+                case "multistring": key!.SetValue(valueName, text.Split('\n'), RegistryValueKind.MultiString); break;
+                case "string": key!.SetValue(valueName, text, RegistryValueKind.String); break;
+                default: return "系统：type 只能是 String / ExpandString / MultiString / DWord / QWord。";
+            }
+        }
+        AuditSystemLog($"写入注册表：{path} -> {valueName} = {value}（{type ?? "String"}）");
+        return $"系统：已写入注册表 {path} -> {valueName}。请向用户说明修改了什么、为什么，以及如何还原。";
+    }
+
+    private static string RunSystemCommand(string? shell, string? command, int timeoutSeconds)
+    {
+        if (string.IsNullOrWhiteSpace(command)) return "系统：run_command 缺少 command。";
+        timeoutSeconds = Math.Clamp(timeoutSeconds, 1, 120);
+        var useCmd = string.Equals(shell, "cmd", StringComparison.OrdinalIgnoreCase);
+        var psi = new ProcessStartInfo
+        {
+            FileName = useCmd ? "cmd.exe" : "powershell.exe",
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            RedirectStandardInput = true,
+        };
+        if (useCmd) { psi.ArgumentList.Add("/d"); psi.ArgumentList.Add("/c"); psi.ArgumentList.Add(command); }
+        else
+        {
+            psi.ArgumentList.Add("-NoProfile"); psi.ArgumentList.Add("-NonInteractive");
+            psi.ArgumentList.Add("-ExecutionPolicy"); psi.ArgumentList.Add("Bypass");
+            psi.ArgumentList.Add("-Command"); psi.ArgumentList.Add(command);
+        }
+        AuditSystemLog($"执行命令（{(useCmd ? "cmd" : "powershell")}，超时 {timeoutSeconds}s）：{command}");
+
+        // 在后台线程执行并在 UI 线程上泵消息等待，避免长命令冻结启动器界面。
+        string result = "";
+        Task task = Task.Run(() => { result = ExecuteProcess(psi, timeoutSeconds); });
+        var dispatcher = System.Windows.Application.Current?.Dispatcher;
+        if (dispatcher != null && dispatcher.CheckAccess())
+        {
+            var frame = new System.Windows.Threading.DispatcherFrame();
+            _ = task.ContinueWith(_ => frame.Continue = false, TaskScheduler.Default);
+            System.Windows.Threading.Dispatcher.PushFrame(frame);
+        }
+        else task.Wait();
+        return result;
+    }
+
+    private static string ExecuteProcess(ProcessStartInfo psi, int timeoutSeconds)
+    {
+        using var proc = Process.Start(psi);
+        if (proc == null) return "系统：无法启动进程。";
+        proc.StandardInput.Close();
+        var stdoutTask = proc.StandardOutput.ReadToEndAsync();
+        var stderrTask = proc.StandardError.ReadToEndAsync();
+        if (!proc.WaitForExit(timeoutSeconds * 1000))
+        {
+            try { proc.Kill(entireProcessTree: true); } catch { }
+            AuditSystemLog($"命令超时被终止（{timeoutSeconds}s）");
+            return $"系统：命令执行超过 {timeoutSeconds} 秒，已强制结束。";
+        }
+        proc.WaitForExit();
+        var stdout = stdoutTask.GetAwaiter().GetResult();
+        var stderr = stderrTask.GetAwaiter().GetResult();
+        var output = (stdout + (string.IsNullOrWhiteSpace(stderr) ? "" : "\n[stderr]\n" + stderr)).Trim();
+        if (output.Length > MaxCommandOutputChars) output = output[..MaxCommandOutputChars] + "\n……（输出过长已截断）";
+        AuditSystemLog($"命令结束，退出码 {proc.ExitCode}");
+        return $"系统：命令已执行，退出码 {proc.ExitCode}。输出：\n```\n{(output.Length == 0 ? "(无输出)" : output)}\n```\n请如实向用户说明结果，不要声称做了没有做的事。";
     }
 }

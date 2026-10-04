@@ -1,0 +1,986 @@
+diff --git a/Models/AppConfig.cs b/Models/AppConfig.cs
+--- a/Models/AppConfig.cs
++++ b/Models/AppConfig.cs
+@@ -172,6 +172,7 @@
+     public DownloadSource Source { get; set; } = DownloadSource.Official;
+     /// <summary>插件事件回调等待上限，宿主限制在 0.1—30 秒；不承诺强停 DLL。</summary>
+     public double PluginCallbackTimeoutSeconds { get; set; } = 3;
++    public string? PluginDownloadProviderId { get; set; }
+ 
+     public string? JavaPath { get; set; }
+ 
+diff --git a/Services/AccountSecretStore.cs b/Services/AccountSecretStore.cs
+--- /dev/null
++++ b/Services/AccountSecretStore.cs
+@@ -0,0 +1,79 @@
++using System.ComponentModel;
++using System.IO;
++using System.Runtime.InteropServices;
++using System.Security.Cryptography;
++using System.Text.Json;
++using XCL2.App.Models;
++
++namespace XCL2.App.Services;
++
++/// <summary>Windows 当前用户 DPAPI；公开账户 JSON 只保留非凭据信息。不提供插件读取接口。</summary>
++internal static class AccountSecretStore
++{
++    private sealed record Secrets(string? Refresh, string? Access, string? Client);
++    [StructLayout(LayoutKind.Sequential)] private struct Blob { internal int Length; internal IntPtr Data; }
++    [DllImport("crypt32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
++    [return: MarshalAs(UnmanagedType.Bool)] private static extern bool CryptProtectData(ref Blob input, string? description, IntPtr entropy, IntPtr reserved, IntPtr prompt, int flags, out Blob output);
++    [DllImport("crypt32.dll", SetLastError = true)]
++    [return: MarshalAs(UnmanagedType.Bool)] private static extern bool CryptUnprotectData(ref Blob input, IntPtr description, IntPtr entropy, IntPtr reserved, IntPtr prompt, int flags, out Blob output);
++    [DllImport("kernel32.dll")] private static extern IntPtr LocalFree(IntPtr memory);
++    private static string Vault(string accountsPath) => Path.Combine(Path.GetDirectoryName(accountsPath)!, "account-secrets.dpapi");
++    private static byte[] Protect(byte[] bytes, bool encrypt)
++    {
++        var memory = Marshal.AllocHGlobal(bytes.Length); var output = default(Blob);
++        try
++        {
++            Marshal.Copy(bytes, 0, memory, bytes.Length); var input = new Blob { Length = bytes.Length, Data = memory };
++            var ok = encrypt ? CryptProtectData(ref input, "XCL2 account credentials", IntPtr.Zero, IntPtr.Zero, IntPtr.Zero, 1, out output)
++                : CryptUnprotectData(ref input, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero, 1, out output);
++            if (!ok) throw new Win32Exception(Marshal.GetLastWin32Error(), "账户安全存储不可用。");
++            var result = new byte[output.Length]; Marshal.Copy(output.Data, result, 0, result.Length); return result;
++        }
++        finally
++        {
++            if (output.Data != IntPtr.Zero) { for (var i = 0; i < output.Length; i++) Marshal.WriteByte(output.Data, i, 0); LocalFree(output.Data); }
++            for (var i = 0; i < bytes.Length; i++) Marshal.WriteByte(memory, i, 0);
++            Marshal.FreeHGlobal(memory);
++        }
++    }
++    internal static bool Restore(string accountsPath, IEnumerable<Account> accounts)
++    {
++        var list = accounts.ToArray();
++        var legacy = list.Any(a => a.MsRefreshToken != null || a.MinecraftAccessToken != null || a.AuthServerClientToken != null);
++        if (legacy) return true; // 先让 Save 完成加密，成功之后才清除旧明文。
++        var path = Vault(accountsPath); if (!File.Exists(path)) return false;
++        byte[]? json = null;
++        try
++        {
++            json = Protect(File.ReadAllBytes(path), false);
++            var saved = JsonSerializer.Deserialize<Dictionary<string, Secrets>>(json) ?? new();
++            foreach (var account in list)
++                if (saved.TryGetValue(account.Id, out var secret))
++                { account.MsRefreshToken = secret.Refresh; account.MinecraftAccessToken = secret.Access; account.AuthServerClientToken = secret.Client; }
++        }
++        catch (Exception ex) { LauncherLogService.AppendLine("[Accounts] CredentialRestoreFailed: " + ex.GetType().Name + "; 请重新登录受影响的账户。"); }
++        finally { if (json != null) CryptographicOperations.ZeroMemory(json); }
++        return false;
++    }
++    internal static void Save(string accountsPath, IEnumerable<Account> accounts, JsonSerializerOptions options)
++    {
++        var list = accounts.ToArray();
++        var secrets = list.GroupBy(a => a.Id, StringComparer.Ordinal).ToDictionary(g => g.Key,
++            g => { var a = g.Last(); return new Secrets(a.MsRefreshToken, a.MinecraftAccessToken, a.AuthServerClientToken); }, StringComparer.Ordinal);
++        var plain = JsonSerializer.SerializeToUtf8Bytes(secrets);
++        try { AtomicWrite(Vault(accountsPath), Protect(plain, true)); }
++        finally { CryptographicOperations.ZeroMemory(plain); }
++        var safe = JsonSerializer.SerializeToNode(list, options)!.AsArray();
++        foreach (var node in safe)
++        {
++            var item = node!.AsObject(); item["MsRefreshToken"] = null; item["MinecraftAccessToken"] = null; item["AuthServerClientToken"] = null;
++        }
++        AtomicWrite(accountsPath, System.Text.Encoding.UTF8.GetBytes(safe.ToJsonString(options)));
++    }
++    private static void AtomicWrite(string path, byte[] bytes)
++    {
++        Directory.CreateDirectory(Path.GetDirectoryName(path)!); var temp = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
++        try { File.WriteAllBytes(temp, bytes); File.Move(temp, path, overwrite: true); }
++        finally { if (File.Exists(temp)) File.Delete(temp); }
++    }
++}
+diff --git a/Services/ConfigService.cs b/Services/ConfigService.cs
+--- a/Services/ConfigService.cs
++++ b/Services/ConfigService.cs
+@@ -262,6 +262,8 @@
+             {
+                 var json = File.ReadAllText(AccountsPath);
+                 Accounts = JsonSerializer.Deserialize<List<Account>>(json) ?? new List<Account>();
++                try { if (AccountSecretStore.Restore(AccountsPath, Accounts)) AccountSecretStore.Save(AccountsPath, Accounts, JsonOpts); }
++                catch (Exception migrationError) { LauncherLogService.AppendLine("[Accounts] CredentialMigrationDeferred: " + migrationError.GetType().Name); }
+             }
+         }
+         catch (Exception ex)
+@@ -491,7 +493,7 @@
+     public void SaveAccounts()
+     {
+         Directory.CreateDirectory(App.DataDir);
+-        File.WriteAllText(AccountsPath, JsonSerializer.Serialize(Accounts, JsonOpts));
++        AccountSecretStore.Save(AccountsPath, Accounts, JsonOpts);
+         AccountsSaved?.Invoke();
+     }
+ 
+diff --git a/Services/DownloadEndpoints.cs b/Services/DownloadEndpoints.cs
+--- a/Services/DownloadEndpoints.cs
++++ b/Services/DownloadEndpoints.cs
+@@ -228,7 +228,7 @@
+     public static async Task<string> GetStringWithFallbackAsync(
+         HttpClient http, string officialUrl, bool preferMirror, string friendlyMessage, CancellationToken ct = default)
+     {
+-        var candidates = Candidates(officialUrl, preferMirror);
++        var candidates = await Plugins.PluginProviderRegistry.AddMirrorAsync(officialUrl, "metadata.json", null, Candidates(officialUrl, preferMirror), ct);
+         Exception? lastError = null;
+ 
+         foreach (var url in candidates)
+@@ -266,7 +266,7 @@
+         string friendlyMessage, IProgress<ProgressInfo>? progress = null, CancellationToken ct = default)
+     {
+         Directory.CreateDirectory(Path.GetDirectoryName(destPath)!);
+-        var candidates = AllCandidates(officialUrl, preferMirror);
++        var candidates = await Plugins.PluginProviderRegistry.AddMirrorAsync(officialUrl, Path.GetFileName(destPath), null, AllCandidates(officialUrl, preferMirror), ct);
+         Exception? lastError = null;
+ 
+         foreach (var url in candidates)
+diff --git a/Services/DownloadService.cs b/Services/DownloadService.cs
+--- a/Services/DownloadService.cs
++++ b/Services/DownloadService.cs
+@@ -137,6 +137,12 @@
+ 
+     public async Task<VersionManifestRoot> GetVersionManifestAsync(CancellationToken ct = default)
+     {
++        var custom = await Plugins.PluginProviderRegistry.GetSelectedManifestAsync(ct);
++        if (custom != null) return new VersionManifestRoot
++        {
++            Latest = new LatestVersions { Release = custom.LatestRelease, Snapshot = custom.LatestSnapshot },
++            Versions = custom.Versions.Select(v => new VersionManifestEntry { Id = v.Id, Type = v.Type, Url = v.Url, ReleaseTime = v.ReleaseTime }).ToList()
++        };
+         // 修复：之前这里按 _source 硬选一个 URL，选了镜像源就永远只请求镜像，官方一旦同一时刻
+         // 镜像抽风(BMCLAPI 偶发不同步/超时是常态)就直接报错，完全没有"换源重试一次"的机会。
+         // 现在改用 DownloadEndpoints 的候选池：按用户偏好排第一，另一个源作为兜底，
+@@ -455,7 +461,8 @@
+         // （官方 + BMCLAPI，顺序按用户设置的偏好 + 各主机近期健康度排）。
+         // 旧行为下 BMCLAPI 一抽风，装一个版本几百个文件就会有文件三次重试全挂、
+         // 整个安装终止；而换个源明明就能下下来。这是"整合包装到一半失败"最主要的成因。
+-        var candidates = DownloadEndpoints.Candidates(url, _source != DownloadSource.Official);
++        var candidates = await Plugins.PluginProviderRegistry.AddMirrorAsync(url, Path.GetFileName(destPath), expectedSha1,
++            DownloadEndpoints.Candidates(url, _source != DownloadSource.Official), ct);
+ 
+         Exception? lastError = null;
+ 
+diff --git a/Services/Plugins/PluginContext.cs b/Services/Plugins/PluginContext.cs
+--- a/Services/Plugins/PluginContext.cs
++++ b/Services/Plugins/PluginContext.cs
+@@ -56,6 +56,8 @@
+     public PluginPermissionService Permissions { get; }
+     public PluginLauncherService Launcher { get; }
+     public PluginEventService Events { get; }
++    public PluginProviderService Providers { get; }
++    public PluginNetworkService Network { get; }
+     private PluginHostBridge? _host;
+     private PluginCallbackRunner? _callbacks;
+     private readonly object _lifetimeGate = new();
+@@ -124,6 +126,8 @@
+         Permissions = new PluginPermissionService(this);
+         Launcher = new PluginLauncherService(this);
+         Events = new PluginEventService(this);
++        Providers = new PluginProviderService(this);
++        Network = new PluginNetworkService(this);
+     }
+ 
+     /// <summary>原安装等于 IPlugin.Id，副本含独立实例后缀。使用此 Id 隔离注册项，方便插件代码里不用额外持有 IPlugin 引用
+diff --git a/Services/Plugins/PluginHostBridge.cs b/Services/Plugins/PluginHostBridge.cs
+--- a/Services/Plugins/PluginHostBridge.cs
++++ b/Services/Plugins/PluginHostBridge.cs
+@@ -32,6 +32,8 @@
+     private ImmutableArray<string> _secrets = ImmutableArray<string>.Empty;
+     private PluginSettingsSnapshot _settings;
+     private string? _selectedInstance;
++    private string? _selectedDownloadProvider;
++    internal string? SelectedDownloadProvider => Volatile.Read(ref _selectedDownloadProvider);
+     private bool _polling;
+     private bool _disposed;
+     private bool _announcedStopping;
+@@ -47,6 +49,7 @@
+         CopySecrets(); _accounts = CopyAccounts(); _settings = CopySettings();
+         _hidden = _config.Config.HiddenInstanceKeys.ToImmutableHashSet(StringComparer.OrdinalIgnoreCase);
+         _selectedInstance = SelectedInstanceId();
++        _selectedDownloadProvider = _config.Config.PluginDownloadProviderId;
+         _config.Saved += ConfigurationSaved;
+         _config.AccountsSaved += ConfigurationSaved;
+         DownloadQueueService.Instance.Items.CollectionChanged += DownloadsChanged;
+@@ -135,6 +138,7 @@
+         PluginApi.Version, Safe(Path.GetDirectoryName(_config.ConfigPath)), Safe(_config.Config.LauncherLanguage));
+     private void ConfigurationSaved() => OnUi(() =>
+     {
++        Volatile.Write(ref _selectedDownloadProvider, _config.Config.PluginDownloadProviderId);
+         CopySecrets();
+         var accounts = CopyAccounts();
+         foreach (var account in accounts.Where(a => !_accounts.Any(old => old.Id == a.Id))) PluginEventHub.Publish(new PluginAccountAdded(account));
+diff --git a/Services/Plugins/PluginLoginBroker.cs b/Services/Plugins/PluginLoginBroker.cs
+--- /dev/null
++++ b/Services/Plugins/PluginLoginBroker.cs
+@@ -0,0 +1,88 @@
++using System.Windows;
++using System.Windows.Controls;
++using XCL2.App.Models;
++using XCL2.App.Views;
++
++namespace XCL2.App.Services.Plugins;
++
++/// <summary>只在用户发起的登录回调期间有效。返回一次性凭据句柄，不返回密码或令牌。</summary>
++public sealed class PluginLoginBroker
++{
++    private readonly PluginContext _context;
++    private readonly Dictionary<Guid, Account> _tickets = new();
++    private readonly CancellationToken _operation;
++    private int _closed;
++    internal PluginLoginBroker(PluginContext context, CancellationToken operation) { _context = context; _operation = operation; }
++    public async Task<PluginLoginTicket?> AuthorizeAsync(PluginLoginRequest request, CancellationToken ct = default)
++    {
++        _context.Permissions.Demand(PluginPermissionNames.AuthProvider);
++        if (Volatile.Read(ref _closed) != 0) throw new ObjectDisposedException(nameof(PluginLoginBroker));
++        if (!Enum.IsDefined(request.Kind)) throw new ArgumentException("登录类型无效。");
++        if (request.Kind != PluginLoginKind.Offline) _context.Permissions.Demand(PluginPermissionNames.Network);
++        if (request.Kind == PluginLoginKind.Yggdrasil && (!PluginProviderRegistry.ValidUrl(request.AuthServerUrl) ||
++            !request.AuthServerUrl!.StartsWith("https://", StringComparison.OrdinalIgnoreCase)))
++            throw new PluginOperationException("InvalidAuthServer", "认证服务器必须使用 HTTPS。");
++        using var stop = CancellationTokenSource.CreateLinkedTokenSource(ct, _operation, _context.Stopping);
++        var host = _context.Host; Account? account; DeviceCodeWindow? popup = null;
++        try
++        {
++            if (request.Kind == PluginLoginKind.MicrosoftDeviceCode)
++            {
++                var auth = new MicrosoftAuthService();
++                auth.UserCodeReady += (uri, code) => host.Owner.Dispatcher.Invoke(() =>
++                { popup = new DeviceCodeWindow(uri, code, stop); popup.Show(); });
++                auth.StatusChanged += text => host.Owner.Dispatcher.BeginInvoke(new Action(() => popup?.SetStatus(text)));
++                account = await auth.LoginInteractiveAsync(stop.Token).ConfigureAwait(false);
++            }
++            else
++            {
++                var dialog = await host.OnUiAsync(() => new PluginCredentialDialog(_context.Metadata.Name, request), stop.Token).ConfigureAwait(false);
++                var shown = await host.OnUiAsync(() => OverlayDialogService.ShowModalAsync(dialog), stop.Token).ConfigureAwait(false);
++                if (await shown.ConfigureAwait(false) != true) return null;
++                var input = await host.OnUiAsync(() => (dialog.Username, dialog.Password), stop.Token).ConfigureAwait(false);
++                if (request.Kind == PluginLoginKind.Offline) account = OfflineAuthService.CreateOfflineAccount(input.Username);
++                else account = await new AuthServerAuthService().LoginAsync(request.AuthServerUrl!, input.Username, input.Password, stop.Token).ConfigureAwait(false);
++                await host.OnUiAsync(() => { dialog.ClearPassword(); return true; }, CancellationToken.None).ConfigureAwait(false);
++            }
++            if (account == null) return null;
++            stop.Token.ThrowIfCancellationRequested(); _context.Permissions.Demand(PluginPermissionNames.AuthProvider);
++            lock (_tickets)
++            {
++                if (Volatile.Read(ref _closed) != 0) return null;
++                var id = Guid.NewGuid(); _tickets.Add(id, account); return new(id);
++            }
++        }
++        catch (OperationCanceledException) { throw; }
++        catch (Exception ex) { _context.Log("AuthenticationFailed: " + ex.GetType().Name); throw new PluginOperationException("AuthenticationFailed", "登录失败，请通过宿主账户页重试。"); }
++        finally { if (popup != null) host.Owner.Dispatcher.BeginInvoke(new Action(() => popup.Close())); }
++    }
++    internal Account Consume(PluginLoginTicket ticket)
++    {
++        lock (_tickets)
++        {
++            if (!_tickets.Remove(ticket.Id, out var account)) throw new PluginOperationException("InvalidLoginTicket", "登录句柄无效、来自其他插件或已过期。");
++            return account;
++        }
++    }
++    internal void Close() { Interlocked.Exchange(ref _closed, 1); lock (_tickets) _tickets.Clear(); }
++}
++
++internal sealed class PluginCredentialDialog : OverlayDialogControl
++{
++    private readonly TextBox _username = new() { Margin = new Thickness(0, 8, 0, 8), MinWidth = 280 };
++    private readonly PasswordBox _password = new() { Margin = new Thickness(0, 8, 0, 8) };
++    internal string Username => _username.Text.Trim();
++    internal string Password => _password.Password;
++    internal void ClearPassword() { _password.Clear(); }
++    internal PluginCredentialDialog(string pluginName, PluginLoginRequest request)
++    {
++        Width = 480; var root = new StackPanel { Margin = new Thickness(20) };
++        root.Children.Add(new TextBlock { Text = Loc.F("Str_Plugin_LoginTitle", "{0} · 登录", pluginName), FontSize = 20 });
++        root.Children.Add(new TextBlock { Text = request.Kind == PluginLoginKind.Offline ? Loc.T("Str_Plugin_OfflineName", "离线账户名称") :
++            Loc.F("Str_Plugin_AuthDestination", "将向以下认证服务器登录：{0}\n密码只由宿主处理。", request.AuthServerUrl), TextWrapping = TextWrapping.Wrap });
++        root.Children.Add(_username); if (request.Kind == PluginLoginKind.Yggdrasil) root.Children.Add(_password);
++        var ok = new Button { Content = Loc.T("Str_Ui_Sign_In", "登录"), Margin = new Thickness(0, 12, 0, 0) };
++        ok.Click += (_, _) => { if (!string.IsNullOrWhiteSpace(Username)) CloseWith(true); };
++        root.Children.Add(ok); Content = root;
++    }
++}
+diff --git a/Services/Plugins/PluginMetadata.cs b/Services/Plugins/PluginMetadata.cs
+--- a/Services/Plugins/PluginMetadata.cs
++++ b/Services/Plugins/PluginMetadata.cs
+@@ -17,7 +17,7 @@
+ 
+ internal static class PluginApi
+ {
+-    internal static readonly Version Version = new(1, 6);
++    internal static readonly Version Version = new(1, 7);
+ }
+ 
+ internal sealed record PluginSemanticVersion(BigInteger Major, BigInteger Minor, BigInteger Patch, string[] Prerelease)
+diff --git a/Services/Plugins/PluginProviderService.cs b/Services/Plugins/PluginProviderService.cs
+--- /dev/null
++++ b/Services/Plugins/PluginProviderService.cs
+@@ -0,0 +1,250 @@
++using System.Collections.Immutable;
++using System.IO;
++using System.Net.Http;
++using System.Security.Cryptography;
++using System.Text.Json;
++
++namespace XCL2.App.Services.Plugins;
++
++public sealed record PluginProviderDefinition(string Id, string Name);
++public sealed record PluginProviderInfo(string Id, string PluginId, string Name, string Kind);
++public sealed record PluginVersionEntry(string Id, string Type, string Url, string ReleaseTime);
++public sealed record PluginVersionManifest(string LatestRelease, string LatestSnapshot, ImmutableArray<PluginVersionEntry> Versions);
++public sealed record PluginFileRequest(string OriginalUrl, string FileName, string? ExpectedSha1);
++public interface IPluginDownloadProvider
++{
++    ValueTask<PluginVersionManifest> GetManifestAsync(CancellationToken ct);
++    ValueTask<string?> ResolveFileAsync(PluginFileRequest request, CancellationToken ct);
++}
++public sealed record PluginModQuery(string Query, string? GameVersion, string? Loader, int Offset = 0, int Limit = 20);
++public sealed record PluginModProject(string Id, string Title, string Description, string Author);
++public sealed record PluginModSearchResult(ImmutableArray<PluginModProject> Items, int Total);
++public sealed record PluginModFile(string Id, string Name, string GameVersion, string Loader, string FileName, string Url, string? Sha1);
++public interface IPluginModProvider
++{
++    ValueTask<PluginModSearchResult> SearchAsync(PluginModQuery query, CancellationToken ct);
++    ValueTask<PluginModProject?> GetDetailsAsync(string projectId, CancellationToken ct);
++    ValueTask<ImmutableArray<PluginModFile>> GetFilesAsync(string projectId, string? gameVersion, string? loader, CancellationToken ct);
++}
++public sealed record PluginLoaderBuild(string Id, string Name, string Version);
++public sealed record PluginLoaderInstallRequest(string MinecraftVersion, string BuildId, string InstanceName);
++public interface IPluginLoaderInstaller
++{
++    ValueTask<ImmutableArray<PluginLoaderBuild>> GetBuildsAsync(string minecraftVersion, CancellationToken ct);
++    ValueTask InstallAsync(PluginInstallWorkspace workspace, PluginLoaderInstallRequest request, CancellationToken ct);
++}
++public enum PluginLoginKind { Offline, MicrosoftDeviceCode, Yggdrasil }
++public sealed record PluginLoginRequest(PluginLoginKind Kind, string? AuthServerUrl = null);
++public sealed record PluginLoginTicket(Guid Id);
++public interface IPluginLoginProvider
++{
++    ValueTask<PluginLoginTicket?> LoginAsync(PluginLoginBroker broker, CancellationToken ct);
++}
++
++/// <summary>任意线程注册；实际业务回调在插件后台域执行，宿主停止时自动移除。</summary>
++public sealed class PluginProviderService
++{
++    private readonly PluginContext _context;
++    internal PluginProviderService(PluginContext context) { _context = context; }
++    public IDisposable RegisterDownloadProvider(PluginProviderDefinition definition, IPluginDownloadProvider provider)
++        => Register("download", PluginPermissionNames.DownloadProvider, definition, provider);
++    public IDisposable RegisterModProvider(PluginProviderDefinition definition, IPluginModProvider provider)
++        => Register("mod", PluginPermissionNames.ModProvider, definition, provider);
++    public IDisposable RegisterLoaderInstaller(PluginProviderDefinition definition, IPluginLoaderInstaller provider)
++        => Register("loader", PluginPermissionNames.LoaderProvider, definition, provider);
++    public IDisposable RegisterLoginProvider(PluginProviderDefinition definition, IPluginLoginProvider provider)
++        => Register("login", PluginPermissionNames.AuthProvider, definition, provider);
++    private IDisposable Register(string kind, string permission, PluginProviderDefinition definition, object provider)
++    {
++        ArgumentNullException.ThrowIfNull(definition); ArgumentNullException.ThrowIfNull(provider);
++        _ = _context.Host; _context.Permissions.Demand(permission);
++        if (!System.Text.RegularExpressions.Regex.IsMatch(definition.Id, "\\A[a-z0-9][a-z0-9._-]{0,127}\\z")) throw new ArgumentException("提供者 Id 无效。");
++        ArgumentException.ThrowIfNullOrWhiteSpace(definition.Name);
++        return _context.Track(PluginProviderRegistry.Register(_context, kind, permission, definition, provider));
++    }
++}
++
++internal static class PluginProviderRegistry
++{
++    internal sealed record Entry(PluginContext Context, PluginProviderInfo Info, string Permission, object Provider);
++    private static readonly object Gate = new();
++    private static readonly List<Entry> Entries = new();
++    internal static event Action? Changed;
++    private static bool Usable(Entry entry) => entry.Context.Permissions.Has(entry.Permission) &&
++        (entry.Info.Kind == "login" || entry.Context.Permissions.Has(PluginPermissionNames.Network));
++    internal static PluginProviderInfo[] Snapshot(string kind)
++    {
++        lock (Gate) return Entries.Where(e => e.Info.Kind == kind && Usable(e)).OrderByDescending(e => e.Context.Metadata.Priority)
++            .ThenBy(e => e.Info.Id, StringComparer.Ordinal).Select(e => e.Info).ToArray();
++    }
++    internal static IDisposable Register(PluginContext context, string kind, string permission, PluginProviderDefinition definition, object provider)
++    {
++        var entry = new Entry(context, new(context.PluginId + "/" + definition.Id, context.PluginId, context.Host.Safe(definition.Name), kind), permission, provider);
++        lock (Gate)
++        {
++            if (Entries.Any(e => e.Info.Id == entry.Info.Id && e.Info.Kind == kind)) throw new ArgumentException("提供者重复注册。");
++            Entries.Add(entry);
++        }
++        context.AuthorizationChanged += Notify;
++        Notify();
++        return new PluginRegistration(() => { lock (Gate) Entries.Remove(entry); context.AuthorizationChanged -= Notify; Notify(); });
++    }
++    private static void Notify()
++    {
++        if (Changed == null) return;
++        foreach (Action handler in Changed.GetInvocationList())
++            try { handler(); } catch (Exception ex) { LauncherLogService.AppendLine("[PluginHost] ProviderUiRefreshFailed: " + ex.GetType().Name); }
++    }
++    internal static Entry Get(string id, string kind)
++    {
++        lock (Gate) return Entries.FirstOrDefault(e => e.Info.Id == id && e.Info.Kind == kind && Usable(e))
++            ?? throw new PluginOperationException("ProviderUnavailable", "插件提供者不可用或权限已撤销。");
++    }
++    internal static async Task<T> InvokeAsync<T>(Entry entry, Func<CancellationToken, ValueTask<T>> callback, CancellationToken ct, TimeSpan? timeout = null)
++    {
++        if (!Usable(entry)) throw new PluginOperationException("ProviderUnavailable", "插件提供者不可用。");
++        var revision = Interlocked.Read(ref entry.Context.AuthorizationRevision);
++        var result = await entry.Context.Callbacks.InvokeAsync(entry.Permission, "Provider:" + entry.Info.Kind,
++            callback, timeout ?? TimeSpan.FromSeconds(15), ct).ConfigureAwait(false);
++        if (!result.Success || result.Value == null || revision != Interlocked.Read(ref entry.Context.AuthorizationRevision) || !Usable(entry))
++            throw new PluginOperationException("ProviderFailed", "插件提供者未完成操作；可以切换回内置来源。");
++        return result.Value;
++    }
++    internal static async Task<PluginVersionManifest?> GetSelectedManifestAsync(CancellationToken ct)
++    {
++        var id = PluginHostBridge.Current?.SelectedDownloadProvider;
++        if (string.IsNullOrWhiteSpace(id)) return null;
++        try
++        {
++            var entry = Get(id, "download");
++            var result = await InvokeAsync(entry, token => ((IPluginDownloadProvider)entry.Provider).GetManifestAsync(token), ct).ConfigureAwait(false);
++            if (result.Versions.IsDefault || result.Versions.Length > 10000 || result.Versions.Any(v => v == null || !ValidFileName(v.Id) || !ValidUrl(v.Url)))
++                throw new PluginOperationException("InvalidManifest", "插件版本清单无效。");
++            return result with { Versions = result.Versions.Select(v => v with { Type = Safe(v.Type), ReleaseTime = Safe(v.ReleaseTime) }).ToImmutableArray() };
++        }
++        catch (OperationCanceledException) { throw; }
++        catch (Exception ex) { LauncherLogService.AppendLine("[PluginHost] DownloadProviderFallback: " + ex.GetType().Name); return null; }
++    }
++    internal static async Task<List<string>> AddMirrorAsync(string originalUrl, string fileName, string? sha1, IEnumerable<string> defaults, CancellationToken ct)
++    {
++        var result = defaults.ToList(); var id = PluginHostBridge.Current?.SelectedDownloadProvider;
++        if (string.IsNullOrEmpty(id) || !PluginInterceptionRegistry.IsPublicUrl(originalUrl)) return result;
++        try
++        {
++            var entry = Get(id, "download");
++            var url = await InvokeAsync(entry, async token => await ((IPluginDownloadProvider)entry.Provider).ResolveFileAsync(new(originalUrl, fileName, sha1), token) ?? originalUrl, ct).ConfigureAwait(false);
++            if (url != originalUrl && ValidUrl(url)) result.Insert(0, url);
++        }
++        catch (OperationCanceledException) { throw; }
++        catch (Exception ex) { LauncherLogService.AppendLine("[PluginHost] FileProviderFallback: " + ex.GetType().Name); }
++        return result.Distinct(StringComparer.Ordinal).ToList();
++    }
++    internal static string Safe(string text) => PluginHostBridge.Current?.Safe(text) ?? text;
++    internal static bool ValidUrl(string? url) => url != null && Uri.TryCreate(url, UriKind.Absolute, out var uri) && uri.Scheme is "http" or "https" &&
++        uri.UserInfo.Length == 0 && Safe(url) == url && url.Length <= 8192;
++    internal static bool ValidFileName(string name) => !string.IsNullOrWhiteSpace(name) && name.Length <= 200 && name != "." && name != ".." &&
++        name.IndexOfAny(Path.GetInvalidFileNameChars()) < 0 && !name.Contains('/') && !name.Contains('\\') && Safe(name) == name;
++}
++
++/// <summary>仅 GET；不附带宿主账户令牌、Cookie、API Key。任意线程调用，返回不可变文本。</summary>
++public sealed class PluginNetworkService
++{
++    private readonly PluginContext _context;
++    internal PluginNetworkService(PluginContext context) { _context = context; }
++    public async Task<string> GetTextAsync(string url, CancellationToken ct = default)
++    {
++        _context.Permissions.Demand(PluginPermissionNames.Network);
++        if (!PluginProviderRegistry.ValidUrl(url)) throw new PluginOperationException("InvalidUrl", "仅允许无用户信息的 HTTP(S) 地址。");
++        var revision = Interlocked.Read(ref _context.AuthorizationRevision);
++        using var stop = CancellationTokenSource.CreateLinkedTokenSource(ct, _context.Stopping); stop.CancelAfter(TimeSpan.FromSeconds(30));
++        using var http = new HttpClient(new HttpClientHandler { UseCookies = false, UseDefaultCredentials = false });
++        http.DefaultRequestHeaders.UserAgent.ParseAdd("XCL2-Plugin/1.9");
++        using var response = await http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, stop.Token).ConfigureAwait(false);
++        response.EnsureSuccessStatusCode();
++        await using var stream = await response.Content.ReadAsStreamAsync(stop.Token).ConfigureAwait(false);
++        using var data = new MemoryStream(); var buffer = new byte[8192]; int read;
++        while ((read = await stream.ReadAsync(buffer, stop.Token).ConfigureAwait(false)) != 0)
++        {
++            if (data.Length + read > 4 * 1024 * 1024) throw new PluginOperationException("ResponseTooLarge", "网络响应超过 4 MiB。");
++            data.Write(buffer, 0, read);
++        }
++        _context.Permissions.Demand(PluginPermissionNames.Network);
++        if (revision != Interlocked.Read(ref _context.AuthorizationRevision)) throw new PluginOperationException("AuthorizationChanged", "网络读取期间授权已变更。");
++        return _context.Host.Safe(System.Text.Encoding.UTF8.GetString(data.ToArray()));
++    }
++}
++
++/// <summary>安装专用临时工作区；宿主验证完整性后才提交到实例目录。API 不返回宿主内部对象。</summary>
++public sealed class PluginInstallWorkspace
++{
++    private readonly PluginContext _context;
++    private readonly CancellationToken _operation;
++    private int _closed;
++    internal string Root { get; }
++    public string VersionId { get; }
++    internal PluginInstallWorkspace(PluginContext context, string versionId, CancellationToken operation)
++    {
++        _context = context; VersionId = versionId; _operation = operation;
++        Root = Path.Combine(context.DataDirectory, "install", Guid.NewGuid().ToString("N")); Directory.CreateDirectory(Root);
++    }
++    private string PathFor(string relative)
++    {
++        if (Volatile.Read(ref _closed) != 0) throw new ObjectDisposedException(nameof(PluginInstallWorkspace));
++        _operation.ThrowIfCancellationRequested(); _context.EnsureActive();
++        if (string.IsNullOrWhiteSpace(relative) || Path.IsPathRooted(relative) || relative.Contains(':')) throw new PluginOperationException("InvalidPath", "工作区路径必须是相对路径。");
++        var full = Path.GetFullPath(Path.Combine(Root, relative));
++        if (!full.StartsWith(Root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)) throw new PluginOperationException("InvalidPath", "不能访问工作区之外。");
++        for (var parent = full; parent != Root && parent != null; parent = Path.GetDirectoryName(parent))
++            if ((File.Exists(parent) || Directory.Exists(parent)) && (File.GetAttributes(parent) & FileAttributes.ReparsePoint) != 0)
++                throw new PluginOperationException("InvalidPath", "工作区不允许链接。");
++        return full;
++    }
++    public async Task WriteVersionJsonAsync(string json, CancellationToken ct = default)
++    {
++        _context.Permissions.Demand(PluginPermissionNames.InstanceFilesWrite);
++        if (json.Length > 4 * 1024 * 1024 || _context.Host.Safe(json) != json) throw new PluginOperationException("InvalidVersionJson", "版本 JSON 过大或包含受保护凭据。");
++        using var parsed = JsonDocument.Parse(json);
++        if (!parsed.RootElement.TryGetProperty("id", out var id) || id.GetString() != VersionId)
++            throw new PluginOperationException("InvalidVersionJson", "版本 JSON 的 id 必须匹配请求的实例名称。");
++        var path = PathFor(Path.Combine("versions", VersionId, VersionId + ".json")); Directory.CreateDirectory(Path.GetDirectoryName(path)!);
++        using var stop = CancellationTokenSource.CreateLinkedTokenSource(ct, _operation, _context.Stopping);
++        await File.WriteAllTextAsync(path, json, stop.Token).ConfigureAwait(false);
++        _context.Permissions.Demand(PluginPermissionNames.InstanceFilesWrite);
++    }
++    public async Task DownloadFileAsync(string url, string relativePath, string? sha1 = null, CancellationToken ct = default)
++    {
++        _context.Permissions.Demand(PluginPermissionNames.InstanceFilesWrite); _context.Permissions.Demand(PluginPermissionNames.Network);
++        if (!PluginProviderRegistry.ValidUrl(url)) throw new PluginOperationException("InvalidUrl", "下载地址无效。");
++        var path = PathFor(relativePath);
++        using var stop = CancellationTokenSource.CreateLinkedTokenSource(ct, _operation, _context.Stopping);
++        using var download = new GenericFileDownloadService();
++        await download.DownloadAsync(url, Path.GetDirectoryName(path)!, Path.GetFileName(path), null, ct: stop.Token).ConfigureAwait(false);
++        if (!string.IsNullOrEmpty(sha1))
++        {
++            await using var stream = File.OpenRead(path);
++            var actual = Convert.ToHexString(await SHA1.HashDataAsync(stream, stop.Token).ConfigureAwait(false));
++            if (!actual.Equals(sha1, StringComparison.OrdinalIgnoreCase)) { File.Delete(path); throw new PluginOperationException("HashMismatch", "下载文件 SHA1 校验失败。"); }
++        }
++        _context.Permissions.Demand(PluginPermissionNames.InstanceFilesWrite); _context.Permissions.Demand(PluginPermissionNames.Network);
++    }
++    internal void Close() { Interlocked.Exchange(ref _closed, 1); }
++
++    public async Task<int> RunJavaInstallerAsync(string relativeJar, ImmutableArray<string> arguments, CancellationToken ct = default)
++    {
++        _context.Permissions.Demand(PluginPermissionNames.ProcessInstall); _context.Permissions.Demand(PluginPermissionNames.InstanceFilesWrite);
++        if (arguments.IsDefault || arguments.Length > 128 || arguments.Any(a => a == null || a.Length > 8192 || a.IndexOfAny(new[] { '\0', '\r', '\n' }) >= 0))
++            throw new PluginOperationException("InvalidArguments", "安装器参数无效。");
++        var jar = PathFor(relativeJar);
++        if (!relativeJar.EndsWith(".jar", StringComparison.OrdinalIgnoreCase) || !File.Exists(jar)) throw new PluginResourceNotFoundException();
++        var java = await _context.Host.OnUiAsync(() => _context.Host.Config.ResolveJavaPath(_context.Host.Config.Config.SelectedJavaId)
++            ?? _context.Host.Config.Config.JavaPath, ct).ConfigureAwait(false);
++        if (string.IsNullOrWhiteSpace(java) || !File.Exists(java)) throw new PluginOperationException("JavaUnavailable", "请先在启动器中选择 Java。");
++        using var stop = CancellationTokenSource.CreateLinkedTokenSource(ct, _operation, _context.Stopping); stop.CancelAfter(TimeSpan.FromMinutes(10));
++        var start = new System.Diagnostics.ProcessStartInfo(java) { WorkingDirectory = Root, UseShellExecute = false, CreateNoWindow = true };
++        start.ArgumentList.Add("-jar"); start.ArgumentList.Add(jar);
++        foreach (var argument in arguments) start.ArgumentList.Add(argument.Replace("${workspace}", Root, StringComparison.Ordinal));
++        using var process = System.Diagnostics.Process.Start(start) ?? throw new PluginOperationException("InstallerStartFailed", "安装器进程无法启动。");
++        try { await process.WaitForExitAsync(stop.Token).ConfigureAwait(false); return process.ExitCode; }
++        catch (OperationCanceledException) { try { if (!process.HasExited) process.Kill(true); } catch { } throw; }
++    }
++}
+diff --git a/Views/DownloadCenterPage.Plugins.cs b/Views/DownloadCenterPage.Plugins.cs
+--- /dev/null
++++ b/Views/DownloadCenterPage.Plugins.cs
+@@ -0,0 +1,35 @@
++using System.Windows;
++using System.Windows.Controls;
++using XCL2.App.Services;
++using XCL2.App.Services.Plugins;
++
++namespace XCL2.App.Views;
++
++public partial class DownloadCenterPage
++{
++    private bool _pluginSourcesUpdating;
++    private void InitializePluginSources()
++    {
++        void Refresh()
++        {
++            if (!Dispatcher.CheckAccess()) { Dispatcher.BeginInvoke(new Action(Refresh)); return; }
++            _pluginSourcesUpdating = true;
++            try
++            {
++                foreach (var item in SourceCombo.Items.OfType<ComboBoxItem>().Where(i => i.Tag is string id && id.StartsWith("plugin:", StringComparison.Ordinal)).ToArray()) SourceCombo.Items.Remove(item);
++                foreach (var provider in PluginProviderRegistry.Snapshot("download"))
++                    SourceCombo.Items.Add(new ComboBoxItem { Content = provider.Name, Tag = "plugin:" + provider.Id });
++                var selected = _owner.ConfigService.Config.PluginDownloadProviderId;
++                SourceCombo.SelectedItem = SourceCombo.Items.OfType<ComboBoxItem>().FirstOrDefault(i => (i.Tag as string) == "plugin:" + selected)
++                    ?? SourceCombo.Items[_owner.ConfigService.Config.Source == Models.DownloadSource.BMCLAPI ? 1 : 0];
++            }
++            finally { _pluginSourcesUpdating = false; }
++        }
++        var mods = new Button { Content = Loc.T("Str_Plugin_ModSources", "插件 Mod 来源…"), Margin = new Thickness(8, 0, 0, 0), Padding = new Thickness(10, 5, 10, 5) };
++        mods.Click += async (_, _) => await OverlayDialogService.ShowModalAsync(new PluginModSourcesDialog(_owner, this));
++        if (ModSourceCombo.Parent is Panel panel) panel.Children.Add(mods);
++        Loaded += (_, _) => { PluginProviderRegistry.Changed -= Refresh; PluginProviderRegistry.Changed += Refresh; Refresh(); };
++        Unloaded += (_, _) => PluginProviderRegistry.Changed -= Refresh;
++        Refresh();
++    }
++}
+diff --git a/Views/DownloadCenterPage.xaml.cs b/Views/DownloadCenterPage.xaml.cs
+--- a/Views/DownloadCenterPage.xaml.cs
++++ b/Views/DownloadCenterPage.xaml.cs
+@@ -219,6 +219,7 @@
+         };
+ 
+         _initialized = true;
++        InitializePluginSources();
+         Category_Checked(CatVersion, new RoutedEventArgs()); // 补上初始化阶段被跳过的那次面板显隐
+     }
+ 
+@@ -559,9 +560,12 @@
+     /// </summary>
+     private void SourceCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+     {
+-        if (!_initialized) return;
++        if (!_initialized || _pluginSourcesUpdating) return;
+         if (_owner?.ConfigService?.Config == null) return; // 控件初始化早于字段赋值时的防御
+-        _owner.ConfigService.Config.Source = SourceCombo.SelectedIndex == 1 ? DownloadSource.BMCLAPI : DownloadSource.Official;
++        var providerTag = (SourceCombo.SelectedItem as ComboBoxItem)?.Tag as string;
++        _owner.ConfigService.Config.PluginDownloadProviderId = providerTag?.StartsWith("plugin:", StringComparison.Ordinal) == true ? providerTag[7..] : null;
++        if (_owner.ConfigService.Config.PluginDownloadProviderId == null)
++            _owner.ConfigService.Config.Source = SourceCombo.SelectedIndex == 1 ? DownloadSource.BMCLAPI : DownloadSource.Official;
+         _owner.ConfigService.Save();
+         _ = FetchOnlineAsync();
+     }
+@@ -676,6 +680,11 @@
+ 
+         var choiceDialog = new LoaderChoiceDialog(entry.Id);
+         if (OverlayDialogService.ShowModal(choiceDialog) != true) return; // 用户点了"取消"
++        if (choiceDialog.SelectedPluginLoaderId != null)
++        {
++            await OverlayDialogService.ShowModalAsync(new PluginLoaderInstallDialog(_owner, choiceDialog.SelectedPluginLoaderId, entry.Id));
++            return;
++        }
+ 
+         // LiteLoader/Cleanroom/LabyMod 目前只在 LoaderChoiceDialog 里做了"能不能装"的探测和置灰，
+         // InstallClientLoaderWindow 那边的三级联动安装流程还没有对应实现（不像 Fabric/Forge/
+diff --git a/Views/LoaderChoiceDialog.xaml.cs b/Views/LoaderChoiceDialog.xaml.cs
+--- a/Views/LoaderChoiceDialog.xaml.cs
++++ b/Views/LoaderChoiceDialog.xaml.cs
+@@ -35,6 +35,7 @@
+ {
+     /// <summary>用户确认选择的加载器类型；取消返回 null。</summary>
+     public ServerCoreType SelectedLoader { get; private set; } = ServerCoreType.Vanilla;
++    public string? SelectedPluginLoaderId { get; private set; }
+ 
+     private readonly string _mcVersionId;
+     private readonly ClientLoaderInstallService _probeService;
+@@ -44,6 +45,13 @@
+         InitializeComponent();
+         _mcVersionId = mcVersionId;
+         TitleText.Text = $"安装 {mcVersionId}";
++        if (OptVanilla.Parent is Panel loaderChoices)
++            foreach (var provider in Services.Plugins.PluginProviderRegistry.Snapshot("loader"))
++            {
++                var button = new Button { Content = Loc.F("Str_Plugin_LoaderChoice", "插件：{0}", provider.Name), Margin = new Thickness(0, 8, 0, 0), Padding = new Thickness(12, 8, 12, 8) };
++                button.Click += (_, _) => { SelectedPluginLoaderId = provider.Id; CloseWith(true); };
++                loaderChoices.Children.Add(button);
++            }
+ 
+         // 只是用来探测"支持不支持"，不需要跟着用户的下载源/多线程设置走，用最简单的默认构造即可。
+         _probeService = new ClientLoaderInstallService(DownloadSource.Official);
+diff --git a/Views/LoginPage.Plugins.cs b/Views/LoginPage.Plugins.cs
+--- /dev/null
++++ b/Views/LoginPage.Plugins.cs
+@@ -0,0 +1,49 @@
++using System.Windows;
++using System.Windows.Controls;
++using XCL2.App.Services;
++using XCL2.App.Services.Plugins;
++
++namespace XCL2.App.Views;
++
++public partial class LoginPage
++{
++    private void InitializePluginLogins()
++    {
++        var row = new WrapPanel { Margin = new Thickness(0, 0, 0, 12) };
++        var choices = new ComboBox { Width = 230, DisplayMemberPath = nameof(PluginProviderInfo.Name) };
++        var login = new Button { Content = Loc.T("Str_Plugin_Login", "插件登录"), Margin = new Thickness(10, 0, 0, 0) };
++        row.Children.Add(choices); row.Children.Add(login); DockPanel.SetDock(row, Dock.Top);
++        if (StatusText.Parent is DockPanel panel) panel.Children.Insert(panel.Children.IndexOf(StatusText), row);
++        void Refresh()
++        {
++            if (!Dispatcher.CheckAccess()) { Dispatcher.BeginInvoke(new Action(Refresh)); return; }
++            var selected = (choices.SelectedItem as PluginProviderInfo)?.Id;
++            choices.ItemsSource = PluginProviderRegistry.Snapshot("login");
++            choices.SelectedItem = choices.Items.OfType<PluginProviderInfo>().FirstOrDefault(p => p.Id == selected) ?? choices.Items.OfType<PluginProviderInfo>().FirstOrDefault();
++            row.Visibility = choices.Items.Count == 0 ? Visibility.Collapsed : Visibility.Visible;
++        }
++        Loaded += (_, _) => { PluginProviderRegistry.Changed -= Refresh; PluginProviderRegistry.Changed += Refresh; Refresh(); };
++        Unloaded += (_, _) => PluginProviderRegistry.Changed -= Refresh;
++        login.Click += async (_, _) =>
++        {
++            if (choices.SelectedItem is not PluginProviderInfo info) return; login.IsEnabled = false;
++            PluginLoginBroker? broker = null;
++            try
++            {
++                var entry = PluginProviderRegistry.Get(info.Id, "login");
++                using var stop = CancellationTokenSource.CreateLinkedTokenSource(entry.Context.Stopping);
++                broker = new PluginLoginBroker(entry.Context, stop.Token);
++                var ticket = await PluginProviderRegistry.InvokeAsync(entry,
++                    token => ((IPluginLoginProvider)entry.Provider).LoginAsync(broker, token), stop.Token, TimeSpan.FromMinutes(10));
++                if (ticket == null) return;
++                var account = broker.Consume(ticket); entry.Context.Permissions.Demand(PluginPermissionNames.AuthProvider);
++                _owner.ConfigService.AddOrUpdateAccount(account); Reload(); _owner.RefreshSidebar();
++                StatusText.Text = Loc.T("Str_Plugin_LoginSucceeded", "登录成功，请在账户列表中选用。");
++            }
++            catch (OperationCanceledException) { StatusText.Text = Loc.T("Str_Cs_Sign_In_Cancelled", "登录已取消。"); }
++            catch (Exception ex) { StatusText.Text = ex is PluginOperationException operation ? operation.SafeMessage : Loc.T("Str_Plugin_LoginFailed", "插件登录失败，可以使用内置登录方式。"); }
++            finally { broker?.Close(); login.IsEnabled = true; }
++        };
++        Refresh();
++    }
++}
+diff --git a/Views/LoginPage.xaml.cs b/Views/LoginPage.xaml.cs
+--- a/Views/LoginPage.xaml.cs
++++ b/Views/LoginPage.xaml.cs
+@@ -16,6 +16,7 @@
+     {
+         _owner = owner; // 统一先于 InitializeComponent 赋值，避免控件初始化时触发的事件访问到未赋值字段
+         InitializeComponent();
++        InitializePluginLogins();
+         AccountListBox.ItemsSource = _accounts;
+         Reload();
+ 
+diff --git a/Views/PluginLoaderInstallDialog.cs b/Views/PluginLoaderInstallDialog.cs
+--- /dev/null
++++ b/Views/PluginLoaderInstallDialog.cs
+@@ -0,0 +1,104 @@
++using System.IO;
++using System.Text.Json;
++using System.Windows;
++using System.Windows.Controls;
++using XCL2.App.Models;
++using XCL2.App.Services;
++using XCL2.App.Services.Plugins;
++
++namespace XCL2.App.Views;
++
++internal sealed class PluginLoaderInstallDialog : OverlayDialogControl
++{
++    private readonly MainWindow _owner;
++    private readonly string _providerId;
++    private readonly string _minecraftVersion;
++    private readonly ComboBox _builds = new() { DisplayMemberPath = nameof(PluginLoaderBuild.Name), MinWidth = 320 };
++    private readonly TextBox _name = new() { Margin = new Thickness(0, 10, 0, 10) };
++    private readonly TextBlock _status = new() { TextWrapping = TextWrapping.Wrap };
++    private readonly CancellationTokenSource _stop = new();
++    internal PluginLoaderInstallDialog(MainWindow owner, string providerId, string minecraftVersion)
++    {
++        _owner = owner; _providerId = providerId; _minecraftVersion = minecraftVersion; Width = 540;
++        _name.Text = minecraftVersion + "-plugin-" + DateTime.Now.ToString("HHmmss");
++        var root = new StackPanel { Margin = new Thickness(20) };
++        root.Children.Add(new TextBlock { Text = Loc.T("Str_Plugin_LoaderInstall", "插件加载器安装"), FontSize = 20 });
++        root.Children.Add(_builds); root.Children.Add(_name);
++        var install = new Button { Content = Loc.T("Str_Plugin_Install", "安装"), Margin = new Thickness(0, 8, 0, 8) };
++        install.Click += async (_, _) =>
++        {
++            if (_builds.SelectedItem is not PluginLoaderBuild build) return; install.IsEnabled = false;
++            try { await InstallAsync(build, _name.Text.Trim()); _status.Text = Loc.T("Str_Cs_Installation_Complete", "安装完成"); CloseWith(true); }
++            catch (OperationCanceledException) { }
++            catch (Exception ex) { _status.Text = ex is PluginOperationException operation ? operation.SafeMessage : Loc.T("Str_Plugin_LoaderFailed", "插件安装失败，可以重新选择内置加载器。临时工作区不会加入实例列表。"); }
++            finally { install.IsEnabled = true; }
++        };
++        root.Children.Add(install); root.Children.Add(_status); Content = root;
++        RequestClose += (_, _) => _stop.Cancel(); Loaded += async (_, _) => await LoadBuildsAsync();
++    }
++    private async Task LoadBuildsAsync()
++    {
++        try
++        {
++            var entry = PluginProviderRegistry.Get(_providerId, "loader");
++            var builds = await PluginProviderRegistry.InvokeAsync(entry, token => ((IPluginLoaderInstaller)entry.Provider).GetBuildsAsync(_minecraftVersion, token), _stop.Token);
++            _builds.ItemsSource = builds.IsDefault ? Array.Empty<PluginLoaderBuild>() : builds.Where(b => b != null).Select(b => b with
++                { Id = PluginProviderRegistry.Safe(b.Id), Name = PluginProviderRegistry.Safe(b.Name), Version = PluginProviderRegistry.Safe(b.Version) }).ToArray();
++            _builds.SelectedIndex = 0;
++        }
++        catch (OperationCanceledException) { }
++        catch (Exception ex) { _status.Text = ex is PluginOperationException operation ? operation.SafeMessage : Loc.T("Str_Plugin_LoaderListFailed", "加载器构建列表读取失败。"); }
++    }
++    private async Task InstallAsync(PluginLoaderBuild build, string name)
++    {
++        if (!PluginProviderRegistry.ValidFileName(name)) throw new PluginOperationException("InvalidName", "实例名称无效。");
++        var root = _owner.ConfigService.Config.SelectedFolderPath;
++        if (string.IsNullOrWhiteSpace(root)) throw new PluginOperationException("MissingFolder", "请先选择游戏文件夹。");
++        var target = Path.Combine(root, "versions", name);
++        if (Directory.Exists(target)) throw new PluginOperationException("InstanceExists", "该实例名称已存在。");
++        await PluginInterceptionRegistry.ValidateInstanceAsync(root, name, "plugin-loader", _stop.Token);
++        var entry = PluginProviderRegistry.Get(_providerId, "loader");
++        entry.Context.Permissions.Demand(PluginPermissionNames.InstanceFilesWrite);
++        using var stop = CancellationTokenSource.CreateLinkedTokenSource(_stop.Token, entry.Context.Stopping);
++        using var vanilla = DownloadService.CreateFromConfig(_owner.ConfigService.Config);
++        var manifest = await vanilla.GetVersionManifestAsync(stop.Token);
++        var game = manifest.Versions.FirstOrDefault(v => v.Id == _minecraftVersion) ?? throw new PluginResourceNotFoundException();
++        await vanilla.InstallVersionAsync(root, game, null, stop.Token);
++        var workspace = new PluginInstallWorkspace(entry.Context, name, stop.Token);
++        try
++        {
++            await PluginProviderRegistry.InvokeAsync(entry, async token =>
++            {
++                await ((IPluginLoaderInstaller)entry.Provider).InstallAsync(workspace, new(_minecraftVersion, build.Id, name), token);
++                return true;
++            }, stop.Token, TimeSpan.FromMinutes(15));
++            workspace.Close();
++            var versionPath = Path.Combine(workspace.Root, "versions", name, name + ".json");
++            if (!File.Exists(versionPath)) throw new PluginOperationException("MissingVersionJson", "安装器没有提供匹配名称的版本 JSON。");
++            var profile = JsonSerializer.Deserialize<VersionDetail>(await File.ReadAllTextAsync(versionPath, stop.Token)) ?? throw new PluginOperationException("InvalidVersionJson", "加载器 JSON 无效。");
++            if (profile.Id != name || (!string.IsNullOrEmpty(profile.InheritsFrom) && profile.InheritsFrom != _minecraftVersion))
++                throw new PluginOperationException("InvalidVersionJson", "安装器的实例 Id / 父版本不匹配。");
++            foreach (var file in Directory.EnumerateFileSystemEntries(workspace.Root, "*", SearchOption.AllDirectories))
++                if ((File.GetAttributes(file) & FileAttributes.ReparsePoint) != 0) throw new PluginOperationException("InvalidPath", "安装器输出含链接。");
++            foreach (var library in profile.Libraries)
++            {
++                var paths = new[] { library.GetMavenPath(), library.Downloads?.Artifact?.Path }.Concat(library.Downloads?.Classifiers?.Values.Select(a => a.Path) ?? Enumerable.Empty<string?>());
++                foreach (var relative in paths.Where(p => !string.IsNullOrWhiteSpace(p)))
++                    if (Path.IsPathRooted(relative!) || relative!.Contains(':') || relative.Split('/', '\\').Contains("..")) throw new PluginOperationException("InvalidLibraryPath", "安装器输出了无效库路径。");
++            }
++            entry.Context.Permissions.Demand(PluginPermissionNames.LoaderProvider); entry.Context.Permissions.Demand(PluginPermissionNames.InstanceFilesWrite);
++            var source = Path.Combine(workspace.Root, "versions", name);
++            await Task.Run(() => CopyTree(source, target), stop.Token);
++            try { await vanilla.DownloadLibrariesOnlyAsync(root, profile, null, stop.Token); }
++            catch { Directory.Delete(target, true); throw; }
++            _owner.NotifyInstanceImported(root, name); PluginHostBridge.Current?.NotifyInstanceCreated(root, name);
++        }
++        finally { workspace.Close(); try { Directory.Delete(workspace.Root, true); } catch { } }
++    }
++    private static void CopyTree(string source, string target)
++    {
++        Directory.CreateDirectory(target);
++        foreach (var directory in Directory.EnumerateDirectories(source, "*", SearchOption.AllDirectories)) Directory.CreateDirectory(Path.Combine(target, Path.GetRelativePath(source, directory)));
++        foreach (var file in Directory.EnumerateFiles(source, "*", SearchOption.AllDirectories)) File.Copy(file, Path.Combine(target, Path.GetRelativePath(source, file)), true);
++    }
++}
+diff --git a/Views/PluginModSourcesDialog.cs b/Views/PluginModSourcesDialog.cs
+--- /dev/null
++++ b/Views/PluginModSourcesDialog.cs
+@@ -0,0 +1,118 @@
++using System.Collections.Immutable;
++using System.IO;
++using System.Security.Cryptography;
++using System.Windows;
++using System.Windows.Controls;
++using XCL2.App.Services;
++using XCL2.App.Services.Plugins;
++
++namespace XCL2.App.Views;
++
++internal sealed class PluginModSourcesDialog : OverlayDialogControl
++{
++    private readonly MainWindow _owner;
++    private readonly DownloadCenterPage _fallback;
++    private readonly ComboBox _sources = new() { Width = 260, DisplayMemberPath = nameof(PluginProviderInfo.Name) };
++    private readonly TextBox _query = new() { MinWidth = 200, Margin = new Thickness(8, 0, 0, 0) };
++    private readonly ListBox _projects = new() { DisplayMemberPath = nameof(PluginModProject.Title), MinHeight = 100, MaxHeight = 200 };
++    private readonly ComboBox _files = new() { DisplayMemberPath = nameof(PluginModFile.Name), MinWidth = 350 };
++    private readonly TextBlock _details = new() { TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 8, 0, 8) };
++    private readonly TextBlock _status = new() { TextWrapping = TextWrapping.Wrap };
++    private readonly CancellationTokenSource _stop = new();
++    private string? _instanceId;
++    private string? _version;
++    private string? _loader;
++    private long _selection;
++    internal PluginModSourcesDialog(MainWindow owner, DownloadCenterPage fallback)
++    {
++        _owner = owner; _fallback = fallback; Width = 740;
++        var root = new StackPanel { Margin = new Thickness(20) };
++        root.Children.Add(new TextBlock { Text = Loc.T("Str_Plugin_ModSources", "插件 Mod 来源"), FontSize = 20, Margin = new Thickness(0, 0, 0, 12) });
++        var top = new WrapPanel(); var search = new Button { Content = Loc.T("Str_Common_Search", "搜索"), Margin = new Thickness(8, 0, 0, 0) };
++        top.Children.Add(_sources); top.Children.Add(_query); top.Children.Add(search); root.Children.Add(top);
++        root.Children.Add(_projects); root.Children.Add(_details); root.Children.Add(_files);
++        var download = new Button { Content = Loc.T("Str_Plugin_InstallSelectedMod", "安装到当前实例"), Margin = new Thickness(0, 12, 0, 8), HorizontalAlignment = HorizontalAlignment.Right };
++        root.Children.Add(download); root.Children.Add(_status); Content = root;
++        _sources.ItemsSource = PluginProviderRegistry.Snapshot("mod"); _sources.SelectedIndex = 0;
++        RequestClose += (_, _) => _stop.Cancel();
++        search.Click += async (_, _) => await SearchAsync();
++        _projects.SelectionChanged += async (_, _) => await LoadDetailsAsync();
++        download.Click += (_, _) => InstallSelected();
++        if (_sources.Items.Count == 0) _status.Text = Loc.T("Str_Plugin_NoModSources", "没有已授权的插件 Mod 来源，请先启用插件并授权 providers.mod 与 network。");
++    }
++    private async Task SearchAsync()
++    {
++        if (_sources.SelectedItem is not PluginProviderInfo info) return;
++        var generation = Interlocked.Increment(ref _selection);
++        try
++        {
++            var host = PluginHostBridge.Current ?? throw new PluginHostUnavailableException();
++            var instances = await host.GetInstancesAsync(new(), _stop.Token);
++            var instance = instances.Items.FirstOrDefault(i => i.IsSelected);
++            _instanceId = instance?.Id; _version = instance?.MinecraftVersion; _loader = instance?.LoaderId;
++            var entry = PluginProviderRegistry.Get(info.Id, "mod");
++            var result = await PluginProviderRegistry.InvokeAsync(entry,
++                token => ((IPluginModProvider)entry.Provider).SearchAsync(new(_query.Text.Trim(), _version, _loader), token), _stop.Token);
++            if (generation != Interlocked.Read(ref _selection)) return;
++            if (result.Items.IsDefault || result.Items.Length > 1000) throw new PluginOperationException("InvalidResults", "插件搜索结果无效。");
++            _projects.ItemsSource = result.Items.Where(p => p != null && !string.IsNullOrWhiteSpace(p.Id)).Select(p => p with
++                { Id = host.Safe(p.Id), Title = host.Safe(p.Title), Description = host.Safe(p.Description), Author = host.Safe(p.Author) }).ToArray();
++            _status.Text = Loc.F("Str_Plugin_ModResultCount", "返回 {0} 条结果；当前实例：{1}", result.Items.Length, instance?.Name ?? Loc.T("Str_Plugin_NoSelectedInstance", "未选择"));
++        }
++        catch (OperationCanceledException) { }
++        catch (Exception ex)
++        {
++            _status.Text = ex is PluginOperationException operation ? operation.SafeMessage : Loc.T("Str_Plugin_SearchFailed", "插件搜索失败，已转到内置来源。");
++            _fallback.SelectModCategoryAndSearch(_query.Text.Trim());
++        }
++    }
++    private async Task LoadDetailsAsync()
++    {
++        if (_sources.SelectedItem is not PluginProviderInfo info || _projects.SelectedItem is not PluginModProject project) return;
++        var generation = Interlocked.Increment(ref _selection); _files.ItemsSource = null;
++        try
++        {
++            var entry = PluginProviderRegistry.Get(info.Id, "mod"); var provider = (IPluginModProvider)entry.Provider;
++            var detail = await PluginProviderRegistry.InvokeAsync(entry, async token => await provider.GetDetailsAsync(project.Id, token) ?? project, _stop.Token);
++            var files = await PluginProviderRegistry.InvokeAsync(entry, token => provider.GetFilesAsync(project.Id, _version, _loader, token), _stop.Token);
++            if (generation != Interlocked.Read(ref _selection)) return;
++            _details.Text = PluginProviderRegistry.Safe(detail?.Description ?? project.Description);
++            if (files.IsDefault || files.Length > 2000) throw new PluginOperationException("InvalidFiles", "插件文件列表无效。");
++            _files.ItemsSource = files.Where(f => f != null && PluginProviderRegistry.ValidFileName(f.FileName) && PluginProviderRegistry.ValidUrl(f.Url))
++                .Select(f => f with { Name = PluginProviderRegistry.Safe(f.Name), GameVersion = PluginProviderRegistry.Safe(f.GameVersion), Loader = PluginProviderRegistry.Safe(f.Loader) })
++                .OrderByDescending(f => f.GameVersion, StringComparer.OrdinalIgnoreCase).ThenBy(f => f.Loader, StringComparer.OrdinalIgnoreCase).ToArray();
++            _files.SelectedIndex = 0;
++        }
++        catch (OperationCanceledException) { }
++        catch (Exception ex) { _status.Text = ex is PluginOperationException operation ? operation.SafeMessage : Loc.T("Str_Plugin_DetailsFailed", "插件详情读取失败，可以切回内置来源。"); }
++    }
++    private void InstallSelected()
++    {
++        if (_sources.SelectedItem is not PluginProviderInfo source || _files.SelectedItem is not PluginModFile file || _instanceId == null)
++        { _status.Text = Loc.T("Str_Plugin_SelectModTarget", "请选择文件并先在启动器中选中一个实例。"); return; }
++        var instanceId = _instanceId;
++        DownloadQueueService.Instance.StartNew(Loc.F("Str_Plugin_ModDownloadName", "下载 {0}", file.Name), async (item, ct) =>
++        {
++            var entry = PluginProviderRegistry.Get(source.Id, "mod"); var revision = Interlocked.Read(ref entry.Context.AuthorizationRevision);
++            var host = PluginHostBridge.Current ?? throw new PluginHostUnavailableException();
++            var detail = await host.GetInstanceDetailsAsync(instanceId, ct) ?? throw new PluginResourceNotFoundException();
++            var staging = Path.Combine(entry.Context.DataDirectory, "downloads", Guid.NewGuid().ToString("N")); Directory.CreateDirectory(staging);
++            try
++            {
++                using var service = new GenericFileDownloadService();
++                var downloaded = await service.DownloadAsync(file.Url, staging, file.FileName, null, item.CreateProgress(), ct);
++                if (!string.IsNullOrEmpty(file.Sha1))
++                {
++                    await using var stream = File.OpenRead(downloaded); var digest = Convert.ToHexString(await SHA1.HashDataAsync(stream, ct));
++                    if (!digest.Equals(file.Sha1, StringComparison.OrdinalIgnoreCase)) throw new PluginOperationException("HashMismatch", "Mod 文件校验失败。");
++                }
++                entry.Context.Permissions.Demand(PluginPermissionNames.ModProvider); entry.Context.Permissions.Demand(PluginPermissionNames.Network);
++                if (revision != Interlocked.Read(ref entry.Context.AuthorizationRevision)) throw new PluginOperationException("AuthorizationChanged", "插件授权已变更，请重新安装。");
++                if (!file.FileName.EndsWith(".jar", StringComparison.OrdinalIgnoreCase)) throw new PluginOperationException("InvalidModFile", "Mod 来源只允许安装 JAR 文件。");
++                foreach (var plan in ModInstallService.PrepareBatch(new[] { downloaded }, Path.Combine(detail.GameDirectory, "mods"))) ModInstallService.Install(plan);
++            }
++            finally { try { Directory.Delete(staging, true); } catch { } }
++        });
++        _status.Text = Loc.T("Str_Plugin_ModQueued", "已加入下载队列。");
++    }
++}
+diff --git a/Views/VersionSelectPage.xaml.cs b/Views/VersionSelectPage.xaml.cs
+--- a/Views/VersionSelectPage.xaml.cs
++++ b/Views/VersionSelectPage.xaml.cs
+@@ -309,7 +309,7 @@
+     /// <summary>"导入实例文件夹..."按钮：把一个现成的、已经有 json/jar 的版本文件夹整个拷进
+     /// 当前选中的 .minecraft 的 versions/ 下——不解析清单、不下载任何东西，纯文件拷贝，
+     /// 装的就是一个已经能跑的现成实例。装完直接选中，右侧列表就能用⚙️菜单设置/启动。</summary>
+-    private void ImportInstanceFolder_Click(object sender, RoutedEventArgs e)
++    private async void ImportInstanceFolder_Click(object sender, RoutedEventArgs e)
+     {
+         if (FolderListBox.SelectedItem is not GameFolder folder)
+         {
+@@ -352,7 +352,7 @@
+ 
+     /// <summary>"导入实例文件..."（小号链接入口）：跟上面"导入实例文件夹"是同一件事，只是源头
+     /// 换成打包好的 .zip，不用用户先自己解压出来。</summary>
+-    private void ImportInstanceFile_Click(object sender, RoutedEventArgs e)
++    private async void ImportInstanceFile_Click(object sender, RoutedEventArgs e)
+     {
+         if (FolderListBox.SelectedItem is not GameFolder folder)
+         {

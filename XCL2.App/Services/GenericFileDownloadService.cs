@@ -46,6 +46,7 @@ public class GenericFileDownloadService : IDisposable
                 fileName = $"download_{DateTime.Now:yyyyMMdd_HHmmss}";
         }
 
+        url = await Plugins.PluginInterceptionRegistry.PrepareDownloadAsync(url, fileName, null, ct);
         using var request = new HttpRequestMessage(HttpMethod.Get, url);
         if (!string.IsNullOrWhiteSpace(userAgent))
             request.Headers.TryAddWithoutValidation("User-Agent", userAgent);

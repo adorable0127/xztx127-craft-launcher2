@@ -91,8 +91,12 @@ public class ModDependencyAnalysisService
 
         foreach (var mod in enabledMods)
         {
-            var (selfId, deps) = TryReadFabricMetadata(mod.FilePath);
+            var (selfId, provides, deps) = TryReadFabricMetadata(mod.FilePath);
             if (selfId != null) installedModIds.Add(selfId);
+            // fabric.mod.json 的 provides：一个 jar 可以同时"充当"别的 mod id。最典型的是
+            // Fabric API（id=fabric-api，provides=["fabric"]），不算进去的话，依赖 "fabric"
+            // 的 mod 会被误报成"缺少前置"，哪怕 Fabric API 明明装着。
+            foreach (var p in provides) installedModIds.Add(p);
             if (deps.Count > 0) perModDependencies.Add((mod.DisplayName, deps));
         }
 
@@ -110,6 +114,12 @@ public class ModDependencyAnalysisService
             {
                 if (builtinIds.Contains(dep.DependencyModId)) continue;
                 if (installedModIds.Contains(dep.DependencyModId)) continue;
+                // Fabric API 内部拆成几十个 fabric-xxx-v1 子模块（fabric-rendering-v1 等），
+                // 它们的 id 是 Fabric API 这个 jar 里嵌套的，不会出现在外层 fabric.mod.json 里。
+                // 只要装了 Fabric API，凡是 fabric-* 开头的依赖都算已满足。
+                if (dep.DependencyModId.StartsWith("fabric-", StringComparison.OrdinalIgnoreCase)
+                    && !dep.DependencyModId.Equals("fabric-language-kotlin", StringComparison.OrdinalIgnoreCase)
+                    && (installedModIds.Contains("fabric-api") || installedModIds.Contains("fabric"))) continue;
 
                 if (!missing.TryGetValue(dep.DependencyModId, out var entry))
                 {
@@ -137,19 +147,27 @@ public class ModDependencyAnalysisService
     /// 不是 Fabric mod（没有这个文件，比如纯 Forge mod）或解析失败时返回 (null, 空列表)，
     /// 静默跳过——这只是"锦上添花"的辅助诊断，不该因为个别 jar 结构异常打断整个分析流程。
     /// </summary>
-    private static (string? SelfId, List<ModDependencyRequirement> Deps) TryReadFabricMetadata(string jarPath)
+    private static (string? SelfId, List<string> Provides, List<ModDependencyRequirement> Deps) TryReadFabricMetadata(string jarPath)
     {
         try
         {
             using var archive = ZipFile.OpenRead(jarPath);
             var entry = archive.GetEntry("fabric.mod.json");
-            if (entry == null) return (null, new List<ModDependencyRequirement>());
+            if (entry == null) return (null, new List<string>(), new List<ModDependencyRequirement>());
 
             using var stream = entry.Open();
             using var doc = JsonDocument.Parse(stream);
             var root = doc.RootElement;
 
             string? selfId = root.TryGetProperty("id", out var idProp) ? idProp.GetString() : null;
+
+            var provides = new List<string>();
+            if (root.TryGetProperty("provides", out var providesProp) && providesProp.ValueKind == JsonValueKind.Array)
+                foreach (var p in providesProp.EnumerateArray())
+                {
+                    if (p.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(p.GetString()))
+                        provides.Add(p.GetString()!);
+                }
 
             var deps = new List<ModDependencyRequirement>();
             if (root.TryGetProperty("depends", out var dependsProp) && dependsProp.ValueKind == JsonValueKind.Object)
@@ -168,11 +186,11 @@ public class ModDependencyAnalysisService
                 }
             }
 
-            return (selfId, deps);
+            return (selfId, provides, deps);
         }
         catch
         {
-            return (null, new List<ModDependencyRequirement>());
+            return (null, new List<string>(), new List<ModDependencyRequirement>());
         }
     }
 }

@@ -7,7 +7,7 @@ using XCL2.App.Views;
 namespace XCL2.App.Services.Plugins;
 
 /// <summary>插件实例独享的 UI 注册表。所有注册、回调及控件创建在 UI 线程串行执行。</summary>
-public sealed class PluginUiService : IDisposable
+public sealed partial class PluginUiService : IDisposable
 {
     private readonly PluginContext _context;
     private readonly Dictionary<string, object> _entries = new(StringComparer.Ordinal);
@@ -39,6 +39,7 @@ public sealed class PluginUiService : IDisposable
     private void EnsureActive()
     {
         if (IsDisposed) throw new ObjectDisposedException(nameof(PluginUiService));
+        _context.Permissions.Demand(PluginPermissionNames.UiBasic);
     }
 
     public Task RunOnUiAsync(Action action)
@@ -132,7 +133,7 @@ public sealed class PluginUiService : IDisposable
     {
         foreach (var observer in _observers.ToArray())
         {
-            if (IsDisposed) break;
+            if (IsDisposed || !_context.Permissions.Has(PluginPermissionNames.UiBasic)) break;
             try { observer(notification); }
             catch (Exception ex) { _context.Log($"弹窗事件回调失败：{ex.Message}"); }
         }
@@ -225,11 +226,11 @@ public sealed class PluginUiService : IDisposable
         return ValueError(option, value) == null ? value : fallback;
     }
 
-    internal string? SaveOption(PluginOptionDefinition option, object? value)
+    internal string? SaveOption(PluginOptionDefinition option, object? value, string permission = PluginPermissionNames.UiBasic)
     {
         try
         {
-            EnsureActive();
+            _context.EnsureActive(); _context.Permissions.Demand(permission);
             var error = ValueError(option, value) ?? option.Validate?.Invoke(value);
             if (!string.IsNullOrEmpty(error)) return error;
             _context.Config.Set(option.ConfigKey ?? option.Id, value);
@@ -250,6 +251,14 @@ public sealed class PluginUiService : IDisposable
         _openDialogs.Clear();
         _context.Runtime.Dispose();
         _context.Components.Dispose();
+        _entries.Clear();
+        _observers.Clear();
+        PluginUiRegistry.Remove(this);
+    });
+
+    internal void Revoke() => Invoke(() =>
+    {
+        foreach (var dialog in _openDialogs.ToArray()) dialog.Close();
         _entries.Clear();
         _observers.Clear();
         PluginUiRegistry.Remove(this);

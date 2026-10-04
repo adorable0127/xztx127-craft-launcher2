@@ -83,7 +83,7 @@
                                     ToolTip="切换便签样式" Click="StyleBtn_Click"/>
                             <Button x:Name="PinBtn" Content="📌" Style="{StaticResource NoteTitleBtnStyle}"
                                     ToolTip="切换是否置顶" Click="PinBtn_Click"/>
-                            <Button Content="✕" Style="{StaticResource NoteTitleBtnStyle}" FontSize="12"
+                            <Button x:Name="NoteCloseButton" Content="✕" Style="{StaticResource NoteTitleBtnStyle}" FontSize="12"
                                     ToolTip="关闭（自动保存）" Click="CloseBtn_Click"/>
                         </StackPanel>
                         <TextBlock x:Name="TitleText" Text="桌面便签" VerticalAlignment="Center" Margin="12,0,4,0"

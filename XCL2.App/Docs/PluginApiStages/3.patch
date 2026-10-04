@@ -1,0 +1,239 @@
+diff --git a/Services/Plugins/PluginComponentService.cs b/Services/Plugins/PluginComponentService.cs
+--- a/Services/Plugins/PluginComponentService.cs
++++ b/Services/Plugins/PluginComponentService.cs
+@@ -88,6 +88,7 @@
+         IDisposable? result = null;
+         _context.Ui.Invoke(() =>
+         {
++            _context.Permissions.Demand(PluginPermissionNames.UiComponents);
+             if (_disposed) throw new ObjectDisposedException(nameof(PluginComponentService));
+             if (!_definitions.TryAdd(definition.Id, definition)) throw new ArgumentException($"组件注册重复：{definition.Id}");
+             PluginComponentRegistry.Add(this);
+@@ -101,6 +102,7 @@
+     /// <summary>检查当前已经加载的视图。命名选择器须唯一；匿名控件使用返回的路径。</summary>
+     public IReadOnlyList<PluginComponentInfo> Inspect(string target)
+     {
++        _context.Permissions.Demand(PluginPermissionNames.UiComponents);
+         IReadOnlyList<PluginComponentInfo> result = Array.Empty<PluginComponentInfo>();
+         _context.Ui.Invoke(() => result = PluginComponentRegistry.Roots().Where(r => PluginComponentRegistry.Matches(r, target))
+             .SelectMany(r => PluginComponentRegistry.Tree(r).Select(n => new PluginComponentInfo(n.Path, n.Element.Name,
+@@ -110,7 +112,13 @@
+         return result;
+     }
+     /// <summary>宿主动态重建组件后可显式重新应用当前注册。</summary>
+-    public void Refresh() => _context.Ui.Invoke(PluginComponentRegistry.Refresh);
++    public void Refresh() => _context.Ui.Invoke(() => { _context.Permissions.Demand(PluginPermissionNames.UiComponents); PluginComponentRegistry.Refresh(); });
++
++    internal void Revoke() => _context.Ui.Invoke(() =>
++    {
++        _definitions.Clear();
++        PluginComponentRegistry.Remove(this);
++    });
+ 
+     public void Dispose() => _context.Ui.Invoke(() =>
+     {
+diff --git a/Services/Plugins/PluginContext.cs b/Services/Plugins/PluginContext.cs
+--- a/Services/Plugins/PluginContext.cs
++++ b/Services/Plugins/PluginContext.cs
+@@ -40,6 +40,8 @@
+         System.Threading.Volatile.Write(ref _grantedPermissions,
+             System.Collections.Immutable.ImmutableHashSet.CreateRange(StringComparer.Ordinal, granted));
+         System.Threading.Interlocked.Increment(ref AuthorizationRevision);
++        if (Ui != null && !Permissions.Has(PluginPermissionNames.UiBasic)) Ui.Revoke();
++        if (Components != null && !Permissions.Has(PluginPermissionNames.UiComponents)) { Components.Revoke(); Runtime.Revoke(); }
+         AuthorizationChanged?.Invoke();
+     }
+ 
+diff --git a/Services/Plugins/PluginManager.cs b/Services/Plugins/PluginManager.cs
+--- a/Services/Plugins/PluginManager.cs
++++ b/Services/Plugins/PluginManager.cs
+@@ -503,6 +503,12 @@
+         WriteState(state);
+         Plugins.FirstOrDefault(p => p.FilePath.Equals(path, StringComparison.OrdinalIgnoreCase))?.Context?.UpdatePermissions(granted);
+         NotifyChanged();
++    }
++    public ImmutableArray<string> GetGrantedPermissions(string filePath)
++    {
++        var path = RequireInstalledEntry(filePath);
++        return LoadState().TryGetValue(StateKey(path), out var saved)
++            ? saved.GrantedPermissions.ToImmutableArray() : ImmutableArray<string>.Empty;
+     }
+     public void SetEnabled(IEnumerable<string> filePaths, bool enabled)
+     {
+diff --git a/Services/Plugins/PluginRuntimeService.cs b/Services/Plugins/PluginRuntimeService.cs
+--- a/Services/Plugins/PluginRuntimeService.cs
++++ b/Services/Plugins/PluginRuntimeService.cs
+@@ -34,6 +34,9 @@
+     private IDisposable Register(string kind, string id, Delegate callback, int order)
+     {
+         ArgumentException.ThrowIfNullOrWhiteSpace(id);
++        _context.Permissions.Demand(PluginPermissionNames.UiComponents);
++        if (kind == "launch" && !_context.Metadata.IsLegacy)
++            throw new PluginOperationException("LegacyApiOnly", "新插件请使用 Events.InterceptLaunch，旧启动中间件不暴露给新插件。");
+         lock (PluginRuntimeRegistry.Gate)
+         {
+             if (_disposed) throw new ObjectDisposedException(nameof(PluginRuntimeService));
+@@ -49,6 +52,7 @@
+             PluginRuntimeRegistry.Remove(this);
+         }
+     }
++    internal void Revoke() { lock (PluginRuntimeRegistry.Gate) PluginRuntimeRegistry.Remove(this); }
+ }
+ 
+ internal static partial class PluginRuntimeRegistry
+diff --git a/Services/Plugins/PluginUiService.cs b/Services/Plugins/PluginUiService.cs
+--- a/Services/Plugins/PluginUiService.cs
++++ b/Services/Plugins/PluginUiService.cs
+@@ -39,6 +39,7 @@
+     private void EnsureActive()
+     {
+         if (IsDisposed) throw new ObjectDisposedException(nameof(PluginUiService));
++        _context.Permissions.Demand(PluginPermissionNames.UiBasic);
+     }
+ 
+     public Task RunOnUiAsync(Action action)
+@@ -132,7 +133,7 @@
+     {
+         foreach (var observer in _observers.ToArray())
+         {
+-            if (IsDisposed) break;
++            if (IsDisposed || !_context.Permissions.Has(PluginPermissionNames.UiBasic)) break;
+             try { observer(notification); }
+             catch (Exception ex) { _context.Log($"弹窗事件回调失败：{ex.Message}"); }
+         }
+@@ -255,6 +256,14 @@
+         PluginUiRegistry.Remove(this);
+     });
+ 
++    internal void Revoke() => Invoke(() =>
++    {
++        foreach (var dialog in _openDialogs.ToArray()) dialog.Close();
++        _entries.Clear();
++        _observers.Clear();
++        PluginUiRegistry.Remove(this);
++    });
++
+     private sealed class Registration : IDisposable
+     {
+         private Action? _remove;
+diff --git a/Views/PluginManagerDialog.xaml.cs b/Views/PluginManagerDialog.xaml.cs
+--- a/Views/PluginManagerDialog.xaml.cs
++++ b/Views/PluginManagerDialog.xaml.cs
+@@ -121,20 +121,23 @@
+             Content = "配置",
+             Padding = new Thickness(10, 3, 10, 3),
+             Margin = new Thickness(12, 0, 0, 0),
+-            IsEnabled = info.LoadError == null && info.Plugin != null && info.Context != null,
++            IsEnabled = info.LoadError == null && info.Plugin != null && info.Context?.Permissions.Has(PluginPermissionNames.UiBasic) == true,
+             VerticalAlignment = VerticalAlignment.Center
+         };
+         configButton.Click += (_, _) => OpenSettings(info);
+         if (info.Metadata is { IsLegacy: false } metadata)
+         {
+             var authorize = new Button { Content = Loc.T("Str_Plugin_Permissions", "权限…"), Margin = new Thickness(8, 0, 0, 0), Padding = new Thickness(10, 3, 10, 3) };
+-            authorize.Click += (_, _) =>
+-            {
+-                var permissionText = metadata.Permissions.Length == 0 ? "未请求额外权限" : string.Join("\n", metadata.Permissions.Select(p => "• " + p));
+-                if (!MessageBoxDialog.ShowConfirm($"{metadata.Name} 请求以下权限：\n\n{permissionText}\n\n" +
+-                    "仅安装可信来源的插件。DLL 与启动器拥有相同系统权限，授权仅限制通过宿主 API 的访问。是否授权并加载？", "插件授权")) return;
+-                try { _manager.SetPermissions(info.FilePath, metadata.Permissions); _manager.ScanAndLoad(); }
+-                catch (Exception ex) { MessageBoxDialog.ShowWarning(ex.Message, "插件授权"); }
++            authorize.Click += async (_, _) =>
++            {
++                var dialog = new PluginPermissionsDialog(metadata, _manager.GetGrantedPermissions(info.FilePath));
++                if (await OverlayDialogService.ShowModalAsync(dialog) != true) return;
++                try
++                {
++                    _manager.SetPermissions(info.FilePath, dialog.Granted);
++                    if (info.Context == null && info.RunningProcess == null) _manager.ScanAndLoad();
++                }
++                catch (Exception ex) { MessageBoxDialog.ShowWarning(ex.Message, Loc.T("Str_Plugin_Authorize", "插件授权")); }
+                 Render();
+             };
+             titleLine.Children.Add(authorize);
+@@ -213,7 +216,7 @@
+         UserControl? panel = null;
+         if (info.Context != null)
+         {
+-            try { panel = info.Plugin.CreateSettingsPanel(info.Context); }
++            try { info.Context.Permissions.Demand(PluginPermissionNames.UiBasic); panel = info.Plugin.CreateSettingsPanel(info.Context); }
+             catch (Exception ex)
+             {
+                 panel = new TextBlock { Text = $"插件生成配置面板时抛出异常：{ex.Message}", TextWrapping = TextWrapping.Wrap }
+diff --git a/Views/PluginPermissionsDialog.cs b/Views/PluginPermissionsDialog.cs
+--- /dev/null
++++ b/Views/PluginPermissionsDialog.cs
+@@ -0,0 +1,73 @@
++using System.Collections.Immutable;
++using System.Windows;
++using System.Windows.Controls;
++using XCL2.App.Services;
++using XCL2.App.Services.Plugins;
++
++namespace XCL2.App.Views;
++
++internal sealed class PluginPermissionsDialog : OverlayDialogControl
++{
++    internal ImmutableArray<string> Granted { get; private set; } = ImmutableArray<string>.Empty;
++    internal PluginPermissionsDialog(PluginMetadata metadata, IEnumerable<string> granted)
++    {
++        Width = 620;
++        var root = new StackPanel { Margin = new Thickness(20) };
++        root.Children.Add(new TextBlock { Text = Loc.F("Str_Plugin_AuthorizeTitle", "{0} · 插件授权", metadata.Name), FontSize = 20, Margin = new Thickness(0, 0, 0, 12) });
++        root.Children.Add(new TextBlock { Text = Loc.T("Str_Plugin_TrustBoundary", "仅安装可信来源的插件。DLL 与启动器拥有相同系统权限；授权只限制宿主 API 的访问。撤销后立即停止该权限的新调用，已写入的文件不会自动恢复。"), TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 0, 0, 12) });
++        var choices = new List<(string Permission, CheckBox Box)>();
++        var list = new StackPanel();
++        foreach (var permission in metadata.Permissions)
++        {
++            var box = new CheckBox { Content = permission + " — " + PluginPermissionText.Describe(permission),
++                IsChecked = granted.Contains(permission, StringComparer.Ordinal), Margin = new Thickness(0, 4, 0, 4) };
++            choices.Add((permission, box)); list.Children.Add(box);
++        }
++        if (choices.Count == 0) list.Children.Add(new TextBlock { Text = Loc.T("Str_Plugin_NoPermissions", "未请求额外权限，保存后可加载。") });
++        root.Children.Add(new ScrollViewer { Content = list, MaxHeight = 350, VerticalScrollBarVisibility = ScrollBarVisibility.Auto });
++        var buttons = new WrapPanel { HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(0, 16, 0, 0) };
++        var clear = new Button { Content = Loc.T("Str_Plugin_RevokeAll", "全部取消"), Margin = new Thickness(4), Padding = new Thickness(12, 6, 12, 6) };
++        clear.Click += (_, _) => { foreach (var choice in choices) choice.Box.IsChecked = false; };
++        var cancel = new Button { Content = Loc.T("Str_Cancel", "取消"), Margin = new Thickness(4), Padding = new Thickness(12, 6, 12, 6) };
++        cancel.Click += (_, _) => CloseWith(false);
++        var save = new Button { Content = Loc.T("Str_Plugin_SavePermissions", "保存授权"), Margin = new Thickness(4), Padding = new Thickness(12, 6, 12, 6) };
++        save.Click += (_, _) => { Granted = choices.Where(c => c.Box.IsChecked == true).Select(c => c.Permission).ToImmutableArray(); CloseWith(true); };
++        buttons.Children.Add(clear); buttons.Children.Add(cancel); buttons.Children.Add(save); root.Children.Add(buttons);
++        Content = root;
++    }
++}
++
++internal static class PluginPermissionText
++{
++    internal static string Describe(string permission) => Loc.T("Str_Plugin_Permission_" + permission.Replace('.', '_'), permission switch
++    {
++        "accounts.read" => "读取账户名称与 UUID，不含凭据",
++        "instances.read" => "读取实例、版本及目录信息",
++        "mods.read" => "读取已装 Mod 的元数据",
++        "downloads.read" => "读取下载状态和进度",
++        "settings.read" => "读取设置白名单",
++        "environment.read" => "读取启动器版本、语言和数据目录",
++        "events.lifecycle" => "订阅启动和退出通知",
++        "launch.modify" => "修改启动参数、环境变量或取消启动",
++        "downloads.intercept" => "改写公开下载地址或取消下载",
++        "instances.validate" => "校验或取消实例创建",
++        "network" => "使用宿主的网络请求",
++        "providers.download" => "注册版本清单和下载镜像",
++        "providers.mod" => "注册 Mod 来源",
++        "providers.loader" => "注册加载器安装器",
++        "auth.provider" => "注册登录方式，凭据由宿主管理",
++        "files.instances.read" => "通过宿主读取实例文件",
++        "files.instances.write" => "通过宿主写入实例文件",
++        "files.external.read" => "读取用户单独选择的背景文件",
++        "files.external.write" => "保留权限：当前没有通用外部写入接口",
++        "process.install" => "在安装流程中运行安装程序",
++        "ui.basic" => "注册弹窗、扩展区及插件配置面板",
++        "ui.components" => "修改现有控件树和渲染扩展",
++        "ui.navigation" => "注册独立导航页",
++        "ui.instanceActions" => "添加实例操作",
++        "ui.settings" => "注册插件设置项",
++        "ui.background" => "提供启动器背景",
++        "plugin.messaging" => "与清单声明的依赖插件通信",
++        _ => permission
++    });
++}

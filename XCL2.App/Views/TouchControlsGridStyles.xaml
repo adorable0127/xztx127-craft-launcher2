@@ -1,7 +1,196 @@
 <ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
                     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
-    <!-- Scoped to the touch editor. Opaque colors keep selection readable over image backgrounds. -->
+    <!-- Only this window loads these styles; every surface and text color is opaque. -->
     <SolidColorBrush x:Key="TouchGridSelectionBrush" Color="#214E73"/>
+
+    <Style TargetType="TextBlock">
+        <Setter Property="Foreground" Value="{DynamicResource TouchEditorTextBrush}"/>
+        <Setter Property="Opacity" Value="1"/>
+    </Style>
+
+    <Style x:Key="TouchEditorButton" TargetType="Button">
+        <Setter Property="Background" Value="{DynamicResource TouchEditorButtonBrush}"/>
+        <Setter Property="Foreground" Value="{DynamicResource TouchEditorTextBrush}"/>
+        <Setter Property="BorderBrush" Value="{DynamicResource TouchEditorBorderBrush}"/>
+        <Setter Property="BorderThickness" Value="1"/>
+        <Setter Property="FontSize" Value="14"/>
+        <Setter Property="MinHeight" Value="38"/>
+        <Setter Property="Cursor" Value="Hand"/>
+        <Setter Property="Opacity" Value="1"/>
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="Button">
+                    <Border x:Name="outline" Background="{TemplateBinding Background}"
+                            BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}"
+                            Padding="{TemplateBinding Padding}" CornerRadius="4">
+                        <TextBlock Text="{Binding Content, RelativeSource={RelativeSource TemplatedParent}}"
+                                   Foreground="{TemplateBinding Foreground}" HorizontalAlignment="Center"
+                                   VerticalAlignment="Center"/>
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsKeyboardFocused" Value="True">
+                            <Setter TargetName="outline" Property="BorderBrush" Value="{DynamicResource TouchEditorFocusBrush}"/>
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+        <Style.Triggers>
+            <Trigger Property="IsMouseOver" Value="True">
+                <Setter Property="Background" Value="{DynamicResource TouchEditorButtonHoverBrush}"/>
+            </Trigger>
+            <Trigger Property="IsPressed" Value="True">
+                <Setter Property="Background" Value="{DynamicResource TouchEditorButtonPressedBrush}"/>
+            </Trigger>
+            <Trigger Property="IsEnabled" Value="False">
+                <Setter Property="Opacity" Value="0.7"/>
+            </Trigger>
+        </Style.Triggers>
+    </Style>
+
+    <Style x:Key="TouchEditorPrimaryButton" TargetType="Button" BasedOn="{StaticResource TouchEditorButton}">
+        <Setter Property="Background" Value="{StaticResource TouchGridSelectionBrush}"/>
+        <Setter Property="Foreground" Value="White"/>
+        <Setter Property="BorderBrush" Value="{StaticResource TouchGridSelectionBrush}"/>
+        <Style.Triggers>
+            <Trigger Property="IsMouseOver" Value="True">
+                <Setter Property="Background" Value="#163E61"/>
+            </Trigger>
+            <Trigger Property="IsPressed" Value="True">
+                <Setter Property="Background" Value="#12344F"/>
+            </Trigger>
+        </Style.Triggers>
+    </Style>
+
+    <Style x:Key="TouchEditorColumnGrip" TargetType="Thumb">
+        <Setter Property="Width" Value="5"/>
+        <Setter Property="Cursor" Value="SizeWE"/>
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="Thumb"><Border Background="Transparent"/></ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <Style x:Key="TouchEditorColumnHeader" TargetType="DataGridColumnHeader">
+        <Setter Property="Background" Value="{DynamicResource TouchEditorHeaderBrush}"/>
+        <Setter Property="Foreground" Value="{DynamicResource TouchEditorTextBrush}"/>
+        <Setter Property="BorderBrush" Value="{DynamicResource TouchEditorBorderBrush}"/>
+        <Setter Property="BorderThickness" Value="0,0,1,1"/>
+        <Setter Property="Padding" Value="8,10"/>
+        <Setter Property="FontWeight" Value="SemiBold"/>
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="DataGridColumnHeader">
+                    <Grid>
+                        <Border Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}" Padding="{TemplateBinding Padding}">
+                            <Grid>
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="10"/></Grid.ColumnDefinitions>
+                                <TextBlock Text="{Binding Content, RelativeSource={RelativeSource TemplatedParent}}"
+                                           Foreground="{TemplateBinding Foreground}" VerticalAlignment="Center"/>
+                                <Path x:Name="sort" Grid.Column="1" Width="7" Height="4" Stretch="Fill"
+                                      Fill="{TemplateBinding Foreground}" Visibility="Collapsed" VerticalAlignment="Center"/>
+                            </Grid>
+                        </Border>
+                        <Thumb x:Name="PART_LeftHeaderGripper" Style="{StaticResource TouchEditorColumnGrip}" HorizontalAlignment="Left"/>
+                        <Thumb x:Name="PART_RightHeaderGripper" Style="{StaticResource TouchEditorColumnGrip}" HorizontalAlignment="Right"/>
+                    </Grid>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="SortDirection" Value="Ascending">
+                            <Setter TargetName="sort" Property="Data" Value="M 0,4 L 3.5,0 L 7,4 Z"/>
+                            <Setter TargetName="sort" Property="Visibility" Value="Visible"/>
+                        </Trigger>
+                        <Trigger Property="SortDirection" Value="Descending">
+                            <Setter TargetName="sort" Property="Data" Value="M 0,0 L 3.5,4 L 7,0 Z"/>
+                            <Setter TargetName="sort" Property="Visibility" Value="Visible"/>
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <Style x:Key="TouchGridTextEditor" TargetType="TextBox">
+        <Setter Property="Background" Value="{StaticResource TouchGridSelectionBrush}"/>
+        <Setter Property="Foreground" Value="White"/>
+        <Setter Property="CaretBrush" Value="White"/>
+        <Setter Property="SelectionBrush" Value="#4B75A1"/>
+        <Setter Property="SelectionOpacity" Value="1"/>
+        <Setter Property="BorderBrush" Value="{DynamicResource TouchEditorFocusBrush}"/>
+        <Setter Property="BorderThickness" Value="1"/>
+        <Setter Property="Padding" Value="6,4"/>
+        <Setter Property="VerticalContentAlignment" Value="Center"/>
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="TextBox">
+                    <Border Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}"
+                            BorderThickness="{TemplateBinding BorderThickness}">
+                        <ScrollViewer x:Name="PART_ContentHost" Margin="{TemplateBinding Padding}"/>
+                    </Border>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <Style x:Key="TouchGridComboItem" TargetType="ComboBoxItem">
+        <Setter Property="Background" Value="{DynamicResource TouchEditorBackgroundBrush}"/>
+        <Setter Property="Foreground" Value="{DynamicResource TouchEditorTextBrush}"/>
+        <Setter Property="Padding" Value="8,6"/>
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="ComboBoxItem">
+                    <Border Background="{TemplateBinding Background}" Padding="{TemplateBinding Padding}">
+                        <TextBlock Text="{Binding Label}" Foreground="{TemplateBinding Foreground}"/>
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsHighlighted" Value="True">
+                            <Setter Property="Background" Value="{StaticResource TouchGridSelectionBrush}"/>
+                            <Setter Property="Foreground" Value="White"/>
+                        </Trigger>
+                        <Trigger Property="IsSelected" Value="True">
+                            <Setter Property="Background" Value="{StaticResource TouchGridSelectionBrush}"/>
+                            <Setter Property="Foreground" Value="White"/>
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <Style x:Key="TouchGridComboEditor" TargetType="ComboBox">
+        <Setter Property="Foreground" Value="White"/>
+        <Setter Property="Background" Value="{StaticResource TouchGridSelectionBrush}"/>
+        <Setter Property="ItemContainerStyle" Value="{StaticResource TouchGridComboItem}"/>
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="ComboBox">
+                    <Grid>
+                        <ToggleButton IsChecked="{Binding IsDropDownOpen, Mode=TwoWay, RelativeSource={RelativeSource TemplatedParent}}"
+                                      Focusable="False" ClickMode="Press">
+                            <ToggleButton.Template>
+                                <ControlTemplate TargetType="ToggleButton">
+                                    <Border Background="{StaticResource TouchGridSelectionBrush}" Padding="8,6">
+                                        <TextBlock Text="▾" Foreground="White" HorizontalAlignment="Right"/>
+                                    </Border>
+                                </ControlTemplate>
+                            </ToggleButton.Template>
+                        </ToggleButton>
+                        <TextBlock Margin="8,6,22,6" IsHitTestVisible="False" Foreground="White"
+                                   Text="{Binding SelectedItem.Label, RelativeSource={RelativeSource TemplatedParent}}"/>
+                        <Popup x:Name="PART_Popup" IsOpen="{TemplateBinding IsDropDownOpen}" Placement="Bottom"
+                               AllowsTransparency="True" Focusable="False">
+                            <Border Background="{DynamicResource TouchEditorBackgroundBrush}"
+                                    BorderBrush="{DynamicResource TouchEditorBorderBrush}" BorderThickness="1"
+                                    MinWidth="{TemplateBinding ActualWidth}" MaxHeight="280">
+                                <ScrollViewer CanContentScroll="True"><ItemsPresenter/></ScrollViewer>
+                            </Border>
+                        </Popup>
+                    </Grid>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
 
     <Style x:Key="TouchGridComboDisplay" TargetType="ComboBox">
         <Setter Property="IsHitTestVisible" Value="False"/>
@@ -41,7 +230,8 @@
                     <Grid Background="Transparent" SnapsToDevicePixels="True">
                         <Border x:Name="focus" CornerRadius="7" BorderThickness="1.5" BorderBrush="Transparent"/>
                         <Border x:Name="box" Width="20" Height="20" CornerRadius="5"
-                                Background="#F8FAFC" BorderBrush="#64748B" BorderThickness="1.5">
+                                Background="{DynamicResource TouchEditorBackgroundBrush}"
+                                BorderBrush="{DynamicResource TouchEditorBorderBrush}" BorderThickness="1.5">
                             <Path x:Name="check" Data="M 1,5 L 4,8 L 10,1" Width="11" Height="9"
                                   Stroke="White" StrokeThickness="2" StrokeStartLineCap="Round"
                                   StrokeEndLineCap="Round" StrokeLineJoin="Round" Visibility="Collapsed"
@@ -67,7 +257,7 @@
                             <Setter TargetName="box" Property="BorderBrush" Value="#93C5FD"/>
                         </Trigger>
                         <Trigger Property="IsKeyboardFocused" Value="True">
-                            <Setter TargetName="focus" Property="BorderBrush" Value="#93C5FD"/>
+                            <Setter TargetName="focus" Property="BorderBrush" Value="{DynamicResource TouchEditorFocusBrush}"/>
                         </Trigger>
                         <Trigger Property="IsEnabled" Value="False">
                             <Setter Property="Opacity" Value="0.5"/>

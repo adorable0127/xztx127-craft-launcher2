@@ -52,7 +52,10 @@ public sealed class DownloadQueueItem : INotifyPropertyChanged
         set { _status = value; OnChanged(); OnChanged(nameof(CanPause)); OnChanged(nameof(CanResume)); }
     }
 
-    public bool CanPause => Status == DownloadQueueItemStatus.Downloading;
+    /// <summary>该任务是否允许暂停。安装加载器这类不能安全中断后续传的任务设为 false，界面上不会出现暂停按钮。</summary>
+    public bool SupportsPause { get; init; } = true;
+
+    public bool CanPause => SupportsPause && Status == DownloadQueueItemStatus.Downloading;
     public bool CanResume => Status == DownloadQueueItemStatus.Paused || Status == DownloadQueueItemStatus.Failed;
 
     /// <summary>驱动本次下载的取消令牌源。暂停/取消都通过 Cancel() 它来打断当前
@@ -82,6 +85,24 @@ public sealed class DownloadQueueItem : INotifyPropertyChanged
     /// 游戏文件夹里，只比版本 ID 会误伤——用户完全可能一边在 A 文件夹装 1.20.1，
     /// 一边启动 B 文件夹里早就装好的 1.20.1。为 null 时退化成只比版本 ID。</summary>
     public string? TargetFolderPath { get; init; }
+
+    private readonly HashSet<string> _installationTargets = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>登记这条任务实际会写入的版本 ID。加载器安装的最终版本名要到安装过程中才能确定
+    /// （自定义实例名、Forge 解析出的目录名等），所以允许在运行中追加，可多次调用。</summary>
+    public void RegisterInstallationTarget(string? versionId)
+    {
+        if (string.IsNullOrWhiteSpace(versionId)) return;
+        lock (_installationTargets) _installationTargets.Add(versionId.Trim());
+    }
+
+    /// <summary>该任务是否正在写入指定版本（初始目标或运行中登记的目标）。</summary>
+    internal bool TargetsVersion(string versionId)
+    {
+        if (!string.IsNullOrWhiteSpace(TargetVersionId) &&
+            string.Equals(TargetVersionId, versionId, StringComparison.OrdinalIgnoreCase)) return true;
+        lock (_installationTargets) return _installationTargets.Contains(versionId.Trim());
+    }
 
     public DownloadQueueItem(string name, CancellationTokenSource cts, Func<DownloadQueueItem, CancellationToken, Task> resumeAction)
     {
@@ -221,8 +242,7 @@ public sealed class DownloadQueueService
 
         return Items.FirstOrDefault(i =>
             i.Status is DownloadQueueItemStatus.Downloading or DownloadQueueItemStatus.Paused &&
-            !string.IsNullOrWhiteSpace(i.TargetVersionId) &&
-            string.Equals(i.TargetVersionId, versionId, StringComparison.OrdinalIgnoreCase) &&
+            i.TargetsVersion(versionId) &&
             (string.IsNullOrWhiteSpace(i.TargetFolderPath) || string.IsNullOrWhiteSpace(folderPath) ||
              string.Equals(NormalizeFolder(i.TargetFolderPath), NormalizeFolder(folderPath), StringComparison.OrdinalIgnoreCase)));
     }
@@ -250,13 +270,14 @@ public sealed class DownloadQueueService
     /// 是同一套右下角气泡组件、视觉上连贯；用 Info 类型（不是 Success）跟"已完成"
     /// 区分开，避免用户扫一眼颜色就以为下载已经结束了。</summary>
     public DownloadQueueItem StartNew(string name, Func<DownloadQueueItem, CancellationToken, Task> resumeAction,
-        string? targetVersionId = null, string? targetFolderPath = null)
+        string? targetVersionId = null, string? targetFolderPath = null, bool supportsPause = true)
     {
         var cts = new CancellationTokenSource();
         var item = new DownloadQueueItem(name, cts, resumeAction)
         {
             TargetVersionId = string.IsNullOrWhiteSpace(targetVersionId) ? null : targetVersionId,
-            TargetFolderPath = string.IsNullOrWhiteSpace(targetFolderPath) ? null : targetFolderPath
+            TargetFolderPath = string.IsNullOrWhiteSpace(targetFolderPath) ? null : targetFolderPath,
+            SupportsPause = supportsPause
         };
         RunOnUi(() =>
         {

@@ -14,6 +14,8 @@ public class ServerProcessInfo
     public Process Process { get; }
     public string InstanceId { get; }
     public string DisplayName { get; }
+    public int ServerPort { get; }
+    public IReadOnlyCollection<int> ListeningPorts { get; }
     public DateTime StartedAt { get; } = DateTime.Now;
 
     public StringBuilder OutputBuffer { get; } = new();
@@ -37,11 +39,14 @@ public class ServerProcessInfo
         }
     }
 
-    public ServerProcessInfo(Process process, string instanceId, string displayName)
+    public ServerProcessInfo(Process process, string instanceId, string displayName, int serverPort = 25565,
+        IReadOnlyCollection<int>? listeningPorts = null)
     {
         Process = process;
         InstanceId = instanceId;
         DisplayName = displayName;
+        ServerPort = serverPort;
+        ListeningPorts = listeningPorts ?? new[] { serverPort };
 
         process.OutputDataReceived += (_, e) => AppendLine(e.Data);
         process.ErrorDataReceived += (_, e) => AppendLine(e.Data);

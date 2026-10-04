@@ -45,6 +45,13 @@
                     </Grid.ColumnDefinitions>
 
                     <StackPanel Grid.Column="0">
+                        <TextBlock Text="服务器端口（1–65535）" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4"/>
+                        <TextBox x:Name="ServerPortBox" Style="{DynamicResource SearchTextBox}" Height="34" Margin="0,0,0,4"/>
+                        <CheckBox x:Name="AutoAvoidPortCheck" Content="端口被占用时自动避让" Margin="0,0,0,4"
+                                  Foreground="{DynamicResource TextSecondaryBrush}" FontSize="12"/>
+                        <TextBlock x:Name="ServerPortHint" Text="关闭自动避让后严格使用该端口，被占用会报错；停止服务器后可修改端口。"
+                                   Foreground="{DynamicResource TextSecondaryBrush}" FontSize="11" TextWrapping="Wrap" Margin="0,0,0,14"/>
+
                         <TextBlock Text="{DynamicResource Str_Ui_Max_Players}" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4"/>
                         <TextBox x:Name="MaxPlayersBox" Style="{DynamicResource SearchTextBox}" Height="34" Margin="0,0,0,14"/>
 

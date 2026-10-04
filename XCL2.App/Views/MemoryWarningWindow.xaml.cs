@@ -16,7 +16,7 @@ public class MemoryWarningProcessRow
         {
             var memMb = TryGetWorkingSetMb(Info);
             var memText = memMb.HasValue ? $"{memMb.Value:N0} MB" : "未知";
-            return $"账户: {Info.AccountLabel}  |  占用内存: {memText}  |  启动于: {Info.StartedAt:HH:mm:ss}";
+            return $"来源: {Info.SourceLabel}  |  占用内存: {memText}  |  {GameWindowStatus.ResponseLabel(Info)}";
         }
     }
 
@@ -51,6 +51,7 @@ public partial class MemoryWarningWindow : OverlayDialogControl
 {
     private readonly GameProcessManager _processManager;
     private readonly MemoryWatchdogService _watchdog;
+    private bool _busy;
 
     public MemoryWarningWindow(GameProcessManager processManager, MemoryWatchdogService watchdog,
         MemoryWatchdogService.LowMemoryEventArgs args)
@@ -63,45 +64,59 @@ public partial class MemoryWarningWindow : OverlayDialogControl
             $"当前系统可用内存仅剩 {args.AvailPhysMb:N0} MB（总内存 {args.TotalPhysMb:N0} MB，" +
             $"已用 {args.MemoryLoadPercent}%）。";
 
-        RefreshList();
+        Loaded += (_, _) => _processManager.Changed += OnProcessesChanged;
+        Unloaded += (_, _) => _processManager.Changed -= OnProcessesChanged;
+        RefreshList(selectAll: true);
     }
 
-    private void RefreshList()
+    private void OnProcessesChanged() => RefreshList();
+
+    private void RefreshList(bool selectAll = false)
     {
-        ProcessListBox.ItemsSource = _processManager.Running
-            .Select(p => new MemoryWarningProcessRow(p))
-            .ToList();
-        // 默认全选，方便用户一键确认关闭；仍然可以手动取消个别项目后再点"关闭所选进程"。
-        foreach (var item in ProcessListBox.Items)
-            ProcessListBox.SelectedItems.Add(item);
+        var selected = ProcessListBox.SelectedItems.Cast<MemoryWarningProcessRow>().Select(r => r.Info).ToHashSet();
+        var rows = _processManager.Running.Select(p => new MemoryWarningProcessRow(p)).ToList();
+        ProcessListBox.ItemsSource = rows;
+        foreach (var row in rows.Where(r => selectAll || selected.Contains(r.Info)))
+            ProcessListBox.SelectedItems.Add(row);
     }
 
-    private void CloseSelected_Click(object sender, RoutedEventArgs e)
+    private async void CloseSelected_Click(object sender, RoutedEventArgs e)
     {
-        var selected = ProcessListBox.SelectedItems.Cast<MemoryWarningProcessRow>().ToList();
-        foreach (var row in selected)
-            _processManager.CloseSelected(row.Info);
-
-        if (_processManager.Running.Count == 0)
+        var games = ProcessListBox.SelectedItems.Cast<MemoryWarningProcessRow>().Select(r => r.Info).ToArray();
+        if (games.Length == 0)
         {
-            CloseWith(null);
+            MessageBoxDialog.ShowInfo("请先选择需要关闭的游戏。", "提示");
+            return;
         }
-        else
-        {
-            RefreshList();
-        }
+        await CloseGamesAsync(games);
     }
 
-    private void CloseAll_Click(object sender, RoutedEventArgs e)
+    private async void CloseAll_Click(object sender, RoutedEventArgs e)
+        => await CloseGamesAsync(_processManager.Running);
+
+    private async Task CloseGamesAsync(IEnumerable<GameProcessInfo> games)
     {
-        _processManager.CloseAll();
-        CloseWith(null);
+        if (_busy) return;
+        _busy = true;
+        CloseSelectedBtn.IsEnabled = CloseAllBtn.IsEnabled = IgnoreBtn.IsEnabled = ProcessListBox.IsEnabled = false;
+        try
+        {
+            var failures = await _processManager.CloseSelectedAsync(games);
+            if (failures.Count > 0)
+                MessageBoxDialog.ShowWarning(GameProcessManager.DescribeCloseFailures(failures), "关闭失败");
+            if (_processManager.Running.Count == 0) CloseWith(null);
+            else RefreshList();
+        }
+        finally
+        {
+            _busy = false;
+            CloseSelectedBtn.IsEnabled = CloseAllBtn.IsEnabled = IgnoreBtn.IsEnabled = ProcessListBox.IsEnabled = true;
+        }
     }
 
     private void Ignore_Click(object sender, RoutedEventArgs e)
     {
-        // 本次先不处理，但不永久关闭监控——内存回升到安全水位之前不会重复打扰用户，
-        // 一旦又跌下去（说明问题没解决/继续恶化）会照常重新弹出。
+        if (_busy) return;
         _watchdog.SuppressUntilRecovered();
         CloseWith(null);
     }

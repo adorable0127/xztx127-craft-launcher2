@@ -130,6 +130,37 @@
                         <Button Grid.Column="1" Content="选择目录" Margin="8,0,0,0" Padding="10,5" Click="BrowseWorkingDirectory_Click"/>
                         <Button Grid.Column="2" Content="清空" Margin="8,0,0,0" Padding="10,5" Click="ClearWorkingDirectory_Click"/>
                     </Grid>
+
+                    <TextBlock Text="额外目录（可添加多个；AI 也可以向你申请新的目录）" FontWeight="SemiBold" Margin="0,12,0,0"/>
+                    <ListBox x:Name="ExtraDirectoriesList" Margin="0,4,0,0" MinHeight="40" MaxHeight="130"/>
+                    <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
+                        <Button Content="添加目录" Padding="10,5" Click="AddExtraDirectory_Click"/>
+                        <Button Content="移除选中" Padding="10,5" Margin="8,0,0,0" Click="RemoveExtraDirectory_Click"/>
+                    </StackPanel>
+
+                    <CheckBox x:Name="FullAccessCheck" Margin="0,14,0,0"
+                              Content="完全访问：允许 AI 访问这台电脑上的所有文件（高风险）"
+                              Checked="FullAccessCheck_Checked" Unchecked="FullAccessCheck_Unchecked"/>
+                    <TextBlock Text="开启时会连续弹出两次系统提示，两次都确认才生效。开启后 AI 读取/列出文件不再逐次询问，每次写入仍会单独询问你；Windows、Program Files、ProgramData 等系统目录禁止写入（除非开启下方的「完全绝对访问」）。"
+                               TextWrapping="Wrap" FontSize="11" Foreground="{DynamicResource DangerBrush}" Margin="0,4,0,0"/>
+
+                    <CheckBox x:Name="AbsoluteAccessCheck" Margin="24,12,0,0" IsEnabled="False"
+                              Content="绝对访问：AI 读写文件时不再弹窗确认，静默执行（极高风险）"
+                              Checked="AbsoluteAccessCheck_Checked" Unchecked="AbsoluteAccessCheck_Unchecked"/>
+                    <TextBlock Text="仅在「完全访问」开启时可用。AI 的每次列出/读取/写入都会直接执行，并记录到启动器日志（前缀「[AI 绝对访问]」）。启动器自己的配置/账户目录和系统目录仍受保护。"
+                               TextWrapping="Wrap" FontSize="11" Foreground="{DynamicResource DangerBrush}" Margin="24,4,0,0"/>
+
+                    <CheckBox x:Name="UnrestrictedAccessCheck" Margin="48,12,0,0" IsEnabled="False"
+                              Content="完全绝对访问：取消所有路径保护，包括应用安装文件和 Windows 系统文件（最高风险）"
+                              Checked="UnrestrictedAccessCheck_Checked" Unchecked="UnrestrictedAccessCheck_Unchecked"/>
+                    <TextBlock Text="仅在「绝对访问」开启时可用。AI 可以静默读取、修改甚至覆盖任何文件：应用安装目录、Windows 系统目录、Program Files、ProgramData，以及启动器自己的配置/账户目录（含 API 密钥、登录令牌）。开启时会连续弹出两次红色警告，任何一次取消都不会生效；每次操作都会记录到启动器日志。"
+                               TextWrapping="Wrap" FontSize="11" Foreground="{DynamicResource DangerBrush}" Margin="48,4,0,0"/>
+
+                    <CheckBox x:Name="SystemControlAccessCheck" Margin="72,12,0,0" IsEnabled="False"
+                              Content="彻底完全访问：允许 AI 修改注册表、执行各种高危系统命令（最高危）"
+                              Checked="SystemControlAccessCheck_Checked"/>
+                    <TextBlock Text="仅在「完全绝对访问」开启时可用。AI 可以直接读写注册表，并通过 PowerShell / cmd 执行任意命令（删除文件、结束进程、改系统设置、安装/卸载软件等），没有任何弹窗确认。开启时会连续弹出三次红色警告，任何一次取消都不会生效；每次操作都会记录到启动器日志。"
+                               TextWrapping="Wrap" FontSize="11" Foreground="{DynamicResource DangerBrush}" Margin="72,4,0,0"/>
                 </StackPanel>
             </Border>
 
@@ -191,6 +222,20 @@
                     <CheckBox x:Name="TokenSaverCheck" Content="省 Token 模式" Checked="TokenSaverCheck_CheckedChanged" Unchecked="TokenSaverCheck_CheckedChanged"/>
                     <TextBlock x:Name="TokenSaverHintText" TextWrapping="Wrap" FontSize="11"
                                Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,4,0,0"/>
+
+                    <TextBlock Text="AI 人格" FontWeight="SemiBold" Margin="0,14,0,0"/>
+                    <ComboBox x:Name="PersonaCombo" Margin="0,4,0,0"
+                              DisplayMemberPath="DisplayName" SelectedValuePath="Id"
+                              SelectionChanged="PersonaCombo_SelectionChanged"/>
+                    <TextBlock x:Name="PersonaHintText" TextWrapping="Wrap" FontSize="11"
+                               Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,4,0,0"/>
+                    <StackPanel x:Name="CustomPromptPanel" Visibility="Collapsed">
+                        <TextBlock Text="我的提示词（「其他」专用）" FontWeight="SemiBold" Margin="0,12,0,0"/>
+                        <TextBox x:Name="CustomSystemPromptBox" Margin="0,4,0,0" MinHeight="90" MaxHeight="220"
+                                 AcceptsReturn="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto"/>
+                        <TextBlock Text="例如：回答时多举例子；称呼我为「船长」。它不能覆盖助手的能力边界与安全规则。" TextWrapping="Wrap"
+                                   FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,4,0,0"/>
+                    </StackPanel>
                 </StackPanel>
             </Border>
 

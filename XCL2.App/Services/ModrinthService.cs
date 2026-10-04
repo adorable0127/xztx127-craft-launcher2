@@ -83,6 +83,89 @@ public class ModrinthService
         return JsonSerializer.Deserialize<List<ModrinthVersion>>(json) ?? new List<ModrinthVersion>();
     }
 
+    /// <summary>启动器的加载器名 -> Modrinth 的 loaders 取值。Quilt 能加载 Fabric 的 mod，所以一并放行；
+    /// Forge / NeoForge 互不兼容，各自只认自己的。未知加载器返回空列表（不过滤）。</summary>
+    public static List<string> ToModrinthLoaders(string? loader)
+    {
+        switch (loader?.Trim().ToLowerInvariant())
+        {
+            case "fabric": return new List<string> { "fabric" };
+            case "quilt": return new List<string> { "quilt", "fabric" };
+            case "forge": return new List<string> { "forge" };
+            case "neoforge":
+            case "neo-forge":
+            case "neo_forge": return new List<string> { "neoforge" };
+            default: return new List<string>();
+        }
+    }
+
+    /// <summary>
+    /// 同 GetVersionsAsync，但额外按加载器过滤（loaders 参数）。装前置模组必须用这个：
+    /// 不按加载器过滤的话，列表第一项经常是别的加载器的构建（比如 Fabric 的整合需要
+    /// Fabric 版前置，却拿到了 NeoForge 版），下载下来必崩。
+    /// </summary>
+    public async Task<List<ModrinthVersion>> GetVersionsForLoaderAsync(string projectId, string? gameVersion,
+        string? loader, CancellationToken ct = default)
+    {
+        var query = new List<string>();
+        var loaders = ToModrinthLoaders(loader);
+        if (loaders.Count > 0)
+            query.Add("loaders=" + Uri.EscapeDataString("[" + string.Join(",", loaders.Select(l => $"\"{l}\"")) + "]"));
+        if (!string.IsNullOrWhiteSpace(gameVersion))
+            query.Add("game_versions=" + Uri.EscapeDataString($"[\"{gameVersion}\"]"));
+
+        var url = $"{BaseUrl}/project/{Uri.EscapeDataString(projectId)}/version";
+        if (query.Count > 0) url += "?" + string.Join("&", query);
+
+        var resp = await _http.GetAsync(url, ct);
+        resp.EnsureSuccessStatusCode();
+        var json = await resp.Content.ReadAsStringAsync(ct);
+        var all = JsonSerializer.Deserialize<List<ModrinthVersion>>(json) ?? new List<ModrinthVersion>();
+
+        // 服务端已经过滤过一次，这里再兜底校验一遍，防止接口行为变化时又混进别的加载器的文件。
+        if (loaders.Count > 0)
+            all = all.Where(v => v.Loaders == null || v.Loaders.Count == 0
+                                 || v.Loaders.Any(l => loaders.Contains(l, StringComparer.OrdinalIgnoreCase))).ToList();
+        return all;
+    }
+
+    /// <summary>
+    /// 把 mod id（比如 fabric.mod.json 里 depends 的 key）解析成 Modrinth 项目 slug。
+    /// 先按 id/slug 直接查项目，查不到再按名字搜索，且只接受 slug/标题（忽略 - _ 和大小写）
+    /// 与 mod id 完全一致的结果——宁可返回 null 让用户手动搜，也不要下载一个同名不同物的 mod。
+    /// </summary>
+    public async Task<string?> ResolveModProjectSlugAsync(string modId, string? loader, string? gameVersion,
+        CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(modId)) return null;
+        var loaders = ToModrinthLoaders(loader);
+
+        try
+        {
+            var resp = await _http.GetAsync($"{BaseUrl}/project/{Uri.EscapeDataString(modId)}", ct);
+            if (resp.IsSuccessStatusCode)
+            {
+                using var doc = JsonDocument.Parse(await resp.Content.ReadAsStringAsync(ct));
+                var root = doc.RootElement;
+                var isMod = root.TryGetProperty("project_type", out var pt) && pt.GetString() == "mod";
+                var supportsLoader = loaders.Count == 0
+                    || (root.TryGetProperty("loaders", out var ls) && ls.ValueKind == JsonValueKind.Array
+                        && ls.EnumerateArray().Any(x => loaders.Contains(x.GetString() ?? "", StringComparer.OrdinalIgnoreCase)));
+                if (isMod && supportsLoader && root.TryGetProperty("slug", out var slugProp))
+                    return slugProp.GetString();
+            }
+        }
+        catch { /* 直接查询失败（网络/解析）就继续走搜索兜底 */ }
+
+        static string Norm(string x) => x.Replace("-", "").Replace("_", "").Replace(" ", "").ToLowerInvariant();
+        var target = Norm(modId);
+        var search = await SearchAsync(ModrinthResourceType.Mod, modId, gameVersion, 0, 10, ct,
+            loaders.Count > 0 ? loaders[0] : null);
+        var hit = search.Hits.FirstOrDefault(h => Norm(h.Slug) == target)
+                  ?? search.Hits.FirstOrDefault(h => Norm(h.Title) == target);
+        return hit?.Slug;
+    }
+
     /// <summary>
     /// 下载一个版本的主文件（primary=true 的那个；没有标记 primary 的就取第一个）。
     ///
@@ -150,7 +233,8 @@ public class ModrinthService
             var tmp = destPath + $".tmp{attempt}";
             try
             {
-                using (var resp = await _http.GetAsync(file.Url, HttpCompletionOption.ResponseHeadersRead, ct))
+                var resolved = await Plugins.PluginInterceptionRegistry.PrepareDownloadAsync(file.Url, file.Filename, file.Hashes?.Sha1, ct);
+                using (var resp = await _http.GetAsync(resolved, HttpCompletionOption.ResponseHeadersRead, ct))
                 {
                     resp.EnsureSuccessStatusCode();
                     await using var fs = File.Create(tmp);
@@ -166,10 +250,11 @@ public class ModrinthService
 
                 if (File.Exists(destPath)) File.Delete(destPath);
                 File.Move(tmp, destPath);
+                Plugins.PluginHostBridge.Current?.NotifyModChange(destPath, "installed");
                 progress?.Report("下载完成");
                 return destPath;
             }
-            catch (Exception ex) when (ex is not OperationCanceledException)
+            catch (Exception ex) when (ex is not OperationCanceledException and not Plugins.PluginFlowCanceledException)
             {
                 lastError = ex;
                 TryDelete(tmp);

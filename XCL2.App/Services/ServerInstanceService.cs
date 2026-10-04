@@ -145,10 +145,14 @@ public class ServerInstanceService
         File.Move(tempPath, path, overwrite: true);
     }
 
+    /// <summary>有新实例被登记时触发（后台下载任务完成后登记的实例，服务器列表页据此自动刷新）。</summary>
+    public event Action? InstanceAdded;
+
     public ServerInstance Add(ServerInstance instance)
     {
         Instances.Add(instance);
         Save();
+        InstanceAdded?.Invoke();
         return instance;
     }
 

@@ -27,7 +27,7 @@
                                     Padding="16,8" Click="TerracottaLaunch_Click"/>
                             <Button Content="{DynamicResource Str_Ui_Use_Another_Version}" Style="{StaticResource SecondaryButton}" Padding="12,8" Margin="10,0,0,0"
                                     Click="TerracottaBrowse_Click" ToolTip="{DynamicResource Str_Ui_Optional_If_A_Newer_Official_Build_Is_Ou}"/>
-                            <Button Content="{DynamicResource Str_Ui_Restore_Bundled_Version}" Style="{StaticResource SecondaryButton}" Padding="12,8" Margin="10,0,0,0"
+                            <Button x:Name="TerracottaResetBtn" Content="{DynamicResource Str_Ui_Restore_Bundled_Version}" Style="{StaticResource SecondaryButton}" Padding="12,8" Margin="10,0,0,0"
                                     Click="TerracottaResetToBuiltin_Click" ToolTip="{DynamicResource Str_Ui_Clear_The_Manual_Path_And_Go_Back_To_The}"/>
                         </StackPanel>
                     </StackPanel>

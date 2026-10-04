@@ -186,6 +186,7 @@ public class ModpackInstallService
 
         var instanceId = MakeUniqueInstanceName(minecraftDir, instanceName);
         var instanceDir = Path.Combine(minecraftDir, "versions", instanceId);
+        await Plugins.PluginInterceptionRegistry.ValidateInstanceAsync(minecraftDir, instanceId, "modpack", ct);
 
         var createdDir = false;
         try
@@ -302,6 +303,7 @@ public class ModpackInstallService
                     new Progress<string>(msg => progress?.Report(new ProgressInfo(msg, 0, 1, ""))));
             }
 
+            Plugins.PluginHostBridge.Current?.NotifyInstanceCreated(minecraftDir, instanceId);
             return new InstallResult(instanceId, instanceDir, req.McVersion, req.Loader, failed);
         }
         catch

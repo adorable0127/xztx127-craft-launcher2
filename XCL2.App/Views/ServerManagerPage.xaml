@@ -162,7 +162,7 @@
                      3) 插件/资源包管理：跳到左侧"插件下载"分类（同一个面板内也能切资源包）。
                      4) 设置选中的服务器参数：对同一个"默认服务器优先，否则第一个"的目标实例
                         打开 ServerPropertiesWindow 图形化编辑 server.properties。 -->
-                <Grid x:Name="HomePanel" DockPanel.Dock="Top" Visibility="Collapsed">
+                <Grid x:Name="HomePanel" services:PageTransitionBehavior.AnimateOnVisible="True" DockPanel.Dock="Top" Visibility="Collapsed">
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto"/>
                         <RowDefinition Height="Auto"/>
@@ -217,7 +217,7 @@
                 </Grid>
 
                 <!-- ===== 核心下载面板 ===== -->
-                <Grid x:Name="CorePanel" DockPanel.Dock="Top" Visibility="Collapsed">
+                <Grid x:Name="CorePanel" services:PageTransitionBehavior.AnimateOnVisible="True" DockPanel.Dock="Top" Visibility="Collapsed">
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto"/>
                         <RowDefinition Height="Auto"/>
@@ -300,14 +300,15 @@
                             <ProgressBar x:Name="ProgressBarCtl" Height="8" Minimum="0" Maximum="1"/>
                         </StackPanel>
 
-                        <!-- Forge/NeoForge 下载完成后的"需要本地安装"提示 -->
+                        <!-- 保留旧版“下载完成后手动运行安装器/BuildTools”的能力，
+                             同时保留新版默认自动安装：只有自动安装/编译失败时才展开这里供用户修复环境后重试。 -->
                         <Border x:Name="InstallRequiredPanel" Background="{DynamicResource SideBrush}" CornerRadius="8"
                                 Padding="14" Margin="0,16,0,0" Visibility="Collapsed">
                             <StackPanel>
-                                <TextBlock Text="{DynamicResource Str_Ui_Installer_Downloaded_It_Still_Needs_To_B}" FontWeight="Bold" Margin="0,0,0,6"/>
+                                <TextBlock Text="自动安装/编译未完成，可手动重试" FontWeight="Bold" Margin="0,0,0,6"/>
                                 <TextBlock x:Name="InstallHintText" TextWrapping="Wrap" FontSize="12"
                                            Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,10"/>
-                                <Button x:Name="RunInstallerBtn" Content="{DynamicResource Str_Ui_Run_Installer_Now}" Style="{StaticResource PrimaryButton}"
+                                <Button x:Name="RunInstallerBtn" Content="手动重试安装 / 编译" Style="{StaticResource PrimaryButton}"
                                         HorizontalAlignment="Left" Click="RunInstaller_Click"/>
                             </StackPanel>
                         </Border>
@@ -315,7 +316,7 @@
                 </Grid>
 
                 <!-- ===== 服务器列表面板 ===== -->
-                <Grid x:Name="InstancesPanel" DockPanel.Dock="Top" Visibility="Collapsed">
+                <Grid x:Name="InstancesPanel" services:PageTransitionBehavior.AnimateOnVisible="True" DockPanel.Dock="Top" Visibility="Collapsed">
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto"/>
                         <RowDefinition Height="*"/>
@@ -362,7 +363,7 @@
                      注意：服务端场景的"Mod"仅在核心类型是 Fabric/Forge/NeoForge（modded 服务端）时才有意义，
                      纯 Vanilla/Paper/Purpur 服务端不支持 Mod，插件(Plugin)才是这些服务端场景该用的东西——
                      两者在 Minecraft 生态里是完全不同的概念，UI 上也分开展示，不会把插件错叫成"模组"。 -->
-                <Grid x:Name="ServerResourcePanel" DockPanel.Dock="Top" Visibility="Collapsed">
+                <Grid x:Name="ServerResourcePanel" services:PageTransitionBehavior.AnimateOnVisible="True" DockPanel.Dock="Top" Visibility="Collapsed">
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto"/>
                         <RowDefinition Height="Auto"/>
@@ -530,7 +531,7 @@
             <!-- 服务端资源详情覆盖层：跟 DownloadCenterPage 的 DetailHost 同一套思路，
                  点击插件/资源包/数据包/光影包/Mod 条目后盖住整个内容区显示 ModDetailPage，
                  返回时收起即可，不影响下层筛选条件/已加载的搜索结果。 -->
-            <ContentControl x:Name="DetailHost" Visibility="Collapsed" Background="{DynamicResource PanelBrush}"/>
+            <ContentControl x:Name="DetailHost" services:PageTransitionBehavior.AnimateOnVisible="True" Visibility="Collapsed" Background="{DynamicResource PanelBrush}"/>
             </Grid>
         </Border>
     </Grid>

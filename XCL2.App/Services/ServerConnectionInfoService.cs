@@ -89,9 +89,11 @@ public static class ServerConnectionInfoService
     /// 同时把解析出的端口写回 instance.ServerPort（调用方负责后续持久化），
     /// 让实例列表刷新一次之后端口就跟 server.properties 保持同步。
     /// </summary>
-    public static string Resolve(ServerInstance instance)
+    public static string Resolve(ServerInstance instance, int? runningPort = null)
     {
-        var port = ReadServerPort(instance.Directory);
+        int port;
+        try { port = runningPort ?? ServerPortService.ReadPort(instance); }
+        catch { port = instance.ServerPort ?? DefaultServerPort; }
         instance.ServerPort = port;
 
         var ip = GetLocalLanIPv4();

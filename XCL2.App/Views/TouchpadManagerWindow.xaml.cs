@@ -12,7 +12,7 @@ public sealed class TouchpadProcessRow : INotifyPropertyChanged
 {
     public GameProcessInfo Info { get; }
     public string TitleLine => Info.VersionId;
-    public string DetailLine => $"账户：{Info.AccountLabel}  |  PID {Info.Pid}  |  启动于 {Info.StartedAt:HH:mm:ss}";
+    public string DetailLine => $"账户：{Info.AccountLabel}  |  PID {Info.Pid}  |  启动于 {Info.StartedAt:HH:mm:ss}  |  {Info.TouchInputRoute}";
     public TouchOverlayState State { get; private set; }
     public string? ErrorText { get; private set; }
     public Visibility ErrorVisibility => string.IsNullOrEmpty(ErrorText) ? Visibility.Collapsed : Visibility.Visible;
@@ -35,9 +35,9 @@ public sealed class TouchpadProcessRow : INotifyPropertyChanged
     public void Refresh()
     {
         var status = TouchOverlayService.GetStatus(Info);
-        if (State == status.State && ErrorText == status.Error) return;
         State = status.State;
         ErrorText = status.Error;
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(DetailLine)));
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(State)));
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(StatusText)));
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(ErrorText)));
@@ -49,12 +49,46 @@ public partial class TouchpadManagerWindow : OverlayDialogControl
 {
     private readonly GameProcessManager _manager;
     private void SettingsButton_Click(object sender, RoutedEventArgs e)
-        => new TouchControlsSettingsWindow().ShowDialog();
+    {
+        var previousEffect = Effect;
+        try
+        {
+            // 主界面的磨砂保持；打开按键设置时，后面的触摸板管理面板也磨砂。
+            SetCurrentValue(EffectProperty, new System.Windows.Media.Effects.BlurEffect
+            {
+                Radius = 12,
+                RenderingBias = System.Windows.Media.Effects.RenderingBias.Performance
+            });
+            var settings = new TouchControlsSettingsWindow();
+            var owner = Window.GetWindow(this);
+            if (owner != null)
+            {
+                settings.Owner = owner;
+                settings.WindowStartupLocation = WindowStartupLocation.CenterOwner;
+            }
+            settings.ShowDialog();
+        }
+        finally { SetCurrentValue(EffectProperty, previousEffect); }
+    }
 
     private readonly AppConfig _config;
     private readonly ObservableCollection<TouchpadProcessRow> _rows = new();
     private readonly DispatcherTimer _refreshTimer = new() { Interval = TimeSpan.FromSeconds(1) };
     private bool _subscribed;
+    private bool _discovering;
+
+    private async void DiscoverExternalGames()
+    {
+        if (_discovering || !_subscribed) return;
+        _discovering = true;
+        try
+        {
+            await _manager.RefreshAsync();
+            if (_subscribed) RefreshInstances();
+        }
+        catch (Exception ex) { ErrorPresenter.LogTechnicalDetail($"[发现外部游戏窗口] {ex}"); }
+        finally { _discovering = false; }
+    }
 
     public TouchpadManagerWindow(GameProcessManager manager, AppConfig config)
     {
@@ -64,7 +98,7 @@ public partial class TouchpadManagerWindow : OverlayDialogControl
         InstanceListBox.ItemsSource = _rows;
         Loaded += OnLoaded;
         Unloaded += OnUnloaded;
-        _refreshTimer.Tick += (_, _) => RefreshInstances();
+        _refreshTimer.Tick += (_, _) => { RefreshInstances(); DiscoverExternalGames(); };
         RefreshInstances();
     }
 
@@ -78,6 +112,7 @@ public partial class TouchpadManagerWindow : OverlayDialogControl
         }
         RefreshInstances();
         _refreshTimer.Start();
+        DiscoverExternalGames();
     }
 
     private void OnUnloaded(object sender, RoutedEventArgs e)
@@ -91,6 +126,12 @@ public partial class TouchpadManagerWindow : OverlayDialogControl
 
     private void RefreshInstances()
     {
+        if (!Dispatcher.CheckAccess())
+        {
+            _ = Dispatcher.BeginInvoke(new Action(RefreshInstances));
+            return;
+        }
+        // 与关闭游戏和内存预警使用同一份进程列表；发现实例不会启用触屏。
         var running = _manager.Running;
         var wasEmpty = _rows.Count == 0;
         foreach (var row in _rows.Where(row => !running.Contains(row.Info)).ToList())
@@ -118,8 +159,7 @@ public partial class TouchpadManagerWindow : OverlayDialogControl
         var running = row != null && !row.Info.HasExited;
         EnableButton.IsEnabled = running &&
             (row!.State is TouchOverlayState.Disabled or TouchOverlayState.Failed);
-        DisableButton.IsEnabled = running &&
-            (row!.State is TouchOverlayState.Starting or TouchOverlayState.Enabled);
+        DisableButton.IsEnabled = running && row!.Info.TouchModeEnabled;
         DisableButton.Content = row?.State == TouchOverlayState.Starting ? "取消开启" : "关闭触摸板";
     }
 
@@ -129,7 +169,7 @@ public partial class TouchpadManagerWindow : OverlayDialogControl
     private void EnableButton_Click(object sender, RoutedEventArgs e)
     {
         if (InstanceListBox.SelectedItem is TouchpadProcessRow row && !row.Info.HasExited)
-            TouchOverlayService.Attach(row.Info, _config);
+            TouchOverlayService.Enable(row.Info, _config);
         RefreshInstances();
     }
 

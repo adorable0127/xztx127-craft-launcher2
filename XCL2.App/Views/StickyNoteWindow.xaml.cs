@@ -2,6 +2,8 @@ using System.Collections.Generic;
 using System.IO;
 using System.Windows;
 using System.Windows.Input;
+using System.Windows.Interop;
+using XCL2.App.Services;
 using System.Windows.Media;
 using System.Windows.Threading;
 
@@ -12,7 +14,7 @@ namespace XCL2.App.Views;
 /// 内容与样式都纯本地保存；正文仍是原来的 .txt，样式另存为同名 .style 文件，
 /// 不破坏用户已有便签文本格式。
 /// </summary>
-public partial class StickyNoteWindow : Window
+public partial class StickyNoteWindow : Window, IGlobalWindowTreatmentExempt
 {
     public static readonly List<StickyNoteWindow> OpenWindows = new();
 
@@ -43,16 +45,22 @@ public partial class StickyNoteWindow : Window
         _filePath = filePath;
         InitializeComponent();
 
-        // 修复"内容全部显示成一片惨白、文字/图标都是极浅的灰白色几乎看不清"：
-        // Windows 11 会给"没有系统标题栏"（WindowStyle=None）的顶层窗口自动套上一层
-        // 云母/亚克力（Mica/Acrylic）背景材质，这层材质会盖在我们自己画的内容上面，
-        // 把所有颜色都往白色方向"冲淡"——症状正是"该有的底色/字色全在，但看起来像
-        // 蒙了一层白纱"，跟上一步修的"分层窗口合成失败=纯灰方块"是两个完全不同的问题。
-        // 用 DwmSetWindowAttribute 显式把这个窗口的 SystemBackdropType 设成
-        // DWMSBT_NONE（=1），关掉这层自动材质，让 NoteCard/TitleBar/ContentBox 自己
-        // 画的颜色不再被蒙白。SourceInitialized 时机足够早——这时候 HWND 已经创建好，
-        // 但窗口通常还没真正显示到屏幕上。
-        SourceInitialized += (_, _) => TryDisableSystemBackdrop();
+        // 便签独立渲染：跳过全局材质/整窗透明，避免驱动合成失败显示黑块。
+        SourceInitialized += (_, _) =>
+        {
+            var hwnd = new WindowInteropHelper(this).Handle;
+            if (HwndSource.FromHwnd(hwnd)?.CompositionTarget is HwndTarget target)
+            {
+                target.RenderMode = RenderMode.SoftwareOnly;
+                target.BackgroundColor = ((SolidColorBrush)Background).Color;
+            }
+            TryDisableSystemBackdrop();
+        };
+        Loaded += (_, _) =>
+        {
+            Opacity = 1;
+            ContentBox.Focus();
+        };
 
         TitleText.Text = Path.GetFileName(filePath);
 
@@ -127,6 +135,8 @@ public partial class StickyNoteWindow : Window
         // Window.Background 也要跟着换色，不然切样式时只有 NoteCard 变了色，
         // 四个直角窗口边缘会露出上一个样式的颜色，跟 NoteCard 的圆角对不上。
         Background = B(palette.Card);
+        if (PresentationSource.FromVisual(this) is HwndSource source && source.CompositionTarget != null)
+            source.CompositionTarget.BackgroundColor = ((SolidColorBrush)Background).Color;
         NoteCard.Background = B(palette.Card);
         TitleBar.Background = B(palette.TitleBar);
         ContentBox.Background = B(palette.Editor);
@@ -134,6 +144,7 @@ public partial class StickyNoteWindow : Window
         ContentBox.CaretBrush = B(palette.Text);
         ContentBox.SelectionBrush = B(palette.Selection);
         TitleText.Foreground = B(palette.TitleText);
+        StyleBtn.Foreground = PinBtn.Foreground = NoteCloseButton.Foreground = B(palette.TitleText);
         NoteResizeGrip.Foreground = B(palette.Grip);
 
         if (persist) WriteStyleKey(_filePath, _styleKey);
@@ -179,7 +190,7 @@ public partial class StickyNoteWindow : Window
 
     private void ContentBox_TextChanged(object sender, System.Windows.Controls.TextChangedEventArgs e)
     {
-        if (_suppressSave) return;
+        if (_suppressSave || _saveTimer == null) return;
         _saveTimer.Stop();
         _saveTimer.Start();
     }

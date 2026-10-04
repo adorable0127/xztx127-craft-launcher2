@@ -316,6 +316,28 @@ public class AiAssistantConfig
     /// <summary>AI 轻量编程工作目录。为空时文件工具完全不可用；AI 只能访问这个目录及其子目录，
     /// 每次读取/写入仍需用户逐次确认，不能通过 ../ 或绝对路径越界。</summary>
     public string? WorkingDirectory { get; set; }
+
+    /// <summary>额外批准给 AI 的目录（与 WorkingDirectory 合并后即为全部已批准目录；
+    /// WorkingDirectory 仍作为"主目录"，相对路径以它为基准）。AI 通过 request_directory 申请、
+    /// 用户在弹窗里同意后也会追加到这里。</summary>
+    public List<string> WorkingDirectories { get; set; } = new();
+
+    /// <summary>完全访问模式：开启后 AI 可（在每次请求仍需用户确认的前提下）访问电脑上任意路径。
+    /// 开启时设置页会连续弹出两次系统提示，两次都确认才生效。</summary>
+    public bool FullDiskAccess { get; set; } = false;
+
+    /// <summary>绝对访问（仅在 FullDiskAccess 同时开启时生效）：AI 的文件列出/读取/写入不再弹窗确认，
+    /// 静默执行，并把每一次操作写进启动器日志。启动器自身的配置/账户数据目录仍需逐次确认。</summary>
+    public bool AbsoluteAccess { get; set; } = false;
+
+    /// <summary>完全绝对访问（仅在 FullDiskAccess 与 AbsoluteAccess 同时开启时生效）：取消所有路径保护——
+    /// 应用安装目录、Windows 系统目录、ProgramData 以及启动器自己的配置/账户目录都可以被 AI 静默读写。
+    /// 开启时设置页会连续弹出两次红色警告，两次都确认才生效。</summary>
+    public bool UnrestrictedAccess { get; set; } = false;
+
+    /// <summary>彻底完全访问（仅在完全访问、绝对访问、完全绝对访问都开启时生效）：AI 还可以修改注册表、
+    /// 执行任意系统命令（PowerShell / cmd）。开启时设置页会连续弹出三次红色警告。</summary>
+    public bool SystemControlAccess { get; set; } = false;
     public bool PanelWasOpen { get; set; } = false;
 
     /// <summary>是否允许把用户主动提交的崩溃/日志内容发给 AI 分析。默认改为 true——这是用户
@@ -332,6 +354,13 @@ public class AiAssistantConfig
     /// 使用；只有明确不想产生这次多余请求（比如按量计费的自定义 API）的用户才需要去设置里
     /// 关掉。</summary>
     public bool PrewarmSystemPromptOnOpen { get; set; } = true;
+
+    /// <summary>人格预设 ID（见 AiPersonas：default / doubao / claude / companion）。
+    /// 只改变语气，不改变知识库和安全边界。</summary>
+    public string PersonaId { get; set; } = "default";
+
+    /// <summary>用户自定义的系统提示词补充内容，会追加在人格设定之后；留空表示不使用。</summary>
+    public string CustomSystemPrompt { get; set; } = "";
 }
 
 public enum AiMessageRole

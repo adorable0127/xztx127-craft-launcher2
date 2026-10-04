@@ -83,6 +83,8 @@ public partial class CreateServerWindow : OverlayDialogControl
             NameBox.Text = reinstallTarget.DisplayName;
             NameBox.IsEnabled = false; // 覆盖安装模式下名称/目录锁定，见上面 _reinstallTarget 注释
             TargetDirBox.Text = reinstallTarget.Directory;
+            ServerPortBox.Text = ServerPortService.ReadPort(reinstallTarget).ToString();
+            ServerPortBox.IsEnabled = false;
             TargetDirBox.IsEnabled = false;
             BrowseTargetDirBtn.IsEnabled = false;
             JavaPathBox.Text = reinstallTarget.JavaPath ?? "";
@@ -294,44 +296,39 @@ public partial class CreateServerWindow : OverlayDialogControl
     /// 这是本轮修复的核心：任何时候都不会再把"客户端全局偏好版本"或"用户随手填的路径"
     /// 未经校验就传给 Forge/NeoForge 安装器或服务端启动命令。
     /// </summary>
-    private async Task<string> ResolveOrDownloadJavaAsync(int requiredMajor, IProgress<ProgressInfo>? progress)
+    private static async Task<(string Path, string? JavaId)> ResolveOrDownloadJavaAsync(
+        JavaService javaService, MainWindow owner, string? currentPath, string? selectedJavaId, bool pickedFromList,
+        int requiredMajor, IProgress<ProgressInfo>? progress, CancellationToken ct)
     {
-        var current = JavaPathBox.Text;
-        if (!string.IsNullOrWhiteSpace(current) && File.Exists(current))
+        if (!string.IsNullOrWhiteSpace(currentPath) && File.Exists(currentPath))
         {
-            var matched = _javaService.FindJava(current, requiredMajor, _owner.ConfigService);
+            var matched = javaService.FindJava(currentPath, requiredMajor, owner.ConfigService);
             if (matched != null)
             {
-                JavaPathBox.Text = matched;
-                // 用户在 Java 列表里选的这一条本来就满足版本要求，原样保留 _selectedJavaId，
-                // 不需要再重新登记一遍；否则(比如用户手填/自动检测出来的路径)清空，走下面的自动登记。
-                if (!string.Equals(matched, current, StringComparison.OrdinalIgnoreCase)
-                    || (JavaListCombo.SelectedItem as JavaListItem)?.Entry == null)
-                    _selectedJavaId = null;
-                return matched;
+                // 用户在 Java 列表里选的这一条本来就满足版本要求，原样保留其 Id；
+                // 否则(手填/自动检测出来的路径)清空，走旧的路径逻辑。
+                var keepId = string.Equals(matched, currentPath, StringComparison.OrdinalIgnoreCase) && pickedFromList;
+                return (matched, keepId ? selectedJavaId : null);
             }
         }
 
-        var found = _javaService.FindJava(null, requiredMajor, _owner.ConfigService);
+        var found = javaService.FindJava(null, requiredMajor, owner.ConfigService);
         if (found != null)
         {
-            JavaPathBox.Text = found;
-            _selectedJavaId = _owner.ConfigService.RegisterJava(found, requiredMajor, "Manual").Id;
-            _owner.ConfigService.Save();
-            return found;
+            var id = owner.ConfigService.RegisterJava(found, requiredMajor, "Manual").Id;
+            owner.ConfigService.Save();
+            return (found, id);
         }
 
         progress?.Report(new ProgressInfo(Loc.T("Str_Cs_Downloading_A_Matching_Java_Runtime", "下载匹配的 Java 运行时"), 0, 1, $"Java {requiredMajor}"));
         var arch = Environment.Is64BitOperatingSystem ? "x64" : "x86";
-        var downloaded = await _javaService.DownloadJavaAsync(
-            new JavaDownloadRequest(requiredMajor, arch, JavaInstallMode.Portable), progress);
+        var downloaded = await javaService.DownloadJavaAsync(
+            new JavaDownloadRequest(requiredMajor, arch, JavaInstallMode.Portable), progress, ct);
 
-        JavaPathBox.Text = downloaded;
-        // 新下载的 Java 自动登记进全局 Java 列表，方便以后其它服务器/客户端版本也能直接选用它，
-        // 不用每个服务器各自重复下载一份。
-        _selectedJavaId = _owner.ConfigService.RegisterJava(downloaded, requiredMajor, "Downloaded").Id;
-        _owner.ConfigService.Save();
-        return downloaded;
+        // 新下载的 Java 自动登记进全局 Java 列表，方便以后其它服务器/客户端版本也能直接选用它。
+        var downloadedId = owner.ConfigService.RegisterJava(downloaded, requiredMajor, "Downloaded").Id;
+        owner.ConfigService.Save();
+        return (downloaded, downloadedId);
     }
 
     private async void Create_Click(object sender, RoutedEventArgs e)
@@ -357,6 +354,18 @@ public partial class CreateServerWindow : OverlayDialogControl
         if (string.IsNullOrWhiteSpace(TargetDirBox.Text))
         {
             MessageBoxDialog.ShowInfo(Loc.T("Str_Cs_Please_Choose_An_Install_Location", "请选择安装位置。"), Loc.T("Str_Status_Tip", "提示"));
+            return;
+        }
+        if (!int.TryParse(ServerPortBox.Text.Trim(), out var serverPort) || !ServerPortService.IsValid(serverPort))
+        {
+            MessageBoxDialog.ShowInfo("服务器端口必须是 1–65535 之间的整数。", "端口无效");
+            return;
+        }
+        if (_reinstallTarget == null && _owner.ServerInstanceService.Instances.Any(i =>
+            string.Equals(Path.GetFullPath(i.Directory).TrimEnd(Path.DirectorySeparatorChar),
+                Path.GetFullPath(TargetDirBox.Text).TrimEnd(Path.DirectorySeparatorChar), StringComparison.OrdinalIgnoreCase)))
+        {
+            MessageBoxDialog.ShowInfo("该目录已有服务器，请为新服务器选择独立目录。", "安装目录冲突");
             return;
         }
         if (!int.TryParse(MinMemoryBox.Text, out var minMem) || minMem <= 0 ||
@@ -406,70 +415,66 @@ public partial class CreateServerWindow : OverlayDialogControl
         else if (_selectedCoreType == ServerCoreType.NeoForge) req.InstallerVersion = mcVersion;
         else req.BuildOrLoaderVersion = buildVersion;
 
-        CreateBtn.IsEnabled = false;
-        ProgressPanel.Visibility = Visibility.Visible;
+        // 整条流水线（下载核心 → 匹配/下载 Java → 编译/安装 → 登记实例）交给统一下载队列，
+        // 在标题栏右上角的下载抽屉里显示进度，向导窗口立即关闭，不再阻塞界面。
+        var reinstallTarget = _reinstallTarget;
+        var coreType = _selectedCoreType;
+        var owner = _owner;
+        var coreService = _coreService;
+        var javaService = _javaService;
+        var javaPathText = JavaPathBox.Text;
+        var selectedJavaId = _selectedJavaId;
+        var javaPickedFromList = (JavaListCombo.SelectedItem as JavaListItem)?.Entry != null;
 
-        var downloadProgress = new Progress<ProgressInfo>(p =>
+        var queueName = reinstallTarget != null ? $"覆盖安装核心 {name}" : $"创建服务器 {name}";
+        if (DownloadQueueService.Instance.Items.Any(i => i.Name == queueName &&
+                i.Status is DownloadQueueItemStatus.Downloading or DownloadQueueItemStatus.Paused))
         {
-            ProgressStageText.Text = p.Stage;
-            ProgressDetailText.Text = p.CurrentFile;
-            ProgressBarCtl.Maximum = Math.Max(p.Total, 1);
-            ProgressBarCtl.Value = p.Done;
-        });
+            MessageBoxDialog.ShowInfo("这个任务已经在下载列表中了，请等它完成。", Loc.T("Str_Status_Tip", "提示"));
+            return;
+        }
 
-        try
+        DownloadQueueService.Instance.StartNew(queueName, async (item, ct) =>
         {
-            var result = await _coreService.DownloadAsync(req, downloadProgress);
+            var progress = item.CreateProgress();
+            var textProgress = new Progress<string>(line => item.StatusText = line);
 
-            // 关键修复：不再无条件使用 JavaPathBox 里预填的路径（那很可能是客户端全局偏好版本，
-            // 和这次实际下载的核心/MC版本要求的 Java 主版本号对不上）。下载完成后，服务端核心的
-            // 真实 Java 版本要求（result.RequiredJavaMajorVersion）已经确定，这里据此重新校验/
-            // 自动下载匹配的 Java，Forge/NeoForge 安装器本身也需要用这个匹配的 Java 来跑，
-            // 否则同样会出现 "class file version ... UnsupportedClassVersionError"。
-            var resolvedJavaPath = await ResolveOrDownloadJavaAsync(result.RequiredJavaMajorVersion, downloadProgress);
+            var result = await coreService.DownloadAsync(req, progress, ct);
+
+            // 下载完成后核心的真实 Java 要求才确定，据此匹配/自动下载 Java；
+            // Forge/NeoForge 安装器也要用这个匹配的 Java 来跑。
+            var (resolvedJavaPath, resolvedJavaId) = await ResolveOrDownloadJavaAsync(
+                javaService, owner, javaPathText, selectedJavaId, javaPickedFromList,
+                result.RequiredJavaMajorVersion, progress, ct);
 
             string launchTarget;
             bool launchTargetIsScript;
 
             if (result.RequiresBuild)
             {
-                // Spigot：result.DownloadedFilePath 此时是 BuildTools.jar 本体，还没编译。
-                // 编译耗时数分钟，展示和"跑 Forge 安装器"不同的提示文案，避免用户以为卡住了。
-                ProgressStageText.Text = Loc.T("Str_Cs_Building_Spigot_With_Buildtools", "正在用 BuildTools 编译 Spigot");
-                ProgressDetailText.Text = Loc.T("Str_Cs_The_First_Build_Downloads_The_Source_And", "首次编译需要联网拉取源码并本地反编译/打补丁，可能需要几分钟，请耐心等待...");
-                ProgressBarCtl.IsIndeterminate = true;
-
-                var buildProgress = new Progress<string>(line => ProgressDetailText.Text = line);
+                // Spigot：编译耗时数分钟，状态文字里提示一下，避免用户以为卡住了。
+                item.StatusText = Loc.T("Str_Cs_Building_Spigot_With_Buildtools", "正在用 BuildTools 编译 Spigot");
                 try
                 {
-                    var jarPath = await _coreService.RunSpigotBuildToolsAsync(
-                        result.DownloadedFilePath, req.TargetDir, resolvedJavaPath, mcVersion, buildProgress);
+                    var jarPath = await coreService.RunSpigotBuildToolsAsync(
+                        result.DownloadedFilePath, req.TargetDir, resolvedJavaPath, mcVersion, textProgress, ct);
                     launchTarget = Path.GetFileName(jarPath);
                     launchTargetIsScript = false;
                 }
                 catch (InvalidOperationException ex) when (ex.Message.Contains("Git"))
                 {
-                    // BuildTools 缺 Git 是最常见的失败原因，这里直接用友好提示框拦一次，
-                    // 而不是让用户在最后统一的 catch 块里只看到一堆英文编译日志。
-                    ErrorPresenter.ShowFriendlyError(
+                    // BuildTools 缺 Git 是最常见的失败原因，单独给个友好提示。
+                    await owner.Dispatcher.InvokeAsync(() => ErrorPresenter.ShowFriendlyError(
                         "编译 Spigot 需要本机已安装 Git，请先安装 Git（https://git-scm.com/downloads）后重试。",
-                        $"[Spigot BuildTools] {ex}", "缺少 Git");
-                    return;
+                        $"[Spigot BuildTools] {ex}", "缺少 Git"));
+                    throw;
                 }
-
-                ProgressBarCtl.IsIndeterminate = false;
             }
             else if (result.RequiresInstall)
             {
-                ProgressStageText.Text = Loc.T("Str_Cs_Running_The_Installer", "正在运行安装器");
-                ProgressDetailText.Text = Loc.T("Str_Cs_The_First_Install_May_Need_To_Download_E", "首次安装可能需要下载额外库文件，请耐心等待...");
-                ProgressBarCtl.IsIndeterminate = true;
-
-                var installProgress = new Progress<string>(line => ProgressDetailText.Text = line);
-                var scriptOrDir = await _coreService.RunForgeInstallerAsync(
-                    result.DownloadedFilePath, req.TargetDir, resolvedJavaPath, installProgress);
-
-                ProgressBarCtl.IsIndeterminate = false;
+                item.StatusText = Loc.T("Str_Cs_Running_The_Installer", "正在运行安装器");
+                var scriptOrDir = await coreService.RunForgeInstallerAsync(
+                    result.DownloadedFilePath, req.TargetDir, resolvedJavaPath, textProgress, ct);
 
                 if (File.Exists(scriptOrDir) &&
                     (scriptOrDir.EndsWith("run.bat", StringComparison.OrdinalIgnoreCase) ||
@@ -480,8 +485,7 @@ public partial class CreateServerWindow : OverlayDialogControl
                 }
                 else
                 {
-                    // 找不到标准启动脚本名（极老的 Forge 版本安装完是直接一个 jar，没有 run 脚本）：
-                    // 退化为在目标目录里找一个看起来是服务端本体的 jar 文件。
+                    // 极老的 Forge 版本安装完是直接一个 jar，没有 run 脚本：找一个看起来是服务端本体的 jar。
                     var fallbackJar = Directory.GetFiles(req.TargetDir, "*.jar")
                         .Select(Path.GetFileName)
                         .FirstOrDefault(f => f != null && !f.Contains("installer", StringComparison.OrdinalIgnoreCase));
@@ -498,58 +502,61 @@ public partial class CreateServerWindow : OverlayDialogControl
                 launchTargetIsScript = false;
             }
 
-            if (_reinstallTarget != null)
+            item.ProgressPercent = 100;
+
+            if (reinstallTarget != null)
             {
-                // 重装模式：更新已有实例记录的核心相关字段，不新增记录、不改名称/目录/内存等
-                // 用户在这个窗口里被锁定不能改的字段（那些字段已经在构造函数里预填并禁用编辑）。
-                _reinstallTarget.CoreType = _selectedCoreType;
-                _reinstallTarget.McVersion = mcVersion;
-                _reinstallTarget.LaunchTarget = launchTarget;
-                _reinstallTarget.LaunchTargetIsScript = launchTargetIsScript;
-                _reinstallTarget.JavaPath = resolvedJavaPath;
-                _reinstallTarget.JavaId = _selectedJavaId;
-                _reinstallTarget.RequiredJavaMajorVersion = result.RequiredJavaMajorVersion;
+                // 重装模式：只更新已有实例的核心相关字段，不新增记录、不改名称/目录/内存等。
+                await owner.Dispatcher.InvokeAsync(() =>
+                {
+                    reinstallTarget.CoreType = coreType;
+                    reinstallTarget.McVersion = mcVersion;
+                    reinstallTarget.LaunchTarget = launchTarget;
+                    reinstallTarget.LaunchTargetIsScript = launchTargetIsScript;
+                    reinstallTarget.JavaPath = resolvedJavaPath;
+                    reinstallTarget.JavaId = resolvedJavaId;
+                    reinstallTarget.RequiredJavaMajorVersion = result.RequiredJavaMajorVersion;
+                    owner.ServerInstanceService.Update(reinstallTarget);
 
-                _owner.ServerInstanceService.Update(_reinstallTarget);
-                CreatedInstance = _reinstallTarget;
-
-                MessageBoxDialog.ShowInfo($"服务器「{name}」的核心已重新安装完成！", "成功");
-                CloseWith(true);
+                    owner.EnsureVisibleForDialog();
+                    MessageBoxDialog.ShowInfo($"服务器「{name}」的核心已重新安装完成！", "成功");
+                });
                 return;
             }
 
-            var instance = new ServerInstance
+            await owner.Dispatcher.InvokeAsync(() =>
             {
-                DisplayName = name,
-                Directory = req.TargetDir,
-                CoreType = _selectedCoreType,
-                McVersion = mcVersion,
-                LaunchTarget = launchTarget,
-                LaunchTargetIsScript = launchTargetIsScript,
-                JavaPath = resolvedJavaPath,
-                JavaId = _selectedJavaId,
-                RequiredJavaMajorVersion = result.RequiredJavaMajorVersion,
-                MinMemoryMb = minMem,
-                MaxMemoryMb = maxMem,
-                CpuLimitPercent = cpuLimit,
-                DiskLimitMb = diskLimit
-            };
+                var instance = new ServerInstance
+                {
+                    DisplayName = name,
+                    Directory = req.TargetDir,
+                    CoreType = coreType,
+                    McVersion = mcVersion,
+                    LaunchTarget = launchTarget,
+                    LaunchTargetIsScript = launchTargetIsScript,
+                    JavaPath = resolvedJavaPath,
+                    JavaId = resolvedJavaId,
+                    RequiredJavaMajorVersion = result.RequiredJavaMajorVersion,
+                    MinMemoryMb = minMem,
+                    MaxMemoryMb = maxMem,
+                    CpuLimitPercent = cpuLimit,
+                    DiskLimitMb = diskLimit,
+                    ServerPort = serverPort,
+                    AutoAvoidPort = true
+                };
 
-            _owner.ServerInstanceService.Add(instance);
-            CreatedInstance = instance;
+                // 合并旧版“创建时指定端口”和新版“创建后再次确认端口”两套能力：
+                // 先从用户填写的端口开始自动避让，写入 server.properties；随后仍保留安装完成后的确认提示。
+                var actualPort = ServerPortService.FindAvailablePort(serverPort, instance,
+                    owner.ServerInstanceService.Instances, owner.ServerProcessManager.Processes);
+                ServerPortService.WritePort(instance, actualPort);
+                instance.ServerPort = actualPort;
 
-            MessageBoxDialog.ShowInfo($"服务器「{name}」创建完成！\n可以在服务器列表里启动它。", "成功");
-            CloseWith(true);
-        }
-        catch (Exception ex)
-        {
-            MessageBoxDialog.ShowError($"创建失败：\n{ex.Message}", "错误");
-        }
-        finally
-        {
-            CreateBtn.IsEnabled = true;
-            ProgressPanel.Visibility = Visibility.Collapsed;
-            ProgressBarCtl.IsIndeterminate = false;
-        }
+                owner.ServerInstanceService.Add(instance);
+                ServerPostInstallPrompt.AskConfigurePort(owner, instance, $"服务器「{name}」创建完成！");
+            });
+        }, supportsPause: false);
+
+        CloseWith(true);
     }
 }

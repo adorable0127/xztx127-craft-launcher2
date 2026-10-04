@@ -298,7 +298,6 @@ public partial class App : Application
         }
 
         base.OnStartup(e);
-        TextEditContextMenuService.Initialize();
 
         // 修复"启动时偶发 NullReferenceException @ ThemeService.Apply / Application.Current.Resources"：
         // ShutdownMode 默认是 OnLastWindowClose。而这里、以及下面 SingleInstanceService.HandleStartup
@@ -523,7 +522,7 @@ public partial class App : Application
         // （TouchOverlayWindow.Teardown），但万一走了某条没关悬浮层就退出的异常路径，
         // 钩子跟着进程一起消失之前那段时间里整机触摸都会失灵，这里无条件再摘一次。
         // Disable 是幂等的，重复调用没有任何副作用。见 TouchMousePromotionFilter 类注释。
-        Exit += (_, _) => TouchMousePromotionFilter.Disable();
+        Exit += (_, _) => { TouchMousePromotionFilter.Disable(); OriginalTouchMousePromotionFilter.Disable(); };
 
         // 深色标题栏（修复"顶部白条"，见 WindowChromeService 类注释）：项目里有 20 多个
         // Window（MainWindow + 各种弹窗），逐个在各自构造函数里调用

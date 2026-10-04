@@ -35,11 +35,16 @@ public partial class MultiplayerPage : UserControl
         {
             TerracottaStatusText.Text = $"✅ 当前使用手动指定的版本：{overridePath}（点「恢复使用内置版本」可以改回启动器自带的版本）";
         }
-        else
+        else if (TerracottaService.HasEmbeddedExecutable)
         {
             TerracottaStatusText.Text = "✅ 已内置陶瓦联机(0.4.2)，无需下载，点击下方按钮即可直接启动。";
         }
-        TerracottaLaunchBtn.IsEnabled = true;
+        else
+        {
+            TerracottaStatusText.Text = "⚠ 当前源码构建未携带 Terracotta 第三方二进制。启动器本体仍可正常构建；请点击“使用其他版本”选择你自己的 Terracotta 可执行文件。";
+        }
+        TerracottaLaunchBtn.IsEnabled = (!string.IsNullOrWhiteSpace(overridePath) && File.Exists(overridePath)) || TerracottaService.HasEmbeddedExecutable;
+        TerracottaResetBtn.IsEnabled = TerracottaService.HasEmbeddedExecutable;
     }
 
     /// <summary>一键拉起陶瓦联机窗口：建房/加入房间/房间码全部在它自己的界面里完成。

@@ -178,7 +178,7 @@ internal static class TouchMousePromotionFilter
                     {
                         var target = Volatile.Read(ref _target);
                         if (target?.KeyDown != null && GetForegroundWindow() == target.GameHwnd)
-                            target.Dispatcher.BeginInvoke(new Action(() =>
+                            _ = target.Dispatcher.BeginInvoke(new Action(() =>
                             {
                                 if (ReferenceEquals(target, Volatile.Read(ref _target)) && GetForegroundWindow() == target.GameHwnd)
                                     target.KeyDown((ushort)data.vkCode);

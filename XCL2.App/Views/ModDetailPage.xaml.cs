@@ -149,7 +149,8 @@ public partial class ModDetailPage : UserControl
     /// 只是现在不需要"展开/收起"这一层，页面本身就是详情页，进来就直接显示。</summary>
     public void ShowGroups(IEnumerable<VersionGroup> groups)
     {
-        _allGroups = groups.ToList();
+        _allGroups = groups.OrderByDescending(g => g.GameVersion, ModVersionGrouping.GameVersionComparer)
+            .ThenBy(g => g.Loader, StringComparer.OrdinalIgnoreCase).ToList();
         // Mod 场景下不直接用调用方传入的分组（那份是按 ModVersionGrouping 默认 includePreview:true
         // 算出来的，跟"预览版默认隐藏"的按钮初始状态对不上），改成用 SetFlatEntries 存下来的扁平列表
         // 按当前 _showPreview 状态本地重新分组，这样按钮切换时不用再向 Modrinth/CurseForge 重新请求。
@@ -205,10 +206,8 @@ public partial class ModDetailPage : UserControl
     /// 会归到同一个 Tab 下，跟截图里 Tab 数量精简、不会每个补丁版本单独占一个 Tab 一致。</summary>
     private static string ExtractVersionTag(VersionGroup group)
     {
-        var lastSpace = group.GroupTitle.LastIndexOf(' ');
-        var gameVersion = lastSpace >= 0 ? group.GroupTitle[(lastSpace + 1)..] : group.GroupTitle;
-        var parts = gameVersion.Split('.');
-        return parts.Length <= 2 ? gameVersion : $"{parts[0]}.{parts[1]}";
+        var parts = group.GameVersion.Split('.');
+        return parts.Length <= 2 ? group.GameVersion : $"{parts[0]}.{parts[1]}";
     }
 
     /// <summary>按 _allGroups 里实际出现过的版本动态生成筛选 Tab（"全部" + 各版本，按
@@ -217,11 +216,12 @@ public partial class ModDetailPage : UserControl
     /// 还会白占一行空间。</summary>
     private void BuildVersionFilterTabs()
     {
-        var tags = _allGroups.Select(ExtractVersionTag).Distinct().ToList();
+        var tags = _allGroups.Select(ExtractVersionTag).Distinct()
+            .OrderByDescending(t => t, ModVersionGrouping.GameVersionComparer).ToList();
 
         VersionFilterPanel.Children.Clear();
 
-        if (tags.Count <= 1)
+        if (tags.Count == 0)
         {
             VersionFilterPanel.Visibility = Visibility.Collapsed;
             _selectedVersionTag = null;
@@ -273,6 +273,7 @@ public partial class ModDetailPage : UserControl
     {
         var filtered = tag == null ? _allGroups : _allGroups.Where(g => ExtractVersionTag(g) == tag).ToList();
         GroupsList.ItemsSource = filtered;
+        UiAnimationHelper.Entrance(GroupsList);
         NoResultText.Visibility = filtered.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
     }
 

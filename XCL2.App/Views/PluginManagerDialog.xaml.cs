@@ -6,14 +6,15 @@ using System.Text.Json;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
+using XCL2.App.Services;
 using XCL2.App.Services.Plugins;
 
 namespace XCL2.App.Views;
 
 /// <summary>
 /// "插件管理"弹窗：列出 PluginManager 扫描到的所有插件（含加载失败的），支持
-/// 启用/禁用、打开某个插件自己的配置面板，以及三个面向插件开发者的"开发命令"
-/// （重新扫描/重新加载、打开插件目录、生成插件项目模板）。
+/// 启用/禁用、打开某个插件自己的配置面板，以及一组面向插件开发者的开发命令（重新扫描/重新加载、导入、打开插件目录、
+/// 生成插件项目模板，以及打开 DLL/API/EXE 协议文档）。
 ///
 /// 列表项没有用 XAML 数据模板 + 绑定，是有意简化：插件列表是"打开弹窗时扫一次、
 /// 操作完立刻重新渲染整份列表"这种轻量交互，不需要为几条到几十条数据搭一整套
@@ -41,6 +42,7 @@ public partial class PluginManagerDialog : OverlayDialogControl
 
     private void Render()
     {
+        if (!Dispatcher.CheckAccess()) { _ = Dispatcher.BeginInvoke(new Action(Render)); return; }
         _rendering = true;
         var installed = _manager.Plugins.Select(p => p.FilePath).ToHashSet(StringComparer.OrdinalIgnoreCase);
         _selected.IntersectWith(installed);
@@ -51,7 +53,7 @@ public partial class PluginManagerDialog : OverlayDialogControl
         {
             PluginListPanel.Children.Add(new TextBlock
             {
-                Text = "还没有发现插件。拖入 DLL / EXE，或点击“导入插件”选择文件。",
+                Text = "还没有发现插件。拖入 DLL / EXE / .xclplugin，或点击“导入插件”选择文件。",
                 Foreground = (Brush)FindResource("TextSecondaryBrush"),
                 TextWrapping = TextWrapping.Wrap,
                 FontSize = 12,
@@ -104,9 +106,9 @@ public partial class PluginManagerDialog : OverlayDialogControl
         enabledBox.Unchecked += (_, _) => { _pendingEnabled[info.FilePath] = false; Render(); };
         titleLine.Children.Add(enabledBox);
 
-        string name = info.Plugin?.DisplayName ?? Path.GetFileName(info.FilePath);
-        string version = info.Plugin?.Version is { Length: > 0 } v ? $" v{v}" : "";
-        string author = info.Plugin?.Author is { Length: > 0 } a ? $"  ·  {a}" : "";
+        string name = info.Metadata?.Name ?? info.Plugin?.DisplayName ?? Path.GetFileName(info.FilePath);
+        string version = (info.Metadata?.Version ?? info.Plugin?.Version) is { Length: > 0 } v ? $" v{v}" : "";
+        string author = (info.Metadata?.Author ?? info.Plugin?.Author) is { Length: > 0 } a ? $"  ·  {a}" : "";
         titleLine.Children.Add(new TextBlock
         {
             Text = $"{name}{version}{author}",
@@ -119,10 +121,27 @@ public partial class PluginManagerDialog : OverlayDialogControl
             Content = "配置",
             Padding = new Thickness(10, 3, 10, 3),
             Margin = new Thickness(12, 0, 0, 0),
-            IsEnabled = info.LoadError == null && info.Plugin != null && info.Context != null,
+            IsEnabled = info.LoadError == null && (info.Plugin != null || info.IsExecutable) && info.Context?.Permissions.Has(PluginPermissionNames.UiBasic) == true,
             VerticalAlignment = VerticalAlignment.Center
         };
         configButton.Click += (_, _) => OpenSettings(info);
+        if (info.Metadata is { IsLegacy: false } metadata)
+        {
+            var authorize = new Button { Content = Loc.T("Str_Plugin_Permissions", "权限…"), Margin = new Thickness(8, 0, 0, 0), Padding = new Thickness(10, 3, 10, 3) };
+            authorize.Click += async (_, _) =>
+            {
+                var dialog = new PluginPermissionsDialog(metadata, _manager.GetGrantedPermissions(info.FilePath));
+                if (await OverlayDialogService.ShowModalAsync(dialog) != true) return;
+                try
+                {
+                    _manager.SetPermissions(info.FilePath, dialog.Granted);
+                    if (info.Context == null && info.RunningProcess == null) _manager.ScanAndLoad();
+                }
+                catch (Exception ex) { MessageBoxDialog.ShowWarning(ex.Message, Loc.T("Str_Plugin_Authorize", "插件授权")); }
+                Render();
+            };
+            titleLine.Children.Add(authorize);
+        }
         titleLine.Children.Add(configButton);
         var delete = new Button { Content = "删除", Padding = new Thickness(10, 3, 10, 3),
             Margin = new Thickness(8, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center,
@@ -146,7 +165,11 @@ public partial class PluginManagerDialog : OverlayDialogControl
             });
         }
 
-        if (info.Plugin?.Description is { Length: > 0 } desc)
+        if (info.Metadata == null || info.Metadata.IsLegacy)
+            root.Children.Add(new TextBlock { Text = "此插件未声明权限，按旧版兼容模式加载；新增业务 API 不开放。", TextWrapping = TextWrapping.Wrap,
+                FontSize = 11, Foreground = (Brush)FindResource("TextSecondaryBrush"), Margin = new Thickness(0, 4, 0, 0) });
+
+        if ((info.Metadata?.Description ?? info.Plugin?.Description) is { Length: > 0 } desc)
         {
             root.Children.Add(new TextBlock
             {
@@ -169,6 +192,9 @@ public partial class PluginManagerDialog : OverlayDialogControl
                 Margin = new Thickness(0, 4, 0, 0)
             });
         }
+        if (info.Context?.BusinessDisabled == true)
+            root.Children.Add(new TextBlock { Text = "插件回调超时且未返回，业务能力已暂停。可重新加载此插件。", TextWrapping = TextWrapping.Wrap,
+                FontSize = 11.5, Foreground = (Brush)FindResource("DangerBrush"), Margin = new Thickness(0, 4, 0, 0) });
 
         return new Border
         {
@@ -185,12 +211,12 @@ public partial class PluginManagerDialog : OverlayDialogControl
     /// 该插件已保存配置项的只读 JSON 预览，至少让用户知道现在存了什么。</summary>
     private void OpenSettings(LoadedPluginInfo info)
     {
-        if (info.Plugin == null) return;
+        if (info.Plugin == null && !info.IsExecutable) return;
 
         UserControl? panel = null;
         if (info.Context != null)
         {
-            try { panel = info.Plugin.CreateSettingsPanel(info.Context); }
+            try { info.Context.Permissions.Demand(PluginPermissionNames.UiBasic); panel = info.Plugin?.CreateSettingsPanel(info.Context); }
             catch (Exception ex)
             {
                 panel = new TextBlock { Text = $"插件生成配置面板时抛出异常：{ex.Message}", TextWrapping = TextWrapping.Wrap }
@@ -203,9 +229,9 @@ public partial class PluginManagerDialog : OverlayDialogControl
         if (info.Context != null)
         {
             using var combined = new PluginSettingsContent(panel, info.Context.Ui);
-            new PluginSettingsHostDialog($"{info.Plugin.DisplayName} · 配置", combined).ShowDialog();
+            new PluginSettingsHostDialog($"{info.Metadata?.Name ?? info.Plugin?.DisplayName ?? Path.GetFileName(info.FilePath)} · 配置", combined).ShowDialog();
         }
-        else new PluginSettingsHostDialog($"{info.Plugin.DisplayName} · 配置", panel).ShowDialog();
+        else new PluginSettingsHostDialog($"{info.Metadata?.Name ?? info.Plugin?.DisplayName ?? Path.GetFileName(info.FilePath)} · 配置", panel).ShowDialog();
     }
 
     private UserControl BuildFallbackConfigPreview(LoadedPluginInfo info)
@@ -246,7 +272,7 @@ public partial class PluginManagerDialog : OverlayDialogControl
         var picker = new Microsoft.Win32.OpenFileDialog
         {
             Title = "选择第三方插件",
-            Filter = "插件 (*.dll;*.exe)|*.dll;*.exe",
+            Filter = "插件 (*.dll;*.exe;*.xclplugin)|*.dll;*.exe;*.xclplugin",
             Multiselect = true
         };
         if (picker.ShowDialog() != true) return;
@@ -268,19 +294,7 @@ public partial class PluginManagerDialog : OverlayDialogControl
     {
         try
         {
-            using var resource = typeof(PluginManagerDialog).Assembly.GetManifestResourceStream("XCL2.App.PLUGIN_GUIDE.md")
-                ?? throw new FileNotFoundException("未找到内置插件开发指南。");
-            var docsDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "XCL2", "Docs");
-            Directory.CreateDirectory(docsDir);
-            var guidePath = Path.Combine(docsDir, "PLUGIN_GUIDE.md");
-            using (var output = File.Create(guidePath)) resource.CopyTo(output);
-            try { Process.Start(new ProcessStartInfo(guidePath) { UseShellExecute = true }); }
-            catch (System.ComponentModel.Win32Exception)
-            {
-                var fallback = new ProcessStartInfo("notepad.exe") { UseShellExecute = false };
-                fallback.ArgumentList.Add(guidePath);
-                Process.Start(fallback);
-            }
+            OverlayDialogService.ShowNonModal(new HelpDocumentDialog(EmbeddedDocumentationService.PluginGuideFileName));
         }
         catch (Exception ex)
         {
@@ -292,6 +306,12 @@ public partial class PluginManagerDialog : OverlayDialogControl
     {
         try { OverlayDialogService.ShowNonModal(new HelpDocumentDialog(Services.EmbeddedDocumentationService.ApiFileName)); }
         catch (Exception ex) { MessageBoxDialog.ShowWarning($"打开 API 接口说明失败：{ex.Message}", "启动器 API 接入说明"); }
+    }
+
+    private void OpenExeProtocol_Click(object sender, RoutedEventArgs e)
+    {
+        try { OverlayDialogService.ShowNonModal(new HelpDocumentDialog(Services.EmbeddedDocumentationService.PluginExeProtocolFileName)); }
+        catch (Exception ex) { MessageBoxDialog.ShowWarning($"打开 EXE 插件协议失败：{ex.Message}", "EXE 插件协议"); }
     }
 
     private void SelectAll_Click(object sender, RoutedEventArgs e)

@@ -271,7 +271,9 @@
                     </ItemsControl>
                 </ScrollViewer>
 
-                <Border Grid.Row="2" Margin="10,4,10,10" Padding="9" CornerRadius="13"
+                <!-- 输入区 + AI 提问卡片放在同一个格子里：模型发起 XCL2_ASK 时卡片显示并覆盖输入框 -->
+                <Grid Grid.Row="2">
+                <Border x:Name="InputArea" Margin="10,4,10,10" Padding="9" CornerRadius="13"
                         Background="{DynamicResource PanelBrush}" BorderBrush="{DynamicResource BorderBrush2}" BorderThickness="1">
                     <StackPanel>
                         <Grid Margin="0,0,0,7">
@@ -313,6 +315,9 @@
                                    Text="AI 可能会犯错，也都有知识截止日期。若它声称某个 MC / 模组版本‘不是正式版而是快照版’，请不要直接相信；版本状态请以官方发布页、Modrinth 或 CurseForge 为准。"/>
                     </StackPanel>
                 </Border>
+                <views:AiQuestionCard x:Name="QuestionCard" Margin="10,4,10,10" VerticalAlignment="Stretch"
+                                      Visibility="Collapsed"/>
+                </Grid>
             </Grid>
         </Grid>
     </Grid>

@@ -11,7 +11,10 @@ public enum GameExitKind
     Crash
 }
 
-public sealed record GameExitAssessment(GameExitKind Kind, int ExitCode, string Evidence, bool LogLooksTruncated);
+/// <param name="JvmIssues">本次退出里识别出的 JVM 启动参数错误（见 <see cref="JvmArgumentDiagnostics"/>）；没有则为 null。
+/// 有值时 Kind 一定是 Crash：JVM 都没起来，游戏代码根本没跑。</param>
+public sealed record GameExitAssessment(GameExitKind Kind, int ExitCode, string Evidence, bool LogLooksTruncated,
+    IReadOnlyList<JvmArgIssue>? JvmIssues = null);
 
 /// <summary>
 /// 对 Minecraft Java 进程退出做最保守的分类。核心目标不是“尽量多报崩溃”，而是避免把
@@ -22,6 +25,7 @@ public static class GameExitClassifier
     private static readonly string[] StrongCrashMarkers =
     {
         "Exception in thread",
+        "Caused by:",
         "/FATAL]",
         " FATAL ",
         "Crash report saved to",
@@ -30,16 +34,10 @@ public static class GameExitClassifier
         "OutOfMemoryError",
         "Could not create the Java Virtual Machine",
         "Could not reserve enough space for object heap",
+        "GLFW error",
+        "OpenGL error",
         "org.lwjgl.LWJGLException",
-        "java.lang.UnsatisfiedLinkError",
-        "Incompatible mod set!",
-        "Incompatible mods found!",
-        "Mod resolution encountered an incompatible mod set",
-        "net.fabricmc.loader.impl.FormattedException",
-        "Failed to start minecraft",
-        "Missing or unsupported mandatory dependencies",
-        "Error: Could not find or load main class",
-        "Error: Unable to access jarfile"
+        "java.lang.UnsatisfiedLinkError"
     };
 
     private static readonly string[] NormalShutdownMarkers =
@@ -61,12 +59,16 @@ public static class GameExitClassifier
         if (exitCode == 0)
             return new(GameExitKind.Normal, exitCode, "", false);
 
-        // Windows 控制台被关闭 / Ctrl+C 的终止码不是游戏崩溃。
-        if (exitCode == unchecked((int)0xC000013A))
-            return new(GameExitKind.PossiblyManualClose, exitCode, "", false);
-
         var output = info.GetOutputSnapshot();
-        var latest = TryReadLatestLog(info.GameDir, info.StartedAt, out var latestEndsMidLine);
+
+        // JVM 启动参数错误：只看进程自己的控制台输出——这类错误发生在游戏代码运行之前，
+        // 磁盘上的 latest.log 只可能是上一局遗留的，拿它来判断会张冠李戴。
+        // 命中时直接定为崩溃并带上具体原因，不再走下面“半截日志=可能手动关闭”之类的推断。
+        var jvmIssues = JvmArgumentDiagnostics.Detect(output);
+        if (jvmIssues.Count > 0)
+            return new(GameExitKind.Crash, exitCode, output, false, jvmIssues);
+
+        var latest = TryReadLatestLog(info.GameDir, out var latestEndsMidLine);
         var evidence = string.Join("\n", new[] { output, latest ?? "" }.Where(s => !string.IsNullOrWhiteSpace(s)));
         var hasCrashArtifact = HasRecentCrashArtifact(info.GameDir, info.StartedAt);
         var hasStrongCrashEvidence = hasCrashArtifact || OpenGlTroubleshooter.IsOpenGlFailure(evidence) || StrongCrashMarkers.Any(m =>
@@ -78,22 +80,21 @@ public static class GameExitClassifier
                 evidence.Contains(m, StringComparison.OrdinalIgnoreCase)))
             return new(GameExitKind.Normal, exitCode, evidence, false);
 
-        // 没有 crash-report/hs_err/FATAL 等明确证据时，不仅半行日志需要保守处理：
-        // 外部结束进程也可能留下完整换行，单凭非零退出码不能认定为游戏自身崩溃。
-        if (!hasStrongCrashEvidence)
-            return new(GameExitKind.PossiblyManualClose, exitCode, evidence, latestEndsMidLine);
+        // latest.log 最后一行没有换行，通常意味着进程在日志框架来得及收尾前被外部结束。
+        // 如果同时没有 crash-report/hs_err/FATAL/异常栈等明确证据，就不要武断地叫“游戏崩溃”。
+        if (latestEndsMidLine && !hasStrongCrashEvidence)
+            return new(GameExitKind.PossiblyManualClose, exitCode, evidence, true);
 
         return new(GameExitKind.Crash, exitCode, evidence, latestEndsMidLine);
     }
 
-    private static string? TryReadLatestLog(string gameDir, DateTime startedAt, out bool endsMidLine)
+    private static string? TryReadLatestLog(string gameDir, out bool endsMidLine)
     {
         endsMidLine = false;
         try
         {
             var path = Path.Combine(gameDir, "logs", "latest.log");
             if (!File.Exists(path)) return null;
-            if (File.GetLastWriteTime(path) < startedAt.AddSeconds(-3)) return null;
 
             using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
             using var sr = new StreamReader(fs, detectEncodingFromByteOrderMarks: true);

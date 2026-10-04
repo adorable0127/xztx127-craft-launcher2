@@ -262,6 +262,8 @@ public class ConfigService
             {
                 var json = File.ReadAllText(AccountsPath);
                 Accounts = JsonSerializer.Deserialize<List<Account>>(json) ?? new List<Account>();
+                try { if (AccountSecretStore.Restore(AccountsPath, Accounts)) AccountSecretStore.Save(AccountsPath, Accounts, JsonOpts); }
+                catch (Exception migrationError) { LauncherLogService.AppendLine("[Accounts] CredentialMigrationDeferred: " + migrationError.GetType().Name); }
             }
         }
         catch (Exception ex)
@@ -312,6 +314,9 @@ public class ConfigService
         }
     }
 
+    public event Action? Saved;
+    public event Action? AccountsSaved;
+
     public void Save()
     {
         Directory.CreateDirectory(Path.GetDirectoryName(ConfigPath)!);
@@ -349,6 +354,7 @@ public class ConfigService
         {
             Config.GuestModeEnabled = sessionGuestMode;
         }
+        Saved?.Invoke();
     }
 
     private static void WriteTextAtomically(string path, string content)
@@ -487,7 +493,8 @@ public class ConfigService
     public void SaveAccounts()
     {
         Directory.CreateDirectory(App.DataDir);
-        File.WriteAllText(AccountsPath, JsonSerializer.Serialize(Accounts, JsonOpts));
+        AccountSecretStore.Save(AccountsPath, Accounts, JsonOpts);
+        AccountsSaved?.Invoke();
     }
 
     /// <summary>

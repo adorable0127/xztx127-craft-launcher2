@@ -107,6 +107,15 @@ public static class AppearanceRotationService
         {
             path = null;
             if (cfg.CustomBackgroundImagePath != null) { cfg.CustomBackgroundImagePath = null; changed = true; }
+            if (cfg.CustomBackgroundDeselected) { cfg.CustomBackgroundDeselected = false; changed = true; }
+            return changed;
+        }
+
+        // 用户主动取消了选择：保留候选池，但不显示任何背景，也不做任何轮换推进。
+        if (cfg.CustomBackgroundDeselected)
+        {
+            path = null;
+            if (cfg.CustomBackgroundImagePath != null) { cfg.CustomBackgroundImagePath = null; changed = true; }
             return changed;
         }
 

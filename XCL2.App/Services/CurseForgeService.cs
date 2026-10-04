@@ -151,12 +151,13 @@ public class CurseForgeService
         {
             try
             {
-                var resp = await _http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, ct);
+                var resolved = await Plugins.PluginInterceptionRegistry.PrepareDownloadAsync(url, file.FileName, null, ct);
+                var resp = await _http.GetAsync(resolved, HttpCompletionOption.ResponseHeadersRead, ct);
                 if (resp.IsSuccessStatusCode) return resp;
                 resp.Dispose();
                 lastError = new HttpRequestException($"HTTP {(int)resp.StatusCode}来自 {url}");
             }
-            catch (Exception ex) when (ex is not OperationCanceledException)
+            catch (Exception ex) when (ex is not OperationCanceledException and not Plugins.PluginFlowCanceledException)
             {
                 lastError = ex;
             }

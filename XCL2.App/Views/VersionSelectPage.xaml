@@ -129,7 +129,7 @@
                                         <!-- 右键菜单：查看 Wiki / 重命名 / 删除。
                                              Tag="{Binding}" 把当前行绑定的 GameVersion 传给菜单项，
                                              点击时从 Tag 里取回对应实例，见 .xaml.cs 里对应处理方法。 -->
-                                        <ContextMenu>
+                                        <ContextMenu Opened="PluginInstanceMenu_Opened">
                                             <MenuItem Header="{DynamicResource Str_Ui_Open_On_The_Chinese_Minecraft_Wiki}"
                                                       Tag="{Binding}" Click="ViewOnWiki_Click"/>
                                             <Separator/>
@@ -147,6 +147,19 @@
                                         <StackPanel>
                                             <TextBlock Text="{Binding Id}" FontSize="15" Foreground="{DynamicResource TextPrimaryBrush}"/>
                                             <TextBlock Text="{Binding SubTitle}" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}"/>
+                                            <TextBlock Text="实例文件不完整，需要修复" FontSize="12"
+                                                       Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,3,0,0">
+                                                <TextBlock.Style>
+                                                    <Style TargetType="TextBlock">
+                                                        <Setter Property="Visibility" Value="Collapsed"/>
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding IsInstalled}" Value="False">
+                                                                <Setter Property="Visibility" Value="Visible"/>
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </TextBlock.Style>
+                                            </TextBlock>
                                         </StackPanel>
                                     </StackPanel>
 
@@ -158,11 +171,23 @@
                                             Padding="8,4" VerticalAlignment="Center" Margin="8,0,0,0"
                                             Tag="{Binding}" Click="OpenInstanceSettingsMenu_Click">
                                         <Button.ContextMenu>
-                                            <ContextMenu>
+                                            <ContextMenu Opened="PluginInstanceMenu_Opened">
                                                 <MenuItem Header="{DynamicResource Str_Ui_Instance_Settings}" Tag="{Binding}" Click="OpenInstanceSettings_Click"/>
                                                 <Separator/>
                                                 <MenuItem Header="重命名..." Tag="{Binding}" Click="RenameInstance_Click"/>
                                                 <MenuItem Header="删除..." Tag="{Binding}" Click="DeleteInstance_Click"/>
+                                                <MenuItem Header="补全文件" Tag="{Binding}" Click="RepairInstance_Click">
+                                                    <MenuItem.Style>
+                                                        <Style TargetType="MenuItem" BasedOn="{StaticResource {x:Type MenuItem}}">
+                                                            <Setter Property="Visibility" Value="Collapsed"/>
+                                                            <Style.Triggers>
+                                                                <DataTrigger Binding="{Binding IsInstalled}" Value="False">
+                                                                    <Setter Property="Visibility" Value="Visible"/>
+                                                                </DataTrigger>
+                                                            </Style.Triggers>
+                                                        </Style>
+                                                    </MenuItem.Style>
+                                                </MenuItem>
                                             </ContextMenu>
                                         </Button.ContextMenu>
                                     </Button>

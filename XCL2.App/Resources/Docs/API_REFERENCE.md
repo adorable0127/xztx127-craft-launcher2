@@ -55,11 +55,11 @@
 
 ### 插件管理界面入口
 
-"插件管理"弹窗（`PluginManagerDialog`）本身不区分入口，只是一个可以从任意位置 `new PluginManagerDialog(owner).ShowDialog()` 打开的 `OverlayDialogControl`。当前有两个位置可以打开它：
+“插件管理”弹窗（`PluginManagerDialog`）本身不区分入口；宿主统一通过 `OverlayDialogService` / `OverlayDialogControl.ShowDialog()` 打开。当前有两个位置可以打开它：
 
 | 入口 | 位置 | 是否受额外门控限制 |
 | --- | --- | --- |
-| 「设置」页 → 第三方插件 → 插件管理… | `SettingsPage.xaml` / `SettingsPage.xaml.cs` 的 `OpenPluginManagerButton_Click` | 无，任何语言、简洁模式开关状态下都能看到 |
+| 「设置」页 → 第三方插件 → 插件管理… | `SettingsPage.Plugins.cs` 的 `InitializePluginSettings()` 动态管理区 | 无，任何语言、简洁模式开关状态下都能看到 |
 | 「实验性功能」→ 插件管理 | `ExperimentalFeaturesWindow` 的 `PluginManager_Click` | 受 `LocalizationService.ExperimentalFeaturesLanguageGate`（仅简体中文）和简洁模式开关联动隐藏，且首次打开要先在 `ExperimentalGateWindow` 等待 10 秒确认 |
 
 插件的启用/禁用、扫描状态查看属于基础管理能力，不属于"实验性"功能，因此不应该只挂在有语言/模式门控的「实验性功能」入口下——「设置」页的入口就是为解决"找不到插件管理"这个问题加的，不受任何门控影响。两个入口背后是同一个 `PluginManagerDialog` / 同一个 `MainWindow.Plugins`（`PluginManager` 单例），互不冲突，也不会重复扫描或重复加载。
@@ -83,7 +83,7 @@
 | `Config` | `PluginConfigService` | 读写本插件配置 |
 | `DataDirectory` | `string` | 已创建的专属可写目录，保存插件缓存、下载内容或其他数据 |
 | `Log` | `Action<string>` | `ctx.Log("消息")`，宿主自动添加插件标识并写入启动器日志 |
-| `ApiVersion` | `Version` | UI API 版本，本版为 1.1 |
+| `ApiVersion` | `Version` | 插件 API 版本，当前宿主为 1.9 |
 | `Ui` | `PluginUiService` | 注册弹窗、选项、按钮、面板；详见第 10 节 |
 | `Stopping` | `CancellationToken` | 插件停止时取消的令牌 |
 
@@ -148,25 +148,23 @@ public sealed class ExamplePlugin : IPlugin
 
 ## 4. EXE 插件进程接口
 
-EXE 不实现 `IPlugin`，不接收 `PluginContext`。宿主以 `UseShellExecute=false` 启动程序，工作目录为安装后的 EXE 所在目录，当前不传入额外命令行参数。
+EXE 不实现 `IPlugin`，不接收进程内 `PluginContext` 对象，但 Protocol 1 会把一组受权限控制的宿主能力映射为双向命名管道 RPC。宿主以 `UseShellExecute=false` 启动程序，工作目录为安装后的 EXE 所在目录，不附加插件专用命令行参数。
 
 | 项目 | 约定 |
 | --- | --- |
-| 数据目录 | 环境变量 `XCL2_PLUGIN_DATA_DIR` |
-| 运行策略 | `EachLaunch`：每次启动器启动或重新扫描时运行；`OnceOnImport`：成功启动后记住状态，不在后续启动中重复运行 |
-| 停止 | 宿主退出或重新加载插件时，结束仍由宿主管理的 EXE 进程树 |
-| 配置和日志 | 由 EXE 自行保存到自己的数据目录；DLL 的 `Config`、`Log` 和设置面板不能直接用于 EXE |
+| 数据目录 | `XCL2_PLUGIN_DATA_DIR` |
+| 管道 | `XCL2_PLUGIN_PIPE` |
+| 握手令牌 | `XCL2_PLUGIN_SESSION_TOKEN`，每次启动随机生成 |
+| 协议版本 | `XCL2_PLUGIN_PROTOCOL_VERSION=1` |
+| 运行策略 | `EachLaunch` 每次启动/重扫；`OnceOnImport` 成功启动一次后不重复运行 |
+| 身份边界 | 当前 Windows 用户 + 实际客户端 PID 双重校验 |
+| 停止 | 退出/重载/禁用/卸载时撤销注册、关闭会话并结束托管 EXE 进程树 |
 
-```csharp
-using System;
-using System.IO;
+Protocol 1 帧为 4 字节 little-endian 长度前缀 + UTF-8 JSON，单帧最大 1 MiB。首个 request 必须调用 `hello` 并提交会话 token；响应返回 `apiVersion` 与实际插件实例 ID。宿主回调 EXE 时使用 `callbacks.invoke` request，EXE 以相同 request id 返回 response。
 
-var dataDir = Environment.GetEnvironmentVariable("XCL2_PLUGIN_DATA_DIR");
-if (string.IsNullOrWhiteSpace(dataDir))
-    throw new InvalidOperationException("未收到 XCL2 插件数据目录。");
-Directory.CreateDirectory(dataDir);
-File.AppendAllText(Path.Combine(dataDir, "plugin.log"), "独立插件已启动\n");
-```
+当前映射包括：权限快照；账户/实例/Mod/下载/设置/环境只读快照；`config.get/set/remove` 与日志；受限网络 GET；事件订阅和三类干预；依赖插件消息；下载/Mod/Loader/登录 Provider；安装工作区；登录 broker；导航页、实例操作、设置项、背景；以及声明式 Dialog/Button/Panel/Option 与弹窗生命周期订阅。注册方法返回独立 `registrationId`，可通过 `registrations.remove` 注销。
+
+EXE 的 Page/Dialog/Panel 内容使用受限声明式节点（当前为 `text` 和 `button`），因此不会把 WPF 对象越过进程边界。需要任意 `FrameworkElement` 组件树修改、头像渲染器、实时 3D 渲染后端或旧同步 `RegisterLaunchMiddleware` 时仍使用 DLL；EXE 修改启动参数使用 `events.interceptLaunch`。完整协议方法和示例见内嵌 `PLUGIN_EXE_PROTOCOL.md`。
 
 ## 5. 外部程序与脚本：命令行入口
 
@@ -271,7 +269,7 @@ Content-Type: application/json; charset=utf-8
 | `InstalledDirectory` | `string` | 已安装插件目录 |
 | `Plugins` | `IReadOnlyList<LoadedPluginInfo>` | 最近一次扫描结果 |
 | `StartPolicy` | `PluginLaunchMode` | 扫描前设置为 `EachLaunch` 或 `OnceOnImport` |
-| `InstallFromFile(string sourcePath)` | `string` | 复制并返回安装路径；本方法本身不启动插件；同名目标存在时拒绝覆盖 |
+| `InstallFromFile(string sourcePath)` | `string` | 安装 DLL / EXE / `.xclplugin` 并返回实际入口路径；本方法本身不启动插件；单参数重载遇到冲突按 Cancel 语义处理 |
 | `ScanAndLoad()` | `void` | 停止上一轮、扫描、按启用状态和策略启动 |
 | `SetEnabled(string filePath, bool enabled)` | `void` | 保存开关；随后重新扫描使运行状态生效 |
 | `ShutdownAll()` | `void` | 结束当前托管插件并释放加载上下文 |
@@ -356,7 +354,7 @@ string markdown = reader.ReadToEnd();
 | MD 读取和导出 | `Services/EmbeddedDocumentationService.cs` |
 | 文档界面 | `Views/AboutHelpPage.xaml`、`Views/HelpDocumentDialog.xaml` |
 
-## 10. UI 注册 API（1.1）
+## 10. UI 注册 API（1.1 起，当前宿主 1.9）
 
 本节接口均位于 `XCL2.App.Services.Plugins`，适用于本轮已经运行的 DLL 插件。原有 `IPlugin` 和 `PluginContext` 构造签名保持兼容。新插件通过 `ctx.ApiVersion` 判断 UI API 版本；`ctx.Ui` 是当前插件实例的注册表；`ctx.Stopping` 在插件停止时取消。
 
@@ -364,7 +362,7 @@ string markdown = reader.ReadToEnd();
 
 | API | 返回值 | 行为 |
 | --- | --- | --- |
-| `ctx.ApiVersion` | `Version` | 本版为 `1.1`，与启动器产品版本独立 |
+| `ctx.ApiVersion` | `Version` | 当前为 `1.9`，与启动器产品版本独立 |
 | `ctx.Ui` | `PluginUiService` | 当前实例的 UI 注册入口 |
 | `ctx.Stopping` / `ctx.Ui.Stopping` | `CancellationToken` | 停止、重载、初始化失败时取消；可传给后台任务 |
 | `Ui.RegisterDialog(PluginDialogDefinition definition)` | `IDisposable` | 注册可多次打开的弹窗工厂 |
@@ -550,7 +548,7 @@ public sealed class UiExamplePlugin : IPlugin
 
 ## API 1.3 补充：绝对布局与模型渲染
 
-- `PluginContext.ApiVersion` 为 1.3，原有插件接口保留。
+- 本节描述的是 API 1.3 引入的能力；当前 `PluginContext.ApiVersion` 为 1.9，原有接口继续保留。
 - 组件 Add/Move 可指定 `Parent = "$overlay"`，直接以目标视图为坐标系放置。
 - `PluginComponentLayout` 新增 MinWidth、MinHeight、MaxWidth、MaxHeight、Opacity、Visibility、
   IsHitTestVisible、ClipToBounds、RenderTransform、RenderTransformOrigin。
@@ -563,4 +561,4 @@ public sealed class UiExamplePlugin : IPlugin
   运行异常回退内置后端。卸载插件或关闭预览自动释放。
 - `RegisterLaunchMiddleware` 继续支持完全替换 Java 游戏启动内核；`RegisterAvatarRenderer` 继续支持 PNG 渲染替换。
 
-详见 PLUGIN_GUIDE.md 的 API 1.3 示例。本次交付未编译、未检测、未测试。
+详见 PLUGIN_GUIDE.md 的 API 1.3 示例。API 1.4–1.9 的清单/依赖/授权、业务快照与事件、拦截链、提供者、登录代理、导航/设置/背景/实例操作、插件消息和 EXE 双向协议，见 `Docs/PluginApiStages/1.md` 至 `7.md`。本次合并已完成静态接线检查；当前交付环境没有 .NET SDK，未执行 Windows/net8.0-windows 实际构建。

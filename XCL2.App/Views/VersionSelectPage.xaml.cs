@@ -3,6 +3,7 @@ using System.IO;
 using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Threading;
 using Microsoft.Win32;
 using XCL2.App.Models;
 using XCL2.App.Services;
@@ -16,19 +17,47 @@ public partial class VersionSelectPage : UserControl
     private readonly ObservableCollection<GameFolder> _folders = new();
     private readonly ObservableCollection<GameVersion> _installed = new();
 
-    /// <summary>本次会话里用户主动选择"仍要显示"的未安装完成版本 Id 集合（不持久化到配置，
-    /// 每次重新进入这个页面/重新扫描都要用户重新确认）。见 RefreshInstalledVersions 注释：
-    /// 未装完的版本默认从主列表里过滤掉，用户点了"未完成的安装"提示、确认要看之后才会出现，
-    /// 满足"这时候就不显示了，除非用户自己选择继续下载"的要求。</summary>
-    private readonly HashSet<string> _revealedIncompleteIds = new(StringComparer.OrdinalIgnoreCase);
-
-    /// <summary>当前文件夹下最近一次扫描到的、未安装完成的版本（不含已被用户"仍要显示"的那些）。</summary>
+    /// <summary>不完整实例仍保留在列表中，单独记录以显示修复提示。</summary>
     private List<GameVersion> _incompleteVersions = new();
+    private readonly DispatcherTimer _watchDebounce;
+    private readonly DispatcherTimer _rescanTimer;
+    private FileSystemWatcher? _versionsWatcher;
+    private string? _watchedFolderPath;
+    private bool _refreshingItems;
+    private bool _automaticRefreshRunning;
+    private long _refreshGeneration;
 
     public VersionSelectPage(MainWindow owner)
     {
         _owner = owner;
         InitializeComponent();
+
+        _watchDebounce = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(400) };
+        _watchDebounce.Tick += async (_, _) =>
+        {
+            _watchDebounce.Stop();
+            await RefreshVersionsAutomaticallyAsync();
+        };
+        // 文件监视可能在网络盘、目录刚创建或大量复制时漏通知，定期扫描作为补偿。
+        _rescanTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(5) };
+        _rescanTimer.Tick += (_, _) =>
+        {
+            WatchSelectedFolder();
+            QueueAutomaticRefresh();
+        };
+        Loaded += (_, _) =>
+        {
+            WatchSelectedFolder();
+            _rescanTimer.Start();
+            QueueAutomaticRefresh();
+        };
+        Unloaded += (_, _) =>
+        {
+            ++_refreshGeneration;
+            _watchDebounce.Stop();
+            _rescanTimer.Stop();
+            StopWatchingVersions();
+        };
 
         FolderListBox.ItemsSource = _folders;
         InstalledListBox.ItemsSource = _installed;
@@ -48,43 +77,157 @@ public partial class VersionSelectPage : UserControl
 
     private void RefreshInstalledVersions()
     {
-        _installed.Clear();
-        _incompleteVersions = new List<GameVersion>();
+        ++_refreshGeneration;
         var folder = FolderListBox.SelectedItem as GameFolder;
-        if (folder == null || string.IsNullOrEmpty(folder.Path) || !Directory.Exists(folder.Path))
+        if (folder == null || string.IsNullOrEmpty(folder.Path))
         {
+            _installed.Clear();
+            _incompleteVersions.Clear();
             ShowHiddenInstancesBtn.Visibility = Visibility.Collapsed;
             RefreshIncompleteVersionsButtonVisibility();
             return;
         }
         try
         {
-            var cfg = _owner.ConfigService.Config;
-            foreach (var v in _folderService.ScanVersions(folder.Path))
-            {
-                // "从列表中删除"的实例：文件还在磁盘上，只是不出现在这个列表里。
-                if (InstanceDeletionService.IsHidden(cfg, folder.Path, v.Id)) continue;
-
-                // 修复"有些版本因为任何原因没有安装完成，仍然会显示在版本列表中"：默认把
-                // ScanVersions 判定为未安装完成(IsInstalled=false)的版本从主列表里过滤掉——
-                // 用户点进来一个装了一半、缺 jar 的版本，点启动大概率直接报错，体验比"根本不在
-                // 列表里"还差。这些版本不会真的消失，只是挪进 _incompleteVersions，由下面的
-                // "未完成的安装"提示按钮统一列出，用户自己选了"仍要显示"才会出现在主列表里。
-                if (!v.IsInstalled && !_revealedIncompleteIds.Contains(v.Id))
-                {
-                    _incompleteVersions.Add(v);
-                    continue;
-                }
-                _installed.Add(v);
-            }
+            ApplyScannedVersions(folder.Path, _folderService.ScanVersions(folder.Path));
         }
         catch (Exception ex)
         {
             MessageBoxDialog.ShowWarning("扫描已安装版本失败：\n" + ex.Message, Loc.T("Str_Cs_Error", "错误"));
         }
 
-        RefreshHiddenInstancesButtonVisibility(folder.Path);
+    }
+
+    private void ApplyScannedVersions(string folderPath, List<GameVersion> versions)
+    {
+        var cfg = _owner.ConfigService.Config;
+        var visible = versions.Where(v => !InstanceDeletionService.IsHidden(cfg, folderPath, v.Id)).ToList();
+        _incompleteVersions = visible.Where(v => !v.IsInstalled).ToList();
+        var selectedId = cfg.SelectedVersionId ?? (InstalledListBox.SelectedItem as GameVersion)?.Id;
+        var unchanged = _installed.Count == visible.Count && _installed.Zip(visible).All(pair =>
+            pair.First.Id == pair.Second.Id && pair.First.McVersion == pair.Second.McVersion &&
+            pair.First.ModLoader == pair.Second.ModLoader && pair.First.ModLoaderVersion == pair.Second.ModLoaderVersion &&
+            pair.First.FolderPath == pair.Second.FolderPath && pair.First.IsInstalled == pair.Second.IsInstalled);
+
+        _refreshingItems = true;
+        try
+        {
+            if (!unchanged)
+            {
+                _installed.Clear();
+                foreach (var version in visible) _installed.Add(version);
+            }
+            InstalledListBox.SelectedItem = _installed.FirstOrDefault(v =>
+                string.Equals(v.Id, selectedId, StringComparison.OrdinalIgnoreCase));
+        }
+        finally { _refreshingItems = false; }
+
+        RefreshHiddenInstancesButtonVisibility(folderPath);
         RefreshIncompleteVersionsButtonVisibility();
+    }
+
+    /// <summary>导入完成后就地刷新，保留页面和当前实例选择。</summary>
+    public void RefreshFromExternalChange()
+    {
+        if (!Dispatcher.CheckAccess())
+        {
+            _ = Dispatcher.BeginInvoke(new Action(RefreshFromExternalChange));
+            return;
+        }
+        var cfg = _owner.ConfigService.Config;
+        if (!_folders.SequenceEqual(cfg.Folders)) LoadFolders();
+        var selected = _folders.FirstOrDefault(f =>
+            string.Equals(f.Path, cfg.SelectedFolderPath, StringComparison.OrdinalIgnoreCase)) ?? _folders.FirstOrDefault();
+        if (!ReferenceEquals(FolderListBox.SelectedItem, selected)) FolderListBox.SelectedItem = selected;
+        else RefreshInstalledVersions();
+    }
+
+    private void QueueAutomaticRefresh()
+    {
+        if (!IsLoaded) return;
+        _watchDebounce.Stop();
+        _watchDebounce.Start();
+    }
+
+    private async Task RefreshVersionsAutomaticallyAsync()
+    {
+        if (!IsLoaded || _automaticRefreshRunning || FolderListBox.SelectedItem is not GameFolder folder) return;
+        _automaticRefreshRunning = true;
+        var generation = ++_refreshGeneration;
+        var folderPath = folder.Path;
+        try
+        {
+            var versions = await Task.Run(() => _folderService.ScanVersions(folderPath));
+            if (IsLoaded && generation == _refreshGeneration && FolderListBox.SelectedItem is GameFolder current &&
+                string.Equals(current.Path, folderPath, StringComparison.OrdinalIgnoreCase))
+                ApplyScannedVersions(folderPath, versions);
+        }
+        catch { /* 复制中的文件/临时目录访问失败不弹窗，后续通知及定时扫描会重试。 */ }
+        finally { _automaticRefreshRunning = false; }
+    }
+
+    private void WatchSelectedFolder()
+    {
+        var folderPath = (FolderListBox.SelectedItem as GameFolder)?.Path;
+        if (_versionsWatcher != null && Directory.Exists(folderPath) &&
+            string.Equals(folderPath, _watchedFolderPath, StringComparison.OrdinalIgnoreCase)) return;
+        StopWatchingVersions();
+        if (!IsLoaded || string.IsNullOrEmpty(folderPath) || !Directory.Exists(folderPath)) return;
+
+        FileSystemWatcher? watcher = null;
+        try
+        {
+            // 监视根目录，使尚不存在的 versions 目录被创建后也能自动发现。
+            watcher = new FileSystemWatcher(folderPath)
+            {
+                IncludeSubdirectories = true,
+                NotifyFilter = NotifyFilters.DirectoryName | NotifyFilters.FileName | NotifyFilters.LastWrite | NotifyFilters.Size
+            };
+            void OnChanged(string path)
+            {
+                var parts = Path.GetRelativePath(folderPath, path).Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+                if (parts.Length == 0 || !string.Equals(parts[0], "versions", StringComparison.OrdinalIgnoreCase)) return;
+                if (parts.Length > 2 && (parts.Length != 3 ||
+                    !(string.Equals(Path.GetExtension(path), ".json", StringComparison.OrdinalIgnoreCase) ||
+                      string.Equals(Path.GetExtension(path), ".jar", StringComparison.OrdinalIgnoreCase)))) return;
+                if (Dispatcher.HasShutdownStarted || Dispatcher.HasShutdownFinished) return;
+                _ = Dispatcher.BeginInvoke(new Action(() =>
+                {
+                    if (ReferenceEquals(_versionsWatcher, watcher)) QueueAutomaticRefresh();
+                }));
+            }
+            watcher.Created += (_, e) => OnChanged(e.FullPath);
+            watcher.Deleted += (_, e) => OnChanged(e.FullPath);
+            watcher.Changed += (_, e) => OnChanged(e.FullPath);
+            watcher.Renamed += (_, e) => { OnChanged(e.OldFullPath); OnChanged(e.FullPath); };
+            watcher.Error += (_, _) =>
+            {
+                if (Dispatcher.HasShutdownStarted || Dispatcher.HasShutdownFinished) return;
+                _ = Dispatcher.BeginInvoke(new Action(() =>
+                {
+                    if (!ReferenceEquals(_versionsWatcher, watcher)) return;
+                    StopWatchingVersions();
+                    QueueAutomaticRefresh();
+                }));
+            };
+            _versionsWatcher = watcher;
+            _watchedFolderPath = folderPath;
+            watcher.EnableRaisingEvents = true;
+        }
+        catch
+        {
+            watcher?.Dispose();
+            _versionsWatcher = null;
+            _watchedFolderPath = null;
+            // 监视不可用时仍由后台定时扫描自动刷新。
+        }
+    }
+
+    private void StopWatchingVersions()
+    {
+        _versionsWatcher?.Dispose();
+        _versionsWatcher = null;
+        _watchedFolderPath = null;
     }
 
     /// <summary>刷新"未完成的安装 (N)"提示按钮的可见性/文字，逻辑跟旁边的
@@ -101,24 +244,17 @@ public partial class VersionSelectPage : UserControl
         IncompleteVersionsBtn.Content = $"未完成的安装 ({_incompleteVersions.Count})...";
     }
 
-    /// <summary>"未完成的安装 (N)..."按钮：列出这个文件夹下扫描到的、缺 jar/继承链不完整的
-    /// 版本文件夹，让用户自己决定——要么继续显示在主列表里（自己判断能不能启动、或者重新走一遍
-    /// 安装向导补齐），要么直接删除这个残缺的文件夹，不需要每次进这个页面都被半成品版本干扰。</summary>
+    /// <summary>列出需要修复的实例；它们已在主列表中显示。</summary>
     private void IncompleteVersions_Click(object sender, RoutedEventArgs e)
     {
         var folder = FolderListBox.SelectedItem as GameFolder;
         if (folder == null || _incompleteVersions.Count == 0) return;
 
-        var names = string.Join("\n", _incompleteVersions.Select(v => "· " + v.Id));
-        var confirmed = MessageBoxDialog.ShowConfirm(
-            $"这个文件夹下有 {_incompleteVersions.Count} 个版本没有安装完成（缺少 jar 文件，可能是之前下载被中断）：\n\n{names}\n\n" +
-            "点\"确定\"会让它们暂时重新出现在左边的版本列表里，你可以自行判断是否尝试启动，或者删除后重新安装；" +
-            "点\"取消\"则保持隐藏，不会删除任何磁盘文件。",
-            "未完成的安装");
-        if (!confirmed) return;
-
-        foreach (var v in _incompleteVersions) _revealedIncompleteIds.Add(v.Id);
-        RefreshInstalledVersions();
+        // 每个未完成的实例后面带一个"安装"按钮：只补全文件，不启动游戏。
+        var dlg = new IncompleteInstallsDialog(_incompleteVersions.ToList(),
+            versionId => _owner.EnqueueInstanceRepair(folder, versionId, RefreshInstalledVersions));
+        dlg.ShowDialog();
+        if (dlg.AnyInstalled) RefreshInstalledVersions();
     }
 
     /// <summary>当前文件夹下只要有一个隐藏实例，就显示"已隐藏的实例..."入口，否则收起来，
@@ -139,6 +275,8 @@ public partial class VersionSelectPage : UserControl
             _owner.ConfigService.Save();
             RefreshInstalledVersions();
         }
+        else RefreshInstalledVersions();
+        WatchSelectedFolder();
     }
 
     private void AddFolder_Click(object sender, RoutedEventArgs e)
@@ -171,7 +309,7 @@ public partial class VersionSelectPage : UserControl
     /// <summary>"导入实例文件夹..."按钮：把一个现成的、已经有 json/jar 的版本文件夹整个拷进
     /// 当前选中的 .minecraft 的 versions/ 下——不解析清单、不下载任何东西，纯文件拷贝，
     /// 装的就是一个已经能跑的现成实例。装完直接选中，右侧列表就能用⚙️菜单设置/启动。</summary>
-    private void ImportInstanceFolder_Click(object sender, RoutedEventArgs e)
+    private async void ImportInstanceFolder_Click(object sender, RoutedEventArgs e)
     {
         if (FolderListBox.SelectedItem is not GameFolder folder)
         {
@@ -201,10 +339,8 @@ public partial class VersionSelectPage : UserControl
 
         try
         {
-            _folderService.ImportVersionFolder(folder.Path, sourceFolder, nameDialog.NewName);
-            RefreshInstalledVersions();
-            var imported = _installed.FirstOrDefault(v => v.Id == nameDialog.NewName);
-            if (imported != null) InstalledListBox.SelectedItem = imported;
+            await _folderService.ImportVersionFolderAsync(folder.Path, sourceFolder, nameDialog.NewName);
+            _owner.NotifyInstanceImported(folder.Path, nameDialog.NewName);
             ToastService.ShowSuccess($"已导入实例「{nameDialog.NewName}」");
         }
         catch (Exception ex)
@@ -216,7 +352,7 @@ public partial class VersionSelectPage : UserControl
 
     /// <summary>"导入实例文件..."（小号链接入口）：跟上面"导入实例文件夹"是同一件事，只是源头
     /// 换成打包好的 .zip，不用用户先自己解压出来。</summary>
-    private void ImportInstanceFile_Click(object sender, RoutedEventArgs e)
+    private async void ImportInstanceFile_Click(object sender, RoutedEventArgs e)
     {
         if (FolderListBox.SelectedItem is not GameFolder folder)
         {
@@ -241,10 +377,8 @@ public partial class VersionSelectPage : UserControl
         pd.Show();
         try
         {
-            _folderService.ImportVersionZip(folder.Path, pickDialog.FileName, nameDialog.NewName);
-            RefreshInstalledVersions();
-            var imported = _installed.FirstOrDefault(v => v.Id == nameDialog.NewName);
-            if (imported != null) InstalledListBox.SelectedItem = imported;
+            await _folderService.ImportVersionZipAsync(folder.Path, pickDialog.FileName, nameDialog.NewName);
+            _owner.NotifyInstanceImported(folder.Path, nameDialog.NewName);
             ToastService.ShowSuccess($"已导入实例「{nameDialog.NewName}」");
         }
         catch (Exception ex)
@@ -375,6 +509,16 @@ public partial class VersionSelectPage : UserControl
         }
     }
 
+    /// <summary>⚙️ 菜单"补全文件"：只补全缺失文件，不启动游戏。仅对不完整的实例显示。</summary>
+    private void RepairInstance_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not MenuItem { Tag: GameVersion v }) return;
+        if (FolderListBox.SelectedItem is not GameFolder folder) return;
+
+        // 走统一下载队列（右上角下载抽屉），不再弹独占的模态进度框。
+        _owner.EnqueueInstanceRepair(folder, v.Id, RefreshInstalledVersions);
+    }
+
     /// <summary>⚙️ 二级菜单 / 右键菜单"删除..."：先弹选择方式的弹窗(DeleteInstanceChoiceDialog)，
     /// 用户选"从电脑中删除"时再追加一层 xztx127 确认，通过了才真正物理删除。</summary>
     private void DeleteInstance_Click(object sender, RoutedEventArgs e)
@@ -497,6 +641,7 @@ public partial class VersionSelectPage : UserControl
 
     private void InstalledListBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
+        if (_refreshingItems) return;
         if (InstalledListBox.SelectedItem is GameVersion v)
         {
             _owner.ConfigService.Config.SelectedVersionId = v.Id;

@@ -146,12 +146,12 @@ public static class ToastService
     /// key 为 null 时保持旧行为（允许堆叠），只有明确传了 key 的调用点才去重。</summary>
     public static void ShowActionPrompt(string message, string primaryText, Action primaryAction,
         string? secondaryText = null, Action? secondaryAction = null, string? hint = null,
-        double? autoDismissSeconds = null, string? key = null)
+        double? autoDismissSeconds = null, string? key = null, bool dismissible = false)
     {
         if (_host?.ActionToastHost == null) return;
         if (!_host.Dispatcher.CheckAccess())
         {
-            _host.Dispatcher.Invoke(() => ShowActionPrompt(message, primaryText, primaryAction, secondaryText, secondaryAction, hint, autoDismissSeconds, key));
+            _host.Dispatcher.Invoke(() => ShowActionPrompt(message, primaryText, primaryAction, secondaryText, secondaryAction, hint, autoDismissSeconds, key, dismissible));
             return;
         }
 
@@ -168,7 +168,7 @@ public static class ToastService
                 }
             }
 
-            var card = BuildActionCard(message, hint, primaryText, primaryAction, secondaryText, secondaryAction);
+            var card = BuildActionCard(message, hint, primaryText, primaryAction, secondaryText, secondaryAction, dismissible);
             card.Tag = key;
             _host.ActionToastHost.Items.Add(card);
 
@@ -181,9 +181,12 @@ public static class ToastService
             card.Opacity = 0;
             card.BeginAnimation(UIElement.OpacityProperty,
                 new DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(160)));
-            slide.BeginAnimation(TranslateTransform.XProperty,
-                new DoubleAnimation(-24, 0, TimeSpan.FromMilliseconds(160))
-                { EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut } });
+            var slideIn = new DoubleAnimation(-24, 0, TimeSpan.FromMilliseconds(160))
+            { EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut } };
+            // 入场动画结束后释放对 X 的占用，否则后面拖动时改不动它。
+            slideIn.Completed += (_, _) => { slide.BeginAnimation(TranslateTransform.XProperty, null); slide.X = 0; };
+            slide.BeginAnimation(TranslateTransform.XProperty, slideIn);
+            if (dismissible) EnableSwipeToDismiss(card, slide);
 
             // 操作卡片默认不会自动消失；只有某个调用点明确传入 autoDismissSeconds 时才挂计时器。
             // 设置页的“自动保存 / 回退”和“未保存 / 保存 / 撤销”都不传该参数，因此会一直保留
@@ -239,8 +242,57 @@ public static class ToastService
         card.BeginAnimation(UIElement.OpacityProperty, fade);
     }
 
+    /// <summary>支持按住卡片向左拖动（从右往左滑）关闭：拖过约 1/4 宽度松手即关闭，否则弹回。
+    /// 按下后移动超过阈值才开始接管鼠标，所以卡片上的按钮仍可正常点击。</summary>
+    private static void EnableSwipeToDismiss(Border card, TranslateTransform slide)
+    {
+        Point start = default;
+        bool pressed = false, dragging = false;
+
+        card.PreviewMouseLeftButtonDown += (_, e) =>
+        {
+            pressed = true; dragging = false;
+            start = e.GetPosition(card);
+        };
+        card.PreviewMouseMove += (_, e) =>
+        {
+            if (!pressed || e.LeftButton != System.Windows.Input.MouseButtonState.Pressed) return;
+            var dx = e.GetPosition(card).X - start.X;
+            if (!dragging)
+            {
+                if (dx > -8) return; // 只响应向左的拖动
+                dragging = true;
+                card.CaptureMouse();
+            }
+            slide.X = Math.Min(0, dx);
+            card.Opacity = Math.Max(0.3, 1 + slide.X / Math.Max(card.ActualWidth, 1));
+        };
+        card.PreviewMouseLeftButtonUp += (_, e) =>
+        {
+            var wasDragging = dragging;
+            pressed = false; dragging = false;
+            if (!wasDragging) return;
+            card.ReleaseMouseCapture();
+            e.Handled = true;
+            if (slide.X < -Math.Max(card.ActualWidth, 1) / 4)
+            {
+                var off = new DoubleAnimation(slide.X, -card.ActualWidth - 40, TimeSpan.FromMilliseconds(140));
+                off.Completed += (_, _) => DismissActionCard(card);
+                slide.BeginAnimation(TranslateTransform.XProperty, off);
+            }
+            else
+            {
+                slide.BeginAnimation(TranslateTransform.XProperty,
+                    new DoubleAnimation(slide.X, 0, TimeSpan.FromMilliseconds(140)) { FillBehavior = FillBehavior.Stop });
+                slide.X = 0;
+                card.BeginAnimation(UIElement.OpacityProperty, null);
+                card.Opacity = 1;
+            }
+        };
+    }
+
     private static Border BuildActionCard(string message, string? hint,
-        string primaryText, Action primaryAction, string? secondaryText, Action? secondaryAction)
+        string primaryText, Action primaryAction, string? secondaryText, Action? secondaryAction, bool dismissible = false)
     {
         var accent = (Brush)Application.Current.FindResource("SuccessTextBrush");
 
@@ -295,13 +347,39 @@ public static class ToastService
 
         content.Children.Add(buttonRow);
 
+        UIElement cardChild = content;
+        if (dismissible)
+        {
+            // 右上角关闭按钮：只是收起提示卡，不保存也不撤销（未保存的修改仍保留，离开页面时会再确认）。
+            content.Margin = new Thickness(0, 0, 22, 0);
+            var closeBtn = new Button
+            {
+                Content = "✕",
+                FontSize = 12,
+                Padding = new Thickness(5, 1, 5, 1),
+                HorizontalAlignment = HorizontalAlignment.Right,
+                VerticalAlignment = VerticalAlignment.Top,
+                Margin = new Thickness(0, -6, -8, 0),
+                BorderThickness = new Thickness(0),
+                Background = Brushes.Transparent,
+                Cursor = System.Windows.Input.Cursors.Hand,
+                ToolTip = "关闭",
+            };
+            closeBtn.SetResourceReference(Control.ForegroundProperty, "TextSecondaryBrush");
+            closeBtn.Click += (_, _) => DismissActionCard(card);
+            var grid = new Grid();
+            grid.Children.Add(content);
+            grid.Children.Add(closeBtn);
+            cardChild = grid;
+        }
+
         card = new Border
         {
             CornerRadius = new CornerRadius(8),
             Padding = new Thickness(14, 12, 16, 12),
             Margin = new Thickness(0, 8, 0, 0),
             BorderThickness = new Thickness(3, 1, 1, 1),
-            Child = content,
+            Child = cardChild,
         };
         card.SetResourceReference(Border.BackgroundProperty, "PanelBrush");
         card.BorderBrush = accent;

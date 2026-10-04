@@ -16,6 +16,7 @@ public partial class LoginPage : UserControl
     {
         _owner = owner; // 统一先于 InitializeComponent 赋值，避免控件初始化时触发的事件访问到未赋值字段
         InitializeComponent();
+        InitializePluginLogins();
         AccountListBox.ItemsSource = _accounts;
         Reload();
 

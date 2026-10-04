@@ -4,10 +4,10 @@
 
 ## 一、从界面导入和查看指南
 
-1. 将 `.dll` 或 `.exe` 文件拖入启动器窗口；也可以进入「更多 → 实验性功能 → 插件管理」，点「导入插件（DLL / EXE）」选择文件。导入插件不要求先选择游戏版本。
+1. 将 `.dll`、`.exe` 或 `.xclplugin` 文件拖入启动器窗口；也可以从「设置 → 第三方插件 → 插件管理…」进入稳定入口，或从「更多 → 实验性功能 → 插件管理」进入实验页入口，再点「导入插件（DLL / EXE / .xclplugin）」选择文件。设置页入口不受实验功能语言/简洁模式门控。导入插件不要求先选择游戏版本。
 2. 启动器会展示文件名并提示：**该插件未经官方验证，使用之后如果出现任何问题或安全问题，均与启动器作者无关。建议你认真审查插件来源。** 只有确认后才复制和运行文件；取消则不会导入。
 3. 插件复制到 `%APPDATA%\XCL2\Plugins\installed\<文件名（无扩展名）>\<原文件名>`。同名导入会显示「复制为副本」「替换」「取消」。副本有独立安装目录、配置与数据；替换停止旧实例后更新文件并保留配置与数据；取消不改变已有插件。DLL 的依赖 DLL 可以放在主 DLL 所在目录，不会被误扫为单独插件。
-4. 导入后启动器自动重新扫描并按当前设置启动插件；「插件管理」显示启用状态和加载错误。手工复制到插件目录的旧版根目录 DLL 仍受支持，手工复制后需点「重新扫描 / 重新加载插件」。
+4. 导入后启动器自动重新扫描。带 `plugin.json` 的插件若是首次启用或权限声明发生变化，会立即显示权限审核窗口；保存授权后宿主再次扫描并真正执行 Provider、事件、UI、Runtime 等注册。取消授权不会偷偷放权，插件会保留为 `AuthorizationRequired`，可稍后在「插件管理 → 权限…」完成授权。「插件管理」同时显示启用状态、运行状态和加载错误。手工复制到插件目录的旧版根目录 DLL 仍受支持，手工复制后需点「重新扫描 / 重新加载插件」。
 5. 在「设置 → 第三方插件 → 插件启动方式」选择「每次打开启动器时启动」（默认）或「只在导入时启动一次」，然后保存设置。第二种方式会记住成功启动过的文件，下次打开启动器和重新扫描时均不会自动再运行；新导入的文件在本次确认后运行一次。
 6. 在「插件管理」点「一键打开查看插件开发指南」：指南作为 `EmbeddedResource` 编进启动器，点击时写入 `%APPDATA%\XCL2\Docs\PLUGIN_GUIDE.md` 并用系统关联程序打开。单文件打包也能打开，不依赖 exe 同目录另放 MD 文件。
 
@@ -94,7 +94,7 @@ public sealed class ExamplePlugin : IPlugin
 | `Config` | `PluginConfigService` | 当前插件的 JSON 设置入口。 |
 | `DataDirectory` | `string` | 已创建的专属可写目录：`%APPDATA%\XCL2\Plugins\data\<Id>`。缓存和下载文件存这里。 |
 | `Log` | `Action<string>` | 调用 `ctx.Log("消息")` 将带插件 ID 前缀的文字写入启动器日志。 |
-| `ApiVersion` | `Version` | 本版扩展 API 为 1.2。 |
+| `ApiVersion` | `Version` | 当前宿主插件 API 为 1.9；1.1–1.9 保持逐步兼容。 |
 | `Ui` | `PluginUiService` | 原有弹窗、按钮、选项与面板入口。 |
 | `Components` | `PluginComponentService` | 组件定位、增删、移动、替换和布局。 |
 | `Runtime` | `PluginRuntimeService` | 游戏启动内核、头像渲染及实时模型渲染后端。 |
@@ -122,17 +122,22 @@ public sealed class ExamplePlugin : IPlugin
 
 ## 三、EXE 插件：进程协议与限制
 
-EXE 不实现 `IPlugin`，不加载到启动器进程，也没有 `PluginContext`、配置面板或可调用的宿主 API。用户确认导入后，宿主通过 `ProcessStartInfo` 启动安装目录中的 exe，工作目录是 exe 所在目录，不附加命令行参数，`UseShellExecute=false`。
+EXE 不实现 `IPlugin`，也不会把程序集加载进启动器进程。当前宿主已经实现 Protocol 1 双向命名管道：带 `plugin.json`、通过权限审核的 EXE 可以使用只读快照、事件、干预链、消息、Provider、配置/日志，以及声明式 UI 注册；没有清单的旧 EXE 仍按兼容模式作为独立程序运行，但不会自动获得新增业务权限。
 
 | 进程输入 / 生命周期 | 约定 |
 | --- | --- |
-| 环境变量 `XCL2_PLUGIN_DATA_DIR` | 启动器为该 EXE 创建的专属可写目录，可用 `Environment.GetEnvironmentVariable` 读取。 |
-| 标准命令行参数 | 没有，EXE 不必解析特殊参数。 |
-| 启动时机 | 默认每次打开启动器及用户点「重新扫描」时运行；「只在导入时启动一次」在成功启动后记住状态。 |
-| 关闭时机 | 启动器退出、重新扫描/重载时会结束仍由启动器托管的 EXE 进程树；已经自行退出的程序无需处理。 |
-| 错误反馈 | 进程启动失败显示在插件管理页并写启动器日志；启动后的内部错误由 EXE 自己记录。 |
+| `XCL2_PLUGIN_DATA_DIR` | 该插件实例专属可写目录。 |
+| `XCL2_PLUGIN_PIPE` | 本次启动专属命名管道。 |
+| `XCL2_PLUGIN_SESSION_TOKEN` | 本次启动的随机握手令牌。 |
+| `XCL2_PLUGIN_PROTOCOL_VERSION` | 当前为 `1`。 |
+| 标准命令行参数 | 不附加插件专用参数；协议参数全部通过环境变量传递。 |
+| 启动时机 | `EachLaunch` 每次启动/重扫运行；`OnceOnImport` 成功启动后记住状态。 |
+| 关闭时机 | 退出、禁用、卸载、重新扫描时撤销注册并结束仍由宿主管理的 EXE 进程树。 |
+| 身份校验 | 管道限制为当前 Windows 用户，并校验连接 PID 等于宿主刚启动的 EXE PID。 |
 
-EXE 的运行不等于 DLL 的 API 插件能力。如果要用 `PluginContext.Config`、`Log` 或设置面板，请编译成实现 `IPlugin` 的 DLL。
+Protocol 1 使用“4 字节小端长度 + UTF-8 JSON”帧。握手成功后，EXE 可以调用 `accounts.*`、`instances.*`、`mods.list`、`downloads.list`、`settings.snapshot`、`environment.snapshot`、`config.*`、`events.*`、`messages.*`、`providers.register`、安装工作区、登录 broker，以及 `ui.registerPage/registerDialog/registerButton/registerPanel/registerOption/registerSetting/registerBackground/registerInstanceAction` 等受权限控制的方法。多个事件/消息/弹窗订阅都返回独立 `registrationId`，可通过 `registrations.remove` 单独注销。
+
+EXE UI 使用声明式 `text` / `button` 节点，不跨进程传 `FrameworkElement`。依赖真实 WPF 对象或同步进程内委托的 `PluginComponentService.Register`、头像/3D 渲染器和旧 `RegisterLaunchMiddleware` 不伪造跨进程等价物；启动参数修改请使用 `events.interceptLaunch`。完整帧格式、方法表和限制见插件管理里的「EXE 插件协议」或内嵌 `PLUGIN_EXE_PROTOCOL.md`。
 
 ## 四、宿主侧管理 API（供启动器开发者）
 
@@ -144,7 +149,7 @@ EXE 的运行不等于 DLL 的 API 插件能力。如果要用 `PluginContext.Co
 | `PluginManager.InstalledDirectory` | 属性 → `string` | 已安装插件根目录。 |
 | `PluginManager.Plugins` | 属性 → `IReadOnlyList<LoadedPluginInfo>` | 最近一次扫描结果；用于渲染状态。 |
 | `PluginManager.StartPolicy` | `PluginLaunchMode` 读写 | 扫描前设置为配置里的策略。`EachLaunch` 默认；`OnceOnImport` 只启动尚未成功启动过的文件。 |
-| `PluginManager.InstallFromFile(string sourcePath)` | DLL/EXE 的绝对路径 → 已复制目标路径 | 校验格式，复制到插件子目录；同名已存在会抛 `IOException`。本函数本身不运行插件，调用方必须先确认用户意愿，随后调用 `ScanAndLoad()`。 |
+| `PluginManager.InstallFromFile(string sourcePath)` | DLL / EXE / `.xclplugin` 的绝对路径 → 已安装入口路径 | 校验格式并安装到插件子目录；`.xclplugin` 会先安全解包并验证包根 `plugin.json` 的入口。同名冲突按重载语义处理；本函数本身不运行插件，调用方必须先确认用户意愿，随后调用 `ScanAndLoad()`。 |
 | `PluginManager.ScanAndLoad()` | 无参 → `void` | 结束上轮、扫描插件、按策略启动、持久化状态。单个插件失败记录 `LoadError`，不阻断其他插件。 |
 | `PluginManager.SetEnabled(string filePath, bool enabled)` | 安装路径及布尔值 → `void` | 立即持久化启用开关；再调用 `ScanAndLoad()` 才实际启动/停止。 |
 | `PluginManager.ShutdownAll()` | 无参 → `void` | 逐个调用已启动 DLL 的 `Shutdown`、结束托管 EXE、卸载 DLL 加载上下文。 |
@@ -357,6 +362,12 @@ ctx.Runtime.RegisterSkinModelRenderer("custom-engine", request => new MyRenderer
 视图卸载时释放后端。启动内核仍使用 RegisterLaunchMiddleware，可完全接管进程创建。
 这里开放的是启动器的组件、启动实现与渲染宿主；Minecraft 游戏内部的渲染器仍需游戏模组实现。
 
+### API 1.4–1.9 能力索引
+
+当前宿主 API 版本为 1.9。1.4–1.9 继续保留前述 UI/组件/渲染接口，并新增：清单、依赖与逐项授权；只读业务快照和生命周期/账户/实例/下载/Mod 事件；启动、下载与实例创建拦截；下载/Mod/Loader/登录提供者；受限网络与安装工作区；导航页、实例右键动作、设置项、背景和插件消息；EXE 双向命名管道协议及结构化命令行结果。阶段设计和逐阶段补丁保存在 `Docs/PluginApiStages/1.md` 至 `7.md`。
+
+其中宿主侧实际接线包括：`RegisterLaunchMiddleware` → `LauncherService.Launch`、`RegisterAvatarRenderer` → `SkinAvatarRenderService.RenderFaceAvatar`、`RegisterSkinModelRenderer` → `PluginSkinModelHost`；所有 Overlay 弹窗统一经过插件扩展宿主并发布 `SubscribeDialogs` 打开/关闭事件；导航、设置、背景、实例动作和四类 Provider 均有真实消费入口。
+
 ### 本次交付状态
 
-按要求仅修改并打包源码，未编译，未运行检测或测试。
+已做源码级并集、注册链、XAML/XML 与事件处理器静态检查。当前交付环境没有 .NET SDK，因此未执行 Windows/net8.0-windows 实际编译或运行测试。

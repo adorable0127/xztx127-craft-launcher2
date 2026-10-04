@@ -255,6 +255,15 @@ public partial class MessageBoxDialog : OverlayDialogControl
     public static bool ShowConfirm(string message, string title = "确认")
         => Show(message, title, XclMessageKind.Info, XclMessageButtons.YesNo) == true;
 
+    public static Task<bool?> ShowConfirmAsync(string message, string title = "确认", string confirmText = "确定")
+    {
+        var dlg = new MessageBoxDialog(message, title, XclMessageKind.Info, XclMessageButtons.OKCancel);
+        dlg.ButtonPanel.Children.Clear();
+        dlg.ButtonPanel.Children.Add(dlg.MakeButton("取消", false, isPrimary: false, isDefault: false));
+        dlg.ButtonPanel.Children.Add(dlg.MakeButton(confirmText, true, isPrimary: true, isDefault: true));
+        return OverlayDialogService.ShowModalAsync(dlg);
+    }
+
     /// <summary>等价于 MessageBox.Show(message, title, MessageBoxButton.YesNoCancel, MessageBoxImage.Question)，
     /// 返回值直接对应原来的 MessageBoxResult.Yes/No/Cancel 三态，调用方原来怎么判断
     /// choice == MessageBoxResult.Xxx，现在就怎么判断 result == XclMessageResult.Xxx。</summary>
@@ -300,6 +309,23 @@ public partial class MessageBoxDialog : OverlayDialogControl
         dlg.ButtonPanel.Children.Clear();
         dlg.ButtonPanel.Children.Add(dlg.MakeButton(leftText, true, isPrimary: !rightIsPrimary, isDefault: !rightIsPrimary));
         dlg.ButtonPanel.Children.Add(dlg.MakeButton(rightText, false, isPrimary: rightIsPrimary, isDefault: rightIsPrimary));
+        return OverlayDialogService.ShowModal(dlg) == true;
+    }
+
+    /// <summary>红色危险确认弹窗：标题图标、正文用危险红色，"确认"按钮为红底白字；
+    /// 默认焦点在"取消"上，避免只按 Enter 就误确认。返回 true 表示点了确认。</summary>
+    public static bool ShowDangerConfirm(string message, string title, string cancelText = "取消", string confirmText = "我已了解风险，继续")
+    {
+        var dlg = new MessageBoxDialog(message, title, XclMessageKind.Error, XclMessageButtons.OK);
+        dlg.MessageText.Foreground = (System.Windows.Media.Brush)dlg.FindResource("DangerBrush");
+        dlg.ButtonPanel.Children.Clear();
+        dlg.ButtonPanel.Children.Add(dlg.MakeButton(cancelText, false, isPrimary: false, isDefault: true));
+        var confirm = dlg.MakeButton(confirmText, true, isPrimary: true, isDefault: false);
+        var danger = (System.Windows.Media.Brush)dlg.FindResource("DangerBrush");
+        confirm.Background = danger;
+        confirm.BorderBrush = danger;
+        confirm.Foreground = System.Windows.Media.Brushes.White;
+        dlg.ButtonPanel.Children.Add(confirm);
         return OverlayDialogService.ShowModal(dlg) == true;
     }
 
@@ -355,9 +381,9 @@ public partial class MessageBoxDialog : OverlayDialogControl
         var dlg = new MessageBoxDialog(message, title, XclMessageKind.Warning, XclMessageButtons.OK);
         dlg.ButtonPanel.Children.Clear();
         dlg.ButtonPanel.Children.Add(dlg.MakeTouchCloseButton(cancelText, XclTouchCloseChoiceResult.Cancel, isPrimary: false, isDefault: false));
-        dlg.ButtonPanel.Children.Add(dlg.MakeTouchCloseButton(closeLauncherOnlyText, XclTouchCloseChoiceResult.CloseLauncherAndOverlayOnly, isPrimary: true, isDefault: true));
+        dlg.ButtonPanel.Children.Add(dlg.MakeTouchCloseButton(closeLauncherOnlyText, XclTouchCloseChoiceResult.CloseLauncherAndOverlayOnly, isPrimary: false, isDefault: false));
         dlg.ButtonPanel.Children.Add(dlg.MakeTouchCloseButton(trayText, XclTouchCloseChoiceResult.Tray, isPrimary: false, isDefault: false));
-        dlg.ButtonPanel.Children.Add(dlg.MakeTouchCloseButton(closeAllText, XclTouchCloseChoiceResult.CloseAllIncludingGame, isPrimary: false, isDefault: false));
+        dlg.ButtonPanel.Children.Add(dlg.MakeTouchCloseButton(closeAllText, XclTouchCloseChoiceResult.CloseAllIncludingGame, isPrimary: true, isDefault: true));
         OverlayDialogService.ShowModal(dlg);
         return dlg.TouchCloseResult;
     }

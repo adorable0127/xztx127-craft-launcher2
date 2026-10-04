@@ -228,19 +228,20 @@ public static class DownloadEndpoints
     public static async Task<string> GetStringWithFallbackAsync(
         HttpClient http, string officialUrl, bool preferMirror, string friendlyMessage, CancellationToken ct = default)
     {
-        var candidates = Candidates(officialUrl, preferMirror);
+        var candidates = await Plugins.PluginProviderRegistry.AddMirrorAsync(officialUrl, "metadata.json", null, Candidates(officialUrl, preferMirror), ct);
         Exception? lastError = null;
 
         foreach (var url in candidates)
         {
             try
             {
-                var result = await http.GetStringAsync(url, ct);
+                var resolved = await Plugins.PluginInterceptionRegistry.PrepareDownloadAsync(url, "metadata.json", null, ct);
+                var result = await http.GetStringAsync(resolved, ct);
                 ReportSuccess(url);
                 return result;
             }
             catch (OperationCanceledException) { throw; }
-            catch (Exception ex)
+            catch (Exception ex) when (ex is not Plugins.PluginFlowCanceledException)
             {
                 ReportFailure(url);
                 lastError = ex;
@@ -265,7 +266,7 @@ public static class DownloadEndpoints
         string friendlyMessage, IProgress<ProgressInfo>? progress = null, CancellationToken ct = default)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(destPath)!);
-        var candidates = AllCandidates(officialUrl, preferMirror);
+        var candidates = await Plugins.PluginProviderRegistry.AddMirrorAsync(officialUrl, Path.GetFileName(destPath), null, AllCandidates(officialUrl, preferMirror), ct);
         Exception? lastError = null;
 
         foreach (var url in candidates)
@@ -273,7 +274,8 @@ public static class DownloadEndpoints
             var tmpPath = destPath + ".fbpart";
             try
             {
-                using var resp = await http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, ct);
+                var resolved = await Plugins.PluginInterceptionRegistry.PrepareDownloadAsync(url, Path.GetFileName(destPath), null, ct);
+                using var resp = await http.GetAsync(resolved, HttpCompletionOption.ResponseHeadersRead, ct);
                 resp.EnsureSuccessStatusCode();
 
                 var total = resp.Content.Headers.ContentLength ?? 0;
@@ -302,7 +304,7 @@ public static class DownloadEndpoints
                 return destPath;
             }
             catch (OperationCanceledException) { throw; }
-            catch (Exception ex)
+            catch (Exception ex) when (ex is not Plugins.PluginFlowCanceledException)
             {
                 ReportFailure(url);
                 lastError = ex;

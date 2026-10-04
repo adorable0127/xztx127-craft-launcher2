@@ -189,6 +189,8 @@ internal static class TouchInputInjector
     public static bool MenuPointerMove(IntPtr game, int screenX, int screenY, bool leftDown)
     {
         if (game == IntPtr.Zero || GetForegroundWindow() != game) return false;
+        // 旧游戏仍明确抓取鼠标时，禁止菜单绝对定位把视角拉到手指位置。
+        if (ReadGameMenuMode(game, allowFullscreenCapture: true) == false) return false;
         ClipCursor(IntPtr.Zero);
         if (!SetCursorPos(screenX, screenY)) return false;
         return PostMenuMouseMessage(game, 0x0200, screenX, screenY, leftDown);
@@ -292,13 +294,13 @@ internal static class TouchInputInjector
     /// <summary>相对位移：这是"手指在视角区拖动 = 转视角"的实现基础。
     /// 游戏锁定光标后只关心相对位移量，不关心光标绝对坐标，所以这里绝不能用绝对坐标模式
     /// （MOUSEEVENTF_ABSOLUTE），否则视角会疯狂乱飞。</summary>
-    public static void MouseMoveRelative(int dx, int dy)
+    public static void MouseMoveRelative(int dx, int dy, bool noCoalesce = false)
     {
         if (dx == 0 && dy == 0) return;
         var input = new INPUT
         {
             type = INPUT_MOUSE,
-            u = new INPUTUNION { mi = new MOUSEINPUT { dx = dx, dy = dy, dwFlags = MOUSEEVENTF_MOVE, dwExtraInfo = Signature } }
+            u = new INPUTUNION { mi = new MOUSEINPUT { dx = dx, dy = dy, dwFlags = MOUSEEVENTF_MOVE | (noCoalesce ? 0x2000u : 0u), dwExtraInfo = Signature } }
         };
         SendInput(1, in input, InputSize);
     }
@@ -391,20 +393,10 @@ internal static class TouchInputInjector
             clip.Bottom == desktopTop + GetSystemMetrics(79);
         var info = new CURSORINFO { cbSize = Marshal.SizeOf<CURSORINFO>() };
         if (!GetCursorInfo(ref info)) return null;
-        if ((info.flags & CURSOR_SUPPRESSED) != 0)
-        {
-            // 抑制本身不能判为菜单；游戏约束 + 显式空光标仍是独立的抓取证据。
-            if (confined && info.hCursor == IntPtr.Zero && (!wholeDesktop || allowFullscreenCapture)) return false;
-            // 菜单释放约束后，触屏仍可能让箭头处于抑制状态。此时结合释放约束的证据，
-            // 交由上层持续采样确认，不能等到用户接入物理鼠标才恢复菜单操作。
-            if (info.hCursor != IntPtr.Zero && (!confined || wholeDesktop)) return true;
-            return null;
-        }
-        var visible = info.hCursor != IntPtr.Zero && (info.flags & CURSOR_SHOWING) != 0;
-        // 可见光标是菜单证据，即使游戏遗留了较小的 ClipCursor 矩形也不能拒绝菜单模式。
-        if (visible) return true;
-        if (!visible && confined && (!wholeDesktop || (allowFullscreenCapture && info.hCursor == IntPtr.Zero))) return false;
-        return null;
+        // 旧后端抓取光标时仍可能留下 WPF 箭头，客户区约束优先于箭头句柄。
+        // 不调用 ClipCursor/ShowCursor/CenterCursor 来推测视角模式。
+        return TouchInputModePolicy.Classify(confined, wholeDesktop, info.hCursor != IntPtr.Zero,
+            (info.flags & CURSOR_SHOWING) != 0, (info.flags & CURSOR_SUPPRESSED) != 0, allowFullscreenCapture);
     }
 
     /// <summary>

@@ -39,55 +39,57 @@ public static class ModVersionGrouping
         ["curseforge"] = "CurseForge 文件", // CurseForgeFile 没有解析出具体 loader，见 InlineVersionEntry 构造函数注释
     };
 
-    /// <summary>
-    /// 生成分组列表：每个 (加载器, 游戏版本) 组合一组，组内按原始顺序(Modrinth/CurseForge
-    /// 默认按发布时间倒序返回)保留 InlineVersionEntry。分组标题格式"加载器 游戏版本"，
-    /// 比如"NeoForge 26.2"，游戏版本取该条目 GameVersionsText 里的第一个版本号。
-    /// 组的整体顺序：按加载器名（NeoForge/Fabric/Forge/Quilt 优先，其余按出现顺序）、
-    /// 再按游戏版本号做粗略倒序，让最新版本的分组排在前面，与截图里的顺序一致。
-    /// 返回后调用方需要自行决定要不要把第一个分组设为默认展开(截图2里"Fabric 26.2"默认展开)。
-    /// </summary>
-    /// <summary>
-    /// includePreview 默认改成 true：之前默认 false（只显示正式版）在部分 mod 上会把全部
-    /// 版本都判断成"预览版"过滤掉，导致详情页显示"没有找到匹配的版本"（IsPreview 的判断
-    /// 依赖 Modrinth version_type / CurseForge releaseType 字段，遇到数据不规范的项目就会
-    /// 全军覆没）。与其继续在这个不可靠的字段上做隐藏，不如干脆全部显示，用户自己看版本号
-    /// 判断要不要装——对应"去掉这些按钮"的需求，见 ModDetailPage 里移除的"显示/隐藏预览版"
-    /// 按钮。
-    /// </summary>
+    // 先按游戏版本倒序，再按加载器名称排序；同一文件会出现在全部受支持版本下。
+    public static readonly IComparer<string> GameVersionComparer = Comparer<string>.Create(CompareVersions);
+
+    // 数字分段排序，保证 1.21.10 排在 1.21.9 前；同号正式版排在预览版前。
+    private static int CompareVersions(string? left, string? right)
+    {
+        if (string.Equals(left, right, StringComparison.OrdinalIgnoreCase)) return 0;
+        if (left == null) return -1;
+        if (right == null) return 1;
+        var a = System.Text.RegularExpressions.Regex.Matches(left, @"\d+|[^\d]+");
+        var b = System.Text.RegularExpressions.Regex.Matches(right, @"\d+|[^\d]+");
+        for (var i = 0; i < Math.Min(a.Count, b.Count); i++)
+        {
+            int result;
+            if (long.TryParse(a[i].Value, out var av) && long.TryParse(b[i].Value, out var bv))
+                result = av.CompareTo(bv);
+            else
+                result = StringComparer.OrdinalIgnoreCase.Compare(a[i].Value, b[i].Value);
+            if (result != 0) return result;
+        }
+        if (a.Count == b.Count) return 0;
+        var longer = a.Count > b.Count ? left : right;
+        var shorter = a.Count > b.Count ? right : left;
+        var suffix = longer[shorter.Length..];
+        var prerelease = suffix.StartsWith("-") || suffix.StartsWith(" ");
+        var resultForLonger = prerelease ? -1 : 1;
+        return a.Count > b.Count ? resultForLonger : -resultForLonger;
+    }
+
     public static List<VersionGroup> Group(IEnumerable<InlineVersionEntry> flatEntries, bool includePreview = true)
     {
-        // key: (加载器原始小写名, 游戏版本号字符串) -> 这一组包含的条目
         var buckets = new Dictionary<(string loader, string gameVersion), List<InlineVersionEntry>>();
-        var bucketOrder = new List<(string loader, string gameVersion)>(); // 记录首次出现顺序，保持组间相对顺序稳定
-
         foreach (var entry in flatEntries)
         {
             if (!includePreview && entry.IsPreview) continue;
-            var firstGameVersion = entry.GameVersionsText.Split(',', StringSplitOptions.TrimEntries)
-                .FirstOrDefault();
-            if (string.IsNullOrEmpty(firstGameVersion)) firstGameVersion = "未知版本";
-
-            foreach (var loader in entry.Loaders)
+            var versions = entry.GameVersions.Count == 0 ? new List<string> { "未知版本" } : entry.GameVersions;
+            foreach (var gameVersion in versions.Distinct(StringComparer.OrdinalIgnoreCase))
+            foreach (var loader in entry.Loaders.DefaultIfEmpty("minecraft").Distinct(StringComparer.OrdinalIgnoreCase))
             {
-                var key = (loader.ToLowerInvariant(), firstGameVersion);
-                if (!buckets.TryGetValue(key, out var list))
-                {
-                    list = new List<InlineVersionEntry>();
-                    buckets[key] = list;
-                    bucketOrder.Add(key);
-                }
-                list.Add(entry);
+                var key = (loader.ToLowerInvariant(), gameVersion);
+                if (!buckets.TryGetValue(key, out var list)) buckets[key] = list = new List<InlineVersionEntry>();
+                if (!list.Contains(entry)) list.Add(entry);
             }
         }
-
-        var groups = new List<VersionGroup>();
-        foreach (var key in bucketOrder)
-        {
-            var displayLoader = LoaderDisplayNames.TryGetValue(key.loader, out var name) ? name : key.loader;
-            var title = $"{displayLoader} {key.gameVersion}";
-            groups.Add(new VersionGroup(title, buckets[key]));
-        }
-        return groups;
+        return buckets.OrderByDescending(pair => pair.Key.gameVersion, GameVersionComparer)
+            .ThenBy(pair => LoaderDisplayNames.TryGetValue(pair.Key.loader, out var name) ? name : pair.Key.loader,
+                StringComparer.OrdinalIgnoreCase)
+            .Select(pair =>
+            {
+                var loader = LoaderDisplayNames.TryGetValue(pair.Key.loader, out var name) ? name : pair.Key.loader;
+                return new VersionGroup($"{loader} {pair.Key.gameVersion}", pair.Value, pair.Key.gameVersion, loader);
+            }).ToList();
     }
 }

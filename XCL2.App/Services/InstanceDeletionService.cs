@@ -93,6 +93,7 @@ public static class InstanceDeletionService
 
         if (string.Equals(config.SelectedVersionId, oldVersionId, StringComparison.OrdinalIgnoreCase))
             config.SelectedVersionId = newVersionId;
+        Plugins.PluginHostBridge.Current?.NotifyInstanceRenamed(folderPath, oldVersionId, newVersionId);
     }
 
     private static void MoveDictionaryEntry<TValue>(Dictionary<string, TValue> dict, string oldKey, string newKey)
@@ -110,12 +111,14 @@ public static class InstanceDeletionService
     public static void DeletePermanently(AppConfig config, string folderPath, string versionId)
     {
         var versionDir = Path.Combine(folderPath, "versions", versionId);
+        var existed = Directory.Exists(versionDir);
         if (Directory.Exists(versionDir))
         {
             Directory.Delete(versionDir, recursive: true);
         }
 
         CleanupConfigReferences(config, folderPath, versionId);
+        if (existed) Plugins.PluginHostBridge.Current?.NotifyInstanceRemoved(folderPath, versionId);
     }
 
     /// <summary>
@@ -128,6 +131,7 @@ public static class InstanceDeletionService
     public static void DeleteToRecycleBin(AppConfig config, string folderPath, string versionId)
     {
         var versionDir = Path.Combine(folderPath, "versions", versionId);
+        var existed = Directory.Exists(versionDir);
         if (Directory.Exists(versionDir))
         {
             Microsoft.VisualBasic.FileIO.FileSystem.DeleteDirectory(
@@ -137,6 +141,7 @@ public static class InstanceDeletionService
         }
 
         CleanupConfigReferences(config, folderPath, versionId);
+        if (existed) Plugins.PluginHostBridge.Current?.NotifyInstanceRemoved(folderPath, versionId);
     }
 
     /// <summary>两种"从电脑中删除"模式共用的配置清理逻辑，从原来的 DeletePermanently 里

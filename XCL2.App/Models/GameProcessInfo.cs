@@ -14,10 +14,21 @@ public class GameProcessInfo
     public string VersionId { get; }
     public string AccountLabel { get; }
     public string GameDir { get; }
+    /// <summary>按真实版本解析的触控分支；null 表示外部进程或版本信息未知。</summary>
+    public bool? UseOriginalTouchInput { get; set; }
+    /// <summary>本次启动时的选择，仅用于记录；当前是否允许接管由 TouchModeEnabled 决定。</summary>
+    public bool TouchModeRequestedAtLaunch { get; set; }
+    private volatile bool _touchModeEnabled;
+    /// <summary>当前实例明确启用且尚未关闭触屏模式；键鼠实例、外部发现实例默认不接管。</summary>
+    public bool TouchModeEnabled { get => _touchModeEnabled; set => _touchModeEnabled = value; }
+    public bool IsExternal { get; init; }
+    public string SourceLabel => IsExternal ? "其他启动器 / 外部启动" : "XCL2";
+    public string TouchInputRoute { get; set; } = "键鼠模式：未接管输入";
     public DateTime StartedAt { get; } = DateTime.Now;
 
-    /// <summary>本次已确认异常退出的独立日志快照，避免下次启动覆盖 latest.log。</summary>
-    public string? CrashLogPath { get; internal set; }
+    /// <summary>外部启动的游戏（其他启动器）已探测到的原生游戏窗口句柄；启动器自己启动的进程为 <see cref="IntPtr.Zero"/>，
+    /// 此时由 MainWindowHandle 轮询得到。</summary>
+    public IntPtr TouchWindowHandle { get; set; }
 
     /// <summary>游戏 Java 进程的 stdout+stderr 实时输出，滚动缓冲，供日志面板"游戏日志"Tab 展示。</summary>
     public StringBuilder OutputBuffer { get; } = new();
@@ -35,6 +46,7 @@ public class GameProcessInfo
     /// 用来区分"用户主动结束游戏"和"游戏自己意外退出/崩溃"——只有后者才需要弹崩溃提示，
     /// 前者是用户自己的操作，不应该被当成崩溃打扰用户。见 <see cref="Close"/>/<see cref="ForceKill"/>。</summary>
     public bool UserRequestedClose { get; private set; }
+    public string? CloseError { get; private set; }
 
     /// <summary>同一个进程的退出只能交给一处 UI 处理。启动阶段和 Exited 事件都可能几乎同时观察到退出，
     /// 用这个原子标记保证最多只弹一次退出/崩溃提示。</summary>
@@ -123,23 +135,36 @@ public class GameProcessInfo
     public void Close()
     {
         UserRequestedClose = true;
+        CloseError = null;
         try
         {
             if (HasExited) return;
+            Process.Refresh();
             if (!Process.CloseMainWindow() || !Process.WaitForExit(3000))
                 Process.Kill(entireProcessTree: true);
         }
-        catch { /* 忽略：进程可能已经退出 */ }
+        catch (Exception ex) { if (!HasExited) CloseError = ex.Message; }
     }
 
     /// <summary>强制结束进程树（用于"未响应"场景，CloseMainWindow 大概率无效，直接 Kill）。</summary>
     public void ForceKill()
     {
         UserRequestedClose = true;
+        CloseError = null;
         try
         {
             if (!HasExited) Process.Kill(entireProcessTree: true);
         }
-        catch { /* 忽略：进程可能已经退出 */ }
+        catch (Exception ex) { if (!HasExited) CloseError = ex.Message; }
     }
+
+    /// <summary>关闭等待在后台执行，多个游戏并行关闭，不阻塞启动器的界面线程。</summary>
+    public Task<bool> CloseAsync(bool force = false) => Task.Run(() =>
+    {
+        if (force) ForceKill(); else Close();
+        try { if (!HasExited) Process.WaitForExit(2000); }
+        catch (Exception ex) { if (!HasExited) CloseError = ex.Message; }
+        if (!HasExited) CloseError ??= "进程仍在运行，可能没有结束它的权限。";
+        return HasExited;
+    });
 }

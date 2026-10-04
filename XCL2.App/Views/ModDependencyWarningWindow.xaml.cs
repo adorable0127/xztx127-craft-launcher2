@@ -21,21 +21,33 @@ public partial class ModDependencyWarningWindow : OverlayDialogControl
     private readonly string _gameDir;
     private readonly LocalModService _localModService;
     private readonly List<LocalModInfo> _allEnabledMods;
+    private readonly string? _mcVersion;
+    private readonly string _loader;
+    private List<MissingDependencyDisplay> _items = new();
+
+    /// <summary>窗口里下载了前置或删除了 mod 之后触发，调用方据此立即刷新模组列表。</summary>
+    public event EventHandler? ModsChanged;
 
     /// <summary>用户点了"我知道了，仍要继续"确认要跳过警告继续启动。</summary>
     public bool UserChoseToContinue { get; private set; }
 
+    /// <param name="mcVersion">当前实例的 Minecraft 版本，用来只下载适配这个游戏版本的前置。</param>
+    /// <param name="loader">当前实例的加载器（Fabric/Forge/NeoForge/Quilt）。依赖分析目前只读 fabric.mod.json，
+    /// 所以没传时按 Fabric 处理。前置必须跟加载器一致，否则下载下来也加载不了。</param>
     public ModDependencyWarningWindow(ModDependencyAnalysisResult analysis, string gameDir,
-        List<LocalModInfo> allEnabledMods)
+        List<LocalModInfo> allEnabledMods, string? mcVersion = null, string? loader = null)
     {
         InitializeComponent();
         _gameDir = gameDir;
         _localModService = new LocalModService();
         _allEnabledMods = allEnabledMods;
+        _mcVersion = string.IsNullOrWhiteSpace(mcVersion) ? null : mcVersion;
+        _loader = string.IsNullOrWhiteSpace(loader) ? "Fabric" : loader!;
 
-        MissingList.ItemsSource = analysis.MissingDependencies
+        _items = analysis.MissingDependencies
             .Select(m => new MissingDependencyDisplay(m))
             .ToList();
+        MissingList.ItemsSource = _items;
     }
 
     private void ViewLogs_Click(object sender, RoutedEventArgs e)
@@ -77,23 +89,39 @@ public partial class ModDependencyWarningWindow : OverlayDialogControl
 
     private async void DownloadDependency_Click(object sender, RoutedEventArgs e)
     {
-        if (sender is not Button { Tag: MissingDependencyDisplay item } || item.Info.ModrinthSlug == null) return;
+        if (sender is not Button { Tag: MissingDependencyDisplay item }) return;
 
+        var loaderLabel = _loader + (_mcVersion != null ? $" {_mcVersion}" : "");
         var progressWin = new ProgressDialog($"正在下载 {item.DisplayName} ...");
         progressWin.Show();
         try
         {
             var modrinth = new ModrinthService();
-            // 直接按项目 slug 拉版本列表，不限定游戏版本/加载器——这里没有可靠的方式知道用户
-            // 当前选中的具体 MC 版本号（这个窗口不持有 GameVersion 上下文），保守起见拿最新版本，
-            // 装完之后如果版本不匹配，加载器本身也会在启动时给出明确的版本不兼容报错，
-            // 不会是"完全没反应"的静默失败。
-            var versions = await modrinth.GetVersionsAsync(item.Info.ModrinthSlug!, gameVersion: null);
-            var version = versions.FirstOrDefault();
+
+            // 1) 先确定 Modrinth 项目：内置映射表命中就直接用，没命中就按 mod id 去 Modrinth 解析
+            //    （只接受名字/slug 完全一致的结果，避免装错同名不同物的 mod）。
+            var slug = item.Info.ModrinthSlug
+                       ?? await modrinth.ResolveModProjectSlugAsync(item.Info.DependencyModId, _loader, _mcVersion);
+            if (slug == null)
+            {
+                progressWin.Close();
+                MessageBoxDialog.ShowWarning(
+                    $"没能在 Modrinth 上找到适配 {loaderLabel} 的「{item.DisplayName}」，请到 Modrinth 手动搜索（模组 ID：{item.Info.DependencyModId}）。", "提示");
+                return;
+            }
+
+            // 2) 按「加载器 + 游戏版本」过滤版本列表。以前这里不传任何过滤条件、直接取列表第一项，
+            //    所以 Fabric 的实例也可能拿到 NeoForge/Forge 的前置，装上必崩。
+            //    现在找不到匹配的就明确告诉用户，绝不退回去下一个别的加载器的文件。
+            var versions = await modrinth.GetVersionsForLoaderAsync(slug, _mcVersion, _loader);
+            // 优先正式版，其次 beta/alpha（列表本身已按发布时间倒序）。
+            var version = versions.FirstOrDefault(v => string.Equals(v.VersionType, "release", StringComparison.OrdinalIgnoreCase))
+                          ?? versions.FirstOrDefault();
             if (version == null)
             {
                 progressWin.Close();
-                MessageBoxDialog.ShowWarning($"没有在 Modrinth 上找到 {item.DisplayName} 的可用版本，请手动搜索安装。", "提示");
+                MessageBoxDialog.ShowWarning(
+                    $"Modrinth 上没有 {item.DisplayName} 适配 {loaderLabel} 的版本，请换个游戏版本，或手动搜索其它来源。", "提示");
                 return;
             }
 
@@ -101,7 +129,13 @@ public partial class ModDependencyWarningWindow : OverlayDialogControl
                 progressWin.Progress.Report(new ProgressInfo(Loc.T("Str_Cs_Downloading_Dependencies", "下载前置模组"), 0, 1, msg)));
             await modrinth.DownloadResourceAsync(_gameDir, Models.ModrinthResourceType.Mod, version, progress);
             progressWin.Close();
-            MessageBoxDialog.ShowInfo($"{item.DisplayName} 已下载安装完成，重新扫描一次 Mod 列表就能看到。", "完成");
+
+            // 下载完立刻通知调用方刷新模组列表，并把已解决的这一项从警告里去掉。
+            ModsChanged?.Invoke(this, EventArgs.Empty);
+            _items = _items.Where(i => !ReferenceEquals(i, item)).ToList();
+            MissingList.ItemsSource = _items;
+            MessageBoxDialog.ShowInfo($"{item.DisplayName}（{version.VersionNumber}，{string.Join("/", version.Loaders)}）已下载安装完成。", "完成");
+            if (_items.Count == 0) CloseWith(true);
         }
         catch (Exception ex)
         {
@@ -132,6 +166,8 @@ public partial class ModDependencyWarningWindow : OverlayDialogControl
         if (failed.Count > 0)
             MessageBoxDialog.ShowWarning($"以下 Mod 删除失败：{string.Join("、", failed)}", "部分失败");
 
+        ModsChanged?.Invoke(this, EventArgs.Empty);
+
         CloseWith(true); // 让调用方知道列表状态变了，需要刷新
         CloseWith(null);
     }
@@ -143,7 +179,9 @@ public class MissingDependencyDisplay
     public MissingDependency Info { get; }
     public string DisplayName => Info.DisplayName;
     public string RequiredByText => string.Join("、", Info.RequiredByModNames);
-    public bool CanDownload => Info.ModrinthSlug != null;
+    /// <summary>内置映射表里没有的前置，点击下载时会实时去 Modrinth 按 mod id 解析，
+    /// 所以按钮始终可点；解析不到会给出明确提示而不是静默失败。</summary>
+    public bool CanDownload => true;
 
     public string VersionHint => Info.VersionRange == "*" || string.IsNullOrWhiteSpace(Info.VersionRange)
         ? ""

@@ -35,6 +35,7 @@ public partial class LoaderChoiceDialog : OverlayDialogControl
 {
     /// <summary>用户确认选择的加载器类型；取消返回 null。</summary>
     public ServerCoreType SelectedLoader { get; private set; } = ServerCoreType.Vanilla;
+    public string? SelectedPluginLoaderId { get; private set; }
 
     private readonly string _mcVersionId;
     private readonly ClientLoaderInstallService _probeService;
@@ -44,6 +45,13 @@ public partial class LoaderChoiceDialog : OverlayDialogControl
         InitializeComponent();
         _mcVersionId = mcVersionId;
         TitleText.Text = $"安装 {mcVersionId}";
+        if (OptVanilla.Parent is Panel loaderChoices)
+            foreach (var provider in Services.Plugins.PluginProviderRegistry.Snapshot("loader"))
+            {
+                var button = new Button { Content = Loc.F("Str_Plugin_LoaderChoice", "插件：{0}", provider.Name), Margin = new Thickness(0, 8, 0, 0), Padding = new Thickness(12, 8, 12, 8) };
+                button.Click += (_, _) => { SelectedPluginLoaderId = provider.Id; CloseWith(true); };
+                loaderChoices.Children.Add(button);
+            }
 
         // 只是用来探测"支持不支持"，不需要跟着用户的下载源/多线程设置走，用最简单的默认构造即可。
         _probeService = new ClientLoaderInstallService(DownloadSource.Official);

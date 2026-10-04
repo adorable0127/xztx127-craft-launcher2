@@ -60,7 +60,7 @@ public static class ServerPropertiesService
             var idx = trimmed.IndexOf('=');
             if (idx < 0) continue;
             var key = trimmed[..idx].Trim();
-            if (remaining.TryGetValue(key, out var newValue))
+            if (updates.TryGetValue(key, out var newValue))
             {
                 if (newValue != null) lines[i] = $"{key}={newValue}";
                 remaining.Remove(key);
@@ -74,6 +74,12 @@ public static class ServerPropertiesService
             lines.Add($"{kv.Key}={kv.Value}");
         }
 
-        File.WriteAllLines(path, lines, Encoding.UTF8);
+        var temporary = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
+        try
+        {
+            File.WriteAllLines(temporary, lines, new UTF8Encoding(false));
+            File.Move(temporary, path, overwrite: true);
+        }
+        finally { if (File.Exists(temporary)) File.Delete(temporary); }
     }
 }

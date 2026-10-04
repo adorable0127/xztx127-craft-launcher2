@@ -1,4 +1,4 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using System.IO;
 using System.Reflection;
 
@@ -39,6 +39,10 @@ public class TerracottaService
     /// 新旧文件不会互相覆盖冲突、也方便一眼看出当前用的是哪个版本。</summary>
     private const string ExtractedFileName = "terracotta-0.4.2-windows-x86_64.exe";
 
+    /// <summary>当前构建是否真的携带内置 Terracotta。源码包可能因第三方二进制未纳入 Git 而缺少该文件；
+    /// csproj 会在文件存在时自动嵌入，不存在时仍允许启动器正常编译并使用手动覆盖路径。</summary>
+    public static bool HasEmbeddedExecutable => Assembly.GetExecutingAssembly().GetManifestResourceInfo(EmbeddedResourceName) != null;
+
     /// <summary>
     /// 确保内置的陶瓦联机可执行文件已经释放到本地磁盘，返回可直接运行的完整路径。
     /// 每次调用都会做一次轻量校验(文件是否存在 + 大小是否一致)，只有文件缺失或大小不对
@@ -54,7 +58,7 @@ public class TerracottaService
         var assembly = Assembly.GetExecutingAssembly();
         using var resourceStream = assembly.GetManifestResourceStream(EmbeddedResourceName)
             ?? throw new InvalidOperationException(
-                $"内置的陶瓦联机可执行文件资源缺失(找不到嵌入资源 {EmbeddedResourceName})，安装包可能不完整。");
+                $"当前构建没有携带内置陶瓦联机资源（{EmbeddedResourceName}）。请点击“使用其他版本”选择 Terracotta 可执行文件；如果你是从源码构建，也可以把对应 exe 放回 Resources\\Terracotta 后重新编译。");
 
         if (File.Exists(targetPath) && new FileInfo(targetPath).Length == resourceStream.Length)
             return targetPath;
@@ -74,7 +78,7 @@ public class TerracottaService
     /// 解析当前应该使用的陶瓦联机可执行文件路径：
     /// 1. 如果用户手动指定过覆盖路径(AppConfig.TerracottaExecutablePath)且文件仍然存在，用那个；
     /// 2. 否则(默认情况)使用内置版本，首次调用时自动释放到本地。
-    /// 这个方法保证总有一个可用路径返回，不会再出现"未检测到"的情况——内置版本恒定存在。
+    /// 如果当前构建未携带内置二进制且用户也没有指定覆盖路径，会抛出带修复说明的异常。
     /// </summary>
     public string ResolveExecutable(string? configuredOverridePath)
     {

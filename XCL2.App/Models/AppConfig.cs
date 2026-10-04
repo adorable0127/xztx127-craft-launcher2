@@ -170,6 +170,10 @@ public class AppConfig
     /// BMCLAPI 镜像源仍保留，用户可在下载中心的来源下拉框里手动切换（国内网络访问官方源较慢时更适用）。
     /// </summary>
     public DownloadSource Source { get; set; } = DownloadSource.Official;
+    /// <summary>插件事件回调等待上限，宿主限制在 0.1—30 秒；不承诺强停 DLL。</summary>
+    public double PluginCallbackTimeoutSeconds { get; set; } = 3;
+    public string? PluginDownloadProviderId { get; set; }
+    public string? PluginBackgroundId { get; set; }
 
     public string? JavaPath { get; set; }
 
@@ -218,17 +222,6 @@ public class AppConfig
     /// <summary>是否已经完成过首次启动向导（新手引导）。默认 false；向导跑完/用户主动跳过后设为 true，
     /// 之后启动器不会再自动弹出，但用户仍可在设置页手动"重新打开新手引导"。</summary>
     public bool FirstRunWizardCompleted { get; set; } = false;
-
-    /// <summary>
-    /// 启动器主窗口"标题栏"（自绘标题栏左上角文字）以及"任务栏/Alt-Tab"显示的文字
-    /// （这两处其实是同一个 Win32 Title：MainWindow.xaml 里自绘标题栏的 TitleBarText
-    /// 是绑定 Window.Title 本身画出来的，任务栏/Alt-Tab 也是读同一个 Title，只是两个
-    /// 不同"展示位置"，不是两份独立文字，改一个设置项同时管两处）。
-    /// null/空字符串表示"没有自定义过"，沿用跟这个设置项加入之前完全一样的默认行为——
-    /// 显示当前界面语言对应的 Str_Main_WindowTitlePrefix 资源字符串（并且会随语言切换
-    /// 自动刷新）；一旦用户填了非空文字，之后固定显示用户填的这段文字，不再随语言切换
-    /// 改变（见 MainWindow.ApplyWindowTitle）。</summary>
-    public string? CustomWindowTitleText { get; set; }
 
     /// <summary>是否已经逐页阅读并同意过首次启动展示的三份协议（用户协议 / 隐私协议 / 开源协议）。
     /// 默认 false：首次启动必须先看完三页协议并点「同意并继续」才能进入新手引导与主界面——
@@ -331,9 +324,6 @@ public class AppConfig
     /// <summary>是否显示日志面板（游戏控制台输出 / 启动器日志）。默认关闭，小白用户看不到也不受打扰。</summary>
     public bool ShowLogPanel { get; set; } = false;
 
-    /// <summary>崩溃分析页是否同时列出普通游戏日志。默认关闭，只显示崩溃报告和已确认的异常退出快照。</summary>
-    public bool ShowNormalLogsInCrashAnalysis { get; set; } = false;
-
     /// <summary>是否启用注入检测（游戏进程模块扫描 + 已知外挂特征码匹配）。默认开启，属于安全保护功能。</summary>
     public bool EnableInjectionScan { get; set; } = true;
 
@@ -368,6 +358,9 @@ public class AppConfig
 
     /// <summary>悬浮层整体缩放倍率。平板屏幕物理尺寸差异大，8 寸小平板建议调到 0.8，
     /// 13 寸 Surface 建议 1.1~1.3。取值范围 0.5~2.0。</summary>
+    /// <summary>插件启动策略：每次启动运行，或仅导入后运行一次。</summary>
+    public PluginLaunchMode PluginLaunchMode { get; set; } = PluginLaunchMode.EachLaunch;
+
     public double TouchOverlayButtonScale { get; set; } = 1.0;
 
     /// <summary>悬浮层不透明度（百分比，20~100）。调低可以少挡游戏画面，但按钮也更难看清。</summary>
@@ -411,10 +404,6 @@ public class AppConfig
     /// 覆盖装进已有实例几乎必然跟已装的 mod 打架。
     /// </summary>
     public bool ModpackDropCreatesNewInstance { get; set; } = true;
-
-    /// <summary>第三方插件启动方式。默认每次打开启动器运行；OnceOnImport 只在首次
-    /// 拖入并确认导入时运行一次，重启和重新扫描均不再自动运行。</summary>
-    public PluginLaunchMode PluginLaunchMode { get; set; } = global::XCL2.App.Models.PluginLaunchMode.EachLaunch;
 
     /// <summary>
     /// 社区资源是否显示预览版（beta / alpha）。
@@ -765,6 +754,10 @@ public class AppConfig
     /// <summary>Multiple / Any / All 模式下的候选实例 ID，限定在当前选择的游戏文件夹中。</summary>
     public List<string> LifecycleBackupVersionIds { get; set; } = new();
     public string? CustomBackgroundImagePath { get; set; }
+
+    /// <summary>用户在候选列表里点了当前选中的那一张、主动取消了选择：候选池保留，但不显示任何
+    /// 毛玻璃背景图片。选中任意一张/导入新图片/清空候选池时复位为 false。</summary>
+    public bool CustomBackgroundDeselected { get; set; }
 
     /// <summary>
     /// 自定义毛玻璃背景图片的磨砂强度。取值范围 25~100：25 接近透明/清晰，
@@ -1203,13 +1196,6 @@ public static class UiZoomShortcutMode
     /// <summary>Ctrl + 键盘上下方向键。</summary>
     public const string CtrlArrow = "CtrlArrow";
     public static readonly string[] All = { CtrlWheel, CtrlArrow };
-}
-
-/// <summary>导入第三方插件后何时再次启动。</summary>
-public enum PluginLaunchMode
-{
-    EachLaunch,
-    OnceOnImport
 }
 
 /// <summary>拖入 .zip 且内容特征不明确时的默认处理方式。</summary>

@@ -1,5 +1,6 @@
 using System.Windows;
 using System.Windows.Controls;
+using XCL2.App.Models;
 using XCL2.App.Services;
 
 namespace XCL2.App.Views;
@@ -21,10 +22,16 @@ namespace XCL2.App.Views;
 public partial class ServerPropertiesWindow : OverlayDialogControl
 {
     private readonly string _serverDir;
+    private readonly ServerInstance _instance;
+    private readonly ServerInstanceService _instances;
+    private readonly ServerProcessManager _processes;
 
-    public ServerPropertiesWindow(string serverDir)
+    public ServerPropertiesWindow(ServerInstance instance, ServerInstanceService instances, ServerProcessManager processes)
     {
-        _serverDir = serverDir;
+        _serverDir = instance.Directory;
+        _instance = instance;
+        _instances = instances;
+        _processes = processes;
         InitializeComponent();
         Loaded += (_, _) => LoadFromFile();
     }
@@ -32,6 +39,10 @@ public partial class ServerPropertiesWindow : OverlayDialogControl
     private void LoadFromFile()
     {
         var props = ServerPropertiesService.Load(_serverDir);
+        ServerPortBox.Text = (_processes.GetRunning(_instance.Id)?.ServerPort ?? ServerPortService.ReadPort(_instance)).ToString();
+        ServerPortBox.IsEnabled = !_processes.IsRunning(_instance.Id);
+        AutoAvoidPortCheck.IsChecked = _instance.AutoAvoidPort;
+        AutoAvoidPortCheck.IsEnabled = ServerPortBox.IsEnabled;
 
         MaxPlayersBox.Text = props.GetValueOrDefault("max-players", "20");
         ViewDistanceBox.Text = props.GetValueOrDefault("view-distance", "10");
@@ -77,6 +88,11 @@ public partial class ServerPropertiesWindow : OverlayDialogControl
 
     private void Save_Click(object sender, RoutedEventArgs e)
     {
+        if (!int.TryParse(ServerPortBox.Text.Trim(), out var requestedPort) || !ServerPortService.IsValid(requestedPort))
+        {
+            MessageBoxDialog.ShowInfo("服务器端口必须是 1–65535 之间的整数。", "端口无效");
+            return;
+        }
         // 两套游戏模式/难度选框理论上应该保持一致（同一个字段，只是给不同 MC 版本时代的两种
         // 展示），但用户完全可能只改了其中一侧就点保存。这里以"新版本(1.14+)"那一侧为准，
         // 因为当前新建的服务器绝大多数都是 1.14+，老字段那一侧仅用于兼容极老版本核心，
@@ -111,7 +127,31 @@ public partial class ServerPropertiesWindow : OverlayDialogControl
 
         try
         {
+            var running = _processes.GetRunning(_instance.Id);
+            var previousAutoAvoid = _instance.AutoAvoidPort;
+            if (running == null) _instance.AutoAvoidPort = AutoAvoidPortCheck.IsChecked != false;
+            int port;
+            try
+            {
+                port = running?.ServerPort ?? ServerPortService.FindAvailablePort(requestedPort, _instance,
+                    _instances.Instances, _processes.Processes);
+            }
+            catch (InvalidOperationException portEx)
+            {
+                // 严格端口模式下端口被占用：直接告诉用户原因，并还原开关，不当成“文件被占用”处理。
+                _instance.AutoAvoidPort = previousAutoAvoid;
+                MessageBoxDialog.ShowInfo(portEx.Message, "端口不可用");
+                return;
+            }
+            if (_instance.CoreType is not (ServerCoreType.Velocity or ServerCoreType.Waterfall))
+                updates["server-port"] = port.ToString();
             ServerPropertiesService.Save(_serverDir, updates);
+            if (running == null) ServerPortService.WritePort(_instance, port);
+            _instance.ServerPort = port;
+            _instances.Update(_instance);
+            ServerPortBox.Text = port.ToString();
+            if (port != requestedPort)
+                ToastService.ShowWarning($"端口 {requestedPort} 已占用或与其他服务器冲突，已保存为 {port}。");
             StatusText.Text = Loc.T("Str_Cs_Saved_Restart_The_Server_For_It_To_Take_", "已保存，重启服务器后生效。");
             CloseWith(true);
         }

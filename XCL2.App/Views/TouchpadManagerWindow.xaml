@@ -2,7 +2,7 @@
                            xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
                            xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
                            xmlns:local="clr-namespace:XCL2.App.Views"
-                           MinWidth="600" MaxWidth="600" MinHeight="440" MaxHeight="440">
+                           MinWidth="600" MaxWidth="600" MinHeight="470" MaxHeight="470">
     <Grid Margin="16">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
@@ -14,8 +14,11 @@
         <TextBlock Text="触摸板" FontSize="18" FontWeight="Bold"
                    Foreground="{DynamicResource TextPrimaryBrush}"/>
         <StackPanel Grid.Row="1" Margin="0,8,0,12">
-            <TextBlock Text="选择已启动的游戏实例，为它开启或关闭触摸板。关闭触摸板后游戏继续运行。"
+            <TextBlock Text="选择游戏（包括其他启动器启动的实例）。开启触摸板会切换为触屏模式；关闭后恢复键鼠模式，游戏继续运行。"
                        TextWrapping="Wrap" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}"/>
+            <TextBlock Text="对 Java 版 26.3-snapshot-3 及以下的版本的渲染器支持不佳（这全部要‘归功’于bugojong（也是mojang）的屎山代码）；建议使用 26.3 正式版及更高版本来使用触屏。"
+                       TextWrapping="Wrap" Margin="0,6,0,0" FontSize="12" FontWeight="SemiBold"
+                       Foreground="{DynamicResource TextPrimaryBrush}"/>
             <TextBlock x:Name="SummaryText" Margin="0,6,0,0" FontSize="12"
                        Foreground="{DynamicResource TextSecondaryBrush}"/>
         </StackPanel>

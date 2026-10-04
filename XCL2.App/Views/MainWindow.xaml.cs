@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Diagnostics;
 using System.Linq;
@@ -25,14 +26,87 @@ public partial class MainWindow : Window
 
     public ConfigService ConfigService { get; } = new();
 
+    /// <summary>第三方插件管理器；整个启动器只保留这一个实例（见 PLUGIN_GUIDE.md）。</summary>
+    public Services.Plugins.PluginManager Plugins { get; } =
+        new(msg => LauncherLogService.AppendLine("[插件] " + msg));
+
+    /// <summary>
+    /// 导入用户选择的插件文件：逐个检查同名冲突并询问处理方式，统一重新扫描；
+    /// 对本次新导入且带公开清单的插件，如果首次启用/权限集合发生变化，则立即引导用户完成授权，
+    /// 授权保存后再扫描一次，让 Provider、事件、UI、Runtime 等注册在这次导入流程里真正生效。
+    /// 用户取消授权时只保留安装文件，不会静默授予权限，插件会以 AuthorizationRequired 状态留在管理页。
+    /// </summary>
+    public void ImportPluginFiles(IEnumerable<string> files)
+    {
+        var sources = files.Where(path => !string.IsNullOrWhiteSpace(path))
+            .Select(Path.GetFullPath).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+        if (sources.Length == 0) return;
+
+        var preview = string.Join("\n", sources.Take(6).Select(path => "• " + Path.GetFileName(path)));
+        if (sources.Length > 6) preview += $"\n…以及另外 {sources.Length - 6} 个文件";
+        if (!MessageBoxDialog.ShowDangerConfirm(
+                "第三方插件会在启动器进程内运行代码（DLL）或启动独立程序（EXE）。插件 API 的敏感能力会按清单授权，但第三方代码本身仍拥有当前用户进程能够获得的系统权限。\n\n" +
+                "这些插件未经 XCL2 官方验证；请只导入你信任来源的文件。带 plugin.json 的插件随后还会逐项显示并请求 API 权限。\n\n" + preview,
+                "导入第三方插件", "取消", "我已了解风险，继续")) return;
+
+        var importedPaths = new List<string>();
+        foreach (var file in sources)
+        {
+            try
+            {
+                var conflict = Plugins.FindInstallConflict(file);
+                var action = Services.Plugins.PluginInstallConflictAction.Replace;
+                if (conflict != null)
+                    action = PluginConflictDialog.Choose(Path.GetFileNameWithoutExtension(file), conflict);
+                if (conflict != null && action == Services.Plugins.PluginInstallConflictAction.Cancel) continue;
+                var installed = Plugins.InstallFromFile(file, action);
+                if (installed != null) importedPaths.Add(installed);
+            }
+            catch (Exception ex)
+            {
+                LauncherLogService.AppendLine($"[插件] 导入 {file} 失败：{ex.Message}");
+                ToastService.ShowWarning($"导入插件失败：{Path.GetFileName(file)}（{ex.Message}）");
+            }
+        }
+        if (importedPaths.Count == 0) return;
+
+        Plugins.StartPolicy = ConfigService.Config.PluginLaunchMode;
+        Plugins.ScanAndLoad();
+
+        var authorizationChanged = false;
+        foreach (var installed in importedPaths.Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            var info = Plugins.Plugins.FirstOrDefault(p => p.FilePath.Equals(installed, StringComparison.OrdinalIgnoreCase));
+            if (info?.Metadata is not { IsLegacy: false } metadata ||
+                !info.Diagnostics.Any(d => d.Code == "AuthorizationRequired")) continue;
+
+            var dialog = new PluginPermissionsDialog(metadata, Plugins.GetGrantedPermissions(installed));
+            if (OverlayDialogService.ShowModal(dialog) != true) continue;
+            try
+            {
+                Plugins.SetPermissions(installed, dialog.Granted);
+                authorizationChanged = true;
+            }
+            catch (Exception ex)
+            {
+                LauncherLogService.AppendLine($"[插件] 保存 {metadata.Name} 授权失败：{ex.Message}");
+                MessageBoxDialog.ShowWarning(ex.Message, Loc.T("Str_Plugin_Authorize", "插件授权"));
+            }
+        }
+
+        // 等全部权限选择结束后只重载一次，避免导入多个有依赖关系的插件时每授权一个就把整套插件反复停启。
+        if (authorizationChanged) Plugins.ScanAndLoad();
+
+        var stillPending = importedPaths.Distinct(StringComparer.OrdinalIgnoreCase).Count(path =>
+            Plugins.Plugins.FirstOrDefault(p => p.FilePath.Equals(path, StringComparison.OrdinalIgnoreCase))?.Diagnostics
+                .Any(d => d.Code == "AuthorizationRequired") == true);
+        ToastService.ShowSuccess(stillPending == 0
+            ? $"已导入并完成注册 {importedPaths.Count} 个插件"
+            : $"已导入 {importedPaths.Count} 个插件；其中 {stillPending} 个等待授权后注册");
+    }
+
     /// <summary>全局游戏进程注册表，供主页进程控制按钮组、日志面板、崩溃/注入分析共用。</summary>
     public GameProcessManager ProcessManager { get; } = new();
-
-    /// <summary>插件系统入口：扫描 / 加载 / 启用禁用第三方插件，见
-    /// Services/Plugins/PluginManager.cs 类头注释。整个进程只有这一份实例，
-    /// "插件管理"弹窗、以及以后任何需要枚举插件的地方都从这里拿，不另外 new。
-    /// 日志走 LauncherLogService，跟启动器其它模块共用同一份"日志"页可见的日志。</summary>
-    public Services.Plugins.PluginManager Plugins { get; } = new(line => LauncherLogService.AppendLine(line));
 
     /// <summary>已创建的服务器实例列表（服务端管理模块），AppData 为主存储、json/servers.json 为镜像。</summary>
     public ServerInstanceService ServerInstanceService { get; } = new();
@@ -65,9 +139,28 @@ public partial class MainWindow : Window
     /// <summary>访客模式服务：生成本次会话的临时账户 + 应用退出前清理本次会话产生的日志/临时下载。</summary>
     private readonly GuestModeService _guestModeService = new();
     private ScheduledInstanceBackupService? _scheduledInstanceBackupService;
-    // 所有窗口关闭入口共用一次请求；弹窗、备份和动画期间不重复进入。
-    private bool _closeRequestPending;
-    private bool _closeApproved;
+    private bool _closeLifecycleBackupRunning;
+    private bool _closeLifecycleBackupCompleted;
+    private bool _stickyNoteCloseDecisionHandled;
+
+    /// <summary>触屏模式关闭确认是否已经问过一遍，见 MainWindow_Closing 里的处理——
+    /// 跟便签三选一同一个道理：Closing 事件可能因为备份/收尾动画被重新触发好几次，
+    /// 不加这个标记会导致同一次关闭动作被反复追问"触屏要不要一起关"。</summary>
+    private bool _touchCloseDecisionHandled;
+
+    /// <summary>本次关闭是否选择了"关闭XCL和虚拟按键，但游戏继续单独跑"——用来告诉后面
+    /// 那段"彻底退出顺手清理游戏/服务器子进程"的逻辑这次要绕开，不能把用户明确要保留的
+    /// 游戏进程也杀掉。</summary>
+    private bool _touchCloseKeepGameRunning;
+    /// <summary>关闭前的"淡出+下沉"收尾动画只播一次：动画播完的回调里会再调用一次 Close()，
+    /// 重新进入 MainWindow_Closing，这时候要能识别出"动画已经放过了"直接放行，不然会
+    /// 死循环播放动画。</summary>
+    private bool _closeAnimationPlayed;
+    private bool _closeRequestAccepted;
+    private bool _shutdownAfterClose;
+    private bool _forceExitRequested;
+    private int _windowStateAnimationGeneration;
+    private Windows11SnapLayoutService? _snapLayouts;
     /// <summary>配合 MainWindow_StateChanged 判断"这次状态变化是不是从最小化恢复"——
     /// 从最小化恢复要接 FadeInMove(呼应 MinimizeWithAnimation 收起时的淡出)，
     /// 其它 Normal⇄Maximized 之间的切换则接 SettleScale，两种过渡不一样，需要先知道
@@ -87,6 +180,9 @@ public partial class MainWindow : Window
 
     /// <summary>避免同一时刻已经有一个内存警告窗口在显示时又弹出第二个。</summary>
     private MemoryWarningWindow? _activeMemoryWarningWindow;
+    private bool _memoryWarningPending;
+    private bool _lastSavedTouchModeEnabled;
+    private bool _closingGames;
 
     /// <summary>
     /// "启动游戏"按钮的防手滑冷却：记录上一次点击被接受处理的时间。
@@ -127,25 +223,6 @@ public partial class MainWindow : Window
     /// <summary>当前是否处于"取消启动"可点击状态（即已经在启动流程中，按钮显示为取消）。</summary>
     private bool _isCancelLaunchState;
 
-    /// <summary>
-    /// 本次进程运行期间是否处于"新界面预览"会话：只在构造函数里由 --preview-session 隐藏参数
-    /// 或落盘配置 ConfigService.Config.PreviewModeEnabled 判定一次，此后整个进程生命周期内不变
-    /// （开关本身开启/关闭预览都是走 RequestPreviewModeRestart / RequestExitPreviewModeRestart
-    /// 整个重启启动器，不存在"同一个进程里中途切换"的情况，所以不需要运行期间重新赋值）。
-    ///
-    /// 单独存这一份、而不是每次都现读 ConfigService.Config.PreviewModeEnabled 的原因：要覆盖
-    /// "命令行/快捷方式手动带了 --preview-session，但磁盘配置这次没有同步为 true"这种兼容场景——
-    /// 只要本次会话已经判定成预览，之后每一次 ShowHome() 都必须保持一致，不能因为单独看配置项
-    /// 又得到不一样的结果。
-    ///
-    /// 用途：每次 ShowHome() 新建 HomePage 实例（首页首次展示、以及之后点侧边栏"首页"或其它
-    /// 途径导航回首页产生的全新实例）时，都用这个字段去同步 HomePage 上"新界面预览"开关的
-    /// 亮起状态，修复"已经处于预览会话、界面也确实是预览样式，但切换几次页面回到首页后开关
-    /// 又变回熄灭"的问题——根因是每次导航都会 new 一个全新的 HomePage，之前只有启动那一次
-    /// 调用了 MarkAsMainWindowPreviewSession()，后续新建的实例都停在 XAML 里的默认未选中状态。
-    /// </summary>
-    private bool _isPreviewSession;
-
     /// <summary>记录窗口最近一次处于"非最小化"状态时的 WindowState(Normal 或 Maximized)。
     /// 修复"启动/下载成功弹窗出现时启动器窗口会自动最小化"：如果窗口在弹窗前已经被系统
     /// (或前台焦点被刚拉起的游戏进程抢走)意外最小化，简单粗暴地把 WindowState 设成
@@ -180,7 +257,7 @@ public partial class MainWindow : Window
             FirstFrameRendered?.Invoke(this, EventArgs.Empty);
             if (ConfigService.Config.BackupInstanceOnStartup)
             {
-                Dispatcher.BeginInvoke(new Action(() => _ = RunLifecycleBackupAsync("启动时备份", showToast: false)),
+                _ = Dispatcher.BeginInvoke(new Action(() => _ = RunLifecycleBackupAsync("启动时备份", showToast: false)),
                     DispatcherPriority.Background);
             }
         };
@@ -193,6 +270,7 @@ public partial class MainWindow : Window
         // 都跑完；EnableUiAnimations 关闭时 UiAnimationHelper 内部直接同步定终值，不引入
         // 任何延迟，不影响启动速度。
         Loaded += (_, _) => UiAnimationHelper.FadeInMove(RootWindowGrid, RootWindowMoveTransform);
+        Loaded += (_, _) => InitializePluginUi();
 
         // 注意：这里**不能**调用 ApplyFeatureVisibility()/RefreshSimplifiedModeNavVisibility()。
         // 那两个方法读的是 ConfigService.Config，而 ConfigService.Load() 要到下面几十行之后
@@ -216,11 +294,14 @@ public partial class MainWindow : Window
         // 必须放在这个事件里而不是构造函数本体直接调用。
         SourceInitialized += (_, _) => WindowChromeService.EnableWorkAreaAwareMaximize(this);
 
-        // Win11 贴靠布局(Snap Layout)悬停菜单：只在 Windows 11 上懒加载（见
-        // WindowChromeService.EnableSnapLayoutForMaximizeButton 顶部注释），Win10 及更早
-        // 版本这行调用内部直接原样返回，不挂任何钩子、没有额外开销。
-        SourceInitialized += (_, _) => WindowChromeService.EnableSnapLayoutForMaximizeButton(
-            this, MaximizeRestoreButton, ToggleMaximizeRestore);
+        // Win10 不创建计时器或弹层；Win11 首次悬停才构建布局界面。
+        if (OperatingSystem.IsWindowsVersionAtLeast(10, 0, 22000))
+            _snapLayouts = new Windows11SnapLayoutService(this, MinimizeButton, MaximizeRestoreButton);
+        Closed += (_, _) =>
+        {
+            _snapLayouts?.Dispose();
+            if (_shutdownAfterClose) Application.Current.Shutdown();
+        };
 
         // 标题栏跟随深浅色模式（修复"顶部白条"）现在由 App.xaml.cs 里注册的
         // EventManager.RegisterClassHandler 对所有 Window 统一处理，MainWindow 不需要
@@ -374,24 +455,20 @@ public partial class MainWindow : Window
         ApplySidebarCollapsedState(collapsed: false);
 
         ConfigService.Load();
+        var pluginHost = new Services.Plugins.PluginHostBridge(this);
+        Plugins.BindHost(pluginHost);
+        EventHandler? pluginReady = null;
+        pluginReady = async (_, _) => { ContentRendered -= pluginReady; await pluginHost.MarkReadyAsync(); };
+        ContentRendered += pluginReady;
 
-        // 插件策略必须在读取用户配置后确定；放在 Load 之前会把“只在导入时启动一次”
-        // 误读成默认的“每次启动”，从而在下一次打开启动器时重新执行第三方代码。
-        Plugins.StartPolicy = ConfigService.Config.PluginLaunchMode;
-        try { Plugins.ScanAndLoad(); }
-        catch (Exception ex) { LauncherLogService.AppendLine($"[PluginManager] 加载插件失败：{ex.Message}"); }
-
-        // 标题栏（自绘标题栏左上角文字，见 TitleBarText）/任务栏/Alt-Tab 显示的文字：
-        // 必须紧跟 ConfigService.Load() 之后应用一次，保证窗口首帧出现之前任务栏图标上
-        // 就已经是用户自定义好的文字，不会先闪一下默认标题再被纠正。
-        // LanguageChanged：用户没有自定义过（CustomWindowTitleText 为空）时，标题文字
-        // 来源是 Str_Main_WindowTitlePrefix 这条语言资源——一旦下面 ApplyWindowTitle 用
-        // 代码给 Title 赋过值，XAML 里原来那条 DynamicResource 绑定就被替换掉了，语言切换
-        // 不会再自动刷新 Title，所以要订阅 LanguageChanged 自己重新取一次，跟类注释里
-        // "code-behind 缓存过资源字符串就该订阅这个事件"的约定一致。
-        ApplyWindowTitle();
-        LocalizationService.LanguageChanged += ApplyWindowTitle;
-        Closed += (_, _) => LocalizationService.LanguageChanged -= ApplyWindowTitle;
+        // 配置读完之后再按用户的启动策略扫描/启动插件；插件失败只记日志，不能影响启动器本身。
+        try
+        {
+            Plugins.StartPolicy = ConfigService.Config.PluginLaunchMode;
+            Plugins.ScanAndLoad();
+        }
+        catch (Exception ex) { LauncherLogService.AppendLine($"[插件] 启动时扫描失败：{ex.Message}"); }
+        Closed += (_, _) => { try { Plugins.ShutdownAll(); } catch { /* 退出时尽力而为 */ } finally { pluginHost.Dispose(); } };
 
         // 配置真正读进来之后，才第一次按它同步所有"由配置决定显隐"的界面元素：
         // 功能隐藏（F12 那套）、简洁模式侧边栏、实验性功能按钮的语言门控。
@@ -400,6 +477,7 @@ public partial class MainWindow : Window
         ApplyConfigDrivenVisibility();
 
         ServerInstanceService.Load();
+        ServerProcessManager.InstanceProvider = () => ServerInstanceService.Instances;
         _scheduledInstanceBackupService = new ScheduledInstanceBackupService(ConfigService);
         Closed += (_, _) => _scheduledInstanceBackupService?.Dispose();
         Topmost = ConfigService.Config.AlwaysOnTop;
@@ -409,6 +487,9 @@ public partial class MainWindow : Window
         // 无条件 ApplyCustomAccent，随后 ContentRendered 又切回真实 UiSkin，于是启动/切页时
         // 按钮会肉眼可见地闪成深蓝再恢复。这里只走完整主题入口，绝不单独套自定义强调色。
         var loadedCfg = ConfigService.Config;
+        _lastSavedTouchModeEnabled = loadedCfg.TouchModeEnabled;
+        ConfigService.Saved += OnConfigSaved;
+        Closed += (_, _) => ConfigService.Saved -= OnConfigSaved;
 
         // 「背景图片 / 配色色系」的候选池 + 每日轮换：必须在下面 ApplyForCurrentState 和
         // SetCustomBackgroundImage 之前解析完，这样窗口首帧出现时看到的就已经是今天该显示的
@@ -521,18 +602,7 @@ public partial class MainWindow : Window
         // "新界面预览"现在是落盘配置（ConfigService.Config.PreviewModeEnabled），不再只靠
         // 一次性的 --preview-session 隐藏参数：正常双击启动也会读到上次保存的选择。
         // 命令行参数继续兼容保留（比如脚本/快捷方式里手动加的场景）。
-        // 这里判定出来的结果存进 _isPreviewSession，后面每一次 ShowHome() 都要用它，
-        // 不能只在这一次启动时判断——否则用户导航离开首页再回来，新建出来的 HomePage
-        // 实例会读不到"其实还在预览会话里"这件事。
-        _isPreviewSession = App.StartupArgs.EnterPreviewMode || ConfigService.Config.PreviewModeEnabled;
-        if (_isPreviewSession)
-        {
-            ShowExperimentalPreview();
-        }
-        else
-        {
-            ShowHome();
-        }
+        ShowHome(); // 内部按 IsPreviewModeActive 决定显示新界面预览还是默认首页
 
         // 启动时自动扫描本机的 .minecraft 文件夹（AppData + 每个磁盘 1/2/3 级目录），
         // 找到新的就自动加入"版本选择"页的文件夹列表，不需要用户手动一个个"添加文件夹"。
@@ -607,8 +677,10 @@ public partial class MainWindow : Window
 
         // 定时清理已退出的进程记录，保持"进程管理"列表/按钮的可用性状态是最新的
         _pruneTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
-        _pruneTimer.Tick += (_, _) => ProcessManager.PruneExited();
+        _pruneTimer.Tick += async (_, _) => await ProcessManager.RefreshAsync();
         _pruneTimer.Start();
+        _ = ProcessManager.RefreshAsync();
+        Closed += (_, _) => _pruneTimer.Stop();
 
         // 「自动循环」深浅色模式：之前是每分钟检查一次。反馈里出现过"到了设定的切换时间，
         // 界面没有自动变成深色，非要重启启动器一次才生效"的情况——ReevaluateAutoThemeCycle
@@ -658,26 +730,11 @@ public partial class MainWindow : Window
         // 事件触发过，这个标记就一定会被置位"即可。
         Closed += (_, _) => _isWindowClosed = true;
 
-        // 关闭时机修正：Plugins.ShutdownAll() 必须先于 LauncherLogService.EndSessionAndFlush()
-        // 执行。原因：EndSessionAndFlush() 把内存缓冲一次性写盘后就把内部 _written 标记为
-        // true（幂等设计，防止重复写盘），此后任何人再调用 AppendLine 往缓冲区追加内容，
-        // 都不会再有第二次落盘机会——这些内容只存在于内存里，进程退出后就彻底丢失。
-        // 如果先调用 EndSessionAndFlush() 再调用 Plugins.ShutdownAll()，插件 Shutdown()
-        // 里通过 ctx.Log(...) 写的任何东西（包括排查问题用的诊断信息、异常信息）都不会
-        // 出现在最终落盘的会话日志文件里，看起来就像"Shutdown 根本没执行"，其实只是记录
-        // 下来的内容没能来得及写盘。调整顺序后，插件整个 Shutdown 阶段（含 PluginManager
-        // 内部对每个插件 Shutdown() 抛出异常时记的日志）都会先进入内存缓冲，再统一落盘。
-        //
-        // 需求："启动器每次关闭时会自动生成会话日志"。EndSessionAndFlush 仍然写在访客模式
-        // 清理**之前**：访客模式清理会删掉本次会话新产生的日志文件（见
-        // GuestModeService.CleanupNewLogFiles 注释——"不留下这次使用的痕迹"是访客模式的
-        // 既定设计），如果反过来先清理再落盘，访客模式下这个文件会残留下来，跟"访客模式
-        // 不留痕迹"的承诺矛盾。
-        Closed += (_, _) =>
-        {
-            try { Plugins.ShutdownAll(); }
-            catch (Exception ex) { LauncherLogService.AppendLine($"[PluginManager] 退出时停止插件失败：{ex.Message}"); }
-        };
+        // 需求："启动器每次关闭时会自动生成会话日志"。写在访客模式清理**之前**：
+        // 访客模式清理会删掉本次会话新产生的日志文件（见 GuestModeService.CleanupNewLogFiles
+        // 注释——"不留下这次使用的痕迹"是访客模式的既定设计），如果反过来先清理再落盘，
+        // 访客模式下这个文件会残留下来，跟"访客模式不留痕迹"的承诺矛盾。非访客模式下
+        // 顺序无所谓，这里统一放前面简化逻辑。
         Closed += (_, _) => LauncherLogService.EndSessionAndFlush();
 
         // 应用关闭时，如果访客模式是开启状态，清理本次会话产生的日志/临时下载文件，
@@ -1169,20 +1226,36 @@ public partial class MainWindow : Window
 
     /// <summary>
     /// 弹出内存不足警告窗口。同一时刻只保留一个警告窗口实例（避免多次触发时叠出一堆
-    /// 弹窗把屏幕糊住），如果当前没有正在运行的游戏进程，说明内存紧张的来源不是本启动器
-    /// 拉起的游戏（可能是下载/解压占用，或者纯粹是用户其它程序占用的），此时弹一个"没有
+    /// 弹窗把屏幕糊住），先刷新包含其他启动器的游戏列表；没有游戏时才跳过。
+    /// 内存紧张也可能不是游戏导致（可能是下载/解压占用，或者纯粹是用户其它程序占用的），此时弹一个"没有
     /// 可关闭游戏进程"的提示意义不大，直接跳过，避免无谓打扰。
     /// </summary>
-    private void ShowMemoryWarning(MemoryWatchdogService.LowMemoryEventArgs args)
+    private async void ShowMemoryWarning(MemoryWatchdogService.LowMemoryEventArgs args)
     {
-        if (_activeMemoryWarningWindow != null) return;
-        if (ProcessManager.Running.Count == 0) return;
+        if (_activeMemoryWarningWindow != null || _memoryWarningPending || _isWindowClosed) return;
+        _memoryWarningPending = true;
+        try
+        {
+            // 必须先发现外部实例，再判断有无可关闭的游戏。
+            await ProcessManager.RefreshAsync();
+            if (_isWindowClosed || _activeMemoryWarningWindow != null || ProcessManager.Running.Count == 0) return;
+            _activeMemoryWarningWindow = new MemoryWarningWindow(ProcessManager, _memoryWatchdog, args);
+            _activeMemoryWarningWindow.RequestClose += (_, _) => _activeMemoryWarningWindow = null;
+            _activeMemoryWarningWindow.Show();
+        }
+        finally { _memoryWarningPending = false; }
+    }
 
-        _activeMemoryWarningWindow = new MemoryWarningWindow(ProcessManager, _memoryWatchdog, args);
-        // MemoryWarningWindow 已迁移成内嵌 Overlay，UserControl 没有 Window.Closed，
-        // 用等价的 IOverlayDialog.RequestClose 复位这个"同一时刻只留一个"的哨兵字段。
-        _activeMemoryWarningWindow.RequestClose += (_, _) => _activeMemoryWarningWindow = null;
-        _activeMemoryWarningWindow.Show();
+    private void OnConfigSaved()
+    {
+        if (!Dispatcher.CheckAccess())
+        {
+            _ = Dispatcher.BeginInvoke(new Action(OnConfigSaved));
+            return;
+        }
+        var enabled = ConfigService.Config.TouchModeEnabled;
+        if (_lastSavedTouchModeEnabled && !enabled) TouchOverlayService.CloseAll();
+        _lastSavedTouchModeEnabled = enabled;
     }
 
     public void RefreshSidebar()
@@ -1440,125 +1513,27 @@ public partial class MainWindow : Window
         // 切换内容之前统一关掉所有当前存活的进度弹窗，视为"打断操作"。
         Views.ProgressDialog.CloseAll();
 
-        if (!ConfigService.Config.EnablePageAnimations)
-        {
-            // 关闭动画时先清掉可能残留的动画/位移状态，避免"先开着动画切了一次页，
-            // 再去设置页关掉动画"这种场景下，MainContent 卡在半透明或偏移的位置上不动。
-            MainContent.BeginAnimation(OpacityProperty, null);
-            MainContentTransform.BeginAnimation(System.Windows.Media.TranslateTransform.YProperty, null);
-            MainContentScaleTransform.BeginAnimation(System.Windows.Media.ScaleTransform.ScaleXProperty, null);
-            MainContentScaleTransform.BeginAnimation(System.Windows.Media.ScaleTransform.ScaleYProperty, null);
-            MainContent.Opacity = 1;
-            MainContentTransform.Y = 0;
-            MainContentScaleTransform.ScaleX = 1;
-            MainContentScaleTransform.ScaleY = 1;
-            MainContent.Content = page;
-            return;
-        }
-
-        // 新内容先设置好位移起点（往下 14px、透明），赋值 Content 后立即对
-        // Opacity + TranslateTransform.Y 同时做一个缓出动画，制造"从下方淡入归位"的
-        // 过渡感，而不是生硬地瞬间替换。
-        // 先用 BeginAnimation(prop, null) 停掉上一次可能还没播完的动画再重设起始值，
-        // 否则连续快速切页时，新动画会从"上一次动画播放到一半的当前值"起步而不是干净的
-        // 起始状态，肉眼看起来就像"动画没生效、内容直接跳出来"。
-        MainContent.BeginAnimation(OpacityProperty, null);
-        MainContentTransform.BeginAnimation(System.Windows.Media.TranslateTransform.YProperty, null);
-
-        // 高性能模式：跟低性能模式互斥优先级相反的一档——在原来"淡入+上移"基础上叠加
-        // 缩放，并把缓出函数从普通 QuadraticEase 换成 BackEase(轻微回弹)，做出
-        // macOS/游戏 UI 那种"冲过头一点再弹回来"的约束感动画。跟低性能模式同时打开时
-        // 前面已经 return 了，不会走到这里，不需要再判断一次。
-        var highPerf = ConfigService.Config.EnableHighPerformanceMode;
-
-        MainContentTransform.Y = highPerf ? 22 : 14;
-        MainContent.Opacity = 0;
-        MainContentScaleTransform.ScaleX = highPerf ? 0.96 : 1;
-        MainContentScaleTransform.ScaleY = highPerf ? 0.96 : 1;
         MainContent.Content = page;
-
-        var duration = TimeSpan.FromMilliseconds(highPerf ? 420 : 260);
-        IEasingFunction easeOut = highPerf
-            ? new BackEase { EasingMode = EasingMode.EaseOut, Amplitude = 0.35 }
-            : new QuadraticEase { EasingMode = EasingMode.EaseOut };
-
-        var fadeIn = new DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(highPerf ? 260 : 260)) { EasingFunction = new QuadraticEase { EasingMode = EasingMode.EaseOut } };
-        var slideUp = new DoubleAnimation(highPerf ? 22 : 14, 0, duration) { EasingFunction = easeOut };
-
-        // 修复"开启新视效（页面切换动画）之后，再切一次页面，内容变成熄灭（透明度卡在 0）
-        // 看不见"：上面几行是先把 MainContent.Opacity 显式置 0，再 BeginAnimation 播放
-        // 0→1 的淡入。如果这次动画在播放过程中被打断（比如用户在 260ms 内又快速点了一次
-        // 导航，下一次 SetMainContent 会先 BeginAnimation(..., null) 停掉它），停掉动画后
-        // WPF 会让属性退回"本地值"——而本地值正是切页开始时设的那个 0，不是动画播到一半的
-        // 值，也不是目标值 1。这里显式挂 Completed 回调，在动画正常播完时把 Opacity/Y 的
-        // 本地值也同步更新成终点值 1/0，这样"停动画"这一步不管发生在什么时机，退回去的
-        // 本地值都已经是可见状态，不会停留在刚开始那一帧的透明/偏移状态上。
-        fadeIn.Completed += (_, _) => MainContent.Opacity = 1;
-        slideUp.Completed += (_, _) => MainContentTransform.Y = 0;
-
-        // 上面的 Completed 回调只在动画"正常播完"时触发——如果这次动画在播放期间被
-        // 后续导航打断（BeginAnimation(prop, null) 停掉），Completed 根本不会触发，
-        // 停牌之后属性退回的本地值到底是不是可见状态，取决于打断发生的那个精确时刻，
-        // 不能保证。这里再加一层跟具体页面绑定的保险：动画时长过后，如果 MainContent
-        // 当前显示的还是这一次 SetMainContent 传进来的 page（没有被更新的导航取代），
-        // 就强制把 Opacity/位移/缩放钉死为终点状态——不管前面动画链路上发生过什么打断，
-        // 这一下都能保证内容最终一定是完全不透明、可交互的，不会停留在切页当下那一帧
-        // 半透明/看起来"熄灭"的状态上。
-        var settleTimer = new System.Windows.Threading.DispatcherTimer
-        {
-            Interval = duration + TimeSpan.FromMilliseconds(80)
-        };
-        settleTimer.Tick += (_, _) =>
-        {
-            settleTimer.Stop();
-            if (!ReferenceEquals(MainContent.Content, page)) return;
-            MainContent.Opacity = 1;
-            MainContentTransform.Y = 0;
-            MainContentScaleTransform.ScaleX = 1;
-            MainContentScaleTransform.ScaleY = 1;
-        };
-        settleTimer.Start();
-
-        MainContent.BeginAnimation(OpacityProperty, fadeIn);
-        MainContentTransform.BeginAnimation(System.Windows.Media.TranslateTransform.YProperty, slideUp);
-
-        if (highPerf)
-        {
-            MainContentScaleTransform.BeginAnimation(System.Windows.Media.ScaleTransform.ScaleXProperty, null);
-            MainContentScaleTransform.BeginAnimation(System.Windows.Media.ScaleTransform.ScaleYProperty, null);
-            var scaleAnim = new DoubleAnimation(0.96, 1, duration) { EasingFunction = easeOut };
-            scaleAnim.Completed += (_, _) =>
-            {
-                MainContentScaleTransform.ScaleX = 1;
-                MainContentScaleTransform.ScaleY = 1;
-            };
-            MainContentScaleTransform.BeginAnimation(System.Windows.Media.ScaleTransform.ScaleXProperty, scaleAnim);
-            MainContentScaleTransform.BeginAnimation(System.Windows.Media.ScaleTransform.ScaleYProperty, scaleAnim);
-        }
-        else
-        {
-            MainContentScaleTransform.ScaleX = 1;
-            MainContentScaleTransform.ScaleY = 1;
-        }
+        _activePluginPage = null;
+        UiAnimationHelper.PageEntrance(MainContent, MainContentTransform, MainContentScaleTransform);
     }
 
-    /// <summary>
-    /// 首页的唯一创建入口：不管是启动时第一次展示，还是之后点侧边栏"首页"、或者其它任何
-    /// 途径导航回首页（NavigateToHome/NavHome_Click 等最终都会走到这里），每次都会 new 一个
-    /// 全新的 HomePage 实例。
-    ///
-    /// 只要本次进程处于"新界面预览"会话（_isPreviewSession），就要把每一份新建出来的实例都
-    /// 同步成 MarkAsMainWindowPreviewSession——否则"新界面预览"开关只有启动那一次是亮的，
-    /// 用户随便切换几次页面回到首页，界面样式（标题栏圆角按钮、禁止最大化等）明明还在预览
-    /// 状态，开关却会因为读到全新实例的默认值而"熄灭"，跟实际状态对不上。
-    /// </summary>
+    /// <summary>当前是否应当显示"新界面预览"：落盘配置 PreviewModeEnabled 为准，
+    /// 同时兼容 --preview-session 命令行参数。</summary>
+    private bool IsPreviewModeActive =>
+        App.StartupArgs.EnterPreviewMode || ConfigService.Config.PreviewModeEnabled;
+
     private void ShowHome()
     {
-        var page = new HomePage(this);
-        if (_isPreviewSession)
+        // 修复：之前只有启动时的那一次会走 ShowExperimentalPreview，之后切到别的页面再回首页
+        // （NavHome_Click / NavigateToHome / 关闭 AI 面板等都会调用 ShowHome）会新建一份
+        // 普通 HomePage，新界面预览的样式就丢了。现在每次回首页都按配置决定是否仍是预览首页。
+        if (IsPreviewModeActive)
         {
-            page.MarkAsMainWindowPreviewSession();
+            ShowExperimentalPreview();
+            return;
         }
+        var page = new HomePage(this);
         SetMainContent(page);
     }
 
@@ -1566,16 +1541,13 @@ public partial class MainWindow : Window
     /// 以 --preview-session 重启后的这次启动专用：直接把新界面预览放进 MainContent，
     /// 复用的是 MainWindow 本来就有的完整侧边栏 + 标题栏，不再像旧版那样另外弹一个没有
     /// 侧边栏、按钮点不动的独立浮动窗口。见 HomePage.MarkAsMainWindowPreviewSession 的注释。
-    ///
-    /// 标题栏圆角按钮样式只需要在这一次启动时应用一次（属于窗口级别的状态，不挂在
-    /// MainContent 上，之后不管 ShowHome() 被调用多少次都不会被重置），首页本身的创建
-    /// 和"开关同步成已选中"统一交给 ShowHome()，避免这里跟 ShowHome() 各写一份、以后
-    /// 两边改了一边忘了改另一边。
     /// </summary>
     private void ShowExperimentalPreview()
     {
         ApplyPreviewSessionTitleBarStyle();
-        ShowHome();
+        var page = new HomePage(this);
+        page.MarkAsMainWindowPreviewSession();
+        SetMainContent(page);
     }
 
     /// <summary>
@@ -1911,7 +1883,7 @@ public partial class MainWindow : Window
         var placeholder = CreateLoadingPlaceholder();
         SetMainContent(placeholder);
 
-        Dispatcher.BeginInvoke(new Action(() =>
+        _ = Dispatcher.BeginInvoke(new Action(() =>
         {
             var page = factory();
             if (ReferenceEquals(MainContent.Content, placeholder))
@@ -2019,6 +1991,7 @@ public partial class MainWindow : Window
     {
         try
         {
+            if (args.ListInstances || args.ListAccounts) { _ = ExecuteStructuredStartupAsync(args); return; }
             // 更新完成自动重启回来的这一次：弹一次"这次更新了什么"，跟下面 EnterGuestMode/
             // LaunchGame 等命令行动作互不冲突，所以不 return，走完继续往下判断其它参数。
             if (args.JustUpdated && ConfigService.Config.ShowUpdateChangelogPopup)
@@ -2034,7 +2007,7 @@ public partial class MainWindow : Window
 
             if (args.LaunchGame)
             {
-                ApplyStartupLaunch(args.AccountName, args.InstanceName);
+                _ = ExecuteStructuredStartupAsync(args);
                 return;
             }
 
@@ -2086,11 +2059,12 @@ public partial class MainWindow : Window
     /// 任意一个没找到都只弹提示、不启动，避免"名字打错了却启动了别的账户/版本"这种
     /// 更危险的静默兜底行为。
     /// </summary>
-    private void ApplyStartupLaunch(string? accountName, string? instanceName)
+    private void ApplyStartupLaunch(string? accountName, string? instanceName, TaskCompletionSource<LauncherCommandResult>? result = null)
     {
         if (string.IsNullOrWhiteSpace(accountName) || string.IsNullOrWhiteSpace(instanceName))
         {
             ToastService.ShowWarning("命令行 -r 启动需要同时指定 --账户名 和 --实例名称，本次启动已跳过。");
+            result?.TrySetResult(new(1, "launch", "NotStarted", "MissingArguments"));
             return;
         }
 
@@ -2099,6 +2073,7 @@ public partial class MainWindow : Window
         if (account == null)
         {
             ToastService.ShowWarning($"未找到账户「{accountName}」，命令行启动已取消。");
+            result?.TrySetResult(new(1, "launch", "NotStarted", "AccountNotFound"));
             return;
         }
 
@@ -2109,15 +2084,20 @@ public partial class MainWindow : Window
         if (!instanceExists)
         {
             ToastService.ShowWarning($"未找到实例「{instanceName}」，命令行启动已取消。");
+            result?.TrySetResult(new(1, "launch", "NotStarted", "InstanceNotFound"));
             return;
         }
 
         ConfigService.SelectAccount(account.Id);
+        ConfigService.Config.SelectedFolderPath = folder!.Path;
         ConfigService.Config.SelectedVersionId = instanceName;
         ConfigService.Save();
         RefreshSidebar();
 
+        _startupLaunchResult = result;
         Launch_Click(this, new RoutedEventArgs());
+        if (ReferenceEquals(_startupLaunchResult, result) && result != null)
+        { _startupLaunchResult = null; result.TrySetResult(new(1, "launch", "NotStarted", "Busy")); }
     }
 
     /// <summary>
@@ -2194,18 +2174,39 @@ public partial class MainWindow : Window
     public void NavigateToVersions() => NavigateLazy(() => new VersionSelectPage(this));
 
     /// <summary>
-    /// 修复"一锅乱炖"（多加载器合装）装完之后启动器找不到新版本的问题：
-    /// VersionSelectPage 只在自己构造函数里扫描一次 versions/ 目录，装完之后没人告诉它
-    /// "该重新扫一遍了"。这里如果当前主内容区正好显示的就是版本选择页，就直接重新 new
-    /// 一个换上去（VersionSelectPage 的构造函数本身就会做一次干净的目录扫描），
-    /// 新装好的版本文件夹自然就出现在列表里了；如果用户当前在别的页面，
-    /// 则什么都不用做——下次导航到版本选择页时反正会重新 new 一个实例、重新扫描。
+    /// 安装/导入完成后就地刷新版本列表，保留当前页面、选择及目录监视。
     /// </summary>
     public void RefreshVersionsPageIfActive()
     {
-        if (MainContent.Content is VersionSelectPage)
+        if (!Dispatcher.CheckAccess())
         {
-            SetMainContent(new VersionSelectPage(this));
+            _ = Dispatcher.BeginInvoke(new Action(RefreshVersionsPageIfActive));
+            return;
+        }
+        if (MainContent.Content is VersionSelectPage page) page.RefreshFromExternalChange();
+    }
+
+    /// <summary>统一处理实例导入后的目录登记、取消旧隐藏标记、选中及列表刷新。</summary>
+    internal void NotifyInstanceImported(string minecraftDir, string instanceId)
+    {
+        if (!Dispatcher.CheckAccess())
+        {
+            Dispatcher.Invoke(() => NotifyInstanceImported(minecraftDir, instanceId));
+            return;
+        }
+
+        var cfg = ConfigService.Config;
+        if (!cfg.Folders.Any(f => string.Equals(f.Path, minecraftDir, StringComparison.OrdinalIgnoreCase)))
+            new FolderService().AddFolder(cfg, minecraftDir);
+        InstanceDeletionService.UnhideFromList(cfg, minecraftDir, instanceId);
+        cfg.SelectedFolderPath = minecraftDir;
+        cfg.SelectedVersionId = instanceId;
+        try { ConfigService.Save(); }
+        finally
+        {
+            RefreshSidebar();
+            RefreshVersionsPageIfActive();
+            if (MainContent.Content is ModManagerPage modPage) modPage.RefreshVersionsFromExternalChange();
         }
     }
 
@@ -2946,7 +2947,11 @@ public partial class MainWindow : Window
     ///      纳入进来（见该方法上方注释）。
     /// 两处场景的下载逻辑完全一样，只是触发时机不同，没必要维护两份几乎相同的代码。
     /// </summary>
-    private async Task RepairMissingLibrariesAsync(string minecraftDir, string versionId, AppConfig cfg, ProgressDialog repairWin)
+    private Task RepairMissingLibrariesAsync(string minecraftDir, string versionId, AppConfig cfg, ProgressDialog repairWin)
+        => RepairMissingLibrariesAsync(minecraftDir, versionId, cfg, repairWin.Progress);
+
+    private async Task RepairMissingLibrariesAsync(string minecraftDir, string versionId, AppConfig cfg, IProgress<ProgressInfo> progress,
+        CancellationToken ct = default)
     {
         var versionDir = Path.Combine(minecraftDir, "versions", versionId);
         var versionJsonPath = File.Exists(Path.Combine(versionDir, $"{versionId}.json"))
@@ -2973,10 +2978,10 @@ public partial class MainWindow : Window
                 var parentDetail = System.Text.Json.JsonSerializer.Deserialize<VersionDetail>(
                     File.ReadAllText(parentJsonPath)) ?? new VersionDetail();
                 parentDetail.Id = detail.InheritsFrom;
-                await repairDownloader.DownloadLibrariesOnlyAsync(minecraftDir, parentDetail, repairWin.Progress);
+                await repairDownloader.DownloadLibrariesOnlyAsync(minecraftDir, parentDetail, progress, ct);
             }
         }
-        await repairDownloader.DownloadLibrariesOnlyAsync(minecraftDir, detail, repairWin.Progress);
+        await repairDownloader.DownloadLibrariesOnlyAsync(minecraftDir, detail, progress, ct);
     }
 
     /// <summary>
@@ -2984,25 +2989,124 @@ public partial class MainWindow : Window
     /// 再补上 client jar（缺失/0 字节时重新下载）和 assets（缺失的资源对象重新下载）。
     /// 这两块原来完全没有补全入口——用户以前遇到这种问题只能去「版本选择」页整个重装。
     /// </summary>
-    private async Task RepairInstanceIntegrityAsync(string minecraftDir, VersionDetail detail,
+    private Task RepairInstanceIntegrityAsync(string minecraftDir, VersionDetail detail,
         InstanceIntegrityService.IntegrityCheckResult check, AppConfig cfg, ProgressDialog repairWin)
+        => RepairInstanceIntegrityAsync(minecraftDir, detail, check, cfg, repairWin.Progress);
+
+    private async Task RepairInstanceIntegrityAsync(string minecraftDir, VersionDetail detail,
+        InstanceIntegrityService.IntegrityCheckResult check, AppConfig cfg, IProgress<ProgressInfo> progress,
+        CancellationToken ct = default)
     {
         using var repairDownloader = DownloadService.CreateFromConfig(cfg);
 
         if (check.ClientJarMissing)
         {
-            await repairDownloader.DownloadClientJarOnlyAsync(minecraftDir, detail, repairWin.Progress);
+            await repairDownloader.DownloadClientJarOnlyAsync(minecraftDir, detail, progress, ct);
         }
 
         if (check.MissingLibraries.Count > 0)
         {
-            await RepairMissingLibrariesAsync(minecraftDir, detail.Id, cfg, repairWin);
+            await RepairMissingLibrariesAsync(minecraftDir, detail.Id, cfg, progress, ct);
         }
 
         if (check.MissingAssets.Count > 0)
         {
-            await repairDownloader.DownloadAssetsOnlyAsync(minecraftDir, detail, repairWin.Progress);
+            await repairDownloader.DownloadAssetsOnlyAsync(minecraftDir, detail, progress, ct);
         }
+    }
+
+    /// <summary>
+    /// "未完成的安装"弹窗里的"安装"按钮：只补全文件，不启动游戏。
+    /// 返回 null 表示补全成功；否则返回给用户看的失败原因。
+    /// 流程：严格检查 → 缺 json 且文件夹名是官方版本号时重新下载原版 → 继承类实例先补父版本
+    /// （父版本缺失则按清单重装）→ 补本实例的库/jar/资源 → 再检查一次确认。
+    /// </summary>
+    public async Task<string?> RepairInstanceWithoutLaunchAsync(GameFolder folder, string versionId,
+        IProgress<ProgressInfo> progress, CancellationToken ct = default)
+    {
+        try
+        {
+            var cfg = ConfigService.Config;
+            var integrity = new InstanceIntegrityService(new LauncherService());
+            var check = await Task.Run(() => integrity.Check(folder.Path, versionId, IntegrityCheckMode.Strict));
+            if (!check.HasProblems) return null;
+
+            if (check.Detail == null)
+            {
+                // json 缺失/损坏：只有文件夹名恰好是官方版本号时才能凭清单重新下载。
+                using var dl = DownloadService.CreateFromConfig(cfg);
+                var manifest = await dl.GetVersionManifestAsync();
+                var entry = manifest.Versions.FirstOrDefault(v =>
+                    string.Equals(v.Id, versionId, StringComparison.OrdinalIgnoreCase));
+                if (entry == null)
+                    return "版本描述文件(json)缺失或已损坏，且这不是官方原版版本号，无法自动补全。请重新安装该版本。";
+                await dl.InstallVersionAsync(folder.Path, entry, progress, ct);
+            }
+            else
+            {
+                var detail = check.Detail;
+                if (!string.IsNullOrEmpty(detail.InheritsFrom))
+                {
+                    var parentId = detail.InheritsFrom;
+                    var parentDir = Path.Combine(folder.Path, "versions", parentId);
+                    var parentCheck = Directory.Exists(parentDir)
+                        ? await Task.Run(() => integrity.Check(folder.Path, parentId, IntegrityCheckMode.Strict))
+                        : null;
+                    if (parentCheck?.Detail != null)
+                    {
+                        if (parentCheck.HasProblems)
+                            await RepairInstanceIntegrityAsync(folder.Path, parentCheck.Detail, parentCheck, cfg, progress, ct);
+                    }
+                    else
+                    {
+                        using var dl = DownloadService.CreateFromConfig(cfg);
+                        var manifest = await dl.GetVersionManifestAsync();
+                        var entry = manifest.Versions.FirstOrDefault(v =>
+                            string.Equals(v.Id, parentId, StringComparison.OrdinalIgnoreCase));
+                        if (entry == null)
+                            return $"找不到父版本「{parentId}」，且它不是官方原版版本号，无法自动补全。请先安装该父版本。";
+                        await dl.InstallVersionAsync(folder.Path, entry, progress, ct);
+                    }
+                }
+                await RepairInstanceIntegrityAsync(folder.Path, detail, check, cfg, progress, ct);
+            }
+
+            var after = await Task.Run(() => integrity.Check(folder.Path, versionId, IntegrityCheckMode.Strict));
+            if (after.HasProblems)
+                return "补全后仍有文件缺失，请检查网络后重试，或重新安装该版本。";
+            return null;
+        }
+        catch (OperationCanceledException)
+        {
+            throw; // 暂停/取消：交给下载队列处理，不要当成"补全失败"
+        }
+        catch (Exception ex)
+        {
+            ErrorPresenter.LogTechnicalDetail($"[未完成的安装·补全失败] {versionId}\n{ex}");
+            return "补全失败：" + ex.Message;
+        }
+    }
+
+    /// <summary>
+    /// 把"补全文件"作为一个任务登记进统一下载队列（标题栏右上角的下载抽屉）：
+    /// 与安装版本/下载资源走同一条通道，因此可以暂停/继续/取消、有统一的进度与开始/完成提示，
+    /// 并且补全期间会按 <see cref="DownloadQueueService.FindActiveForVersion"/> 拦住对该实例的启动。
+    /// 补全失败（返回了失败原因）会抛出异常，让队列条目显示为"失败"并可点击重试。
+    /// </summary>
+    public void EnqueueInstanceRepair(GameFolder folder, string versionId, Action? onSuccess = null)
+    {
+        if (DownloadQueueService.Instance.FindActiveForVersion(folder.Path, versionId) != null)
+        {
+            ToastService.ShowInfo($"「{versionId}」已经在下载列表中，请稍候。");
+            return;
+        }
+
+        DownloadQueueService.Instance.StartNew($"补全文件 {versionId}", async (item, ct) =>
+        {
+            var error = await RepairInstanceWithoutLaunchAsync(folder, versionId, item.CreateProgress(), ct);
+            if (error != null) throw new InvalidOperationException(error);
+            await Dispatcher.InvokeAsync(() => onSuccess?.Invoke());
+        }, targetVersionId: versionId, targetFolderPath: folder.Path);
     }
 
     /// <summary>
@@ -3116,6 +3220,9 @@ public partial class MainWindow : Window
     /// </summary>
     private async Task LaunchInternalAsync(object sender, RoutedEventArgs e, bool skipAccountConfirm = false, CancellationToken cancelToken = default)
     {
+        var commandResult = _startupLaunchResult; _startupLaunchResult = null;
+        try
+        {
         var cfg = ConfigService.Config;
         var account = ConfigService.GetSelectedAccount();
         var folder = cfg.Folders.FirstOrDefault(f => f.Path == cfg.SelectedFolderPath);
@@ -3622,6 +3729,34 @@ public partial class MainWindow : Window
                 AutoJoinServerAddress = autoJoinServer
             };
 
+            // JVM 参数预检：设置里的内存 + 自定义 JVM 参数。必然会让 JVM 起不来的写法
+            // （缺 -、Xms>Xmx、-Xmx4096 没单位、写了 -version、GC 冲突……）在拉起进程之前就拦下，
+            // 让用户立刻知道改哪里，而不是等进程闪退后再看一堆控制台输出。
+            // 预检本身出错不影响启动；非致命的提示只写启动器日志，不打扰用户。
+            try
+            {
+                int? jvmLintMajor = null;
+                if (!string.IsNullOrWhiteSpace(options.CustomJvmArgs))
+                    jvmLintMajor = await Task.Run(() => JavaService.TryGetJavaMajorVersionSync(javaPath));
+                var jvmLintIssues = JvmArgumentDiagnostics.Lint(options.CustomJvmArgs,
+                    options.MinMemoryMb, options.MaxMemoryMb, jvmLintMajor);
+                foreach (var issue in jvmLintIssues)
+                    LauncherLogService.AppendLine(
+                        $"[JVM参数检查] {(issue.Severity == JvmIssueSeverity.Fatal ? "错误" : "提示")}：{issue.Text}");
+                var fatalJvmIssues = jvmLintIssues.Where(jx => jx.Severity == JvmIssueSeverity.Fatal).ToList();
+                if (fatalJvmIssues.Count > 0 &&
+                    !MessageBoxDialog.ShowConfirm(
+                        "检测到 JVM 启动参数有问题，按现在的设置游戏很可能无法启动：\n\n" +
+                        JvmArgumentDiagnostics.FormatForDialog(fatalJvmIssues) +
+                        "\n\n是否仍要尝试启动？（选“取消”可先去修改设置）",
+                        "JVM 参数有误"))
+                    return;
+            }
+            catch (Exception jvmLintEx)
+            {
+                ErrorPresenter.LogFallback("JVM 参数预检失败(不影响启动)", jvmLintEx);
+            }
+
             // 启动前主动完整性检查：不再只查 libraries，version json / client jar / assets
             // 一起查（见 InstanceIntegrityService），检查粒度按用户选过的
             // AppConfig.IntegrityCheckMode（简单/严格）来，发现问题时弹 IncompleteVersionDialog
@@ -3644,7 +3779,8 @@ public partial class MainWindow : Window
             // （之前 GBK 编码问题就是在这一步抛异常，导致下面的 Launch 根本没执行到）。
             // MissingLibrariesException 在这里也可能抛出，但那是"下面 Launch() 也一定会
             // 遇到的同一个问题"，不属于导出脚本独有的失败，放过它冒泡到下面统一处理。
-            try { launcher.ExportLaunchScript(options); }
+            try { await launcher.PrepareLaunchAsync(options, cancelToken); launcher.ExportLaunchScript(options); }
+            catch (Services.Plugins.PluginFlowCanceledException) { throw; }
             catch (MissingLibrariesException) { /* 留给下面 Launch() 统一处理 */ }
             catch (Exception exportEx)
             {
@@ -3666,10 +3802,8 @@ public partial class MainWindow : Window
             }
 
             // ===================== 操作模式：键鼠 / 触屏 =====================
-            // 需求："可以在启动之前选择是键鼠模式还是触屏模式，默认键鼠模式。"
-            // 默认路径完全不变：cfg.AskInputModeBeforeLaunch 默认 false、cfg.TouchModeEnabled
-            // 默认 false，所以不做任何设置的用户走到这里就是 useTouchMode=false，行为跟改动前
-            // 一模一样，不会多弹任何框。只有主动打开了"每次启动前询问"的用户才会看到选择框。
+            // 本次明确选择优先于全局默认。关闭选择框/倒计时按键鼠模式处理；
+            // 选择键鼠时不加载触屏会话，也不恢复或写入触屏鼠标配置。
             var useTouchMode = cfg.TouchModeEnabled;
             if (cfg.AskInputModeBeforeLaunch)
             {
@@ -3698,12 +3832,27 @@ public partial class MainWindow : Window
                     (modeWindow.TimedOut ? "（倒计时超时自动选择）" : ""));
             }
 
+            // 触屏模式 + 26.3 正式版以下的版本：弹二次确认框，选"否"则取消本次启动。
+            if (useTouchMode && !string.IsNullOrEmpty(cfg.SelectedVersionId) &&
+                TouchModeVersionPolicy.IsBelowSupported(
+                    Path.Combine(folder.Path, "versions", cfg.SelectedVersionId), cfg.SelectedVersionId))
+            {
+                LauncherLogService.AppendLine($"[触屏模式] 版本 {cfg.SelectedVersionId} 低于 26.3，已弹出二次确认。");
+                if (!MessageBoxDialog.ShowConfirm(TouchModeVersionPolicy.WarningMessage, "触屏模式提示"))
+                {
+                    ToastService.ShowSuccess(Loc.T("Str_Cs_Launch_Cancelled", "已取消启动。"));
+                    return;
+                }
+            }
+
             LauncherLogService.AppendLine($"[启动游戏] 账户={account.DisplayLabel} 版本={cfg.SelectedVersionId}");
+
+            options.UseTouchMode = useTouchMode;
 
             GameProcessInfo processInfo;
             try
             {
-                processInfo = launcher.Launch(options);
+                processInfo = await launcher.LaunchAsync(options, cancelToken);
 
                 // Launch() 本身是同步阻塞调用（拼参数+起进程），中间没有 await 让出线程，
                 // 理论上不会跟"点取消"这个 UI 事件真正并发；但保留这一步兜底检查——万一
@@ -3755,7 +3904,8 @@ public partial class MainWindow : Window
                 }
 
                 // 补库之后原地重试一次启动，不需要用户再点一次"启动游戏"按钮。
-                processInfo = launcher.Launch(options);
+                options.PreparedPluginLaunch = null;
+                processInfo = await launcher.LaunchAsync(options, cancelToken);
 
                 if (cancelToken.IsCancellationRequested)
                 {
@@ -3765,6 +3915,8 @@ public partial class MainWindow : Window
                 }
             }
             ProcessManager.Register(processInfo);
+            commandResult?.TrySetResult(new(1, "launch", "Started", "ProcessCreated", processInfo.Process.Id,
+                Services.Plugins.PluginHostBridge.InstanceId(options.MinecraftDir, options.VersionId), account.Id));
 
             // 触屏模式：等游戏窗口出现后贴上虚拟按键悬浮层（内部异步等待，不阻塞这里）。
             // 纯附加功能，失败只写日志，绝不影响游戏本身运行。见 Services/TouchOverlayService.cs。
@@ -3928,8 +4080,14 @@ public partial class MainWindow : Window
                 AttachGameExitMonitor(processInfo);
             }
         }
+        catch (Services.Plugins.PluginFlowCanceledException canceled)
+        {
+            commandResult?.TrySetResult(new(1, "launch", "Canceled", canceled.Code));
+            MessageBoxDialog.ShowInfo(canceled.SafeMessage, Loc.T("Str_Plugin_Canceled", "插件取消了操作"));
+        }
         catch (Exception ex)
         {
+            commandResult?.TrySetResult(new(1, "launch", "Failed", ex is Services.Plugins.PluginOperationException operation ? operation.Code : "LaunchFailed"));
             ErrorPresenter.ShowFriendlyError(Loc.T("Str_Cs_Launch_Failed_Check_That_Java_And_The_Ga", "启动失败，请检查 Java、游戏文件是否完整，或查看「日志」页面获取更多信息。"), $"[启动失败] {ex}", "启动失败");
         }
         finally
@@ -3938,6 +4096,8 @@ public partial class MainWindow : Window
             // 不能让"等待游戏窗口出现…"这行字永久挂在侧边栏上。
             HideLaunchStatus();
         }
+        }
+        finally { commandResult?.TrySetResult(new(1, "launch", "NotStarted", "CanceledOrDeclined")); }
     }
 
     /// <summary>游戏已经进入运行阶段后，安装唯一的长期退出监视。
@@ -3975,7 +4135,6 @@ public partial class MainWindow : Window
         try { exitCode = processInfo.Process.ExitCode; } catch { /* 进程句柄极端情况下已不可读 */ }
 
         var assessment = GameExitClassifier.Assess(processInfo, exitCode);
-        processInfo.CrashLogPath = GameCrashLogService.Capture(processInfo, assessment);
         switch (assessment.Kind)
         {
             case GameExitKind.UserRequested:
@@ -3987,7 +4146,7 @@ public partial class MainWindow : Window
                 return;
 
             case GameExitKind.PossiblyManualClose:
-                LauncherLogService.AppendLine($"[游戏退出] {processInfo.AccountLabel} - {processInfo.VersionId}，退出码 {exitCode}；缺少明确崩溃证据，可能是用户手动关闭");
+                LauncherLogService.AppendLine($"[游戏退出] {processInfo.AccountLabel} - {processInfo.VersionId}，退出码 {exitCode}；日志疑似被强行截断，可能是用户手动关闭");
                 await Dispatcher.InvokeAsync(() =>
                 {
                     EnsureVisibleForDialog();
@@ -3998,6 +4157,19 @@ public partial class MainWindow : Window
             case GameExitKind.Crash:
             default:
                 LauncherLogService.AppendLine($"[游戏崩溃] {processInfo.AccountLabel} - {processInfo.VersionId}，退出码 {exitCode}");
+
+                // JVM 启动参数错误：给出针对性的结论，而不是笼统的“游戏崩溃了”。
+                if (assessment.JvmIssues is { Count: > 0 } jvmIssues)
+                {
+                    LauncherLogService.AppendLine("[JVM参数错误] " + string.Join(" | ", jvmIssues.Select(jx => jx.Title)));
+                    await Dispatcher.InvokeAsync(() =>
+                    {
+                        EnsureVisibleForDialog();
+                        CrashReportDialog.ShowJvmArgumentError(this, processInfo, exitCode, jvmIssues);
+                    });
+                    return;
+                }
+
                 var output = processInfo.GetOutputSnapshot();
                 var tail = output.Length > 3000 ? output[^3000..] : output;
                 var message = exitedDuringStartup
@@ -4028,49 +4200,56 @@ public partial class MainWindow : Window
         LaunchStatusText.Visibility = Visibility.Collapsed;
     }
 
-    /// <summary>一键关闭游戏：结束所有正在运行的游戏进程。</summary>
-    private void CloseAllGames_Click(object sender, RoutedEventArgs e)
+    /// <summary>刷新并关闭全部游戏，包括其他启动器启动的游戏。</summary>
+    private async void CloseAllGames_Click(object sender, RoutedEventArgs e)
     {
-        if (ProcessManager.Running.Count == 0)
+        if (_closingGames) return;
+        _closingGames = true;
+        try
         {
-            MessageBoxDialog.ShowInfo(Loc.T("Str_Cs_No_Game_Is_Currently_Running", "当前没有正在运行的游戏。"));
-            return;
-        }
-        var confirm = MessageBoxDialog.ShowConfirm($"确定要关闭全部 {ProcessManager.Running.Count} 个正在运行的游戏吗？",
-            "一键关闭游戏");
-        if (confirm)
-        {
-            ProcessManager.CloseAll();
+            await ProcessManager.RefreshAsync();
+            if (_isWindowClosed) return;
+            var games = ProcessManager.Running;
+            if (games.Count == 0)
+            {
+                MessageBoxDialog.ShowInfo(Loc.T("Str_Cs_No_Game_Is_Currently_Running", "当前没有正在运行的游戏。"));
+                return;
+            }
+            var externalCount = games.Count(p => p.IsExternal);
+            var detail = externalCount > 0 ? $"（包含 {externalCount} 个其他启动器启动的游戏）" : "";
+            if (!MessageBoxDialog.ShowConfirm($"确定要关闭全部 {games.Count} 个正在运行的游戏{detail}吗？", "一键关闭游戏")) return;
+            var failures = await ProcessManager.CloseSelectedAsync(games);
+            if (failures.Count > 0)
+                MessageBoxDialog.ShowWarning(GameProcessManager.DescribeCloseFailures(failures), "关闭失败");
             RefreshSidebar();
         }
+        finally { _closingGames = false; }
     }
 
-    /// <summary>关闭所选的游戏：打开进程列表窗口，用户选中一个后关闭。</summary>
-    private void CloseSelectedGame_Click(object sender, RoutedEventArgs e)
+    private async void CloseSelectedGame_Click(object sender, RoutedEventArgs e)
     {
+        await ProcessManager.RefreshAsync();
+        if (_isWindowClosed) return;
         if (ProcessManager.Running.Count == 0)
         {
             MessageBoxDialog.ShowInfo(Loc.T("Str_Cs_No_Game_Is_Currently_Running", "当前没有正在运行的游戏。"));
             return;
         }
-        var win = new ProcessManagerWindow(ProcessManager, ProcessManagerWindow.Mode.SelectToClose);
-        win.ShowDialog();
+        new ProcessManagerWindow(ProcessManager, ProcessManagerWindow.Mode.SelectToClose).ShowDialog();
         RefreshSidebar();
     }
 
-    /// <summary>
-    /// 关闭未响应的游戏：不会自动判断"卡死"，而是打开进程列表让用户勾选确认无响应的游戏，
-    /// 勾选后才允许强制结束，避免误杀正在正常游玩的进程。
-    /// </summary>
-    private void CloseUnresponsiveGame_Click(object sender, RoutedEventArgs e)
+    /// <summary>展示全部游戏，用户勾选确认无响应后才强制结束，不自动结束任何实例。</summary>
+    private async void CloseUnresponsiveGame_Click(object sender, RoutedEventArgs e)
     {
+        await ProcessManager.RefreshAsync();
+        if (_isWindowClosed) return;
         if (ProcessManager.Running.Count == 0)
         {
             MessageBoxDialog.ShowInfo(Loc.T("Str_Cs_No_Game_Is_Currently_Running", "当前没有正在运行的游戏。"));
             return;
         }
-        var win = new ProcessManagerWindow(ProcessManager, ProcessManagerWindow.Mode.MarkUnresponsive);
-        win.ShowDialog();
+        new ProcessManagerWindow(ProcessManager, ProcessManagerWindow.Mode.MarkUnresponsive).ShowDialog();
         RefreshSidebar();
     }
 
@@ -4219,45 +4398,6 @@ public partial class MainWindow : Window
 
     private readonly DragDropInstallService _dragDropService = new();
 
-    private static bool IsPluginImport(string path)
-        => File.Exists(path) && (Path.GetExtension(path).Equals(".dll", StringComparison.OrdinalIgnoreCase) ||
-                                 Path.GetExtension(path).Equals(".exe", StringComparison.OrdinalIgnoreCase));
-
-    /// <summary>拖入窗口或从插件管理中选择 DLL/EXE，先明确提示再复制并运行。
-    /// 提示取消时不会安装，也不会执行导入的文件。</summary>
-    internal void ImportPluginFiles(IEnumerable<string> sources)
-    {
-        var files = sources.Where(IsPluginImport).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
-        if (files.Length == 0) return;
-        var names = string.Join("、", files.Select(Path.GetFileName));
-        if (!MessageBoxDialog.ShowConfirm(
-                $"准备导入插件：{names}\n\n该插件未经官方验证，使用之后如果出现任何问题或安全问题，均与启动器作者无关。建议你认真审查插件来源。\n\n确认安装并按当前插件启动设置运行吗？",
-                "第三方插件来源提醒")) return;
-
-        var installed = new List<string>();
-        var attempted = false;
-        foreach (var file in files)
-        {
-            try
-            {
-                var action = Services.Plugins.PluginInstallConflictAction.Cancel;
-                if (Plugins.FindInstallConflict(file) is { } conflict)
-                {
-                    action = PluginConflictDialog.Choose(Path.GetFileName(file), conflict);
-                    if (action == Services.Plugins.PluginInstallConflictAction.Cancel) continue;
-                }
-                attempted = true;
-                if (Plugins.InstallFromFile(file, action) is { } destination) installed.Add(destination);
-            }
-            catch (Exception ex) { MessageBoxDialog.ShowWarning($"导入 {Path.GetFileName(file)} 失败：{ex.Message}", "插件导入"); }
-        }
-        if (!attempted) return;
-        Plugins.StartPolicy = ConfigService.Config.PluginLaunchMode;
-        try { Plugins.ScanAndLoad(); }
-        catch (Exception ex) { MessageBoxDialog.ShowWarning($"刷新插件失败：{ex.Message}", "插件导入"); }
-        if (installed.Count > 0) ToastService.ShowSuccess($"已导入 {installed.Count} 个插件；可在「插件管理」查看运行状态。");
-    }
-
     // 修复"拖动文件时，只要鼠标晃动，屏幕就会闪烁"：拖拽悬停在窗口上时，DragOver 事件会
     // 随鼠标每一次移动反复触发（一秒钟能有几十次），而这个事件里原来对拖进来的每个文件都
     // 调一次 _dragDropService.Classify——这个方法要打开文件（压缩包类型的甚至要读 zip 目录）
@@ -4333,7 +4473,15 @@ public partial class MainWindow : Window
             RestoreFromTray();
             CloseAllGames_Click(this, new RoutedEventArgs());
         });
-        _trayIcon.ExitRequested += () => Dispatcher.Invoke(() => QueueLauncherClose(explicitExit: true));
+        _trayIcon.ExitRequested += () => Dispatcher.Invoke(() =>
+        {
+            // 托盘"退出"是用户明确表达的真正退出意图，不应该再走"下载/启动进行中"
+            // 那套确认逻辑一遍——用户已经在托盘菜单这个动作本身里做过一次选择了。
+            // 需求："结束的时候，如果用户选择真的要关闭，那就彻底结束 XCL 的所有进程"——
+            // 托盘退出同样属于用户明确选择的"真的要关闭"，所以也要走彻底退出，
+            // 不能只是简单 Shutdown() 留下还在跑的游戏/服务器子进程。
+            PerformFullExit();
+        });
         Closed += (_, _) => _trayIcon?.Dispose();
     }
 
@@ -4361,6 +4509,7 @@ public partial class MainWindow : Window
             if (WindowState == WindowState.Minimized)
                 WindowState = _lastNonMinimizedWindowState;
 
+            UiAnimationHelper.Reset(RootWindowGrid, RootWindowMoveTransform, RootWindowScaleTransform);
             // 窗口可能处于 MinimizeToTray() 之后的 Hide() 状态（还没被 Close()，只是不可见），
             // 这种情况下 Show() 能正常把它拿回来，跟"仅关闭启动器"那种已 Close() 的情况不同。
             Show();
@@ -4381,23 +4530,58 @@ public partial class MainWindow : Window
         }
     }
 
-    /// <summary>只为启动器本身兜底退出；正常退出后后台线程自然消失，不结束游戏进程树。</summary>
+    /// <summary>
+    /// "彻底退出"路径下的兜底自杀保险：正常情况下 Application.Current.Shutdown() 会让整个
+    /// 进程干净退出，不需要这个方法做任何事。但实际观察到的问题是——某些情况下（未处理的
+    /// 后台线程没设 IsBackground、第三方组件起的 COM/句柄、WebView2 子进程没退干净等）
+    /// Shutdown() 触发了，主窗口也关了，但 xcl2.exe 本体在任务管理器里其实还挂着一个孤儿
+    /// 进程。用户完全看不出来，下次双击图标重新打开时，SingleInstanceService 探测到这个
+    /// "看不见"的旧实例，弹出多开确认框，在用户看来就是一次莫名其妙的弹窗骚扰。
+    ///
+    /// 这里在每次"彻底退出"（不是最小化/托盘/保留便签这几种明确要继续留在后台的场景）时，
+    /// 顺手起一个隐藏的 cmd 进程，先等几秒给 Shutdown() 走完正常流程的时间，再对着
+    /// 当前进程 PID 补一刀 taskkill /F。如果那时候进程早就正常退出了，taskkill 对一个
+    /// 不存在的 PID 只会静默失败，不会有任何副作用；只有真的卡成孤儿进程时，这一刀才有意义。
+    /// CreateNoWindow + UseShellExecute=false，不会弹出任何黑框打扰用户。
+    /// </summary>
     private static void ScheduleSelfKillFailSafe()
     {
-        var thread = new Thread(() =>
+        try
         {
-            Thread.Sleep(6000);
-            Environment.Exit(0);
-        }) { IsBackground = true, Name = "LauncherExitFallback" };
-        thread.Start();
+            var pid = Environment.ProcessId;
+            var psi = new ProcessStartInfo("cmd.exe")
+            {
+                // /c 后面：先睡 6 秒把时间留给正常 Shutdown()，再无条件尝试 taskkill 这个 PID。
+                // 用 timeout /t 而不是 ping -n 之类的老技巧，避免在没有回环网络的极端环境下失效；
+                // 2>nul / >nul 把"进程已不存在"这种预期内的失败信息吞掉，不留下任何痕迹。
+                Arguments = $"/c timeout /t 6 >nul 2>nul & taskkill /F /PID {pid} >nul 2>nul",
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                WindowStyle = ProcessWindowStyle.Hidden,
+            };
+            Process.Start(psi);
+        }
+        catch
+        {
+            // 这个兜底保险本身失败（比如极端沙盒环境限制起进程）不应该影响正常退出流程，
+            // 正常的 Shutdown() 该怎么走还怎么走，只是少了这道保险。
+        }
     }
 
-    /// <summary>仅用于用户明确选择“关闭所有（包括游戏）”，普通退出绝不调用。</summary>
+    /// <summary>
+    /// 结束本进程名下所有正在运行的游戏进程和服务器进程（先优雅 CloseAll，服务器直接 ForceKill）。
+    /// 供 <see cref="PerformFullExit"/>（托盘"退出"/多开"FORCE_EXIT"）和
+    /// <see cref="MainWindow_Closing"/>（点关闭按钮、真的没有留任何东西要保留时）共用——
+    /// 两种路径本质都是"用户已经明确选择/确认了要真的关闭"，都不能留孤儿进程。
+    /// </summary>
     private void KillAllGameAndServerProcesses()
     {
-        // 此方法仅在触屏关闭弹窗中明确选择“关闭所有（包括游戏）”之后执行。
-        try { ProcessManager.CloseAll(); } catch { /* 单个进程失败不影响其余进程 */ }
+        // 自动退出清理只处理由 XCL2 启动的游戏；外部游戏仅在用户点击关闭游戏时结束。
+        try { ProcessManager.CloseOwned(); } catch { /* 单个进程关闭失败不影响整体退出 */ }
 
+        // 服务器进程没有窗口，CloseAll 语义上更接近"强制"，这里直接对每个仍在运行的
+        // 服务器实例调用 ForceKill——真正退出启动器时不适合再等"发 stop 命令、等它
+        // 优雅保存世界"这种可能耗时数秒到数十秒的流程，用户此刻的意图是"立刻结束"。
         try
         {
             foreach (var p in ServerProcessManager.Processes.ToArray())
@@ -4409,14 +4593,48 @@ public partial class MainWindow : Window
         catch { /* 忽略：不能因为清理服务器进程失败而卡住退出流程 */ }
     }
 
-    /// <summary>已明确授权的应用退出（替换旧实例、启动后自动退出）：保留游戏和服务器。</summary>
-    public void PerformFullExit()
+    /// <summary>
+    /// 彻底退出：结束本进程名下所有正在运行的游戏进程和服务器进程，再关闭窗口/退出应用。
+    /// 供托盘"退出"菜单、以及被另一个新实例通过 SingleInstanceService 的 "FORCE_EXIT"
+    /// 指令要求关闭时共用——两种场景本质都是"用户已经明确选择了要真的关闭"，不需要
+    /// 再走"下载/启动进行中"那套二次确认，但都必须先清理干净子进程，不能留孤儿进程。
+    /// </summary>
+    public async void PerformFullExit()
     {
-        _closeApproved = true;
-        TouchOverlayService.CloseAll();
-        _trayIcon?.Hide();
-        ScheduleSelfKillFailSafe();
-        Application.Current.Shutdown();
+        // 托盘退出 / 单实例 FORCE_EXIT 都是“确定退出”路径。旧实现这里只把 Stopping
+        // 事件丢进后台队列，紧接着就 ShutdownAll，插件几乎没有机会真正收到退出通知。
+        // 这里改成先等待生命周期订阅者（受 PluginCallbackTimeoutSeconds 限制），再清理
+        // 游戏/服务器进程和关闭宿主；同时把 _pluginExitPrepared 置位，避免随后 WPF 的
+        // Closing 流程再重复准备一次。
+        if (_forceExitRequested) return;
+        _forceExitRequested = true;
+        _shutdownAfterClose = true;
+        try
+        {
+            if (Services.Plugins.PluginHostBridge.Current is { } pluginHost)
+            {
+                _pluginExitPreparing = true;
+                try { await pluginHost.PrepareExitAsync(); }
+                catch (Exception ex) { LauncherLogService.AppendLine("[插件] 退出通知失败：" + ex.GetType().Name); }
+                finally
+                {
+                    _pluginExitPreparing = false;
+                    _pluginExitPrepared = true;
+                }
+            }
+
+            KillAllGameAndServerProcesses();
+        }
+        finally
+        {
+            _trayIcon?.Hide();
+            ScheduleSelfKillFailSafe();
+            // 不再需要多开检测把这个进程当成"仍然存活的旧实例"，Shutdown() 会自然触发
+            // MainWindow.Closed（如果窗口还没关的话），SingleInstanceService 的管道服务端
+            // 线程是后台线程（IsBackground=true），进程退出时会被系统直接终止，不需要
+            // 额外手动停止。
+            System.Windows.Application.Current.Shutdown();
+        }
     }
 
     /// <summary>隐藏主窗口、显示托盘图标——"关闭按钮默认最小化到托盘"和四选一提示里的
@@ -4427,7 +4645,8 @@ public partial class MainWindow : Window
         // 从前台切到后台：先把窗口内容淡出，动画播完（视觉上已经看不见了）再真正 Hide()，
         // 而不是内容还没淡完窗口就没了——那样等于没做动画。EnableUiAnimations 关闭时
         // UiAnimationHelper 内部会直接同步 Hide，不引入任何延迟。
-        UiAnimationHelper.FadeOut(this, onCompleted: Hide);
+        _snapLayouts?.Close();
+        UiAnimationHelper.FadeOutMove(RootWindowGrid, RootWindowMoveTransform, onCompleted: Hide);
     }
 
     /// <summary>游戏窗口成功出现后，按设置页「游戏启动后」选项处理启动器主窗口——跟
@@ -4445,8 +4664,10 @@ public partial class MainWindow : Window
                 MinimizeToTray();
                 break;
             case Models.PostGameLaunchAction.Close:
-                // 用户预先选择了启动成功后退出；游戏始终独立继续运行。
-                PerformFullExit();
+                // 跟托盘"退出"同理：这是用户自己在设置里明确选定的行为，不需要再走
+                // "下载/启动进行中"那套关闭确认——游戏已经启动成功，启动器这边没有正在
+                // 进行、会被打断的任务，直接退出即可；游戏是独立进程，不会被一起关掉。
+                System.Windows.Application.Current.Shutdown();
                 break;
             case Models.PostGameLaunchAction.KeepAsIs:
             default:
@@ -4456,13 +4677,15 @@ public partial class MainWindow : Window
 
     private void RestoreFromTray()
     {
+        if (_isWindowClosed) return;
+        UiAnimationHelper.Reset(RootWindowGrid, RootWindowMoveTransform, RootWindowScaleTransform);
         Show();
         WindowState = _lastNonMinimizedWindowState;
         Activate();
         _trayIcon?.Hide();
         // 从后台切回前台：Show() 之后窗口是瞬间满 Opacity 出现的，这里补一个淡入，
         // 呼应上面 MinimizeToTray 的淡出，让"托盘还原"也有过渡而不是硬切。
-        UiAnimationHelper.FadeIn(this);
+        UiAnimationHelper.FadeInMove(RootWindowGrid, RootWindowMoveTransform);
     }
 
     /// <summary>绑定标题栏下载列表的数据源，并在集合变化时刷新角标数字/显示状态。</summary>
@@ -4503,20 +4726,33 @@ public partial class MainWindow : Window
         DownloadQueueEmptyHint.Visibility = count == 0 ? Visibility.Visible : Visibility.Collapsed;
     }
 
-    private TouchpadManagerWindow? _touchpadManagerWindow;
-
-    private async void TouchpadButton_Click(object sender, RoutedEventArgs e)
+    private void TouchpadManagerButton_Click(object sender, RoutedEventArgs e)
     {
-        if (_touchpadManagerWindow != null) return;
         DownloadQueuePopup.IsOpen = false;
-        _touchpadManagerWindow = new TouchpadManagerWindow(ProcessManager, ConfigService.Config);
+        // 只模糊弹窗下方的主界面，不能把 OverlayRoot 一起模糊，否则文字与按钮也会变糊。
+        var backgroundLayers = new List<UIElement>();
+        foreach (UIElement child in AppBodyGrid.Children)
+        {
+            if (ReferenceEquals(child, OverlayRoot)) break;
+            backgroundLayers.Add(child);
+        }
+        backgroundLayers.Add(CustomTitleBar);
+        var previousEffects = backgroundLayers.Select(layer => (Layer: layer, Effect: layer.Effect)).ToArray();
         try
         {
-            await OverlayDialogService.ShowModalAsync(_touchpadManagerWindow);
+            foreach (var item in previousEffects)
+                item.Layer.SetCurrentValue(UIElement.EffectProperty, new System.Windows.Media.Effects.BlurEffect
+                {
+                    Radius = 12,
+                    RenderingBias = System.Windows.Media.Effects.RenderingBias.Performance
+                });
+            new TouchpadManagerWindow(ProcessManager, ConfigService.Config).ShowDialog();
         }
         finally
         {
-            _touchpadManagerWindow = null;
+            // 完成、Esc、窗口关闭和异常路径都恢复原有特效；嵌套的按键设置关闭前保持模糊。
+            foreach (var item in previousEffects)
+                item.Layer.SetCurrentValue(UIElement.EffectProperty, item.Effect);
         }
     }
 
@@ -4586,183 +4822,269 @@ public partial class MainWindow : Window
     /// 不用每处各自复制一遍动画调用代码。</summary>
     private void MinimizeWithAnimation()
     {
+        if (WindowState == WindowState.Minimized || _isWindowClosed) return;
+        _snapLayouts?.Close();
         UiAnimationHelper.FadeOutMove(RootWindowGrid, RootWindowMoveTransform,
-            onCompleted: () => SystemCommands.MinimizeWindow(this));
+            onCompleted: () =>
+            {
+                if (!_isWindowClosed) SystemCommands.MinimizeWindow(this);
+            });
     }
 
-    private void MaximizeRestoreButton_Click(object sender, RoutedEventArgs e) => ToggleMaximizeRestore();
-
-    /// <summary>最大化/还原切换的唯一实现：普通点击（Click 事件）和 Win11 贴靠布局悬停菜单
-    /// 命中最大化按钮后的非客户区点击（见 WindowChromeService.EnableSnapLayoutForMaximizeButton，
-    /// 那边声明了 HTMAXBUTTON 之后 Click 事件就不会再触发，只能手动调这个方法）共用同一份逻辑。</summary>
-    private void ToggleMaximizeRestore()
+    private void MaximizeRestoreButton_Click(object sender, RoutedEventArgs e)
     {
-        if (WindowState == WindowState.Maximized) SystemCommands.RestoreWindow(this);
-        else SystemCommands.MaximizeWindow(this);
-    }
-
-    /// <summary>标题栏与任务栏、Alt+F4、系统菜单都交给 Closing 统一处理。</summary>
-    private void CloseButton_Click(object sender, RoutedEventArgs e) => SystemCommands.CloseWindow(this);
-
-    private void MainWindow_Closing(object? sender, System.ComponentModel.CancelEventArgs e)
-    {
-        if (_closeApproved) return;
-        e.Cancel = true;
-        QueueLauncherClose();
-    }
-
-    private void QueueLauncherClose(bool explicitExit = false)
-    {
-        if (_closeRequestPending || _closeApproved) return;
-        if (_isWindowClosed)
+        _snapLayouts?.Close();
+        var restore = WindowState == WindowState.Maximized;
+        UiAnimationHelper.BeforeWindowStateChange(RootWindowGrid, RootWindowScaleTransform, () =>
         {
-            PerformFullExit();
-            return;
+            if (_isWindowClosed) return;
+            if (restore) SystemCommands.RestoreWindow(this);
+            else SystemCommands.MaximizeWindow(this);
+        });
+    }
+
+    /// <summary>关闭按钮：
+    /// 1) 下载/启动进行中时，不管设置页配的是什么默认行为，一律弹出专门的四选一提示
+    ///    （取消 / 关闭 / 最小化 / 返回任务栏托盘），明确告知关闭会导致下载/启动失败，
+    ///    需要用户在知情的情况下手动选，不能被默认行为悄悄决定——AskEachTime 的弹窗
+    ///    内容跟这个几乎一样，忙碌状态下这一个提示已经涵盖了"让用户自己选"的诉求，
+    ///    不需要再叠加弹第二个窗。
+    /// 2) 不在忙碌状态时，按设置页「点击叉号时的默认操作」执行：直接关闭 / 最小化到托盘 /
+    ///    单纯最小化 / 每次都弹窗询问（AskEachTime，弹出跟上面同一个四选一窗口，只是措辞
+    ///    换成不带"下载/启动会失败"这句警告，因为这时候并不一定真的在忙）。</summary>
+    private void CloseButton_Click(object sender, RoutedEventArgs e) => Close();
+
+    /// <summary>所有关闭入口只在 Closing 中询问一次：叉号、Alt+F4、系统/任务栏右键菜单。</summary>
+    private bool TryAcceptCloseRequest()
+    {
+        XclFourChoiceResult? choice = null;
+        if (IsDownloadOrLaunchBusy(this))
+            choice = MessageBoxDialog.ShowFourChoice(
+                "当前正在运行下载/启动工作，是否关闭启动器？关闭后会造成下载失败、启动失败。",
+                "确认关闭", cancelText: "取消", closeText: "关闭",
+                minimizeText: "最小化", trayText: "返回任务栏托盘");
+        else
+        {
+            switch (ConfigService.Config.DefaultCloseAction)
+            {
+                case CloseButtonAction.MinimizeToTray: MinimizeToTray(); return false;
+                case CloseButtonAction.Minimize: MinimizeWithAnimation(); return false;
+                case CloseButtonAction.AskEachTime:
+                    choice = MessageBoxDialog.ShowFourChoice(
+                        "确定要关闭启动器吗？也可以选择最小化或返回任务栏托盘继续在后台运行。",
+                        "关闭启动器", cancelText: "取消", closeText: "关闭",
+                        minimizeText: "最小化", trayText: "返回任务栏托盘");
+                    break;
+                default: return true;
+            }
+        }
+        switch (choice)
+        {
+            case XclFourChoiceResult.Close: return true;
+            case XclFourChoiceResult.Minimize: MinimizeWithAnimation(); break;
+            case XclFourChoiceResult.Tray: MinimizeToTray(); break;
+        }
+        return false;
+    }
+
+    /// <summary>ShowFourChoice 弹窗结果的统一处理，供"忙碌时强制弹窗"和"AskEachTime 每次
+    /// 弹窗"两处复用，避免同一套 switch 抄两遍。</summary>
+    private void ApplyFourChoiceResult(XclFourChoiceResult choice)
+    {
+        switch (choice)
+        {
+            case XclFourChoiceResult.Close:
+                SystemCommands.CloseWindow(this);
+                break;
+            case XclFourChoiceResult.Minimize:
+                MinimizeWithAnimation();
+                break;
+            case XclFourChoiceResult.Tray:
+                MinimizeToTray();
+                break;
+            // Cancel：什么都不做。
+        }
+    }
+
+    /// <summary>主窗口关闭前的检查：还有便签钉在桌面上的话，弹三选一询问用户——
+    /// "一起关闭"直接把所有便签窗口也 Close() 掉（便签内容已经是自动保存的，不会丢）；
+    /// "仅关闭启动器"保持现状，便签继续留在桌面，XCL2 进程也会因此继续在后台运行
+    /// （这是"贴在桌面"这个功能本身的代价，明确告知用户，不是意外行为）；
+    /// "取消"则拦下这次关闭，两边都不动。没有任何便签在开时直接放行，不打扰。</summary>
+    private async void MainWindow_Closing(object? sender, System.ComponentModel.CancelEventArgs e)
+    {
+        if (_forceExitRequested) return;
+        if (_pluginExitPreparing) { e.Cancel = true; return; }
+        if (_closeLifecycleBackupRunning) { e.Cancel = true; return; }
+        if (!_closeRequestAccepted)
+        {
+            if (!TryAcceptCloseRequest()) { e.Cancel = true; return; }
+            _closeRequestAccepted = true;
+        }
+        _snapLayouts?.Close();
+
+        // 真正关闭窗口前，优先处理设置页未保存修改。注意必须先 Flush：用户刚松开滑块/
+        // 关闭下拉框就点叉号时，400ms 防抖可能还没执行，不能因此误判成“没有修改”。
+        if (MainContent.Content is SettingsPage closingSettingsPage)
+        {
+            closingSettingsPage.FlushPendingEditsForLeave(preserveAutoSaveRollbackPrompt: false);
+            if (closingSettingsPage.HasUnsavedChanges)
+            {
+                var settingsChoice = MessageBoxDialog.ShowThreeChoice(
+                    "关闭了窗口，但是设置还没有保存，请选择保存、放弃或者取消关闭。",
+                    "设置还没有保存",
+                    "取消关闭", "放弃", "保存");
+
+                if (settingsChoice == XclMessageResult.Cancel)
+                {
+                    e.Cancel = true;
+                    _closeRequestAccepted = false;
+                    closingSettingsPage.ShowPendingEditPromptIfNeeded();
+                    return;
+                }
+
+                if (settingsChoice == XclMessageResult.No)
+                    closingSettingsPage.DiscardUnsavedChangesWithoutNavigating();
+                else if (settingsChoice == XclMessageResult.Yes)
+                    closingSettingsPage.SaveNow();
+            }
         }
 
-        _closeRequestPending = true;
-        // 先退出 WPF 的 Closing 调用栈，再恢复窗口/显示弹窗/执行最终 Close，避免重入。
-        _ = Dispatcher.BeginInvoke(new Action(async () =>
+        // 触屏模式下关闭启动器：悬浮层是贴在 MainWindow 生命周期上的附属层，启动器一关，
+        // 玩家手上还戳着的虚拟按键会直接消失——这跟"点叉号无非是关不关游戏"的心理预期
+        // 差得比较远，必须单独截住问清楚，不能被"点击叉号时的默认操作"悄悄决定。
+        // 同样加一次性标记，避免备份/收尾动画导致 Closing 被重新触发时反复追问。
+        if (!_touchCloseDecisionHandled && TouchOverlayService.HasActive)
         {
-            bool committed = false;
+            var touchChoice = MessageBoxDialog.ShowTouchModeCloseChoice(
+                "当前正在使用触屏模式玩游戏，关闭启动器会导致虚拟按键悬浮层一起消失，触屏操作会直接断开。",
+                "关闭启动器",
+                cancelText: "取消",
+                closeAllText: "关闭所有（包括游戏）",
+                trayText: "返回托盘",
+                closeLauncherOnlyText: "关闭XCL和虚拟按键");
+
+            if (touchChoice == XclTouchCloseChoiceResult.Cancel)
+            {
+                e.Cancel = true;
+                _closeRequestAccepted = false;
+                return;
+            }
+
+            _touchCloseDecisionHandled = true;
+
+            if (touchChoice == XclTouchCloseChoiceResult.Tray)
+            {
+                e.Cancel = true;
+                _closeRequestAccepted = false;
+                _touchCloseDecisionHandled = false;
+                MinimizeToTray();
+                return;
+            }
+
+            if (touchChoice == XclTouchCloseChoiceResult.CloseLauncherAndOverlayOnly)
+            {
+                // 悬浮层立刻摘掉（幂等，TouchOverlayService.CloseAll 后面还会再调一次），
+                // 游戏进程完全不动。真正"不杀游戏"的效果落在下面那段 KillAllGameAndServerProcesses
+                // 的跳过判断上，这里只是记下用户的选择。
+                TouchOverlayService.CloseAll();
+                _touchCloseKeepGameRunning = true;
+            }
+            // CloseAllIncludingGame：什么都不用特殊处理，走到下面默认的"彻底退出"分支
+            // 本来就会把悬浮层和所有游戏/服务器子进程一起清理掉。
+        }
+
+        // 第一次关闭时仍保留原来的桌面便签三选一；关闭备份完成后第二次 Close() 不重复打扰。
+        if (!_stickyNoteCloseDecisionHandled && Views.StickyNoteWindow.OpenWindows.Count > 0)
+        {
+            var count = Views.StickyNoteWindow.OpenWindows.Count;
+            var choice = MessageBoxDialog.ShowThreeChoice(
+                $"还有 {count} 个桌面便签处于置顶状态。\n\n" +
+                "便签窗口不属于启动器主界面，关闭启动器不会自动带走它——如果只关闭启动器，" +
+                "便签会继续显示在桌面上，XCL2 也会因此继续在后台运行。",
+                "关闭启动器",
+                "取消",
+                "仅关闭启动器（便签继续置顶）",
+                "一起关闭");
+
+            if (choice == XclMessageResult.Cancel)
+            {
+                e.Cancel = true;
+                _closeRequestAccepted = false;
+                return;
+            }
+
+            _stickyNoteCloseDecisionHandled = true;
+            if (choice == XclMessageResult.Yes)
+            {
+                foreach (var note in Views.StickyNoteWindow.OpenWindows.ToArray())
+                    note.Close();
+            }
+            else if (choice == XclMessageResult.No)
+            {
+                e.Cancel = true;
+                _closeRequestAccepted = false;
+                _stickyNoteCloseDecisionHandled = false;
+                _touchCloseDecisionHandled = false;
+                MinimizeToTray();
+                return;
+            }
+        }
+
+
+        if (ConfigService.Config.BackupInstanceOnClose && !_closeLifecycleBackupCompleted)
+        {
+            // 真正退出前必须等备份结束；第一次 Closing 先取消，后台 zip 完成后再主动 Close 一次
+            // （会重新进入这个方法，这次 _closeLifecycleBackupCompleted 已经是 true，往下走到
+            // 关闭动画那一段）。
+            e.Cancel = true;
+            if (_closeLifecycleBackupRunning) return;
+            _closeLifecycleBackupRunning = true;
             try
             {
-                committed = await ConfirmAndCloseLauncherAsync(explicitExit);
-            }
-            catch (Exception ex)
-            {
-                ErrorPresenter.LogFallback("关闭启动器失败", ex);
+                await RunLifecycleBackupAsync("关闭时备份", showToast: true);
             }
             finally
             {
-                if (!committed) _closeRequestPending = false;
+                _closeLifecycleBackupRunning = false;
+                _closeLifecycleBackupCompleted = true;
+                _ = Dispatcher.BeginInvoke(new Action(Close), DispatcherPriority.Background);
             }
-        }), DispatcherPriority.Normal);
-    }
-
-    private void ShowWindowForClosePrompt()
-    {
-        if (!IsVisible || WindowState == WindowState.Minimized) RestoreFromTray();
-        Activate();
-    }
-
-    private async Task<bool> ConfirmAndCloseLauncherAsync(bool explicitExit)
-    {
-        var busy = IsDownloadOrLaunchBusy(this);
-        var defaultAction = ConfigService.Config.DefaultCloseAction;
-        if (busy || defaultAction == CloseButtonAction.AskEachTime)
-        {
-            ShowWindowForClosePrompt();
-            var choice = MessageBoxDialog.ShowFourChoice(
-                busy
-                    ? "当前正在下载或启动游戏。关闭启动器会中断尚未完成的任务，已经运行的游戏会继续运行。请选择如何关闭启动器。"
-                    : "请选择如何关闭启动器。关闭启动器后，已经运行的游戏会继续运行。",
-                "关闭启动器",
-                cancelText: "取消", closeText: "关闭启动器",
-                minimizeText: "最小化", trayText: "最小化到托盘");
-            switch (choice)
-            {
-                case XclFourChoiceResult.Cancel:
-                    return false;
-                case XclFourChoiceResult.Minimize:
-                    MinimizeWithAnimation();
-                    return false;
-                case XclFourChoiceResult.Tray:
-                    MinimizeToTray();
-                    return false;
-            }
-        }
-        else if (!explicitExit)
-        {
-            if (defaultAction == CloseButtonAction.MinimizeToTray)
-            {
-                MinimizeToTray();
-                return false;
-            }
-            if (defaultAction == CloseButtonAction.Minimize)
-            {
-                MinimizeWithAnimation();
-                return false;
-            }
+            return;
         }
 
-        // 只有选择真正关闭才处理未保存的设置；取消后下一次仍重新询问。
-        if (MainContent.Content is SettingsPage settingsPage)
+        // 走到这里说明这次关闭真的会发生——上面设置未保存/桌面便签/备份这几处该拦的都已经
+        // 放行了，不会再被取消。先播一遍"淡出+下沉"的收尾动画，动画播完的回调里再真正
+        // Close()（会再次进入这个方法，_closeAnimationPlayed 已经是 true，直接放行，不会
+        // 死循环）。不这样做的话，用户点关闭那一下窗口会瞬间消失，是典型的"傻快傻快"。
+        if (!_pluginExitPrepared && Services.Plugins.PluginHostBridge.Current is { } closingPluginHost)
         {
-            settingsPage.FlushPendingEditsForLeave(preserveAutoSaveRollbackPrompt: false);
-            if (settingsPage.HasUnsavedChanges)
+            e.Cancel = true;
+            _pluginExitPreparing = true;
+            var wasEnabled = RootWindowGrid.IsEnabled;
+            RootWindowGrid.IsEnabled = false;
+            try { await closingPluginHost.PrepareExitAsync(); }
+            finally
             {
-                ShowWindowForClosePrompt();
-                var choice = MessageBoxDialog.ShowThreeChoice(
-                    "设置还没有保存，请选择保存、放弃或者取消关闭。",
-                    "设置还没有保存", "取消关闭", "放弃", "保存");
-                if (choice == XclMessageResult.Cancel)
-                {
-                    settingsPage.ShowPendingEditPromptIfNeeded();
-                    return false;
-                }
-                if (choice == XclMessageResult.No) settingsPage.DiscardUnsavedChangesWithoutNavigating();
-                else settingsPage.SaveNow();
+                _pluginExitPreparing = false;
+                _pluginExitPrepared = true;
+                RootWindowGrid.IsEnabled = wasEnabled;
+                _ = Dispatcher.BeginInvoke(new Action(Close), DispatcherPriority.Background);
             }
+            return;
         }
-
-        bool closeGames = false;
-        if (TouchOverlayService.HasActive)
+        if (!_closeAnimationPlayed)
         {
-            ShowWindowForClosePrompt();
-            var choice = MessageBoxDialog.ShowTouchModeCloseChoice(
-                "关闭启动器会同时关闭虚拟按键，游戏仍会继续运行。需要继续使用触屏操作时，请选择返回托盘。",
-                "关闭启动器", cancelText: "取消", closeAllText: "关闭所有（包括游戏）",
-                trayText: "返回托盘", closeLauncherOnlyText: "仅关闭启动器和虚拟按键");
-            if (choice == XclTouchCloseChoiceResult.Cancel) return false;
-            if (choice == XclTouchCloseChoiceResult.Tray)
-            {
-                MinimizeToTray();
-                return false;
-            }
-            closeGames = choice == XclTouchCloseChoiceResult.CloseAllIncludingGame;
+            e.Cancel = true;
+            _closeAnimationPlayed = true;
+            UiAnimationHelper.FadeOutMove(RootWindowGrid, RootWindowMoveTransform, onCompleted: Close);
+            return;
         }
-
-        bool closeNotes = false;
-        if (StickyNoteWindow.OpenWindows.Count > 0)
-        {
-            ShowWindowForClosePrompt();
-            var choice = MessageBoxDialog.ShowThreeChoice(
-                $"还有 {StickyNoteWindow.OpenWindows.Count} 个桌面便签处于置顶状态。保留便签时，XCL2 会继续在后台运行。",
-                "关闭启动器", "取消", "仅关闭启动器（便签继续置顶）", "一起关闭");
-            if (choice == XclMessageResult.Cancel) return false;
-            closeNotes = choice == XclMessageResult.Yes;
-            if (!closeNotes) explicitExit = false;
-        }
-
-        if (ConfigService.Config.BackupInstanceOnClose)
-            await RunLifecycleBackupAsync("关闭时备份", showToast: true);
-
-        // 所有选择已确认、备份已完成后才清理浮层/便签。兜底退出也只能从这里开始计时。
-        // 动画回调再次触发 Closing 时由 _closeApproved 放行，不再重复弹窗或备份。
-        UiAnimationHelper.FadeOutMove(RootWindowGrid, RootWindowMoveTransform, onCompleted: () =>
-        {
-            _closeApproved = true;
-            TouchOverlayService.CloseAll();
-            if (closeNotes)
-                foreach (var note in StickyNoteWindow.OpenWindows.ToArray()) note.Close();
-            if (closeGames) KillAllGameAndServerProcesses();
-
-            var hasOtherWindows = Application.Current.Windows.Cast<Window>()
-                .Any(w => !ReferenceEquals(w, this) && w is not TouchOverlayWindow);
-            if (explicitExit || !hasOtherWindows)
-            {
-                _trayIcon?.Hide();
-                ScheduleSelfKillFailSafe();
-                Application.Current.Shutdown();
-            }
-            else
-            {
-                _trayIcon?.Show();
-                Close();
-            }
-        });
-        return true;
+        _shutdownAfterClose = true;
+        _trayIcon?.Hide();
+        TouchOverlayService.CloseAll();
+        if (!_touchCloseKeepGameRunning) KillAllGameAndServerProcesses();
+        ScheduleSelfKillFailSafe();
     }
 
     private async Task RunLifecycleBackupAsync(string reason, bool showToast)
@@ -4808,65 +5130,23 @@ public partial class MainWindow : Window
     private void MainWindow_StateChanged(object? sender, EventArgs e)
     {
         UpdateMaximizeRestoreIcon();
-
-        // 标题栏的下载列表是一个 AllowsTransparency 的 Popup，也就是一个独立于主窗口的
-        // 顶层窗口。主窗口最小化/最大化/从任务栏恢复时，这个 Popup 不跟着做同样的状态
-        // 切换，会短暂地留在屏幕上、位置也对不上（用户反馈截图里那个"悬在外面、内容一片
-        // 黑的下载列表框"就是这个），而且它自己那层透明合成还要跟着一起重画，白白加重
-        // 切换那一帧的负担。窗口状态一变就直接关掉它，代价只是用户要重新点一下下载图标。
         if (DownloadQueuePopup != null) DownloadQueuePopup.IsOpen = false;
-
+        _snapLayouts?.Close();
         var previous = _previousWindowStateForAnimation;
         _previousWindowStateForAnimation = WindowState;
-
-        if (WindowState == WindowState.Minimized) return;
-        if (previous == WindowState) return;
-
-        // 连续快速切换（比如疯狂双击标题栏）时，上一次的收尾动画可能还没播完。再叠一次
-        // 新动画不但看不出效果，还会让 BitmapCache 反复建/拆，是卡顿被放大的常见路径。
-        // 同一时刻只允许有一次窗口级过渡在跑。
-        if (DateTime.UtcNow < _windowTransitionBusyUntil) return;
-        // 用"忙到什么时候"而不是一个 bool 开关：动画的 Completed 回调在动画被别的动画
-        // 打断时不保证触发（例如切换过程中用户又点了托盘还原，那边会直接 BeginAnimation
-        // 覆盖掉当前这条），bool 开关一旦漏了复位就会永久卡住、之后所有窗口过渡都不再播。
-        // 用时间戳则最坏情况下也只是"接下来 600ms 内不再接新的过渡"，自己会恢复。
-        _windowTransitionBusyUntil = DateTime.UtcNow.AddMilliseconds(600);
-
+        var generation = ++_windowStateAnimationGeneration;
+        UiAnimationHelper.Reset(RootWindowGrid, RootWindowMoveTransform, RootWindowScaleTransform);
+        if (WindowState == WindowState.Minimized || previous == WindowState) return;
         var fromMinimized = previous == WindowState.Minimized;
-
-        // 关键改动：不在 StateChanged 里同步启动动画。
-        //
-        // StateChanged 是在原生窗口状态刚切换、WPF 正准备按新尺寸重新 Measure/Arrange 的
-        // 时候触发的。之前在这里直接 BeginAnimation，等于在同一帧里塞进"整树重新布局"
-        // + "为动画建立整树位图缓存" + "第一帧动画合成"三件重活，用户看到的就是切换瞬间
-        // 明显顿一下。改成用 Background 优先级排到布局之后再启动：这时新尺寸下的布局
-        // 已经跑完，建缓存和播动画都在一个干净的帧里进行，观感上动画起步晚了不到一帧，
-        // 但不再有那一下卡顿。
-        Dispatcher.BeginInvoke(new Action(() =>
+        _ = Dispatcher.BeginInvoke(new Action(() =>
         {
-            try
-            {
-                if (fromMinimized)
-                    UiAnimationHelper.FadeInMove(RootWindowGrid, RootWindowMoveTransform,
-                        onCompleted: () => _windowTransitionBusyUntil = DateTime.MinValue);
-                else
-                    UiAnimationHelper.SettleScale(RootWindowGrid, RootWindowScaleTransform,
-                        onCompleted: () => _windowTransitionBusyUntil = DateTime.MinValue);
-            }
-            catch
-            {
-                // 动画只是观感，任何异常都不该让窗口卡在半透明/缩小状态上：兜底把
-                // 三个被动画驱动的属性同步复位，并解除"正在过渡"的锁。
-                RootWindowGrid.Opacity = 1;
-                RootWindowScaleTransform.ScaleX = RootWindowScaleTransform.ScaleY = 1;
-                RootWindowMoveTransform.Y = 0;
-                _windowTransitionBusyUntil = DateTime.MinValue;
-            }
-        }), DispatcherPriority.Background);
+            if (_isWindowClosed || generation != _windowStateAnimationGeneration || WindowState == WindowState.Minimized) return;
+            if (fromMinimized)
+                UiAnimationHelper.FadeInMove(RootWindowGrid, RootWindowMoveTransform);
+            else
+                UiAnimationHelper.SettleScale(RootWindowGrid, RootWindowScaleTransform);
+        }), DispatcherPriority.Loaded);
     }
-
-    /// <summary>窗口级过渡动画"忙到什么时候为止"，见 MainWindow_StateChanged 里的说明。</summary>
-    private DateTime _windowTransitionBusyUntil = DateTime.MinValue;
 
     /// <summary>
     /// 兼容旧版/补丁叠加后的 MainWindow.xaml：部分版本仍然绑定 SizeChanged="MainWindow_SizeChanged"。
@@ -4883,18 +5163,6 @@ public partial class MainWindow : Window
     /// 要顺着整棵逻辑树一路查到 App.xaml 那个上百 KB 的资源字典，放在尺寸变化路径上属于
     /// 纯浪费；缓存后每次调用就只是一次引用赋值。_lastMaximizeIconIsRestore 再挡掉
     /// "状态没变还反复赋值 Data"导致的多余重绘。</summary>
-    /// <summary>设置页「启动器标题栏/任务栏文字」保存后，以及语言切换时都会重新调用一次：
-    /// 按 ConfigService.Config.CustomWindowTitleText 是否为空决定 Title 到底显示用户自定义
-    /// 文字，还是回退到跟这个设置项加入之前完全一样的 Str_Main_WindowTitlePrefix 语言资源。
-    /// 直接赋值 Window.Title（而不是继续用 XAML 里的 DynamicResource）：自绘标题栏左上角的
-    /// TitleBarText 本身就是绑定 Title 属性画出来的，任务栏/Alt-Tab 也读同一个 Title，
-    /// 改这一处，两个"展示位置"一起生效，不是两份独立文字。</summary>
-    public void ApplyWindowTitle()
-    {
-        var custom = ConfigService.Config.CustomWindowTitleText;
-        Title = !string.IsNullOrWhiteSpace(custom) ? custom : (string)FindResource("Str_Main_WindowTitlePrefix");
-    }
-
     private Geometry? _iconWinRestoreCache;
     private Geometry? _iconWinMaximizeCache;
     private bool? _lastMaximizeIconIsRestore;
@@ -4941,28 +5209,31 @@ public partial class MainWindow : Window
         }
         else
         {
-            kinds = paths.Select(path => IsPluginImport(path)
-                ? DragDropInstallService.DropKind.Plugin : _dragDropService.Classify(path)).ToList();
+            kinds = paths.Select(_dragDropService.Classify).ToList();
             _lastDragOverPaths = paths;
             _lastDragOverKinds = kinds;
         }
 
         // 悬停时就把"会发生什么"说清楚，而不是等松手才知道装到哪去了。
         var target = ResolveDropTargetInstanceDir();
-        if (kinds.All(kind => kind == DragDropInstallService.DropKind.Plugin))
+        var pluginCount = kinds.Count(k => k == DragDropInstallService.DropKind.Plugin);
+        var onlyPlugins = pluginCount > 0 && pluginCount == kinds.Count;
+        if (onlyPlugins)
         {
-            DragHintTitle.Text = "松手导入第三方插件";
-            DragHintDetail.Text = "将先显示来源提醒，确认后安装并运行";
+            DragHintTitle.Text = "松手即可导入插件";
+            DragHintDetail.Text = $"{DescribeKinds(kinds)}\n插件不需要先选择游戏实例。";
         }
         else if (target == null)
         {
             DragHintTitle.Text = Loc.T("Str_Cs_No_Game_Instance_Selected", "还没有选择游戏实例");
-            DragHintDetail.Text = "请先在「版本选择」里选一个版本，再把文件拖进来。";
+            DragHintDetail.Text = pluginCount > 0
+                ? $"{pluginCount} 个插件可以直接导入；其余内容需要先在「版本选择」里选一个游戏版本。"
+                : "请先在「版本选择」里选一个版本，再把文件拖进来。";
         }
         else
         {
             DragHintTitle.Text = Loc.T("Str_Drop_Title", "松手即可安装");
-            DragHintDetail.Text = $"{DescribeKinds(kinds)}\n将安装到：{Path.GetFileName(target.TrimEnd(Path.DirectorySeparatorChar))}";
+            DragHintDetail.Text = $"{DescribeKinds(kinds)}\n游戏内容将安装到：{Path.GetFileName(target.TrimEnd(Path.DirectorySeparatorChar))}";
         }
 
         if (DragHintLayer.Visibility != Visibility.Visible)
@@ -4984,7 +5255,7 @@ public partial class MainWindow : Window
         Add(DragDropInstallService.DropKind.World, "存档");
         Add(DragDropInstallService.DropKind.Modpack, "整合包");
         Add(DragDropInstallService.DropKind.BedrockContent, "基岩版内容");
-        Add(DragDropInstallService.DropKind.Plugin, "插件");
+        Add(DragDropInstallService.DropKind.Plugin, "启动器插件");
         Add(DragDropInstallService.DropKind.Unknown, "无法识别的文件");
         return names.Count == 0 ? "没有可安装的内容" : string.Join("、", names);
     }
@@ -5049,9 +5320,7 @@ public partial class MainWindow : Window
                     modpackPath, folder.Path, instanceName, javaExe, progressDialog.Progress);
 
                 // 装完直接把新实例设为当前选中，用户点启动就能玩，不用自己再去版本列表找一遍。
-                cfg.SelectedVersionId = result.InstanceId;
-                try { ConfigService.Save(); } catch { }
-                RefreshSidebar();
+                NotifyInstanceImported(folder.Path, result.InstanceId);
 
                 if (result.FailedFiles.Count > 0)
                 {
@@ -5103,6 +5372,7 @@ public partial class MainWindow : Window
             {
                 var r = await service.ImportMrpackAsync(modpackPath, targetDir,
                     new Progress<string>(msg => pd.Progress.Report(new ProgressInfo(msg, 0, 1, ""))));
+                NotifyInstanceImported(folder.Path, dialog.TargetVersionId);
 
                 if (r.FailedFiles.Count > 0)
                 {
@@ -5119,10 +5389,9 @@ public partial class MainWindow : Window
             else
             {
                 await Task.Run(() => service.Import(modpackPath, targetDir));
+                NotifyInstanceImported(folder.Path, dialog.TargetVersionId);
                 ToastService.ShowSuccess($"整合包已导入到「{dialog.TargetVersionId}」");
             }
-
-            RefreshSidebar();
         }
         catch (Exception ex)
         {
@@ -5228,12 +5497,16 @@ public partial class MainWindow : Window
         _lastDragOverKinds = null;
         if (!e.Data.GetDataPresent(DataFormats.FileDrop)) return;
 
-        var paths = (string[])e.Data.GetData(DataFormats.FileDrop)!;
-        if (paths.Length == 0) return;
-
-        var pluginFiles = paths.Where(IsPluginImport).ToArray();
+        // 插件导入与“把内容装进某个 MC 实例”是两套独立流程。只识别用户本次直接拖入的
+        // 插件文件，不递归扫描拖入文件夹里的 DLL/EXE，避免把游戏目录里的本地库误当插件。
+        var dropped = ((string[])e.Data.GetData(DataFormats.FileDrop)!)
+            .Select(Path.GetFullPath).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+        var pluginFiles = dropped.Where(path => File.Exists(path) && _dragDropService.Classify(path) == DragDropInstallService.DropKind.Plugin).ToArray();
         if (pluginFiles.Length > 0) ImportPluginFiles(pluginFiles);
-        paths = paths.Except(pluginFiles, StringComparer.OrdinalIgnoreCase).ToArray();
+
+        var remainingRoots = dropped.Where(path => !pluginFiles.Contains(path, StringComparer.OrdinalIgnoreCase)).ToArray();
+        var paths = DragDropInstallService.Expand(remainingRoots)
+            .Select(Path.GetFullPath).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
         if (paths.Length == 0) return;
 
         // 先把"每个文件该怎么处理"定下来（可能会弹选择框），再动手装。
@@ -5245,7 +5518,7 @@ public partial class MainWindow : Window
                                   .Select(kv => kv.Key).ToList();
         if (serverJars.Count > 0)
         {
-            InstallJarsToSelectedServer(serverJars);
+            await InstallJarsToSelectedServerAsync(serverJars);
             foreach (var j in serverJars) overrides.Remove(j);
             if (overrides.Count == 0 && paths.Length == serverJars.Count) return;
         }
@@ -5263,7 +5536,11 @@ public partial class MainWindow : Window
         DragDropInstallService.DropResult result;
         try
         {
-            result = await Task.Run(() => _dragDropService.InstallMany(remaining, target, null, overrides));
+            var mods = remaining.Where(p => (overrides.TryGetValue(p, out var forced) ? forced : _dragDropService.Classify(p))
+                == DragDropInstallService.DropKind.Mod).ToArray();
+            var plans = await ModInstallConfirmation.PrepareAsync(mods, Path.Combine(target, "mods"));
+            if (plans == null) return;
+            result = await Task.Run(() => _dragDropService.InstallMany(remaining, target, null, overrides, plans));
         }
         catch (Exception ex)
         {
@@ -5272,9 +5549,16 @@ public partial class MainWindow : Window
             return;
         }
 
+        // 文件已经落盘：如果用户正停在「模组管理」页，立刻刷新列表（整合包导入可能很久，
+        // 所以先刷一次，下面整合包导完再刷一次）。
+        if (result.Installed.Count > 0)
+            (MainContent.Content as ModManagerPage)?.RefreshFromExternalChange();
+
         // 整合包：按设置决定"从零建新实例"还是"装进已有实例"。
         foreach (var modpack in result.Modpacks)
             await ImportDroppedModpackAsync(modpack);
+        if (result.Modpacks.Count > 0)
+            (MainContent.Content as ModManagerPage)?.RefreshFromExternalChange();
 
         // 基岩版内容（.mcworld/.mcpack/.mcaddon/.mctemplate）直接就地导入，
         // 不再只是提示用户自己去别处操作。基岩版没装时 ImportMany 会抛出带说明的异常。
@@ -5347,7 +5631,7 @@ public partial class MainWindow : Window
     /// 在「服务端管理」页拖 jar 时走这条路（需求："在服务器管理页面拖入 jar 文件，
     /// 默认会给服务器安装"）。没有选中服务器时提示用户先选一个，而不是默默装到客户端去。
     /// </summary>
-    private void InstallJarsToSelectedServer(List<string> jarPaths)
+    private async Task InstallJarsToSelectedServerAsync(List<string> jarPaths)
     {
         // ServerInstance 上标了 IsDefault 的优先，没有就取第一个。
         // （服务端实例没有像客户端 SelectedVersionId 那样的"当前选中"配置项，
@@ -5366,23 +5650,16 @@ public partial class MainWindow : Window
         var failed = new List<string>();
         try
         {
-            Directory.CreateDirectory(modsDir);
-            foreach (var jar in jarPaths)
+            var plans = await ModInstallConfirmation.PrepareAsync(jarPaths, modsDir);
+            if (plans == null) return;
+            foreach (var plan in plans.Values)
             {
                 try
                 {
-                    var dest = Path.Combine(modsDir, Path.GetFileName(jar));
-                    var baseName = Path.GetFileNameWithoutExtension(dest);
-                    var i = 2;
-                    while (File.Exists(dest))
-                    {
-                        dest = Path.Combine(modsDir, $"{baseName} ({i}).jar");
-                        i++;
-                    }
-                    File.Copy(jar, dest);
+                    await Task.Run(() => ModInstallService.Install(plan));
                     ok++;
                 }
-                catch (Exception ex) { failed.Add($"{Path.GetFileName(jar)}（{ex.Message}）"); }
+                catch (Exception ex) { failed.Add($"{Path.GetFileName(plan.Source)}（{ex.Message}）"); }
             }
         }
         catch (Exception ex)

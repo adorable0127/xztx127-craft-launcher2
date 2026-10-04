@@ -10,9 +10,9 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <AssemblyName>XCL2</AssemblyName>
     <RootNamespace>XCL2.App</RootNamespace>
-    <Version>2.2.20</Version>
-    <AssemblyVersion>2.2.20.0</AssemblyVersion>
-    <FileVersion>2.2.20.0</FileVersion>
+    <Version>2.2.21</Version>
+    <AssemblyVersion>2.2.21.0</AssemblyVersion>
+    <FileVersion>2.2.21.0</FileVersion>
     <Platforms>AnyCPU</Platforms>
     <LangVersion>latest</LangVersion>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
@@ -85,14 +85,11 @@
   </Target>
 
   <ItemGroup>
-    <EmbeddedResource Include="Resources\Terracotta\terracotta-0.4.2-windows-x86_64.exe">
+    <EmbeddedResource Include="Resources\Terracotta\terracotta-0.4.2-windows-x86_64.exe" Condition="Exists('Resources\Terracotta\terracotta-0.4.2-windows-x86_64.exe')">
       <LogicalName>XCL2.App.Resources.Terracotta.terracotta-0.4.2-windows-x86_64.exe</LogicalName>
     </EmbeddedResource>
     <EmbeddedResource Include="Resources\Data\WikiEntries.txt">
       <LogicalName>XCL2.App.Resources.Data.WikiEntries.txt</LogicalName>
-    </EmbeddedResource>
-    <EmbeddedResource Include="Resources\Avatars\offline-default.png">
-      <LogicalName>XCL2.App.Resources.Avatars.offline-default.png</LogicalName>
     </EmbeddedResource>
     <EmbeddedResource Include="Resources\Skins\steve.png">
       <LogicalName>XCL2.App.Resources.Skins.steve.png</LogicalName>
@@ -103,12 +100,15 @@
     <EmbeddedResource Include="Resources\Avatars\alex-default.png">
       <LogicalName>XCL2.App.Resources.Avatars.alex-default.png</LogicalName>
     </EmbeddedResource>
-  </ItemGroup>
-
-  <!-- 单文件发布时仍能从插件管理一键查看开发指南。 -->
-  <ItemGroup>
-    <EmbeddedResource Include="Resources\Docs\PLUGIN_GUIDE.md" LogicalName="XCL2.App.PLUGIN_GUIDE.md" />
-    <EmbeddedResource Include="Resources\Docs\API_REFERENCE.md" LogicalName="XCL2.App.Docs.API_REFERENCE.md" />
+    <EmbeddedResource Include="Resources\Docs\PLUGIN_GUIDE.md">
+      <LogicalName>XCL2.App.PLUGIN_GUIDE.md</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Resources\Docs\API_REFERENCE.md">
+      <LogicalName>XCL2.App.Docs.API_REFERENCE.md</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Resources\Docs\PLUGIN_EXE_PROTOCOL.md">
+      <LogicalName>XCL2.App.Docs.PLUGIN_EXE_PROTOCOL.md</LogicalName>
+    </EmbeddedResource>
   </ItemGroup>
 
 </Project>

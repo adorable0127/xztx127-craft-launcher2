@@ -34,6 +34,9 @@ public sealed class PluginRuntimeService : IDisposable
     private IDisposable Register(string kind, string id, Delegate callback, int order)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(id);
+        _context.Permissions.Demand(PluginPermissionNames.UiComponents);
+        if (kind == "launch" && !_context.Metadata.IsLegacy)
+            throw new PluginOperationException("LegacyApiOnly", "新插件请使用 Events.InterceptLaunch，旧启动中间件不暴露给新插件。");
         lock (PluginRuntimeRegistry.Gate)
         {
             if (_disposed) throw new ObjectDisposedException(nameof(PluginRuntimeService));
@@ -49,6 +52,7 @@ public sealed class PluginRuntimeService : IDisposable
             PluginRuntimeRegistry.Remove(this);
         }
     }
+    internal void Revoke() { lock (PluginRuntimeRegistry.Gate) PluginRuntimeRegistry.Remove(this); }
 }
 
 internal static partial class PluginRuntimeRegistry

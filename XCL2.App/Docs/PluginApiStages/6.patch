@@ -1,0 +1,558 @@
+diff --git a/Models/AppConfig.cs b/Models/AppConfig.cs
+--- a/Models/AppConfig.cs
++++ b/Models/AppConfig.cs
+@@ -173,6 +173,7 @@
+     /// <summary>插件事件回调等待上限，宿主限制在 0.1—30 秒；不承诺强停 DLL。</summary>
+     public double PluginCallbackTimeoutSeconds { get; set; } = 3;
+     public string? PluginDownloadProviderId { get; set; }
++    public string? PluginBackgroundId { get; set; }
+ 
+     public string? JavaPath { get; set; }
+ 
+diff --git a/Services/Plugins/PluginContext.cs b/Services/Plugins/PluginContext.cs
+--- a/Services/Plugins/PluginContext.cs
++++ b/Services/Plugins/PluginContext.cs
+@@ -58,6 +58,7 @@
+     public PluginEventService Events { get; }
+     public PluginProviderService Providers { get; }
+     public PluginNetworkService Network { get; }
++    public PluginMessageService Messages { get; }
+     private PluginHostBridge? _host;
+     private PluginCallbackRunner? _callbacks;
+     private readonly object _lifetimeGate = new();
+@@ -128,6 +129,7 @@
+         Events = new PluginEventService(this);
+         Providers = new PluginProviderService(this);
+         Network = new PluginNetworkService(this);
++        Messages = new PluginMessageService(this);
+     }
+ 
+     /// <summary>原安装等于 IPlugin.Id，副本含独立实例后缀。使用此 Id 隔离注册项，方便插件代码里不用额外持有 IPlugin 引用
+diff --git a/Services/Plugins/PluginEventService.cs b/Services/Plugins/PluginEventService.cs
+--- a/Services/Plugins/PluginEventService.cs
++++ b/Services/Plugins/PluginEventService.cs
+@@ -49,6 +49,7 @@
+         nameof(PluginDownloadFailed) or nameof(PluginDownloadCanceled) or nameof(PluginDownloadRemoved) => PluginPermissionNames.DownloadsRead,
+         nameof(PluginModInstalled) or nameof(PluginModRemoved) or nameof(PluginModEnabledChanged) or nameof(PluginModCatalogChanged) => PluginPermissionNames.ModsRead,
+         nameof(PluginSettingsChanged) => PluginPermissionNames.SettingsRead,
++        nameof(PluginPeerUnavailable) => PluginPermissionNames.Messaging,
+         _ => throw new ArgumentException("不支持的宿主事件类型。", nameof(type))
+     };
+     internal void Enqueue(PluginNotification notification)
+diff --git a/Services/Plugins/PluginManager.cs b/Services/Plugins/PluginManager.cs
+--- a/Services/Plugins/PluginManager.cs
++++ b/Services/Plugins/PluginManager.cs
+@@ -42,6 +42,7 @@
+     public PluginMetadata? Metadata { get; init; }
+     public ImmutableArray<PluginLoadDiagnostic> Diagnostics { get; init; } = ImmutableArray<PluginLoadDiagnostic>.Empty;
+     public ImmutableArray<string> GrantedPermissions { get; init; } = ImmutableArray<string>.Empty;
++    internal ImmutableArray<string> RequiredDependencyPaths { get; set; } = ImmutableArray<string>.Empty;
+ }
+ 
+ /// <summary>安装冲突必须由调用方选择；取消不改文件、不停止插件。</summary>
+@@ -380,6 +381,8 @@
+                     IsExecutable = Path.GetExtension(candidate.FilePath).Equals(".exe", StringComparison.OrdinalIgnoreCase),
+                     Metadata = candidate.Metadata, GrantedPermissions = saved.GrantedPermissions.ToImmutableArray(),
+                     LoadError = string.Join("\n", candidate.Errors.Select(e => e.SafeMessage)), Diagnostics = candidate.Errors.ToImmutableArray() };
++            info.RequiredDependencyPaths = candidate.Dependencies.Where(pair => candidate.Metadata!.Dependencies.Any(d => d.Id == pair.Key && !d.Optional))
++                .Select(pair => pair.Value.FilePath).ToImmutableArray();
+             loaded.Add(info);
+             Plugins = loaded.ToArray();
+             saved.Enabled = info.Enabled; saved.StartedOnce = info.StartedOnce;
+@@ -568,6 +571,8 @@
+     }
+     private void StopOne(string path)
+     {
++        foreach (var dependent in Plugins.Where(p => p.RequiredDependencyPaths.Contains(path, StringComparer.OrdinalIgnoreCase)).Reverse().ToArray())
++            StopOne(dependent.FilePath);
+         var p = Plugins.FirstOrDefault(p => p.FilePath.Equals(path, StringComparison.OrdinalIgnoreCase));
+         if (p?.RunningProcess is { } process)
+         {
+@@ -586,6 +591,7 @@
+             _activePluginIds.Remove(SafeFileName(p.Context.PluginId));
+         }
+         ReleaseRuntime(path);
++        if (p?.Context != null) PluginEventHub.Publish(new PluginPeerUnavailable(p.Context.PluginId));
+         Plugins = Plugins.Where(p => !p.FilePath.Equals(path, StringComparison.OrdinalIgnoreCase)).ToArray();
+     }
+     private void ReleaseRuntime(string path)
+diff --git a/Services/Plugins/PluginMessageService.cs b/Services/Plugins/PluginMessageService.cs
+--- /dev/null
++++ b/Services/Plugins/PluginMessageService.cs
+@@ -0,0 +1,66 @@
++using System.Collections.Immutable;
++using System.Text.Json;
++
++namespace XCL2.App.Services.Plugins;
++
++public sealed record PluginPeer(string InstanceId, string DeclaredId, string Version);
++public sealed record PluginMessage(string SenderPluginId, string Channel, JsonElement Payload);
++public sealed record PluginPeerUnavailable(string PluginId) : PluginNotification;
++
++/// <summary>具名 JSON 消息；只向清单声明的依赖实例发送，不共享可变对象或服务引用。</summary>
++public sealed class PluginMessageService
++{
++    private readonly PluginContext _context;
++    internal PluginMessageService(PluginContext context) { _context = context; }
++    public ImmutableArray<PluginPeer> GetPeers()
++    {
++        _context.Permissions.Demand(PluginPermissionNames.Messaging);
++        return _context.Host.Owner.Plugins.Plugins.Where(p => p.Context != null && !p.Context.IsStopped && p.Metadata != null &&
++            p.Context.Permissions.Has(PluginPermissionNames.Messaging) && _context.Metadata.Dependencies.Any(d =>
++                d.Id == p.Metadata.DeclaredId && PluginSemanticVersion.InRange(p.Metadata.Version, d.VersionRange)))
++            .Select(p => new PluginPeer(p.Context!.PluginId, p.Metadata!.DeclaredId, p.Metadata.Version)).OrderBy(p => p.InstanceId, StringComparer.Ordinal).ToImmutableArray();
++    }
++    public IDisposable Subscribe(string channel, Func<PluginMessage, CancellationToken, ValueTask> callback)
++    {
++        _context.Permissions.Demand(PluginPermissionNames.Messaging); ArgumentException.ThrowIfNullOrWhiteSpace(channel); ArgumentNullException.ThrowIfNull(callback);
++        if (channel.Length > 128) throw new ArgumentException("消息通道名超过 128 字符。");
++        return _context.Track(PluginMessageRegistry.Add(_context, channel, callback));
++    }
++    public async Task<int> SendAsync(string targetPluginId, string channel, JsonElement payload, CancellationToken ct = default)
++    {
++        _context.Permissions.Demand(PluginPermissionNames.Messaging);
++        ArgumentException.ThrowIfNullOrWhiteSpace(channel);
++        if (!GetPeers().Any(p => p.InstanceId == targetPluginId)) throw new PluginOperationException("UndeclaredDependency", "目标必须是清单声明且已加载的依赖插件实例。");
++        var text = payload.GetRawText();
++        if (System.Text.Encoding.UTF8.GetByteCount(text) > 65536 || _context.Host.Safe(text) != text)
++            throw new PluginOperationException("InvalidMessage", "消息超过 64 KiB 或包含受保护凭据。");
++        var revision = Interlocked.Read(ref _context.AuthorizationRevision);
++        var result = await PluginMessageRegistry.SendAsync(_context, targetPluginId, new(_context.PluginId, channel, payload.Clone()), ct).ConfigureAwait(false);
++        _context.Permissions.Demand(PluginPermissionNames.Messaging);
++        if (revision != Interlocked.Read(ref _context.AuthorizationRevision)) throw new PluginOperationException("AuthorizationChanged", "发送期间授权已变更。");
++        return result;
++    }
++}
++internal static class PluginMessageRegistry
++{
++    private sealed record Entry(PluginContext Context, string Channel, Func<PluginMessage, CancellationToken, ValueTask> Callback);
++    private static readonly object Gate = new(); private static readonly List<Entry> Entries = new();
++    internal static IDisposable Add(PluginContext context, string channel, Func<PluginMessage, CancellationToken, ValueTask> callback)
++    {
++        var entry = new Entry(context, channel, callback); lock (Gate) Entries.Add(entry);
++        return new PluginRegistration(() => { lock (Gate) Entries.Remove(entry); });
++    }
++    internal static async Task<int> SendAsync(PluginContext sender, string target, PluginMessage message, CancellationToken ct)
++    {
++        Entry[] listeners; lock (Gate) listeners = Entries.Where(e => e.Context.PluginId == target && e.Channel == message.Channel).ToArray();
++        var delivered = 0;
++        foreach (var entry in listeners)
++        {
++            sender.Permissions.Demand(PluginPermissionNames.Messaging);
++            var result = await entry.Context.Callbacks.InvokeAsync(PluginPermissionNames.Messaging, "Message:" + message.Channel,
++                async token => { await entry.Callback(message, token); return true; }, entry.Context.Host.CallbackTimeout, ct).ConfigureAwait(false);
++            if (result.Success) delivered++;
++        }
++        return delivered;
++    }
++}
+diff --git a/Services/Plugins/PluginMetadata.cs b/Services/Plugins/PluginMetadata.cs
+--- a/Services/Plugins/PluginMetadata.cs
++++ b/Services/Plugins/PluginMetadata.cs
+@@ -17,7 +17,7 @@
+ 
+ internal static class PluginApi
+ {
+-    internal static readonly Version Version = new(1, 7);
++    internal static readonly Version Version = new(1, 8);
+ }
+ 
+ internal sealed record PluginSemanticVersion(BigInteger Major, BigInteger Minor, BigInteger Patch, string[] Prerelease)
+diff --git a/Services/Plugins/PluginUiContributions.cs b/Services/Plugins/PluginUiContributions.cs
+--- /dev/null
++++ b/Services/Plugins/PluginUiContributions.cs
+@@ -0,0 +1,112 @@
++using System.Collections.Immutable;
++using System.IO;
++using System.Windows;
++
++namespace XCL2.App.Services.Plugins;
++
++public sealed record PluginNavigationPageDefinition(string Id, string Title, Func<PluginUiContext, FrameworkElement> CreateContent,
++    bool ShowInSimplifiedMode = false, ImmutableArray<string> Languages = default, int Order = 0);
++public sealed record PluginInstanceActionDefinition(string Id, string Title,
++    Func<PluginInstanceDetails, CancellationToken, ValueTask> ExecuteAsync, int Order = 0);
++public sealed record PluginBackgroundDefinition(string Id, string Name, string RelativeImagePath);
++public sealed record PluginBackgroundAsset(string RelativeImagePath);
++
++public sealed partial class PluginUiService
++{
++    public IDisposable RegisterNavigationPage(PluginNavigationPageDefinition definition)
++    {
++        ArgumentNullException.ThrowIfNull(definition); ArgumentNullException.ThrowIfNull(definition.CreateContent);
++        return RegisterContribution("navigation", PluginPermissionNames.UiNavigation, definition.Id, definition);
++    }
++    public IDisposable RegisterInstanceAction(PluginInstanceActionDefinition definition)
++    {
++        ArgumentNullException.ThrowIfNull(definition); ArgumentNullException.ThrowIfNull(definition.ExecuteAsync);
++        return RegisterContribution("instance-action", PluginPermissionNames.UiInstanceActions, definition.Id, definition);
++    }
++    public IDisposable RegisterSetting(PluginOptionDefinition definition)
++    {
++        ArgumentNullException.ThrowIfNull(definition);
++        if (!Enum.IsDefined(definition.Kind) || !double.IsFinite(definition.Minimum) || !double.IsFinite(definition.Maximum) || definition.Minimum > definition.Maximum)
++            throw new ArgumentException("设置类型或范围无效。");
++        if (definition.Kind == PluginOptionKind.Choice && definition.Choices.Count == 0) throw new ArgumentException("选择设置需要候选项。");
++        definition = definition with { Choices = Array.AsReadOnly(definition.Choices.ToArray()) };
++        var error = ValueError(definition, DefaultValue(definition)); if (error != null) throw new ArgumentException(error);
++        return RegisterContribution("setting", PluginPermissionNames.UiSettings, definition.Id, definition);
++    }
++    public IDisposable RegisterBackground(PluginBackgroundDefinition definition)
++    {
++        ArgumentNullException.ThrowIfNull(definition);
++        _ = PluginUiContributionRegistry.ResolveImage(_context, definition.RelativeImagePath);
++        return RegisterContribution("background", PluginPermissionNames.UiBackground, definition.Id, definition);
++    }
++    private IDisposable RegisterContribution(string kind, string permission, string id, object definition)
++    {
++        ArgumentException.ThrowIfNullOrWhiteSpace(id);
++        _ = _context.Host; _context.Permissions.Demand(permission);
++        IDisposable? result = null;
++        Invoke(() => result = _context.Track(PluginUiContributionRegistry.Register(_context, kind, permission, id, definition)));
++        return result!;
++    }
++    public async Task<PluginBackgroundAsset?> ImportBackgroundImageAsync(CancellationToken ct = default)
++    {
++        _context.Permissions.Demand(PluginPermissionNames.UiBackground); _context.Permissions.Demand(PluginPermissionNames.ExternalFilesRead);
++        using var stop = CancellationTokenSource.CreateLinkedTokenSource(ct, Stopping);
++        var chosen = await _context.Host.OnUiAsync(() =>
++        {
++            var picker = new Microsoft.Win32.OpenFileDialog { Filter = "Images|*.png;*.jpg;*.jpeg;*.bmp;*.gif", Multiselect = false };
++            return picker.ShowDialog() == true ? picker.FileName : null;
++        }, stop.Token).ConfigureAwait(false);
++        if (chosen == null) return null;
++        var extension = Path.GetExtension(chosen).ToLowerInvariant();
++        if (!PluginUiContributionRegistry.ImageExtensions.Contains(extension) || new FileInfo(chosen).Length > 32 * 1024 * 1024)
++            throw new PluginOperationException("InvalidImage", "图片类型不支持或大小超过 32 MiB。");
++        var relative = Path.Combine("backgrounds", Guid.NewGuid().ToString("N") + extension);
++        var destination = Path.Combine(_context.DataDirectory, relative); Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
++        await Task.Run(() => File.Copy(chosen, destination), stop.Token).ConfigureAwait(false);
++        _context.Permissions.Demand(PluginPermissionNames.UiBackground); _context.Permissions.Demand(PluginPermissionNames.ExternalFilesRead);
++        return new(relative);
++    }
++}
++
++internal static class PluginUiContributionRegistry
++{
++    internal sealed record Entry(PluginContext Context, string Id, string Kind, string Permission, object Definition);
++    private static readonly object Gate = new(); private static readonly List<Entry> Entries = new();
++    internal static readonly string[] ImageExtensions = { ".png", ".jpg", ".jpeg", ".bmp", ".gif" };
++    internal static event Action? Changed;
++    internal static Entry[] Snapshot(string kind)
++    {
++        lock (Gate) return Entries.Where(e => e.Kind == kind && e.Context.Permissions.Has(e.Permission)).OrderBy(e => e.Id, StringComparer.Ordinal).ToArray();
++    }
++    internal static IDisposable Register(PluginContext context, string kind, string permission, string id, object definition)
++    {
++        var entry = new Entry(context, context.PluginId + "/" + id, kind, permission, definition);
++        lock (Gate)
++        {
++            if (Entries.Any(e => e.Kind == kind && e.Id == entry.Id)) throw new ArgumentException("UI 扩展重复注册。");
++            Entries.Add(entry);
++        }
++        context.AuthorizationChanged += Refresh; Refresh();
++        return new PluginRegistration(() => { lock (Gate) Entries.Remove(entry); context.AuthorizationChanged -= Refresh; Refresh(); });
++    }
++    internal static void Refresh()
++    {
++        if (Changed == null) return;
++        foreach (Action handler in Changed.GetInvocationList())
++            try { handler(); } catch (Exception ex) { LauncherLogService.AppendLine("[PluginHost] UiContributionRefreshFailed: " + ex.GetType().Name); }
++    }
++    internal static string ResolveImage(PluginContext context, string relative)
++    {
++        context.Permissions.Demand(PluginPermissionNames.UiBackground);
++        if (Path.IsPathRooted(relative) || relative.Contains(':')) throw new PluginOperationException("InvalidPath", "背景路径必须在插件数据目录中。");
++        var root = Path.GetFullPath(context.DataDirectory).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
++        var full = Path.GetFullPath(Path.Combine(root, relative));
++        if (!full.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase) || !ImageExtensions.Contains(Path.GetExtension(full).ToLowerInvariant()))
++            throw new PluginOperationException("InvalidImage", "背景必须是插件数据目录内的图片。");
++        for (var item = full; item != root && item != null; item = Path.GetDirectoryName(item))
++            if ((File.Exists(item) || Directory.Exists(item)) && (File.GetAttributes(item) & FileAttributes.ReparsePoint) != 0)
++                throw new PluginOperationException("InvalidImage", "背景不能使用链接文件。");
++        if (!File.Exists(full) || new FileInfo(full).Length > 32 * 1024 * 1024) throw new PluginOperationException("InvalidImage", "背景不存在或超过 32 MiB。");
++        return full;
++    }
++}
+diff --git a/Services/Plugins/PluginUiService.cs b/Services/Plugins/PluginUiService.cs
+--- a/Services/Plugins/PluginUiService.cs
++++ b/Services/Plugins/PluginUiService.cs
+@@ -7,7 +7,7 @@
+ namespace XCL2.App.Services.Plugins;
+ 
+ /// <summary>插件实例独享的 UI 注册表。所有注册、回调及控件创建在 UI 线程串行执行。</summary>
+-public sealed class PluginUiService : IDisposable
++public sealed partial class PluginUiService : IDisposable
+ {
+     private readonly PluginContext _context;
+     private readonly Dictionary<string, object> _entries = new(StringComparer.Ordinal);
+@@ -226,11 +226,11 @@
+         return ValueError(option, value) == null ? value : fallback;
+     }
+ 
+-    internal string? SaveOption(PluginOptionDefinition option, object? value)
++    internal string? SaveOption(PluginOptionDefinition option, object? value, string permission = PluginPermissionNames.UiBasic)
+     {
+         try
+         {
+-            EnsureActive();
++            _context.EnsureActive(); _context.Permissions.Demand(permission);
+             var error = ValueError(option, value) ?? option.Validate?.Invoke(value);
+             if (!string.IsNullOrEmpty(error)) return error;
+             _context.Config.Set(option.ConfigKey ?? option.Id, value);
+diff --git a/Views/MainWindow.PluginUi.cs b/Views/MainWindow.PluginUi.cs
+--- /dev/null
++++ b/Views/MainWindow.PluginUi.cs
+@@ -0,0 +1,76 @@
++using System.Windows;
++using System.Windows.Controls;
++using XCL2.App.Services;
++using XCL2.App.Services.Plugins;
++
++namespace XCL2.App.Views;
++
++public partial class MainWindow
++{
++    private readonly List<Button> _pluginNavButtons = new();
++    private string? _activePluginPage;
++    private string? _appliedPluginBackground;
++    private bool _refreshingPluginUi;
++    private bool _pluginUiInitialized;
++    private void InitializePluginUi()
++    {
++        if (_pluginUiInitialized) return; _pluginUiInitialized = true;
++        PluginUiContributionRegistry.Changed += RefreshPluginUi;
++        ConfigService.Saved += RefreshPluginUi;
++        Closed += (_, _) => { PluginUiContributionRegistry.Changed -= RefreshPluginUi; ConfigService.Saved -= RefreshPluginUi; };
++        RefreshPluginUi();
++    }
++    private void RefreshPluginUi()
++    {
++        if (!Dispatcher.CheckAccess()) { Dispatcher.BeginInvoke(new Action(RefreshPluginUi)); return; }
++        if (_refreshingPluginUi) return; _refreshingPluginUi = true;
++        try
++        {
++            foreach (var button in _pluginNavButtons) NavButtonsPanel.Children.Remove(button); _pluginNavButtons.Clear();
++            var navigation = PluginUiContributionRegistry.Snapshot("navigation").Where(entry =>
++            {
++                var definition = (PluginNavigationPageDefinition)entry.Definition;
++                return (!ConfigService.Config.SimplifiedModeEnabled || definition.ShowInSimplifiedMode) &&
++                    (definition.Languages.IsDefaultOrEmpty || definition.Languages.Contains(ConfigService.Config.LauncherLanguage, StringComparer.OrdinalIgnoreCase));
++            }).ToArray();
++            if (_activePluginPage != null && !navigation.Any(e => e.Id == _activePluginPage)) { _activePluginPage = null; ShowHome(); }
++            foreach (var entry in navigation.OrderBy(e => ((PluginNavigationPageDefinition)e.Definition).Order).ThenBy(e => e.Id, StringComparer.Ordinal))
++            {
++                var definition = (PluginNavigationPageDefinition)entry.Definition;
++                if ((ConfigService.Config.SimplifiedModeEnabled && !definition.ShowInSimplifiedMode) ||
++                    (!definition.Languages.IsDefaultOrEmpty && !definition.Languages.Contains(ConfigService.Config.LauncherLanguage, StringComparer.OrdinalIgnoreCase))) continue;
++                var button = new Button { Content = entry.Context.Host.Safe(definition.Title), ToolTip = definition.Title, Margin = new Thickness(0, 4, 0, 0) };
++                button.SetResourceReference(StyleProperty, "SideNavButton");
++                button.Click += (_, _) =>
++                {
++                    try
++                    {
++                        entry.Context.Permissions.Demand(PluginPermissionNames.UiNavigation);
++                        var content = definition.CreateContent(new PluginUiContext(entry.Context, "navigation:" + entry.Id));
++                        if (content == null || content.Parent != null) throw new InvalidOperationException("插件页面必须返回新的控件。");
++                        SetMainContent(content); if (ReferenceEquals(MainContent.Content, content)) _activePluginPage = entry.Id;
++                    }
++                    catch (Exception ex) { entry.Context.Log("PageCreationFailed: " + ex.GetType().Name); MessageBoxDialog.ShowWarning(Loc.T("Str_Plugin_PageFailed", "插件页面创建失败，可以返回首页。"), definition.Title); }
++                };
++                NavButtonsPanel.Children.Add(button); _pluginNavButtons.Add(button);
++            }
++            var background = PluginUiContributionRegistry.Snapshot("background").FirstOrDefault(e => e.Id == ConfigService.Config.PluginBackgroundId);
++            if (background != null)
++            {
++                try
++                {
++                    var image = PluginUiContributionRegistry.ResolveImage(background.Context, ((PluginBackgroundDefinition)background.Definition).RelativeImagePath);
++                    if (_appliedPluginBackground != image && SetCustomBackgroundImage(image)) _appliedPluginBackground = image;
++                }
++                catch (Exception ex) { background.Context.Log("BackgroundFailed: " + ex.GetType().Name); RestorePluginBackground(); }
++            }
++            else RestorePluginBackground();
++        }
++        finally { _refreshingPluginUi = false; }
++    }
++    private void RestorePluginBackground()
++    {
++        if (_appliedPluginBackground == null) return; _appliedPluginBackground = null;
++        if (!SetCustomBackgroundImage(ConfigService.Config.CustomBackgroundImagePath)) SetCustomBackgroundImage(null);
++    }
++}
+diff --git a/Views/MainWindow.xaml.cs b/Views/MainWindow.xaml.cs
+--- a/Views/MainWindow.xaml.cs
++++ b/Views/MainWindow.xaml.cs
+@@ -222,6 +222,7 @@
+         // 都跑完；EnableUiAnimations 关闭时 UiAnimationHelper 内部直接同步定终值，不引入
+         // 任何延迟，不影响启动速度。
+         Loaded += (_, _) => UiAnimationHelper.FadeInMove(RootWindowGrid, RootWindowMoveTransform);
++        Loaded += (_, _) => InitializePluginUi();
+ 
+         // 注意：这里**不能**调用 ApplyFeatureVisibility()/RefreshSimplifiedModeNavVisibility()。
+         // 那两个方法读的是 ConfigService.Config，而 ConfigService.Load() 要到下面几十行之后
+@@ -1472,6 +1473,7 @@
+         Views.ProgressDialog.CloseAll();
+ 
+         MainContent.Content = page;
++        _activePluginPage = null;
+         UiAnimationHelper.PageEntrance(MainContent, MainContentTransform, MainContentScaleTransform);
+     }
+ 
+diff --git a/Views/PluginModSourcesDialog.cs b/Views/PluginModSourcesDialog.cs
+--- a/Views/PluginModSourcesDialog.cs
++++ b/Views/PluginModSourcesDialog.cs
+@@ -51,8 +51,9 @@
+             var instance = instances.Items.FirstOrDefault(i => i.IsSelected);
+             _instanceId = instance?.Id; _version = instance?.MinecraftVersion; _loader = instance?.LoaderId;
+             var entry = PluginProviderRegistry.Get(info.Id, "mod");
++            var query = new PluginModQuery(_query.Text.Trim(), _version, _loader);
+             var result = await PluginProviderRegistry.InvokeAsync(entry,
+-                token => ((IPluginModProvider)entry.Provider).SearchAsync(new(_query.Text.Trim(), _version, _loader), token), _stop.Token);
++                token => ((IPluginModProvider)entry.Provider).SearchAsync(query, token), _stop.Token);
+             if (generation != Interlocked.Read(ref _selection)) return;
+             if (result.Items.IsDefault || result.Items.Length > 1000) throw new PluginOperationException("InvalidResults", "插件搜索结果无效。");
+             _projects.ItemsSource = result.Items.Where(p => p != null && !string.IsNullOrWhiteSpace(p.Id)).Select(p => p with
+diff --git a/Views/SettingsPage.Plugins.cs b/Views/SettingsPage.Plugins.cs
+--- /dev/null
++++ b/Views/SettingsPage.Plugins.cs
+@@ -0,0 +1,65 @@
++using System.Globalization;
++using System.Windows;
++using System.Windows.Controls;
++using XCL2.App.Services;
++using XCL2.App.Services.Plugins;
++
++namespace XCL2.App.Views;
++
++public partial class SettingsPage
++{
++    private void InitializePluginSettings()
++    {
++        var area = new StackPanel { Margin = new Thickness(0, 20, 0, 12) }; SettingsRootPanel.Children.Add(area);
++        void Refresh()
++        {
++            if (!Dispatcher.CheckAccess()) { Dispatcher.BeginInvoke(new Action(Refresh)); return; }
++            area.Children.Clear();
++            area.Children.Add(new TextBlock { Text = Loc.T("Str_Plugin_CustomSettings", "插件设置与背景"), FontSize = 16, FontWeight = FontWeights.Bold });
++            var backgrounds = new ComboBox { MinWidth = 280, HorizontalAlignment = HorizontalAlignment.Left, Margin = new Thickness(0, 10, 0, 12) };
++            backgrounds.Items.Add(new ComboBoxItem { Content = Loc.T("Str_Plugin_BuiltInBackground", "使用启动器原背景"), Tag = "" });
++            foreach (var entry in PluginUiContributionRegistry.Snapshot("background"))
++                backgrounds.Items.Add(new ComboBoxItem { Content = entry.Context.Host.Safe(((PluginBackgroundDefinition)entry.Definition).Name), Tag = entry.Id });
++            backgrounds.SelectedItem = backgrounds.Items.OfType<ComboBoxItem>().FirstOrDefault(i => (i.Tag as string) == _owner.ConfigService.Config.PluginBackgroundId) ?? backgrounds.Items[0];
++            backgrounds.SelectionChanged += (_, _) =>
++            {
++                _owner.ConfigService.Config.PluginBackgroundId = (backgrounds.SelectedItem as ComboBoxItem)?.Tag as string;
++                _owner.ConfigService.Save();
++            };
++            area.Children.Add(backgrounds);
++            foreach (var entry in PluginUiContributionRegistry.Snapshot("setting").OrderBy(e => ((PluginOptionDefinition)e.Definition).Order).ThenBy(e => e.Id, StringComparer.Ordinal))
++            {
++                var option = (PluginOptionDefinition)entry.Definition; var ui = entry.Context.Ui;
++                var row = new StackPanel { Margin = new Thickness(0, 6, 0, 8) };
++                row.Children.Add(new TextBlock { Text = entry.Context.Host.Safe(entry.Context.Metadata.Name + " · " + option.Title), FontWeight = FontWeights.SemiBold });
++                var error = new TextBlock { TextWrapping = TextWrapping.Wrap };
++                void Save(object? value) { error.Text = ui.SaveOption(option, value, PluginPermissionNames.UiSettings) ?? ""; }
++                var current = ui.ReadOption(option);
++                switch (option.Kind)
++                {
++                    case PluginOptionKind.Toggle:
++                        var toggle = new CheckBox { IsChecked = (bool)current }; toggle.Click += (_, _) => Save(toggle.IsChecked == true); row.Children.Add(toggle); break;
++                    case PluginOptionKind.Choice:
++                        var combo = new ComboBox { ItemsSource = option.Choices, DisplayMemberPath = nameof(PluginChoice.Label), SelectedValuePath = nameof(PluginChoice.Value), SelectedValue = current, MinWidth = 250, HorizontalAlignment = HorizontalAlignment.Left };
++                        combo.SelectionChanged += (_, _) => Save(combo.SelectedValue as string); row.Children.Add(combo); break;
++                    default:
++                        var text = new TextBox { Text = Convert.ToString(current, CultureInfo.InvariantCulture) ?? "", MinWidth = 280, HorizontalAlignment = HorizontalAlignment.Left };
++                        text.LostFocus += (_, _) =>
++                        {
++                            if (option.Kind == PluginOptionKind.Number)
++                            {
++                                if (double.TryParse(text.Text, NumberStyles.Float, CultureInfo.InvariantCulture, out var number)) Save(number);
++                                else error.Text = Loc.T("Str_Plugin_InvalidNumber", "请输入有效数字。");
++                            }
++                            else Save(text.Text);
++                        };
++                        row.Children.Add(text); break;
++                }
++                row.Children.Add(error); area.Children.Add(row);
++            }
++        }
++        Loaded += (_, _) => { PluginUiContributionRegistry.Changed -= Refresh; PluginUiContributionRegistry.Changed += Refresh; Refresh(); };
++        Unloaded += (_, _) => PluginUiContributionRegistry.Changed -= Refresh;
++        Refresh();
++    }
++}
+diff --git a/Views/SettingsPage.xaml.cs b/Views/SettingsPage.xaml.cs
+--- a/Views/SettingsPage.xaml.cs
++++ b/Views/SettingsPage.xaml.cs
+@@ -78,6 +78,7 @@
+     {
+         _owner = owner; // 统一先于 InitializeComponent 赋值，避免控件初始化时触发的事件访问到未赋值字段
+         InitializeComponent();
++        InitializePluginSettings();
+         var cfg = _owner.ConfigService.Config;
+         _pendingHiddenFeatureKeys = new HashSet<string>(cfg.HiddenFeatureKeys, StringComparer.OrdinalIgnoreCase);
+         _pendingHiddenSettingKeys = new HashSet<string>(cfg.HiddenSettingKeys, StringComparer.OrdinalIgnoreCase);
+diff --git a/Views/VersionSelectPage.Plugins.cs b/Views/VersionSelectPage.Plugins.cs
+--- /dev/null
++++ b/Views/VersionSelectPage.Plugins.cs
+@@ -0,0 +1,38 @@
++using System.Windows;
++using System.Windows.Controls;
++using XCL2.App.Models;
++using XCL2.App.Services;
++using XCL2.App.Services.Plugins;
++
++namespace XCL2.App.Views;
++
++public partial class VersionSelectPage
++{
++    private void PluginInstanceMenu_Opened(object sender, RoutedEventArgs e)
++    {
++        if (sender is not ContextMenu menu) return;
++        foreach (var item in menu.Items.OfType<MenuItem>().Where(i => i.Tag is PluginUiContributionRegistry.Entry).ToArray()) menu.Items.Remove(item);
++        if (menu.PlacementTarget is not FrameworkElement target || target.DataContext is not GameVersion version) return;
++        var root = _owner.ConfigService.Config.SelectedFolderPath;
++        if (string.IsNullOrWhiteSpace(root)) return;
++        var instanceId = PluginHostBridge.InstanceId(root, version.Id);
++        foreach (var entry in PluginUiContributionRegistry.Snapshot("instance-action").OrderBy(i => ((PluginInstanceActionDefinition)i.Definition).Order).ThenBy(i => i.Id, StringComparer.Ordinal))
++        {
++            var definition = (PluginInstanceActionDefinition)entry.Definition;
++            var action = new MenuItem { Header = entry.Context.Host.Safe(definition.Title), Tag = entry };
++            action.Click += async (_, _) =>
++            {
++                try
++                {
++                    entry.Context.Permissions.Demand(PluginPermissionNames.UiInstanceActions);
++                    var detail = await entry.Context.Host.GetInstanceDetailsAsync(instanceId, entry.Context.Stopping) ?? throw new PluginResourceNotFoundException();
++                    await entry.Context.Callbacks.InvokeAsync(PluginPermissionNames.UiInstanceActions, "InstanceAction:" + entry.Id,
++                        async token => { await definition.ExecuteAsync(detail, token); return true; }, entry.Context.Host.CallbackTimeout, entry.Context.Stopping);
++                }
++                catch (OperationCanceledException) { }
++                catch (Exception ex) { entry.Context.Log("InstanceActionFailed: " + ex.GetType().Name); MessageBoxDialog.ShowWarning(Loc.T("Str_Plugin_InstanceActionFailed", "插件实例操作失败。"), definition.Title); }
++            };
++            menu.Items.Add(action);
++        }
++    }
++}
+diff --git a/Views/VersionSelectPage.xaml b/Views/VersionSelectPage.xaml
+--- a/Views/VersionSelectPage.xaml
++++ b/Views/VersionSelectPage.xaml
+@@ -129,7 +129,7 @@
+                                         <!-- 右键菜单：查看 Wiki / 重命名 / 删除。
+                                              Tag="{Binding}" 把当前行绑定的 GameVersion 传给菜单项，
+                                              点击时从 Tag 里取回对应实例，见 .xaml.cs 里对应处理方法。 -->
+-                                        <ContextMenu>
++                                        <ContextMenu Opened="PluginInstanceMenu_Opened">
+                                             <MenuItem Header="{DynamicResource Str_Ui_Open_On_The_Chinese_Minecraft_Wiki}"
+                                                       Tag="{Binding}" Click="ViewOnWiki_Click"/>
+                                             <Separator/>
+@@ -171,7 +171,7 @@
+                                             Padding="8,4" VerticalAlignment="Center" Margin="8,0,0,0"
+                                             Tag="{Binding}" Click="OpenInstanceSettingsMenu_Click">
+                                         <Button.ContextMenu>
+-                                            <ContextMenu>
++                                            <ContextMenu Opened="PluginInstanceMenu_Opened">
+                                                 <MenuItem Header="{DynamicResource Str_Ui_Instance_Settings}" Tag="{Binding}" Click="OpenInstanceSettings_Click"/>
+                                                 <Separator/>
+                                                 <MenuItem Header="重命名..." Tag="{Binding}" Click="RenameInstance_Click"/>

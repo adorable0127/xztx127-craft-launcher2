@@ -76,6 +76,11 @@
                 <Button x:Name="BrowseTargetDirBtn" Grid.Column="1" Content="{DynamicResource Str_Ui_Browse}" Style="{StaticResource PrimaryButton}" Click="BrowseTargetDir_Click"/>
             </Grid>
 
+            <TextBlock Text="服务器端口（1–65535）" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4"/>
+            <TextBox x:Name="ServerPortBox" Style="{StaticResource SearchTextBox}" Height="34" Text="25565" Margin="0,0,0,4"/>
+            <TextBlock Text="创建时优先使用这里填写的端口；端口被占用或与已有服务器冲突时会自动选择下一个可用端口。安装结束后仍会提示确认，也可随时在服务器列表的「服务器设置」里修改。"
+                       Foreground="{DynamicResource TextSecondaryBrush}" FontSize="11" TextWrapping="Wrap" Margin="0,0,0,14"/>
+
             <TextBlock Text="{DynamicResource Str_Ui_Java_Path}" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4"/>
             <ComboBox x:Name="JavaListCombo" Margin="0,0,0,8" Padding="6" Height="34"
                       DisplayMemberPath="DisplayText" SelectionChanged="JavaListCombo_SelectionChanged"

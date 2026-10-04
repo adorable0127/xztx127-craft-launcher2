@@ -137,6 +137,12 @@ public class DownloadService : IDisposable
 
     public async Task<VersionManifestRoot> GetVersionManifestAsync(CancellationToken ct = default)
     {
+        var custom = await Plugins.PluginProviderRegistry.GetSelectedManifestAsync(ct);
+        if (custom != null) return new VersionManifestRoot
+        {
+            Latest = new LatestVersions { Release = custom.LatestRelease, Snapshot = custom.LatestSnapshot },
+            Versions = custom.Versions.Select(v => new VersionManifestEntry { Id = v.Id, Type = v.Type, Url = v.Url, ReleaseTime = v.ReleaseTime }).ToList()
+        };
         // 修复：之前这里按 _source 硬选一个 URL，选了镜像源就永远只请求镜像，官方一旦同一时刻
         // 镜像抽风(BMCLAPI 偶发不同步/超时是常态)就直接报错，完全没有"换源重试一次"的机会。
         // 现在改用 DownloadEndpoints 的候选池：按用户偏好排第一，另一个源作为兜底，
@@ -152,6 +158,8 @@ public class DownloadService : IDisposable
         IProgress<ProgressInfo>? progress, CancellationToken ct = default)
     {
         var versionDir = Path.Combine(minecraftDir, "versions", entry.Id);
+        var isNewInstance = !Directory.Exists(versionDir);
+        if (isNewInstance) await Plugins.PluginInterceptionRegistry.ValidateInstanceAsync(minecraftDir, entry.Id, "vanilla", ct);
         Directory.CreateDirectory(versionDir);
 
         // 1. version json
@@ -198,6 +206,7 @@ public class DownloadService : IDisposable
         }
 
         progress?.Report(new ProgressInfo(Loc.T("Str_Cs_Installation_Complete", "安装完成"), 1, 1, entry.Id));
+        if (isNewInstance) Plugins.PluginHostBridge.Current?.NotifyInstanceCreated(minecraftDir, entry.Id);
     }
 
     /// <summary>
@@ -397,7 +406,7 @@ public class DownloadService : IDisposable
                 progress?.Report(new ProgressInfo("解压原生库", done, total, entry.Name));
             }
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not Plugins.PluginFlowCanceledException)
         {
             ErrorPresenter.LogFallback($"解压 native 库失败，已跳过：{jarPath}", ex);
         }
@@ -452,7 +461,8 @@ public class DownloadService : IDisposable
         // （官方 + BMCLAPI，顺序按用户设置的偏好 + 各主机近期健康度排）。
         // 旧行为下 BMCLAPI 一抽风，装一个版本几百个文件就会有文件三次重试全挂、
         // 整个安装终止；而换个源明明就能下下来。这是"整合包装到一半失败"最主要的成因。
-        var candidates = DownloadEndpoints.Candidates(url, _source != DownloadSource.Official);
+        var candidates = await Plugins.PluginProviderRegistry.AddMirrorAsync(url, Path.GetFileName(destPath), expectedSha1,
+            DownloadEndpoints.Candidates(url, _source != DownloadSource.Official), ct);
 
         Exception? lastError = null;
 
@@ -478,7 +488,7 @@ public class DownloadService : IDisposable
                 {
                     throw;   // 用户真的取消了整个安装，直接往上抛
                 }
-                catch (Exception ex)
+                catch (Exception ex) when (ex is not Plugins.PluginFlowCanceledException)
                 {
                     lastError = ex;
                     DownloadEndpoints.ReportFailure(candidate);
@@ -512,13 +522,14 @@ public class DownloadService : IDisposable
     private async Task DownloadFromSingleUrlAsync(string url, string destPath, string expectedSha1,
         bool allowResume, CancellationToken ct)
     {
+        url = await Plugins.PluginInterceptionRegistry.PrepareDownloadAsync(url, Path.GetFileName(destPath), expectedSha1, ct);
         var part = destPath + ".part";
 
         long existing = 0;
         if (allowResume && File.Exists(part))
         {
             try { existing = new FileInfo(part).Length; }
-            catch (Exception ex)
+            catch (Exception ex) when (ex is not Plugins.PluginFlowCanceledException)
             {
                 ErrorPresenter.LogFallback($"读取断点续传临时文件长度失败，已从头下载：{part}", ex);
                 existing = 0;
@@ -544,7 +555,7 @@ public class DownloadService : IDisposable
                 acceptsRange = headResp.Headers.AcceptRanges.Contains("bytes");
             }
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not Plugins.PluginFlowCanceledException)
         {
             // HEAD 失败不是致命问题（有些 CDN 不支持 HEAD），退回普通 GET 流程。
             ErrorPresenter.LogFallback($"下载前 HEAD 探测失败，已退回普通 GET：{url}", ex);
@@ -706,7 +717,7 @@ public class DownloadService : IDisposable
                     {
                         throw;   // 用户取消：不重试，直接往上抛
                     }
-                    catch (Exception ex)
+                    catch (Exception ex) when (ex is not Plugins.PluginFlowCanceledException)
                     {
                         chunkError = ex;
                     }

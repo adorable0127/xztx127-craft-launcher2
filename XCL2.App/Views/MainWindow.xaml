@@ -35,31 +35,7 @@
             <shell:WindowChrome CaptionHeight="32" GlassFrameThickness="0" CornerRadius="0"
                                  ResizeBorderThickness="6" UseAeroCaptionButtons="False"/>
         </shell:WindowChrome.WindowChrome>
-    <!-- x:Name="RootWindowGrid" + 下面这个 TransformGroup(ScaleTransform+TranslateTransform)是
-         专门给"打开/关闭/最小化/还原/最大化⇄还原"这一批窗口级过渡动画用的挂载点，见
-         UiAnimationHelper 里 FadeInMove/FadeOutMove/SettleScale 三个方法与 MainWindow.xaml.cs
-         里对应的调用处。RenderTransformOrigin="0.5,0.5" 保证 SettleScale 的缩放是以窗口中心
-         为基准做的"回弹"，而不是从左上角长出来。
-
-         CacheMode="BitmapCache"：修复"缩小/放大/最小化/最大化动画掉帧且短暂黑屏"——
-         这个 Grid 底下挂的是整个窗口内容（标题栏+主体+背景图 BlurEffect 毛玻璃层等一整棵
-         很重的可视化树）。之前没有缓存时，FadeInMove/FadeOutMove/SettleScale 每一帧动画
-         (Opacity/ScaleTransform 变化)都会让 WPF 重新走一遍这棵树的完整渲染管线，包括重新
-         计算 BlurEffect 这种本身就很吃性能的像素着色器特效——13帧/220ms 的动画期间等于
-         反复整树重绘+重新模糊，这就是掉帧的根因；而 WindowState 原生切换(最大化/还原/
-         从最小化恢复)本身是瞬间发生的，切换那一刻新尺寸下的整树还没重新布局渲染完，
-         画面就已经不是旧的了，中间那一下"还没画完"的空隙就是用户看到的短暂黑屏。
-         设成 BitmapCache 后，WPF 会把这棵树预先光栅化成一张位图，动画期间只是拿这张现成
-         位图做 GPU 合成层面的缩放/透明度变化，不再逐帧重新布局/重绘/重新算模糊，既消除了
-         掉帧，也让 WindowState 切换瞬间始终有一张已经就绪的位图可以立刻显示，不会露出
-         中间的空白/黑屏帧。
-
-         这里刻意不在 XAML 里常驻挂 CacheMode（那样会导致平时点击/悬停/文字输入等所有
-         跟这棵树相关的重绘都要经过位图光栅化，反而拖慢日常交互、文字也会变糊）。改成
-         只在 UiAnimationHelper 的这几个窗口级动画方法内部"动画开始前临时打开、动画
-         结束后立刻关闭" CacheMode——见 UiAnimationHelper.cs 里 BeginWindowCache/
-         EndWindowCache 两个辅助方法，仅这一小段动画窗口期吃到缓存带来的性能收益，
-         平时保持原来的正常(非缓存)渲染质量。 -->
+    <!-- 窗口动画变换。临时过渡不缓存整棵窗口树，避免驱动合成导致黑块。 -->
     <Grid x:Name="RootWindowGrid" RenderTransformOrigin="0.5,0.5">
         <Grid.RenderTransform>
             <TransformGroup>
@@ -136,16 +112,19 @@
                      只有这三个显式标了 IsHitTestVisibleInChrome=True 的按钮会正常吃到点击，
                      不会被当成"拖动窗口"。 -->
                 <StackPanel Grid.Column="2" Orientation="Horizontal">
-                    <Button x:Name="TouchpadButton" Style="{StaticResource CaptionButton}"
-                            Width="Auto" MinWidth="80" Padding="8,0" Margin="0,0,4,0"
+                    <!-- 触摸板入口常驻标题栏，未启动游戏时也可打开管理和按键设置。 -->
+                    <Button x:Name="TouchpadManagerButton" Style="{StaticResource CaptionButton}"
+                            Width="Auto" MinWidth="46" Padding="10,0"
+                            Margin="0,0,4,0" VerticalAlignment="Center"
                             shell:WindowChrome.IsHitTestVisibleInChrome="True"
-                            Click="TouchpadButton_Click" ToolTip="触摸板：管理游戏实例的触屏操作"
-                            AutomationProperties.Name="触摸板">
-                        <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                            <Path Style="{StaticResource CaptionIconPath}" Width="14" Height="12"
-                                  Data="M 2,2 L 22,2 22,18 2,18 Z M 2,13 L 22,13 M 12,13 L 12,18"/>
+                            Click="TouchpadManagerButton_Click" ToolTip="触摸板管理"
+                            AutomationProperties.Name="触摸板管理">
+                        <StackPanel Orientation="Horizontal">
+                            <!-- 触摸板图标：圆角矩形外框 + 下方一条分隔线 + 底部两个按键，一眼能认出是笔记本触摸板 -->
+                            <Path Style="{StaticResource CaptionIconPath}" Width="14" Height="14" VerticalAlignment="Center"
+                                  Data="M 4,3 L 20,3 Q 22,3 22,5 L 22,19 Q 22,21 20,21 L 4,21 Q 2,21 2,19 L 2,5 Q 2,3 4,3 Z M 2,15 L 22,15 M 12,15 L 12,21"/>
                             <TextBlock Text="触摸板" FontSize="12" Margin="6,0,0,0" VerticalAlignment="Center"
-                                       Foreground="{DynamicResource TextPrimaryBrush}"/>
+                                       Foreground="{DynamicResource TextSecondaryBrush}"/>
                         </StackPanel>
                     </Button>
                     <!-- 下载列表按钮：放在最小化/最大化/关闭三个系统按钮左边。需求："下载的暂停、
@@ -627,19 +606,21 @@
             <Border x:Name="OverlayCard" Background="Transparent" CornerRadius="8"
                     HorizontalAlignment="Center" VerticalAlignment="Center"
                     BorderBrush="{DynamicResource DividerBrush}" BorderThickness="1">
+                <Border.Effect>
+                    <DropShadowEffect Color="Black" Opacity="0.35" BlurRadius="24" ShadowDepth="4"/>
+                </Border.Effect>
                 <Border.RenderTransform>
                     <ScaleTransform x:Name="OverlayCardScale" CenterX="0.5" CenterY="0.5"/>
                 </Border.RenderTransform>
                 <Border.RenderTransformOrigin>0.5,0.5</Border.RenderTransformOrigin>
-                <!-- 阴影和背景特效只作用在 Viewport3D 的兄弟图层；3D 内容的祖先
-                     不再带 BitmapCache 或 Effect，动态骨骼的面片始终使用同一帧合成。 -->
-                <Grid>
-                    <Border Background="{DynamicResource PopupPanelBrush}" CornerRadius="7"
-                            IsHitTestVisible="False">
-                        <Border.Effect>
-                            <DropShadowEffect Color="Black" Opacity="0.35" BlurRadius="24" ShadowDepth="4"/>
-                        </Border.Effect>
-                    </Border>
+                <!-- 背景层跟内容层拆成两个独立的 Grid 子元素叠放：Effect 属性单个控件只能挂一个，
+                     外层 OverlayCard 已经用掉了投影阴影；磨砂(PopupBlurEffect)只糊在背景层
+                     （PopupPanelBrush，一个纯色/半透明底），不会连带糊到 OverlayContentHost
+                     里装载的弹窗文字/控件——跟 MainWindow.ApplyCustomBackgroundFrost 里
+                     "背景图层单独模糊、文字/卡片层保持清晰"是同一个思路，只是背景层这里没有
+                     图片，磨砂效果体现在半透明度叠加而不是纹理模糊。也不需要改任何一个具体
+                     弹窗 UserControl 内部已经写好的 XAML（见 ThemeService.ApplyPopupAppearance）。 -->
+                <Grid ClipToBounds="True">
                     <Border x:Name="OverlayCardBackgroundLayer" CornerRadius="7"
                             Background="{DynamicResource PopupPanelBrush}" Effect="{DynamicResource PopupBlurEffect}"/>
                     <ContentControl x:Name="OverlayContentHost" Focusable="False"/>

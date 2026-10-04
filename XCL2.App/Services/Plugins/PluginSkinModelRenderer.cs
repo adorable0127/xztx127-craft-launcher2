@@ -26,7 +26,7 @@ internal static partial class PluginRuntimeRegistry
         var dispatcher = Application.Current?.Dispatcher;
         if (dispatcher == null || dispatcher.HasShutdownStarted || _rendererNotificationQueued) return;
         _rendererNotificationQueued = true;
-        dispatcher.BeginInvoke(new Action(() =>
+        _ = dispatcher.BeginInvoke(new Action(() =>
         {
             lock (Gate) _rendererNotificationQueued = false;
             foreach (var handler in RenderersChanged?.GetInvocationList() ?? Array.Empty<Delegate>())

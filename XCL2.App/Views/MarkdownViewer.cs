@@ -45,6 +45,9 @@ public sealed class MarkdownViewer : RichTextBox
         // 内部滚动条关闭（外层聊天气泡的 ScrollViewer 负责滚动）。IsReadOnly 只挡编辑，不挡
         // 选中/复制——这正是我们要的：能选、能拖、能 Ctrl+C，但用户改不了 AI 说的话。
         IsReadOnly = true;
+        // 关键：RichTextBox 默认 IsDocumentEnabled=false，文档里嵌入的 UI 元素（代码块的“复制”按钮、
+        // 代码框、超链接）会整体被禁用、点不动。必须开启，复制按钮才能点击。
+        IsDocumentEnabled = true;
         IsReadOnlyCaretVisible = false;
         IsUndoEnabled = false;
         AcceptsReturn = true;
@@ -435,13 +438,6 @@ public sealed class MarkdownViewer : RichTextBox
         };
         copyBtn.SetResourceReference(Button.ForegroundProperty, "TextSecondaryBrush");
         copyBtn.SetResourceReference(Button.BorderBrushProperty, "BorderBrush2");
-        // 加固：宿主是只读 RichTextBox，其内部 TextEditor 会在 Preview 阶段处理左键按下
-        // （用于判断是否要开始文字拖选），个别情况下会连带把落在嵌入控件上的按下事件也
-        // 标记为已处理，导致按钮收不到后续 MouseUp、Click 不触发——即"点了没反应"。
-        // 这里在按钮自身的 Preview 阶段先把事件标记为已处理，阻止它被当成"文档拖选起点"，
-        // 按钮随后仍能在 Bubble 阶段正常收到 MouseUp 并触发 Click。
-        copyBtn.Focusable = true;
-        copyBtn.PreviewMouseLeftButtonDown += (_, e) => e.Handled = true;
         copyBtn.Click += (_, _) =>
         {
             try

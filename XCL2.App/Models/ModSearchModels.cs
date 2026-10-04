@@ -303,6 +303,7 @@ public class InlineVersionEntry
     public string Name { get; }
     public string VersionNumber { get; }
     public string GameVersionsText { get; }
+    public List<string> GameVersions { get; }
 
     /// <summary>这个版本支持的加载器列表，Modrinth 原样取自 version.loaders；CurseForge 文件没有
     /// 这个概念(一个文件只对应一种 loader，见下方 CurseForgeFile 构造函数)，统一成 List 方便两边共用
@@ -330,7 +331,8 @@ public class InlineVersionEntry
         Source = ModSource.Modrinth;
         Name = string.IsNullOrEmpty(version.Name) ? version.VersionNumber : version.Name;
         VersionNumber = version.VersionNumber;
-        GameVersionsText = string.Join(", ", version.GameVersions.Take(6)) + (version.GameVersions.Count > 6 ? " ..." : "");
+        GameVersions = version.GameVersions.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        GameVersionsText = string.Join(", ", GameVersions.Take(6)) + (version.GameVersions.Count > 6 ? " ..." : "");
         Loaders = version.Loaders.Count > 0 ? version.Loaders : new List<string> { "minecraft" }; // 材质包/光影包等没有 loader 概念的项目类型，Modrinth 返回空数组，这里退回一个占位分组名而不是让分组逻辑收到空列表出错
         RequiredDependencies = version.Dependencies.Where(d => d.DependencyType == "required").ToList();
         RawVersion = version;
@@ -342,8 +344,15 @@ public class InlineVersionEntry
         Source = ModSource.CurseForge;
         Name = string.IsNullOrEmpty(file.DisplayName) ? file.FileName : file.DisplayName;
         VersionNumber = file.FileName;
-        GameVersionsText = string.Join(", ", file.GameVersions.Take(6)) + (file.GameVersions.Count > 6 ? " ..." : "");
-        Loaders = new List<string> { "curseforge" }; // CurseForgeFile 结构里没有解析出具体 loader 名，用固定占位分组，跟 Modrinth 结果分开展示，不假装知道具体是 Fabric 还是 Forge
+        GameVersions = file.GameVersions.Where(v =>
+            System.Text.RegularExpressions.Regex.IsMatch(v, @"^(?:\d+\.\d+|\d{2}w\d{2})", System.Text.RegularExpressions.RegexOptions.IgnoreCase))
+            .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        GameVersionsText = string.Join(", ", GameVersions.Take(6)) + (GameVersions.Count > 6 ? " ..." : "");
+        var knownLoaders = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            { "fabric", "forge", "neoforge", "quilt", "liteloader", "bukkit", "spigot", "paper", "sponge" };
+        Loaders = file.GameVersions.Select(v => v.Replace(" ", "").Replace("-", "").ToLowerInvariant())
+            .Where(knownLoaders.Contains).Distinct().ToList();
+        if (Loaders.Count == 0) Loaders.Add("curseforge");
         RequiredDependencies = new List<ModrinthDependency>();
         RawVersion = file;
         IsPreview = file.ReleaseType is 2 or 3; // CurseForge: 1=release 2=beta 3=alpha
@@ -364,6 +373,9 @@ public class InlineVersionEntry
 public class VersionGroup : INotifyPropertyChanged
 {
     public string GroupTitle { get; }
+    public string GameVersion { get; }
+    public string Loader { get; }
+    public int EntryCount => Entries.Count;
     public List<ModrinthDependency> RequiredDependencies { get; }
     public bool HasRequiredDependencies => RequiredDependencies.Count > 0;
     public List<InlineVersionEntry> Entries { get; }
@@ -377,9 +389,12 @@ public class VersionGroup : INotifyPropertyChanged
         set { if (_isExpanded == value) return; _isExpanded = value; OnPropertyChanged(); }
     }
 
-    public VersionGroup(string groupTitle, List<InlineVersionEntry> entries)
+    public VersionGroup(string groupTitle, List<InlineVersionEntry> entries, string? gameVersion = null, string? loader = null)
     {
         GroupTitle = groupTitle;
+        var split = groupTitle.LastIndexOf(' ');
+        GameVersion = gameVersion ?? (split < 0 ? groupTitle : groupTitle[(split + 1)..]);
+        Loader = loader ?? (split < 0 ? "通用" : groupTitle[..split]);
         Entries = entries;
         RequiredDependencies = entries.FirstOrDefault()?.RequiredDependencies ?? new List<ModrinthDependency>();
     }

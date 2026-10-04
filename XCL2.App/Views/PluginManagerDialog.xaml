@@ -24,18 +24,19 @@
    <StackPanel>
     <StackPanel Margin="0,0,0,10">
      <TextBlock Text="插件管理" FontSize="18" FontWeight="Bold" Margin="0,0,0,4"/>
-     <TextBlock Text="拖入 DLL / EXE 自动安装；也可使用下方按钮选择文件。导入前会提示确认来源。"
+     <TextBlock Text="拖入 DLL / EXE / .xclplugin 自动安装；也可使用下方按钮选择文件。导入前会提示确认来源。"
                 Foreground="{DynamicResource TextSecondaryBrush}" FontSize="12" TextWrapping="Wrap"/>
     </StackPanel>
 
     <!-- 开发命令工具条：都是这次新增的“开发命令”。 -->
     <WrapPanel Margin="0,0,0,10">
      <Button x:Name="RescanButton" Content="🔄 重新扫描 / 重新加载插件" Padding="10,6" Margin="0,0,8,8" Click="Rescan_Click"/>
-     <Button Content="导入插件（DLL / EXE）" Padding="10,6" Margin="0,0,8,8" Click="Import_Click"/>
+     <Button Content="导入插件（DLL / EXE / .xclplugin）" Padding="10,6" Margin="0,0,8,8" Click="Import_Click"/>
      <Button x:Name="OpenDirButton" Content="📂 打开插件目录" Padding="10,6" Margin="0,0,8,8" Click="OpenDir_Click"/>
      <Button x:Name="GenerateTemplateButton" Content="🧪 生成插件项目模板" Padding="10,6" Margin="0,0,8,8" Click="GenerateTemplate_Click"/>
      <Button x:Name="OpenGuideButton" Content="一键打开查看插件开发指南" Padding="10,6" Margin="0,0,8,8" Click="OpenGuide_Click"/>
      <Button x:Name="OpenApiReferenceButton" Content="📘 一键查看API接口" Padding="10,6" Margin="0,0,8,8" Click="OpenApiReference_Click"/>
+     <Button x:Name="OpenExeProtocolButton" Content="EXE 插件协议" Padding="10,6" Margin="0,0,8,8" Click="OpenExeProtocol_Click"/>
     </WrapPanel>
 
     <WrapPanel Margin="0,0,0,8">

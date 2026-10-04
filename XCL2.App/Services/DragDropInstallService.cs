@@ -53,8 +53,8 @@ public class DragDropInstallService
         World,
         Modpack,
         BedrockContent,
-        /// <summary>启动器插件，由 MainWindow 确认来源并交给 PluginManager 安装；
-        /// 不属于游戏实例内的文件。</summary>
+        /// <summary>第三方启动器插件。MainWindow 会在进入游戏实例安装流程前单独交给 PluginManager；
+        /// InstallMany 本身不安装插件，避免把插件文件误复制进游戏目录。</summary>
         Plugin,
         /// <summary>服务端 jar：由 MainWindow 单独处理（装进服务器实例的 mods/），
         /// 不经过 InstallMany 的客户端实例目录。Classify 永远不会自己产出这个值，
@@ -97,6 +97,10 @@ public class DragDropInstallService
             case ".mcaddon":
             case ".mctemplate":
                 return DropKind.BedrockContent;
+            case ".dll":
+            case ".exe":
+            case ".xclplugin":
+                return DropKind.Plugin;
             case ".zip":
                 return ClassifyZip(path);
             case ".json":
@@ -205,7 +209,8 @@ public class DragDropInstallService
     /// 没有覆盖的文件走 Classify 自动识别。</param>
     public DropResult InstallMany(IEnumerable<string> paths, string instanceDir,
         IProgress<string>? progress = null,
-        IReadOnlyDictionary<string, DropKind>? kindOverrides = null)
+        IReadOnlyDictionary<string, DropKind>? kindOverrides = null,
+        IReadOnlyDictionary<string, ModInstallPlan>? modPlans = null)
     {
         var result = new DropResult();
 
@@ -221,7 +226,13 @@ public class DragDropInstallService
                 switch (kind)
                 {
                     case DropKind.Mod:
-                        CopyInto(path, Path.Combine(instanceDir, "mods"));
+                        ModInstallPlan? modPlan;
+                        if (modPlans != null)
+                        {
+                            if (!modPlans.TryGetValue(Path.GetFullPath(path), out modPlan)) break;
+                        }
+                        else modPlan = ModInstallService.PrepareBatch(new[] { path }, Path.Combine(instanceDir, "mods")).Single();
+                        ModInstallService.Install(modPlan);
                         result.Installed.Add($"{name} → mods");
                         progress?.Report($"已安装 Mod：{name}");
                         break;
@@ -268,6 +279,11 @@ public class DragDropInstallService
                         result.BedrockItems.Add(path);
                         break;
 
+                    case DropKind.Plugin:
+                        // 插件由 MainWindow 在进入实例安装流程前交给 PluginManager 处理。
+                        // 这里保持 no-op，避免未来调用方漏过滤时把插件复制到游戏目录。
+                        break;
+
                     case DropKind.ServerJar:
                         // 上层（MainWindow.InstallJarsToSelectedServer）已经装过了，这里跳过，
                         // 不要再往客户端实例的 mods 里复制一份。
@@ -288,7 +304,7 @@ public class DragDropInstallService
     }
 
     /// <summary>文件夹展开成里面的文件（只展开一层子目录，避免用户误拖整个 D 盘导致遍历爆炸）。</summary>
-    private static IEnumerable<string> Expand(IEnumerable<string> paths)
+    public static IEnumerable<string> Expand(IEnumerable<string> paths)
     {
         foreach (var p in paths)
         {
@@ -325,6 +341,7 @@ public class DragDropInstallService
         }
 
         File.Copy(sourceFile, dest);
+        Plugins.PluginHostBridge.Current?.NotifyModChange(dest, "installed");
     }
 
     /// <summary>存档 zip 解压到 saves/ 下。带路径穿越防护。</summary>

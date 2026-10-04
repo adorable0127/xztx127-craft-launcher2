@@ -1,4 +1,4 @@
-﻿using System.Collections.Generic;
+using System.Collections.Generic;
 using System.Linq;
 using System.Windows;
 using System.Windows.Media;
@@ -1217,7 +1217,7 @@ public static class ThemeService
                 if (nowTicks - state.LastAppliedTicks < 200) return IntPtr.Zero;
 
                 state.PendingApply = true;
-                window.Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Background,
+                _ = window.Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Background,
                     new Action(() =>
                     {
                         state.PendingApply = false;
@@ -1423,6 +1423,9 @@ public static class ThemeService
         ApplyDrawerAppearance(useCustom, opacityPercent, frostPercent, textOpacityPercent);
     }
 
+    /// <summary>主题/外观刷新完成后广播，供自绘窗口（如触屏按键编辑器）重算自己的配色。</summary>
+    public static event Action? AppearanceChanged;
+
     private static void RefreshOpenWindows()
     {
         // 每次主题相关的 Apply 收尾都顺带用最近一次缓存的配置重算一次弹窗/抽屉的独立外观
@@ -1454,6 +1457,8 @@ public static class ThemeService
             if (window is Views.MainWindow main)
                 AppIconService.ApplyToTitleBarImage(main, main.TitleBarIconImage);
         }
+
+        try { AppearanceChanged?.Invoke(); } catch { /* 订阅方异常不影响主题刷新 */ }
     }
 
     /// <summary>

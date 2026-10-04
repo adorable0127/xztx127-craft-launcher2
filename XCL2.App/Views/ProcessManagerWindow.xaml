@@ -32,14 +32,14 @@
 
         <!-- MinHeight：列表为空时 ListBox 的期望高度是 0，而这一行是 RowDefinition Height="*"。
              在 Window 里有固定 Height 撑着看不出问题，改成 Overlay 之后空列表会让整块塌陷。 -->
-        <ListBox x:Name="ProcessListBox" Grid.Row="1" Margin="0,12,0,12" MinHeight="240"
+        <ListBox x:Name="ProcessListBox" SelectionMode="Extended" Grid.Row="1" Margin="0,12,0,12" MinHeight="240"
                  BorderThickness="1" BorderBrush="{DynamicResource DividerBrush}">
             <ListBox.ItemTemplate>
                 <DataTemplate>
                     <StackPanel Orientation="Horizontal" Margin="4">
                         <CheckBox x:Name="MarkCheck" VerticalAlignment="Center" Margin="0,0,10,0"
                                   Visibility="{Binding MarkVisibility}"
-                                  IsChecked="{Binding Info.ManuallyMarkedUnresponsive, Mode=TwoWay}"/>
+                                  IsChecked="{Binding IsMarkedUnresponsive, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/>
                         <StackPanel>
                             <TextBlock Text="{Binding TitleLine}" FontWeight="Bold" FontSize="13"/>
                             <TextBlock Text="{Binding SubLine}" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}"/>
@@ -52,7 +52,7 @@
         <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right">
             <Button x:Name="ActionButton" Content="{DynamicResource Str_Launch_CloseSelected}" Style="{StaticResource PrimaryButton}"
                     Padding="16,8" Margin="0,0,8,0" Click="ActionButton_Click"/>
-            <Button Content="{DynamicResource Str_Common_Cancel}" Style="{StaticResource SideNavButton}" Padding="16,8" Click="Cancel_Click"/>
+            <Button x:Name="CancelButton" Content="{DynamicResource Str_Common_Cancel}" Style="{StaticResource SideNavButton}" Padding="16,8" Click="Cancel_Click"/>
         </StackPanel>
     </Grid>
 </local:OverlayDialogControl>

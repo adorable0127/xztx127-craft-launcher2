@@ -11,10 +11,11 @@ using XCL2.App.Models;
 namespace XCL2.App.Views;
 
 /// <summary>
-/// 不抢焦点的游戏触屏悬浮层。菜单使用绝对定位和完整鼠标按下/移动/抬起，
-/// 游戏视角只使用手指的相对位移。操作中的触点保持原模式，空闲时才确认菜单切换。
+/// 26.3 第 4 快照以前的 GLFW/LWJGL 兼容层。
+/// 系统触摸提升被拦截，视角只取触点增量，不回中、不使用绝对定位。
+/// 菜单与视角在落指时确定，手势中途不会因为触摸隐藏光标而切换模式。
 /// </summary>
-public partial class TouchOverlayWindow : Window, IGlobalWindowTreatmentExempt
+public partial class TouchOverlayWindow : Window, IGlobalWindowTreatmentExempt, ITouchOverlayWindow
 {
     [DllImport("user32.dll")] private static extern IntPtr GetForegroundWindow();
     [DllImport("user32.dll")] private static extern bool SetForegroundWindow(IntPtr hWnd);
@@ -36,7 +37,9 @@ public partial class TouchOverlayWindow : Window, IGlobalWindowTreatmentExempt
     private const uint SWP_NOACTIVATE = 0x0010;
     private static readonly IntPtr HWND_TOPMOST = new(-1);
 
-    private readonly IntPtr _gameHwnd;
+    private IntPtr _gameHwnd;
+    private readonly int _gamePid;
+    private readonly Func<bool> _canTakeOver;
     private IntPtr _overlayHwnd;
     private HwndSource? _source;
     private readonly DispatcherTimer _followTimer = new() { Interval = TimeSpan.FromMilliseconds(100) };
@@ -88,15 +91,17 @@ public partial class TouchOverlayWindow : Window, IGlobalWindowTreatmentExempt
     private double _lookRemainderX;
     private double _lookRemainderY;
 
-    private bool HasActiveContact => _viewTouch != null || _touchKeys.Count != 0 || _mouseKey != null;
+    private bool HasActiveContact => _viewTouch != null || _padTouch != null || _touchKeys.Count != 0 || _mouseKey != null;
 
-    private bool IsGameForeground => _gameHwnd != IntPtr.Zero &&
+    private bool IsGameForeground => !_closingDown && _canTakeOver() && _gameHwnd != IntPtr.Zero &&
         GetForegroundWindow() == _gameHwnd && !IsIconic(_gameHwnd);
 
-    public TouchOverlayWindow(IntPtr gameHwnd, double buttonScale, double opacityPercent, double sensitivity)
+    public TouchOverlayWindow(IntPtr gameHwnd, double buttonScale, double opacityPercent, double sensitivity, int gamePid, Func<bool> canTakeOver)
     {
         InitializeComponent();
         _gameHwnd = gameHwnd;
+        _gamePid = gamePid;
+        _canTakeOver = canTakeOver;
         _sensitivity = sensitivity <= 0 ? 1.4 : sensitivity;
         _buttonScale = !double.IsFinite(buttonScale) || buttonScale <= 0 ? 1.0 : buttonScale;
         RootGrid.Opacity = Math.Clamp(opacityPercent <= 0 ? 85 : opacityPercent, 20, 100) / 100.0;
@@ -110,10 +115,14 @@ public partial class TouchOverlayWindow : Window, IGlobalWindowTreatmentExempt
         ViewPad.TouchMove += ViewPad_TouchMove;
         ViewPad.TouchUp += ViewPad_TouchUp;
         ViewPad.LostTouchCapture += ViewPad_LostTouchCapture;
+        TouchpadPad.TouchDown += TouchpadPad_TouchDown;
+        TouchpadPad.TouchMove += TouchpadPad_TouchMove;
+        TouchpadPad.TouchUp += TouchpadPad_TouchUp;
+        TouchpadPad.LostTouchCapture += TouchpadPad_LostTouchCapture;
         ApplyOverlayVisibility();
 
         _followTimer.Tick += (_, _) => FollowGameWindow();
-        Loaded += (_, _) => { FollowGameWindow(); _followTimer.Start(); };
+        Loaded += (_, _) => { FollowGameWindow(); if (!_closingDown) _followTimer.Start(); };
         Closed += (_, _) => Teardown();
     }
 
@@ -137,6 +146,7 @@ public partial class TouchOverlayWindow : Window, IGlobalWindowTreatmentExempt
 
     private IntPtr WindowProc(IntPtr hwnd, int message, IntPtr wParam, IntPtr lParam, ref bool handled)
     {
+        if (_closingDown || !_canTakeOver()) return IntPtr.Zero;
         if (message is WM_MOUSEACTIVATE or WM_POINTERACTIVATE)
         {
             handled = true;
@@ -180,8 +190,33 @@ public partial class TouchOverlayWindow : Window, IGlobalWindowTreatmentExempt
 
     private void FollowGameWindow()
     {
-        if (_closingDown || _settingsOpen) return;
-        if (_gameHwnd == IntPtr.Zero || !IsWindow(_gameHwnd)) { Close(); return; }
+        if (_closingDown) return;
+        if (!_canTakeOver()) { ShutdownOverlay(); return; }
+        if (_settingsOpen) return;
+        // 游戏切换全屏或重建原生窗口后，继续绑定同一个进程的新窗口。
+        if (_gamePid > 0 && (!IsWindow(_gameHwnd) ||
+            !TouchGameWindow.BelongsTo(_gameHwnd, _gamePid) || GetForegroundWindow() != _gameHwnd))
+        {
+            var current = TouchGameWindow.Find(_gamePid, _gameHwnd);
+            if (current != IntPtr.Zero && current != _gameHwnd)
+            {
+                ReleaseHeld();
+                TouchMousePromotionFilter.Disable(_overlayHwnd);
+                _gameHwnd = current;
+                _lastClientBounds = null;
+                _menuMode = true;
+                _hasObservedMenu = false;
+                _explicitModeUntil = 0;
+                ApplyOverlayVisibility();
+            }
+        }
+        if (_gameHwnd == IntPtr.Zero || !IsWindow(_gameHwnd))
+        {
+            ReleaseHeld();
+            TouchMousePromotionFilter.Disable(_overlayHwnd);
+            Visibility = Visibility.Hidden;
+            return;
+        }
         var foreground = GetForegroundWindow();
         if (foreground == IntPtr.Zero && !IsIconic(_gameHwnd))
         {
@@ -277,6 +312,10 @@ public partial class TouchOverlayWindow : Window, IGlobalWindowTreatmentExempt
     {
         ViewPad.Visibility = _hidden ? Visibility.Collapsed : Visibility.Visible;
         ControlCanvas.Visibility = _hidden ? Visibility.Collapsed : Visibility.Visible;
+        // 触摸板默认隐藏，需在按键设置里开启。
+        var padVisible = !_hidden && TouchControlSettingsService.TouchpadEnabled;
+        TouchpadPad.Visibility = padVisible ? Visibility.Visible : Visibility.Collapsed;
+        if (!padVisible && _padTouch != null) CancelPadGesture();
         foreach (var key in _keys)
         {
             if (ReferenceEquals(key, RestoreKey) || key.Tag is not TouchControlDefinition c) continue;
@@ -509,7 +548,7 @@ public partial class TouchOverlayWindow : Window, IGlobalWindowTreatmentExempt
             case "SETTINGS":
                 // 离开当前触摸回调再显示可激活的设置窗口，防止遗留触摸捕获。
                 ReleaseHeld();
-                Dispatcher.BeginInvoke(new Action(OpenTouchSettings));
+                _ = Dispatcher.BeginInvoke(new Action(OpenTouchSettings));
                 break;
         }
     }
@@ -577,7 +616,7 @@ public partial class TouchOverlayWindow : Window, IGlobalWindowTreatmentExempt
         if (touch == null || touch.Id != e.TouchDevice.Id) return;
         // 游戏收到按下后可能取得原生鼠标捕获。等这一轮输入处理结束，仍在屏幕上的
         // 同一个触点只恢复捕获，不补发按下，避免刚拿起物品就被提前松开。
-        Dispatcher.BeginInvoke(DispatcherPriority.Input, new Action(() =>
+        _ = Dispatcher.BeginInvoke(DispatcherPriority.Input, new Action(() =>
         {
             if (!ReferenceEquals(_viewTouch, touch)) return;
             try
@@ -697,6 +736,101 @@ public partial class TouchOverlayWindow : Window, IGlobalWindowTreatmentExempt
                _menuPointerScreen.Y >= top && _menuPointerScreen.Y < bottom;
     }
 
+    // ===================== 触摸板（相对位移区） =====================
+    // 手指在触摸板上滑动：菜单里移动指针（相对位移，限制在游戏客户区内），游戏里转动视角；
+    // 轻点 = 鼠标左键。它与全屏的 ViewPad 互相独立，各自占一根手指，可同时使用。
+
+    private TouchDevice? _padTouch;
+    private Point _padStart;
+    private Point _padLast;
+    private DateTime _padTime;
+    private bool _padMoved;
+    private bool _padIsMenu;
+    private bool _padPointerReady;
+    private double _padRemainderX;
+    private double _padRemainderY;
+
+    private void TouchpadPad_TouchDown(object? sender, TouchEventArgs e)
+    {
+        e.Handled = true;
+        if (_hidden || _closingDown || !IsGameForeground || _padTouch != null) return;
+        if (Environment.TickCount64 < _menuTransitionUntil) return;
+        ResetModeCandidate();
+        _padTouch = e.TouchDevice;
+        _padStart = _padLast = e.GetTouchPoint(TouchpadPad).Position;
+        _padTime = DateTime.UtcNow;
+        _padMoved = false;
+        _padIsMenu = _menuMode;
+        _padRemainderX = _padRemainderY = 0;
+        if (!TouchpadPad.CaptureTouch(e.TouchDevice)) { _padTouch = null; return; }
+        if (_padIsMenu && !_padPointerReady && TouchInputInjector.TryGetClientAreaOnScreen(_gameHwnd,
+                out var left, out var top, out var right, out var bottom))
+        {
+            // 第一次在菜单里使用触摸板：指针从游戏画面中心开始。
+            _menuPointerScreen = new Point((left + right) / 2.0, (top + bottom) / 2.0);
+            _padPointerReady = MoveMenuPointer(ViewPad.PointFromScreen(_menuPointerScreen));
+        }
+    }
+
+    private void TouchpadPad_TouchMove(object? sender, TouchEventArgs e)
+    {
+        e.Handled = true;
+        if (_padTouch?.Id != e.TouchDevice.Id) return;
+        if (_hidden || _closingDown || !IsGameForeground) { CancelPadGesture(); return; }
+        var point = e.GetTouchPoint(TouchpadPad).Position;
+        var delta = TouchpadPad.PointToScreen(point) - TouchpadPad.PointToScreen(_padLast);
+        _padLast = point;
+        if ((point - _padStart).Length >= 6) _padMoved = true;
+        if (_padIsMenu)
+        {
+            if (!_padPointerReady) return;
+            var fx = delta.X * _sensitivity + _padRemainderX;
+            var fy = delta.Y * _sensitivity + _padRemainderY;
+            var dx = Math.Truncate(fx);
+            var dy = Math.Truncate(fy);
+            _padRemainderX = fx - dx;
+            _padRemainderY = fy - dy;
+            if (!TouchInputInjector.TryGetClientAreaOnScreen(_gameHwnd, out var left, out var top, out var right, out var bottom))
+                return;
+            var target = new Point(
+                Math.Clamp(_menuPointerScreen.X + dx, left, right - 1),
+                Math.Clamp(_menuPointerScreen.Y + dy, top, bottom - 1));
+            MoveMenuPointer(ViewPad.PointFromScreen(target));
+        }
+        else ApplyLook(delta);
+    }
+
+    private void TouchpadPad_TouchUp(object? sender, TouchEventArgs e)
+    {
+        e.Handled = true;
+        if (_padTouch?.Id != e.TouchDevice.Id) return;
+        var tap = !_padMoved && (DateTime.UtcNow - _padTime).TotalMilliseconds < 300;
+        var wasMenu = _padIsMenu;
+        CancelPadGesture();
+        if (!tap || _hidden || _closingDown || !IsGameForeground) return;
+        if (wasMenu)
+        {
+            // 与视角手势共用指针按下状态；有视角手势在进行时不插入点击。
+            if (_viewTouch != null || !_padPointerReady) return;
+            if (PressMenuPointer()) ReleaseMenuPointer();
+        }
+        else if (!_heldButtons.Contains(TouchInputInjector.MouseButton.Left))
+            TouchInputInjector.MouseClick(TouchInputInjector.MouseButton.Left);
+    }
+
+    private void TouchpadPad_LostTouchCapture(object? sender, TouchEventArgs e)
+    {
+        if (_padTouch?.Id == e.TouchDevice.Id) CancelPadGesture();
+    }
+
+    private void CancelPadGesture()
+    {
+        var touch = _padTouch;
+        _padTouch = null;
+        _padRemainderX = _padRemainderY = 0;
+        if (touch != null && ReferenceEquals(touch.Captured, TouchpadPad)) TouchpadPad.ReleaseTouchCapture(touch);
+    }
+
     private void ApplyLook(Vector screenDelta)
     {
         // PointToScreen 已包含窗口 DPI 与按钮缩放，不能再乘一次 DPI。
@@ -706,7 +840,7 @@ public partial class TouchOverlayWindow : Window, IGlobalWindowTreatmentExempt
         var dy = (int)Math.Truncate(fy);
         _lookRemainderX = fx - dx;
         _lookRemainderY = fy - dy;
-        TouchInputInjector.MouseMoveRelative(Math.Clamp(dx, -250, 250), Math.Clamp(dy, -250, 250));
+        TouchInputInjector.MouseMoveRelative(Math.Clamp(dx, -250, 250), Math.Clamp(dy, -250, 250), noCoalesce: true);
     }
 
     private void CancelViewGesture()
@@ -730,6 +864,7 @@ public partial class TouchOverlayWindow : Window, IGlobalWindowTreatmentExempt
         {
             ResetModeCandidate();
             CancelViewGesture();
+            CancelPadGesture();
             TouchInputInjector.ReleaseAll(_heldKeys, _heldButtons);
             _heldKeys.Clear(); _heldButtons.Clear();
             _keyReferences.Clear(); _buttonReferences.Clear(); _activeBindings.Clear();
