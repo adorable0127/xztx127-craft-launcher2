@@ -1,0 +1,181 @@
+{
+  "verification_kind": "static syntax, source integration and catalog checks; not compilation or runtime testing",
+  "baseline": "XCL2_源码_增强版_11.zip",
+  "syntax": {
+    "csharp_files": 13,
+    "xml_files": 6,
+    "issue_count": 0,
+    "issues": [],
+    "changed_files": [
+      "README_本次更新.md",
+      "SEARCH_NOTES.md",
+      "Tests/FeatureSearchRegression/FeatureSearchRegression.csproj",
+      "Tests/FeatureSearchRegression/Program.cs",
+      "Tests/FeatureSearchRegression/TestLocalizationStub.cs",
+      "Tests/FeatureSearchRegression/generate_catalog.py",
+      "Tests/FeatureSearchRegression/validate_catalog.py",
+      "XCL2.App/Models/AppConfig.cs",
+      "XCL2.App/Models/FeatureSearchEntry.cs",
+      "XCL2.App/Resources/Data/FeatureSearchCatalog.json",
+      "XCL2.App/Services/FeatureSearchCatalog.cs",
+      "XCL2.App/Services/FeatureSearchHighlight.cs",
+      "XCL2.App/Services/FeatureSearchMatcher.cs",
+      "XCL2.App/Views/DownloadCenterPage.SearchNavigation.cs",
+      "XCL2.App/Views/FeatureSearchBox.xaml",
+      "XCL2.App/Views/FeatureSearchBox.xaml.cs",
+      "XCL2.App/Views/MainWindow.FeatureSearch.cs",
+      "XCL2.App/Views/MainWindow.SearchNavigation.cs",
+      "XCL2.App/Views/MainWindow.xaml",
+      "XCL2.App/Views/MainWindow.xaml.cs",
+      "XCL2.App/Views/ToolboxPage.xaml",
+      "XCL2.App/Views/ToolboxPage.xaml.cs",
+      "XCL2.App/XCL2.App.csproj",
+      "XCL2.proj"
+    ]
+  },
+  "integration": {
+    "verification_kind": "static integration (not compilation or runtime testing)",
+    "test_projects": [
+      {
+        "project": "Tests/AiActivityRegression/AiActivityRegression.csproj",
+        "source_files": 6,
+        "missing_links": [],
+        "unresolved_project_type_tokens": []
+      },
+      {
+        "project": "Tests/AiFileDiffRegression/AiFileDiffRegression.csproj",
+        "source_files": 3,
+        "missing_links": [],
+        "unresolved_project_type_tokens": []
+      },
+      {
+        "project": "Tests/AiUsageRegression/AiUsageRegression.csproj",
+        "source_files": 7,
+        "missing_links": [],
+        "unresolved_project_type_tokens": []
+      },
+      {
+        "project": "Tests/FeatureRegression/FeatureRegression.csproj",
+        "source_files": 12,
+        "missing_links": [],
+        "unresolved_project_type_tokens": []
+      },
+      {
+        "project": "Tests/FeatureSearchRegression/FeatureSearchRegression.csproj",
+        "source_files": 5,
+        "missing_links": [],
+        "unresolved_project_type_tokens": []
+      }
+    ],
+    "changed_xaml": [
+      {
+        "file": "XCL2.App/Views/FeatureSearchBox.xaml",
+        "handlers": 12
+      },
+      {
+        "file": "XCL2.App/Views/MainWindow.xaml",
+        "handlers": 37
+      },
+      {
+        "file": "XCL2.App/Views/ToolboxPage.xaml",
+        "handlers": 107
+      }
+    ],
+    "embedded_resources": [
+      {
+        "name": "XCL2.App.Resources.Terracotta.terracotta-0.4.2-windows-x86_64.exe",
+        "exists": false,
+        "conditional": true
+      },
+      {
+        "name": "XCL2.App.Resources.Data.FeatureSearchCatalog.json",
+        "exists": true,
+        "conditional": false
+      },
+      {
+        "name": "XCL2.App.Resources.Data.WikiEntries.txt",
+        "exists": true,
+        "conditional": false
+      },
+      {
+        "name": "XCL2.App.Resources.Skins.steve.png",
+        "exists": true,
+        "conditional": false
+      },
+      {
+        "name": "XCL2.App.Resources.Avatars.steve-default.png",
+        "exists": true,
+        "conditional": false
+      },
+      {
+        "name": "XCL2.App.Resources.Avatars.alex-default.png",
+        "exists": true,
+        "conditional": false
+      },
+      {
+        "name": "XCL2.App.PLUGIN_GUIDE.md",
+        "exists": true,
+        "conditional": false
+      },
+      {
+        "name": "XCL2.App.Docs.API_REFERENCE.md",
+        "exists": true,
+        "conditional": false
+      },
+      {
+        "name": "XCL2.App.Docs.PLUGIN_EXE_PROTOCOL.md",
+        "exists": true,
+        "conditional": false
+      },
+      {
+        "name": "XCL2.App.Docs.API_LAUNCHER_CONTROL.md",
+        "exists": true,
+        "conditional": false
+      },
+      {
+        "name": "XCL2.App.Docs.API_EXAMPLES.md",
+        "exists": true,
+        "conditional": false
+      },
+      {
+        "name": "XCL2.App.Docs.API_WORLDS.md",
+        "exists": true,
+        "conditional": false
+      }
+    ],
+    "issue_count": 0,
+    "issues": []
+  },
+  "catalog": {
+    "generation_consistency": "pass",
+    "named_targets_routes_sections_and_toolbox_tab_indices": "pass",
+    "entries": 552,
+    "pages": {
+      "home": 14,
+      "versions": 8,
+      "downloads": 43,
+      "multiplayer": 4,
+      "mods": 6,
+      "servers": 47,
+      "accounts": 8,
+      "settings": 150,
+      "logs": 27,
+      "ai": 8,
+      "toolbox": 143,
+      "bedrock": 25,
+      "about": 15,
+      "more": 10,
+      "main": 1,
+      "worlds": 40,
+      "api": 3
+    },
+    "toolbox_tabs": 36
+  },
+  "not_executed": [
+    "C# compilation",
+    "FeatureSearchRegression and other .NET regression programs",
+    "Windows WPF/WinUI UI tests"
+  ],
+  "limitation": "Linux environment; installed .NET 8 CoreCLR cannot initialize (HRESULT 0x8007000E); no Windows graphical session.",
+  "manual_acceptance": "SEARCH_NOTES.md"
+}

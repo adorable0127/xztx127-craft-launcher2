@@ -33,29 +33,48 @@ internal sealed class PluginModSourcesDialog : OverlayDialogControl
         root.Children.Add(_projects); root.Children.Add(_details); root.Children.Add(_files);
         var download = new Button { Content = Loc.T("Str_Plugin_InstallSelectedMod", "安装到当前实例"), Margin = new Thickness(0, 12, 0, 8), HorizontalAlignment = HorizontalAlignment.Right };
         root.Children.Add(download); root.Children.Add(_status); Content = root;
+        var back = new Button { Content = Loc.T("Str_Plugin_BackToBuiltInSources", "返回内置来源"), Margin = new Thickness(0, 12, 0, 0), HorizontalAlignment = HorizontalAlignment.Right };
+        root.Children.Add(back);
+        back.Click += (_, _) => CloseWith(false);
         _sources.ItemsSource = PluginProviderRegistry.Snapshot("mod"); _sources.SelectedIndex = 0;
-        RequestClose += (_, _) => _stop.Cancel();
+        RequestClose += (_, _) => { Interlocked.Increment(ref _selection); _stop.Cancel(); };
+        _sources.SelectionChanged += (_, _) =>
+        {
+            Interlocked.Increment(ref _selection);
+            ResetResults();
+            _status.Text = "";
+        };
         search.Click += async (_, _) => await SearchAsync();
         _projects.SelectionChanged += async (_, _) => await LoadDetailsAsync();
         download.Click += (_, _) => InstallSelected();
         if (_sources.Items.Count == 0) _status.Text = Loc.T("Str_Plugin_NoModSources", "没有已授权的插件 Mod 来源，请先启用插件并授权 providers.mod 与 network。");
     }
+    private void ResetResults()
+    {
+        _projects.ItemsSource = null;
+        _files.ItemsSource = null;
+        _details.Text = "";
+        _instanceId = null;
+        _version = null;
+        _loader = null;
+    }
     private async Task SearchAsync()
     {
         if (_sources.SelectedItem is not PluginProviderInfo info) return;
+        ResetResults();
         var generation = Interlocked.Increment(ref _selection);
         try
         {
             var host = PluginHostBridge.Current ?? throw new PluginHostUnavailableException();
             var instances = await host.GetInstancesAsync(new(), _stop.Token);
             var instance = instances.Items.FirstOrDefault(i => i.IsSelected);
-            _instanceId = instance?.Id; _version = instance?.MinecraftVersion; _loader = instance?.LoaderId;
             var entry = PluginProviderRegistry.Get(info.Id, "mod");
-            var query = new PluginModQuery(_query.Text.Trim(), _version, _loader);
+            var query = new PluginModQuery(_query.Text.Trim(), instance?.MinecraftVersion, instance?.LoaderId);
             var result = await PluginProviderRegistry.InvokeAsync(entry,
                 token => ((IPluginModProvider)entry.Provider).SearchAsync(query, token), _stop.Token);
             if (generation != Interlocked.Read(ref _selection)) return;
             if (result.Items.IsDefault || result.Items.Length > 1000) throw new PluginOperationException("InvalidResults", "插件搜索结果无效。");
+            _instanceId = instance?.Id; _version = instance?.MinecraftVersion; _loader = instance?.LoaderId;
             _projects.ItemsSource = result.Items.Where(p => p != null && !string.IsNullOrWhiteSpace(p.Id)).Select(p => p with
                 { Id = host.Safe(p.Id), Title = host.Safe(p.Title), Description = host.Safe(p.Description), Author = host.Safe(p.Author) }).ToArray();
             _status.Text = Loc.F("Str_Plugin_ModResultCount", "返回 {0} 条结果；当前实例：{1}", result.Items.Length, instance?.Name ?? Loc.T("Str_Plugin_NoSelectedInstance", "未选择"));
@@ -63,14 +82,17 @@ internal sealed class PluginModSourcesDialog : OverlayDialogControl
         catch (OperationCanceledException) { }
         catch (Exception ex)
         {
+            if (generation != Interlocked.Read(ref _selection)) return;
             _status.Text = ex is PluginOperationException operation ? operation.SafeMessage : Loc.T("Str_Plugin_SearchFailed", "插件搜索失败，已转到内置来源。");
             _fallback.SelectModCategoryAndSearch(_query.Text.Trim());
         }
     }
     private async Task LoadDetailsAsync()
     {
+        var generation = Interlocked.Increment(ref _selection);
+        _files.ItemsSource = null;
+        _details.Text = "";
         if (_sources.SelectedItem is not PluginProviderInfo info || _projects.SelectedItem is not PluginModProject project) return;
-        var generation = Interlocked.Increment(ref _selection); _files.ItemsSource = null;
         try
         {
             var entry = PluginProviderRegistry.Get(info.Id, "mod"); var provider = (IPluginModProvider)entry.Provider;
@@ -85,7 +107,11 @@ internal sealed class PluginModSourcesDialog : OverlayDialogControl
             _files.SelectedIndex = 0;
         }
         catch (OperationCanceledException) { }
-        catch (Exception ex) { _status.Text = ex is PluginOperationException operation ? operation.SafeMessage : Loc.T("Str_Plugin_DetailsFailed", "插件详情读取失败，可以切回内置来源。"); }
+        catch (Exception ex)
+        {
+            if (generation != Interlocked.Read(ref _selection)) return;
+            _status.Text = ex is PluginOperationException operation ? operation.SafeMessage : Loc.T("Str_Plugin_DetailsFailed", "插件详情读取失败，可以切回内置来源。");
+        }
     }
     private void InstallSelected()
     {

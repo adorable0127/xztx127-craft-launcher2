@@ -1,4 +1,4 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using System.IO;
 using System.Windows;
 using System.Windows.Controls;
@@ -184,10 +184,14 @@ public partial class FirstRunWizardWindow : OverlayDialogControl
         progressWin.Show();
         try
         {
-            var path = await _javaService.DownloadRecommendedJavaAsync(progressWin.Progress);
+            var path = await JavaDownloadQueueService.DownloadRecommendedAsync(_javaService, progressWin.Progress);
             _resolvedJavaPath = path;
             _javaStepDone = true;
             JavaStatusText.Text = $"Java 安装完成：{path}";
+        }
+        catch (OperationCanceledException)
+        {
+            JavaStatusText.Text = "Java 下载已取消，可以稍后重新安装。";
         }
         catch (Exception ex)
         {
@@ -522,7 +526,7 @@ public partial class FirstRunWizardWindow : OverlayDialogControl
                 });
                 try
                 {
-                    _resolvedJavaPath = await _javaService.DownloadRecommendedJavaAsync(progress);
+                    _resolvedJavaPath = await JavaDownloadQueueService.DownloadRecommendedAsync(_javaService, progress);
                     _javaStepDone = true;
                 }
                 catch (Exception ex)

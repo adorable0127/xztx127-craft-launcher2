@@ -3,6 +3,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
+using System.Windows.Media.Animation;
 
 namespace XCL2.App.Services;
 
@@ -25,6 +26,24 @@ namespace XCL2.App.Services;
 /// </summary>
 public static class ScrollWheelBehavior
 {
+    private static readonly List<WeakReference<ScrollViewer>> ActiveScrollers = new();
+
+    static ScrollWheelBehavior()
+    {
+        AnimationSettingsService.Changed += () =>
+        {
+            if (AnimationSettingsService.IsEnabled(AnimationKind.SmoothScroll)) return;
+            var active = ActiveScrollers.ToArray();
+            ActiveScrollers.Clear();
+            foreach (var reference in active)
+            {
+                if (!reference.TryGetTarget(out var viewer)) continue;
+                if (viewer.Dispatcher.CheckAccess()) FinishScroll(viewer);
+                else if (!viewer.Dispatcher.HasShutdownStarted)
+                    viewer.Dispatcher.BeginInvoke(new Action(() => FinishScroll(viewer)));
+            }
+        };
+    }
     /// <summary>100% 灵敏度时单次滚轮"咔哒"一格对应的基准滚动像素距离。
     /// 旧版本固定使用 180px；现在默认灵敏度为 90%，实际默认步长约 162px，
     /// 仍明显快于 WPF 原生滚动，但比旧版稍微收敛一点。</summary>
@@ -102,13 +121,19 @@ public static class ScrollWheelBehavior
         if ((bool)e.NewValue)
         {
             sv.PreviewMouseWheel += ScrollViewer_PreviewMouseWheel;
+            sv.Unloaded += ScrollViewer_Unloaded;
         }
         else
         {
             sv.PreviewMouseWheel -= ScrollViewer_PreviewMouseWheel;
-            sv.ClearValue(TargetOffsetProperty);
-            sv.BeginAnimation(ScrollViewerOffsetHelper.VerticalOffsetProperty, null);
+            sv.Unloaded -= ScrollViewer_Unloaded;
+            FinishScroll(sv, sv.VerticalOffset);
         }
+    }
+
+    private static void ScrollViewer_Unloaded(object sender, RoutedEventArgs e)
+    {
+        if (sender is ScrollViewer viewer) FinishScroll(viewer, viewer.VerticalOffset);
     }
 
     /// <summary>记录"这次连续滚动最终应该停在哪个像素偏移"，把同一串快速滚轮事件的多次
@@ -117,9 +142,26 @@ public static class ScrollWheelBehavior
         DependencyProperty.RegisterAttached("TargetOffset", typeof(double), typeof(ScrollWheelBehavior),
             new PropertyMetadata(double.NaN));
 
+    private static readonly DependencyProperty ScrollGenerationProperty =
+        DependencyProperty.RegisterAttached("ScrollGeneration", typeof(int), typeof(ScrollWheelBehavior),
+            new PropertyMetadata(0));
+
+    private static void FinishScroll(ScrollViewer viewer, double? offset = null)
+    {
+        var target = offset ?? (double)viewer.GetValue(TargetOffsetProperty);
+        if (double.IsNaN(target)) target = viewer.VerticalOffset;
+        target = Math.Clamp(target, 0, viewer.ScrollableHeight);
+        viewer.SetValue(ScrollGenerationProperty, (int)viewer.GetValue(ScrollGenerationProperty) + 1);
+        viewer.SetCurrentValue(ScrollViewerOffsetHelper.VerticalOffsetProperty, target);
+        viewer.BeginAnimation(ScrollViewerOffsetHelper.VerticalOffsetProperty, null);
+        viewer.ScrollToVerticalOffset(target);
+        viewer.ClearValue(TargetOffsetProperty);
+        ActiveScrollers.RemoveAll(reference => !reference.TryGetTarget(out var active) || ReferenceEquals(active, viewer));
+    }
+
     private static void ScrollViewer_PreviewMouseWheel(object sender, MouseWheelEventArgs e)
     {
-        if (sender is not ScrollViewer sv) return;
+        if (sender is not ScrollViewer sv || e.Delta == 0) return;
 
         // 修复"设置主题选择页里，滚动字体/主题这类长下拉列表（抽屉）时，整个设置页会跟着
         // 一起跳动，并且被误判成正在修改设置从而打断用户进度"：
@@ -192,14 +234,9 @@ public static class ScrollWheelBehavior
             return;
         }
 
-        // 根因：之前这里直接调用 sv.ScrollToVerticalOffset(newOffset)——这是同步的、
-        // 立即完成的一次性跳转，每次 MouseWheel 事件（快速划动时一秒能触发几十次）都会
-        // 各自强制走一次完整的布局(layout)+排版(arrange)。设置页控件多、内容高，一次布局
-        // 本身就比普通页面贵，几十次/秒的同步布局叠加起来，表现就是划得越快、越感觉"卡顿"。
-        //
-        // 修法：改用 WPF 动画系统的 DoubleAnimation 做位移，把"目标偏移量"记在附加属性里
-        // 累加——同一串连续滚动只更新一次动画目标而不是每格都重新触发同步布局；动画由渲染
-        // 线程驱动插值，过渡更平滑，也不会阻塞 UI 线程。
+        // 连续滚动累加最终目标，但新动画始终从真实可见偏移开始。
+        // ScrollToVerticalOffset 仍在 UI 线程触发布局；短时过渡和可关闭的平滑滚动
+        // 减少密集设置页面的布局压力，不把它误当成渲染线程上的廉价位移动画。
         var current = double.IsNaN((double)sv.GetValue(TargetOffsetProperty))
             ? sv.VerticalOffset
             : (double)sv.GetValue(TargetOffsetProperty);
@@ -212,19 +249,38 @@ public static class ScrollWheelBehavior
 
         sv.SetValue(TargetOffsetProperty, target);
 
-        var animation = new System.Windows.Media.Animation.DoubleAnimation
+        var intensity = AnimationSettingsService.Intensity(AnimationKind.SmoothScroll);
+        if (intensity <= 0 || Math.Abs(target - sv.VerticalOffset) < 0.5)
         {
+            FinishScroll(sv, target);
+            e.Handled = true;
+            return;
+        }
+
+        var generation = (int)sv.GetValue(ScrollGenerationProperty) + 1;
+        sv.SetValue(ScrollGenerationProperty, generation);
+        ActiveScrollers.RemoveAll(reference => !reference.TryGetTarget(out var active) || ReferenceEquals(active, sv));
+        ActiveScrollers.Add(new WeakReference<ScrollViewer>(sv));
+        // 降低强度时减少需要插值的距离；滚动终点和时长仍独立于视觉强度。
+        var from = sv.VerticalOffset + (target - sv.VerticalOffset) * (1 - intensity);
+        sv.SetCurrentValue(ScrollViewerOffsetHelper.VerticalOffsetProperty, target);
+        var animation = new DoubleAnimation
+        {
+            From = from,
             To = target,
-            Duration = TimeSpan.FromMilliseconds(180),
-            EasingFunction = new System.Windows.Media.Animation.QuadraticEase
+            Duration = AnimationSettingsService.Duration(160, AnimationKind.SmoothScroll),
+            FillBehavior = FillBehavior.Stop,
+            EasingFunction = new QuadraticEase
             {
-                EasingMode = System.Windows.Media.Animation.EasingMode.EaseOut
+                EasingMode = EasingMode.EaseOut
             }
         };
-        // 动画结束清掉目标缓存，避免下一次全新的滚动误用上一次滚到底后残留的旧目标值。
-        animation.Completed += (_, _) => sv.ClearValue(TargetOffsetProperty);
+        animation.Completed += (_, _) =>
+        {
+            if ((int)sv.GetValue(ScrollGenerationProperty) == generation) FinishScroll(sv, target);
+        };
 
-        sv.BeginAnimation(ScrollViewerOffsetHelper.VerticalOffsetProperty, animation);
+        sv.BeginAnimation(ScrollViewerOffsetHelper.VerticalOffsetProperty, animation, HandoffBehavior.SnapshotAndReplace);
         e.Handled = true;
     }
 

@@ -926,4 +926,7 @@
 
     <system:String x:Key="Str_Ui_Channel_Client">Channel:</system:String>
 
+    <system:String x:Key="Str_Plugin_ModSourceMenu">Plugin Mod sources…</system:String>
+    <system:String x:Key="Str_Plugin_BackToBuiltInSources">Back to built-in sources</system:String>
+    <system:String x:Key="Str_Plugin_OpenModSourcesFailed">Cannot open plugin Mod sources: </system:String>
 </ResourceDictionary>

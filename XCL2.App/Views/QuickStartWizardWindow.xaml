@@ -3,6 +3,7 @@
                             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
                             xmlns:local="clr-namespace:XCL2.App.Views"
                             xmlns:services="clr-namespace:XCL2.App.Services"
+                            xmlns:controls="clr-namespace:XCL2.App.Views.Controls"
                             MinWidth="760"
                             MaxWidth="760"
                             MinHeight="640"
@@ -76,6 +77,11 @@
                         </StackPanel>
                     </RadioButton>
 
+                    <StackPanel x:Name="SourceFoldersLoadingPanel" Orientation="Horizontal" Visibility="Collapsed" Margin="28,0,0,10">
+                        <controls:LoadingIndicator Width="24" Height="24" Margin="0,0,8,0"/>
+                        <TextBlock Text="正在加载" VerticalAlignment="Center" Foreground="{DynamicResource TextSecondaryBrush}"/>
+                    </StackPanel>
+
                     <!-- “傻瓜式启动”子面板：只能从已经导入过的文件夹(cfg.Folders)里选，跟下面
                          “使用现有实例”(任意 .minecraft 目录，包括其它启动器的)是两回事——
                          这里体现的是"用户必须已经导入安装文件夹才可以选择"这条要求。 -->
@@ -87,6 +93,10 @@
                                       SelectionChanged="SimpleFolderCombo_SelectionChanged"/>
                             <TextBlock Text="{DynamicResource Str_Ui_Choose_A_Version_To_Launch}" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4"/>
                             <ComboBox x:Name="SimpleVersionCombo" Style="{StaticResource FilterComboBox}" Height="34" Margin="0,0,0,8"/>
+                            <StackPanel x:Name="SimpleVersionsLoadingPanel" Orientation="Horizontal" Visibility="Collapsed" Margin="0,0,0,8">
+                                <controls:LoadingIndicator Width="24" Height="24" Margin="0,0,8,0"/>
+                                <TextBlock Text="正在加载" VerticalAlignment="Center" Foreground="{DynamicResource TextSecondaryBrush}"/>
+                            </StackPanel>
                             <TextBlock x:Name="SimpleModeStatusText" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap"/>
                         </StackPanel>
                     </Border>
@@ -125,6 +135,10 @@
                             </Grid>
                             <TextBlock Text="{DynamicResource Str_Ui_Pick_A_Version_Already_Installed_In_This}" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4"/>
                             <ComboBox x:Name="ExistingVersionCombo" Style="{StaticResource FilterComboBox}" Height="34" Margin="0,0,0,8"/>
+                            <StackPanel x:Name="ExistingVersionsLoadingPanel" Orientation="Horizontal" Visibility="Collapsed" Margin="0,0,0,8">
+                                <controls:LoadingIndicator Width="24" Height="24" Margin="0,0,8,0"/>
+                                <TextBlock Text="正在加载" VerticalAlignment="Center" Foreground="{DynamicResource TextSecondaryBrush}"/>
+                            </StackPanel>
                             <TextBlock x:Name="ExistingInstanceStatusText" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap"/>
                         </StackPanel>
                     </Border>

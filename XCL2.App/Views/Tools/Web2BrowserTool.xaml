@@ -14,10 +14,10 @@
                 <TextBox x:Name="UrlBox" Padding="8,6" Margin="0,0,0,10"
                          Text="https://xztx127.dpdns.org/xztx127gjx"/>
 
-                <StackPanel Orientation="Horizontal">
+                <StackPanel>
                     <Button x:Name="OpenEmbeddedButton" Content="在启动器内打开" Style="{StaticResource PrimaryButton}"
                             Padding="14,7" Margin="0,0,10,0" Click="OpenEmbeddedButton_Click"/>
-                    <Button x:Name="OpenExternalButton" Content="在浏览器中打开" Padding="14,7" Click="OpenExternalButton_Click"/>
+                    <Button x:Name="OpenExternalButton" Content="一键打开链接 ↗" HorizontalAlignment="Left" Margin="0,6,0,0" Padding="14,7" Click="OpenExternalButton_Click"/>
                 </StackPanel>
 
                 <TextBlock x:Name="Web2StatusText" FontSize="11" Margin="0,8,0,0"

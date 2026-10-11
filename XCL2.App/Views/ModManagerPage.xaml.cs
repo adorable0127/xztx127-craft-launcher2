@@ -1,6 +1,7 @@
 using System.Collections.ObjectModel;
 using System.IO;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
@@ -28,8 +29,17 @@ public partial class ModManagerPage : UserControl
     private readonly ModDependencyAnalysisService _dependencyAnalysisService = new();
 
     private readonly ObservableCollection<GameFolder> _folders = new();
-    private readonly ObservableCollection<GameVersion> _versions = new();
-    private readonly ObservableCollection<LocalModDisplayItem> _mods = new();
+    private IReadOnlyList<GameVersion> _versions = Array.Empty<GameVersion>();
+    private IReadOnlyList<LocalModDisplayItem> _mods = Array.Empty<LocalModDisplayItem>();
+    private CancellationTokenSource? _versionScanCancellation;
+    private CancellationTokenSource? _modScanCancellation;
+    private CancellationTokenSource? _dependencyAnalysisCancellation;
+    private int _versionScanGeneration;
+    private int _modScanGeneration;
+    private int _dependencyAnalysisGeneration;
+    private bool _updatingSelection;
+    private bool _isLoadingVersions;
+    private bool _isLoadingMods;
 
     // 监视当前实例的 mods 文件夹：不管是拖拽导入、下载、还是用户手动往文件夹里丢文件，
     // 只要内容变了就自动刷新列表。防抖是因为复制一个 jar 会连续触发好几次文件事件。
@@ -48,57 +58,136 @@ public partial class ModManagerPage : UserControl
             _watchDebounce.Stop();
             RefreshMods();
         };
-        Unloaded += (_, _) => StopWatchingMods();
+        // 先让页面的轻量框架完成入树。构造函数不扫描磁盘，也不打开任何 JAR。
+        Loaded += (_, _) => LoadFolders();
+        Unloaded += (_, _) =>
+        {
+            CancelVersionScan();
+            CancelModScan();
+            StopWatchingMods();
+        };
 
         FolderCombo.ItemsSource = _folders;
         VersionCombo.ItemsSource = _versions;
         VersionCombo.DisplayMemberPath = nameof(GameVersion.Id);
         ModsListBox.ItemsSource = _mods;
-
-        LoadFolders();
+        LoadingHost.Content = LoadingPlaceholderFactory.Create("正在读取版本与模组信息");
     }
 
     private void LoadFolders()
     {
-        _folders.Clear();
-        foreach (var f in _owner.ConfigService.Config.Folders ?? new List<GameFolder>()) _folders.Add(f);
-
-        var selected = _folders.FirstOrDefault(f => f.Path == _owner.ConfigService.Config.SelectedFolderPath)
-            ?? _folders.FirstOrDefault();
-        if (selected != null)
-            FolderCombo.SelectedItem = selected;
-        else
-            RefreshVersions(); // 没有任何文件夹时也要跑一遍刷新，确保空态提示正确显示
+        if (!IsLoaded) return;
+        _updatingSelection = true;
+        try
+        {
+            _folders.Clear();
+            foreach (var f in _owner.ConfigService.Config.Folders ?? new List<GameFolder>()) _folders.Add(f);
+            FolderCombo.SelectedItem = _folders.FirstOrDefault(f => f.Path == _owner.ConfigService.Config.SelectedFolderPath)
+                ?? _folders.FirstOrDefault();
+        }
+        finally { _updatingSelection = false; }
+        if (FolderCombo.SelectedItem is GameFolder selected &&
+            !string.Equals(_owner.ConfigService.Config.SelectedFolderPath, selected.Path, StringComparison.OrdinalIgnoreCase))
+        {
+            _owner.ConfigService.Config.SelectedFolderPath = selected.Path;
+            _owner.ConfigService.Save();
+        }
+        RefreshVersions();
     }
 
-    private void RefreshVersions()
+    private void RefreshVersions() => _ = RefreshVersionsAsync();
+
+    private async Task RefreshVersionsAsync()
     {
-        _versions.Clear();
-        _mods.Clear();
+        if (!IsLoaded) return;
+        CancelVersionScan();
+        CancelModScan();
+        StopWatchingMods();
+        SetVersions(Array.Empty<GameVersion>(), null);
+        SetMods(Array.Empty<LocalModInfo>());
 
         var folder = FolderCombo.SelectedItem as GameFolder;
-        if (folder == null || string.IsNullOrEmpty(folder.Path) || !Directory.Exists(folder.Path))
+        if (folder == null || string.IsNullOrEmpty(folder.Path))
         {
             UpdateEmptyHint();
             return;
         }
 
+        // 路径和配置必须在 UI 线程取快照；后台只处理普通数据，不访问控件/集合。
+        var folderPath = folder.Path;
+        var selectedId = _owner.ConfigService.Config.SelectedVersionId;
+        var generation = _versionScanGeneration;
+        var cancellation = new CancellationTokenSource();
+        _versionScanCancellation = cancellation;
+        _isLoadingVersions = true;
+        UpdateEmptyHint();
         try
         {
-            foreach (var v in _folderService.ScanVersions(folder.Path)) _versions.Add(v);
+            var versions = await Task.Run(() => _folderService.ScanVersions(folderPath, cancellation.Token), cancellation.Token);
+            if (!IsLoaded || cancellation.IsCancellationRequested || generation != _versionScanGeneration) return;
+            SetVersions(versions, selectedId);
         }
+        catch (OperationCanceledException) when (cancellation.IsCancellationRequested) { }
         catch (Exception ex)
         {
-            ErrorPresenter.ShowFriendlyError("扫描已安装版本失败，可能是这个文件夹不是有效的 .minecraft 目录，或权限不足。",
-                ex.ToString(), "扫描版本失败");
+            if (IsLoaded && !cancellation.IsCancellationRequested && generation == _versionScanGeneration)
+                ErrorPresenter.ShowFriendlyError("扫描已安装版本失败，可能是这个文件夹不是有效的 .minecraft 目录，或权限不足。",
+                    ex.ToString(), "扫描版本失败");
         }
+        finally
+        {
+            if (generation == _versionScanGeneration)
+            {
+                _versionScanCancellation = null;
+                _isLoadingVersions = false;
+                UpdateEmptyHint();
+            }
+            cancellation.Dispose();
+        }
+        if (IsLoaded && generation == _versionScanGeneration) RefreshMods();
+    }
 
-        var selectedId = _owner.ConfigService.Config.SelectedVersionId;
-        var selectedVersion = _versions.FirstOrDefault(v => v.Id == selectedId) ?? _versions.FirstOrDefault();
-        if (selectedVersion != null)
-            VersionCombo.SelectedItem = selectedVersion;
-        else
-            UpdateEmptyHint();
+    private void SetVersions(IReadOnlyList<GameVersion> versions, string? selectedId)
+    {
+        _updatingSelection = true;
+        try
+        {
+            _versions = versions;
+            VersionCombo.ItemsSource = _versions;
+            VersionCombo.SelectedItem = _versions.FirstOrDefault(v => v.Id == selectedId) ?? _versions.FirstOrDefault();
+        }
+        finally { _updatingSelection = false; }
+    }
+
+    private void SetMods(IEnumerable<LocalModInfo> mods)
+    {
+        // 一次更换数据源，避免每个模组分别触发集合通知/布局；列表仍使用虚拟化。
+        _mods = mods.Select(m => new LocalModDisplayItem(m)).ToArray();
+        ModsListBox.ItemsSource = _mods;
+    }
+
+    private void CancelVersionScan()
+    {
+        CancelDependencyAnalysis();
+        ++_versionScanGeneration;
+        _versionScanCancellation?.Cancel();
+        _versionScanCancellation = null;
+        _isLoadingVersions = false;
+    }
+
+    private void CancelModScan()
+    {
+        ++_modScanGeneration;
+        _modScanCancellation?.Cancel();
+        _modScanCancellation = null;
+        _isLoadingMods = false;
+    }
+
+    private void CancelDependencyAnalysis()
+    {
+        ++_dependencyAnalysisGeneration;
+        _dependencyAnalysisCancellation?.Cancel();
+        _dependencyAnalysisCancellation = null;
     }
 
     /// <summary>
@@ -150,6 +239,8 @@ public partial class ModManagerPage : UserControl
             };
             void OnChanged() => Dispatcher.BeginInvoke(new Action(() =>
             {
+                // 已排队的旧 watcher 事件不能在切走后重新启动计时器。
+                if (!IsLoaded || !ReferenceEquals(_modsWatcher, watcher)) return;
                 _watchDebounce.Stop();
                 _watchDebounce.Start();
             }));
@@ -180,45 +271,74 @@ public partial class ModManagerPage : UserControl
         _watchedModsDir = null;
     }
 
-    private void RefreshMods()
+    private void RefreshMods() => _ = RefreshModsAsync();
+
+    private async Task RefreshModsAsync()
     {
+        if (!IsLoaded || _isLoadingVersions) return;
         // 显式刷新会取消还在排队的"文件变化"刷新，避免同一件事刷两遍。
         _watchDebounce.Stop();
-        _mods.Clear();
+        CancelModScan();
         var gameDir = GetEffectiveGameDir();
         if (gameDir == null)
         {
+            StopWatchingMods();
+            SetMods(Array.Empty<LocalModInfo>());
             UpdateEmptyHint();
             return;
         }
 
-        WatchModsDir(gameDir);
-
+        var generation = _modScanGeneration;
+        var cancellation = new CancellationTokenSource();
+        _modScanCancellation = cancellation;
+        _isLoadingMods = true;
+        UpdateEmptyHint();
         try
         {
-            foreach (var m in _localModService.ScanMods(gameDir)) _mods.Add(new LocalModDisplayItem(m));
+            // 先订阅变更，再读快照，避免扫描过程中复制/删除的文件漏掉后续刷新。
+            WatchModsDir(gameDir);
+            var mods = await Task.Run(() => _localModService.ScanMods(gameDir, cancellation.Token), cancellation.Token);
+            if (!IsLoaded || cancellation.IsCancellationRequested || generation != _modScanGeneration) return;
+            SetMods(mods);
         }
+        catch (OperationCanceledException) when (cancellation.IsCancellationRequested) { }
         catch (Exception ex)
         {
-            ErrorPresenter.ShowFriendlyError(Loc.T("Str_Cs_Couldn_T_Scan_The_Mod_List_A_File_May_Be", "扫描 Mod 列表失败，可能是文件被占用或权限不足，请重试。"),
-                ex.ToString(), "扫描 Mod 列表失败");
+            if (IsLoaded && !cancellation.IsCancellationRequested && generation == _modScanGeneration)
+            {
+                SetMods(Array.Empty<LocalModInfo>());
+                ErrorPresenter.ShowFriendlyError(Loc.T("Str_Cs_Couldn_T_Scan_The_Mod_List_A_File_May_Be", "扫描 Mod 列表失败，可能是文件被占用或权限不足，请重试。"),
+                    ex.ToString(), "扫描 Mod 列表失败");
+            }
         }
-
-        UpdateEmptyHint();
+        finally
+        {
+            if (generation == _modScanGeneration)
+            {
+                _modScanCancellation = null;
+                _isLoadingMods = false;
+                UpdateEmptyHint();
+            }
+            cancellation.Dispose();
+        }
     }
 
     private void UpdateEmptyHint()
     {
+        var isLoading = _isLoadingVersions || _isLoadingMods;
+        LoadingHost.Visibility = isLoading ? Visibility.Visible : Visibility.Collapsed;
+        VersionCombo.IsEnabled = !_isLoadingVersions;
         var hasSelection = FolderCombo.SelectedItem != null && VersionCombo.SelectedItem != null;
-        EmptyHint.Visibility = _mods.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+        EmptyHint.Visibility = !isLoading && _mods.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
         EmptyHint.Text = !hasSelection
             ? "请先选择一个文件夹和版本。"
             : "这个版本还没有安装任何 Mod，去「下载」页的 Mod 分类搜索安装吧。";
-        ModsListBox.Visibility = _mods.Count == 0 ? Visibility.Collapsed : Visibility.Visible;
+        ModsListBox.Visibility = isLoading || _mods.Count == 0 ? Visibility.Collapsed : Visibility.Visible;
     }
 
     private void FolderCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
+        if (_updatingSelection) return;
         if (FolderCombo.SelectedItem is GameFolder folder)
         {
             _owner.ConfigService.Config.SelectedFolderPath = folder.Path;
@@ -229,6 +349,8 @@ public partial class ModManagerPage : UserControl
 
     private void VersionCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
+        if (_updatingSelection) return;
+        CancelDependencyAnalysis();
         RefreshMods();
     }
 
@@ -239,42 +361,70 @@ public partial class ModManagerPage : UserControl
     /// 用户可能就是想先装个前置再装主 mod，中间状态本来就会"缺前置"，如果每次刷新列表都弹一次
     /// 警告框会很烦人，改成用户主动点了才检查更符合"提示而不是打扰"的分寸）。
     /// </summary>
-    private void AnalyzeDependencies_Click(object sender, RoutedEventArgs e)
+    private async void AnalyzeDependencies_Click(object sender, RoutedEventArgs e)
     {
         var gameDir = GetEffectiveGameDir();
-        if (gameDir == null)
+        var selectedVersion = VersionCombo.SelectedItem as GameVersion;
+        if (gameDir == null || selectedVersion == null)
         {
             MessageBoxDialog.ShowInfo(Loc.T("Str_Cs_Please_Choose_A_Folder_And_A_Version_Fir", "请先选择一个文件夹和版本。"));
             return;
         }
 
-        List<LocalModInfo> enabledMods;
+        // 切换实例后，旧分析既不能弹窗，也不能拿新实例的加载器为旧实例下载前置。
+        var selectedId = selectedVersion.Id;
+        var mcVersion = selectedVersion.McVersion;
+        var modLoader = selectedVersion.ModLoader;
+        CancelDependencyAnalysis();
+        var generation = _dependencyAnalysisGeneration;
+        var cancellation = new CancellationTokenSource();
+        _dependencyAnalysisCancellation = cancellation;
+        var button = sender as Button;
+        if (button != null) button.IsEnabled = false;
+        bool IsCurrentRequest() => IsLoaded && !cancellation.IsCancellationRequested &&
+            generation == _dependencyAnalysisGeneration &&
+            (VersionCombo.SelectedItem as GameVersion)?.Id == selectedId &&
+            string.Equals(GetEffectiveGameDir(), gameDir, StringComparison.OrdinalIgnoreCase);
         try
         {
-            enabledMods = _localModService.ScanMods(gameDir).Where(m => m.IsEnabled).ToList();
+            ToastService.ShowInfo("正在检查前置模组…");
+            var result = await Task.Run(() =>
+            {
+                var enabledMods = _localModService.ScanMods(gameDir, cancellation.Token)
+                    .Where(m => m.IsEnabled).ToList();
+                cancellation.Token.ThrowIfCancellationRequested();
+                var analysis = _dependencyAnalysisService.Analyze(enabledMods);
+                cancellation.Token.ThrowIfCancellationRequested();
+                return (EnabledMods: enabledMods, Analysis: analysis);
+            }, cancellation.Token);
+            if (!IsCurrentRequest()) return;
+            if (!result.Analysis.HasMissingDependencies)
+            {
+                MessageBoxDialog.ShowInfo("没有发现缺失的前置模组。", "检查完成");
+                return;
+            }
+
+            // 使用请求发起时的游戏版本与加载器；后台工作仅返回普通数据。
+            var warnWin = new ModDependencyWarningWindow(result.Analysis, gameDir, result.EnabledMods,
+                mcVersion, modLoader);
+            warnWin.ModsChanged += (_, _) => RefreshMods();
+            warnWin.ShowDialog();
+            RefreshMods();
         }
+        catch (OperationCanceledException) when (cancellation.IsCancellationRequested) { }
         catch (Exception ex)
         {
-            ErrorPresenter.ShowFriendlyError(Loc.T("Str_Cs_Couldn_T_Scan_The_Mod_List_A_File_May_Be", "扫描 Mod 列表失败，可能是文件被占用或权限不足，请重试。"),
-                ex.ToString(), "检查前置模组失败");
-            return;
+            if (IsCurrentRequest())
+                ErrorPresenter.ShowFriendlyError(Loc.T("Str_Cs_Couldn_T_Scan_The_Mod_List_A_File_May_Be", "扫描 Mod 列表失败，可能是文件被占用或权限不足，请重试。"),
+                    ex.ToString(), "检查前置模组失败");
         }
-
-        var analysis = _dependencyAnalysisService.Analyze(enabledMods);
-        if (!analysis.HasMissingDependencies)
+        finally
         {
-            MessageBoxDialog.ShowInfo("没有发现缺失的前置模组。", "检查完成");
-            return;
+            if (ReferenceEquals(_dependencyAnalysisCancellation, cancellation))
+                _dependencyAnalysisCancellation = null;
+            cancellation.Dispose();
+            if (button != null) button.IsEnabled = true;
         }
-
-        // 把当前实例的游戏版本和加载器传给弹窗：下载前置时必须按它们过滤，
-        // 否则 Fabric 实例可能下到 NeoForge/Forge 版的前置。
-        var selectedVersion = VersionCombo.SelectedItem as GameVersion;
-        var warnWin = new ModDependencyWarningWindow(analysis, gameDir, enabledMods,
-            selectedVersion?.McVersion, selectedVersion?.ModLoader);
-        warnWin.ModsChanged += (_, _) => RefreshMods();   // 下载/删除后立刻刷新，不用等弹窗关闭
-        warnWin.ShowDialog();
-        RefreshMods(); // 用户可能在弹窗里下载了前置或删除了 mod，刷新列表让状态保持一致
     }
 
     /// <summary>

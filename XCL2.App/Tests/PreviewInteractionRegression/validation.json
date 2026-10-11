@@ -1,0 +1,760 @@
+{
+  "kind": "static_source_contract_validation",
+  "checks": [
+    {
+      "name": "C# syntax: Views/MainWindow.AiCrashOverlay.cs",
+      "passed": true
+    },
+    {
+      "name": "C# syntax: Views/MainWindow.FeatureSearch.cs",
+      "passed": true
+    },
+    {
+      "name": "C# syntax: Views/MainWindow.PluginCommands.cs",
+      "passed": true
+    },
+    {
+      "name": "C# syntax: Views/MainWindow.PluginControl.cs",
+      "passed": true
+    },
+    {
+      "name": "C# syntax: Views/MainWindow.PluginLifecycle.cs",
+      "passed": true
+    },
+    {
+      "name": "C# syntax: Views/MainWindow.PluginUi.cs",
+      "passed": true
+    },
+    {
+      "name": "C# syntax: Views/MainWindow.SearchNavigation.cs",
+      "passed": true
+    },
+    {
+      "name": "C# syntax: Views/MainWindow.WinUiPreview.cs",
+      "passed": true
+    },
+    {
+      "name": "C# syntax: Views/MainWindow.xaml.cs",
+      "passed": true
+    },
+    {
+      "name": "C# syntax: Views/HomePage.Preview.cs",
+      "passed": true
+    },
+    {
+      "name": "C# syntax: Views/HomePage.xaml.cs",
+      "passed": true
+    },
+    {
+      "name": "C# syntax: Services/PreviewFluentTheme.cs",
+      "passed": true
+    },
+    {
+      "name": "XML parses: App.xaml",
+      "passed": true
+    },
+    {
+      "name": "XML parses: Views/MainWindow.xaml",
+      "passed": true
+    },
+    {
+      "name": "XML parses: Views/HomePage.xaml",
+      "passed": true
+    },
+    {
+      "name": "XML parses: Resources/Themes/PreviewFluent.xaml",
+      "passed": true
+    },
+    {
+      "name": "XAML routed-event handlers resolve: Views/MainWindow.xaml",
+      "passed": true,
+      "detail": {
+        "handler_count": 36
+      }
+    },
+    {
+      "name": "XAML routed-event handlers resolve: Views/HomePage.xaml",
+      "passed": true,
+      "detail": {
+        "handler_count": 20
+      }
+    },
+    {
+      "name": "MainWindow contains required preview controls",
+      "passed": true
+    },
+    {
+      "name": "HomePage contains required preview controls",
+      "passed": true
+    },
+    {
+      "name": "Preview partial's named controls exist in XAML: MainWindow",
+      "passed": true,
+      "detail": []
+    },
+    {
+      "name": "Preview partial's named controls exist in XAML: HomePage",
+      "passed": true,
+      "detail": []
+    },
+    {
+      "name": "All 47 application style keys have Fluent replacements",
+      "passed": true,
+      "detail": {
+        "application_style_count": 47,
+        "preview_style_count": 56,
+        "missing": []
+      }
+    },
+    {
+      "name": "Fluent theme replaces direct application entries",
+      "passed": true
+    },
+    {
+      "name": "Disabling preview restores original application resources",
+      "passed": true
+    },
+    {
+      "name": "Existing local StaticResource style objects are restyled",
+      "passed": true
+    },
+    {
+      "name": "Newly navigated pages receive Fluent resources",
+      "passed": true
+    },
+    {
+      "name": "StaticResource keys resolve in local/application/theme declarations: Views/MainWindow.xaml",
+      "passed": true,
+      "detail": []
+    },
+    {
+      "name": "StaticResource keys resolve in local/application/theme declarations: Views/HomePage.xaml",
+      "passed": true,
+      "detail": []
+    },
+    {
+      "name": "StaticResource keys resolve in local/application/theme declarations: Resources/Themes/PreviewFluent.xaml",
+      "passed": true,
+      "detail": []
+    },
+    {
+      "name": "Interactive control template retains parts: PreviewTextBoxBase",
+      "passed": true,
+      "detail": {
+        "required": [
+          "PART_ContentHost"
+        ],
+        "missing": []
+      }
+    },
+    {
+      "name": "Interactive control template retains parts: PasswordBox",
+      "passed": true,
+      "detail": {
+        "required": [
+          "PART_ContentHost"
+        ],
+        "missing": []
+      }
+    },
+    {
+      "name": "Interactive control template retains parts: PreviewComboBoxBase",
+      "passed": true,
+      "detail": {
+        "required": [
+          "PART_EditableTextBox",
+          "PART_Popup"
+        ],
+        "missing": []
+      }
+    },
+    {
+      "name": "Interactive control template retains parts: ScrollBar",
+      "passed": true,
+      "detail": {
+        "required": [
+          "PART_Thumb",
+          "PART_Track"
+        ],
+        "missing": []
+      }
+    },
+    {
+      "name": "Interactive control template retains parts: ProgressBar",
+      "passed": true,
+      "detail": {
+        "required": [
+          "PART_Indicator",
+          "PART_Track"
+        ],
+        "missing": []
+      }
+    },
+    {
+      "name": "Interactive control template retains parts: TabControl",
+      "passed": true,
+      "detail": {
+        "required": [
+          "PART_SelectedContentHost"
+        ],
+        "missing": []
+      }
+    },
+    {
+      "name": "Interactive control template retains parts: Slider",
+      "passed": true,
+      "detail": {
+        "required": [
+          "PART_Track"
+        ],
+        "missing": []
+      }
+    },
+    {
+      "name": "Interactive control template retains parts: MenuItem",
+      "passed": true,
+      "detail": {
+        "required": [
+          "PART_Popup"
+        ],
+        "missing": []
+      }
+    },
+    {
+      "name": "Template trigger targets resolve: Control",
+      "passed": true,
+      "detail": []
+    },
+    {
+      "name": "Template trigger targets resolve: Button",
+      "passed": true,
+      "detail": []
+    },
+    {
+      "name": "Template trigger targets resolve: Button",
+      "passed": true,
+      "detail": []
+    },
+    {
+      "name": "Template trigger targets resolve: Button",
+      "passed": true,
+      "detail": []
+    },
+    {
+      "name": "Template trigger targets resolve: ToggleButton",
+      "passed": true,
+      "detail": []
+    },
+    {
+      "name": "Template trigger targets resolve: Button",
+      "passed": true,
+      "detail": []
+    },
+    {
+      "name": "Template trigger targets resolve: TextBox",
+      "passed": true,
+      "detail": []
+    },
+    {
+      "name": "Template trigger targets resolve: ComboBox",
+      "passed": true,
+      "detail": []
+    },
+    {
+      "name": "Template trigger targets resolve: ToggleButton",
+      "passed": true,
+      "detail": []
+    },
+    {
+      "name": "Template trigger targets resolve: TextBox",
+      "passed": true,
+      "detail": []
+    },
+    {
+      "name": "Template trigger targets resolve: ToolTip",
+      "passed": true,
+      "detail": []
+    },
+    {
+      "name": "Template trigger targets resolve: Button",
+      "passed": true,
+      "detail": []
+    },
+    {
+      "name": "Template trigger targets resolve: RadioButton",
+      "passed": true,
+      "detail": []
+    },
+    {
+      "name": "Template trigger targets resolve: PasswordBox",
+      "passed": true,
+      "detail": []
+    },
+    {
+      "name": "Template trigger targets resolve: RepeatButton",
+      "passed": true,
+      "detail": []
+    },
+    {
+      "name": "Template trigger targets resolve: ScrollBar",
+      "passed": true,
+      "detail": []
+    },
+    {
+      "name": "Template trigger targets resolve: Thumb",
+      "passed": true,
+      "detail": []
+    },
+    {
+      "name": "Template trigger targets resolve: ListBox",
+      "passed": true,
+      "detail": []
+    },
+    {
+      "name": "Template trigger targets resolve: ListBoxItem",
+      "passed": true,
+      "detail": []
+    },
+    {
+      "name": "Template trigger targets resolve: ComboBoxItem",
+      "passed": true,
+      "detail": []
+    },
+    {
+      "name": "Template trigger targets resolve: ListBoxItem",
+      "passed": true,
+      "detail": []
+    },
+    {
+      "name": "Template trigger targets resolve: ProgressBar",
+      "passed": true,
+      "detail": []
+    },
+    {
+      "name": "Template trigger targets resolve: TabItem",
+      "passed": true,
+      "detail": []
+    },
+    {
+      "name": "Template trigger targets resolve: TabControl",
+      "passed": true,
+      "detail": []
+    },
+    {
+      "name": "Template trigger targets resolve: CheckBox",
+      "passed": true,
+      "detail": []
+    },
+    {
+      "name": "Template trigger targets resolve: Expander",
+      "passed": true,
+      "detail": []
+    },
+    {
+      "name": "Template trigger targets resolve: ToggleButton",
+      "passed": true,
+      "detail": []
+    },
+    {
+      "name": "Template trigger targets resolve: RadioButton",
+      "passed": true,
+      "detail": []
+    },
+    {
+      "name": "Template trigger targets resolve: RadioButton",
+      "passed": true,
+      "detail": []
+    },
+    {
+      "name": "Template trigger targets resolve: GridViewColumnHeader",
+      "passed": true,
+      "detail": []
+    },
+    {
+      "name": "Template trigger targets resolve: ContextMenu",
+      "passed": true,
+      "detail": []
+    },
+    {
+      "name": "Template trigger targets resolve: MenuItem",
+      "passed": true,
+      "detail": []
+    },
+    {
+      "name": "Template trigger targets resolve: Separator",
+      "passed": true,
+      "detail": []
+    },
+    {
+      "name": "Template trigger targets resolve: Thumb",
+      "passed": true,
+      "detail": []
+    },
+    {
+      "name": "Template trigger targets resolve: Slider",
+      "passed": true,
+      "detail": []
+    },
+    {
+      "name": "Template trigger targets resolve: RepeatButton",
+      "passed": true,
+      "detail": []
+    },
+    {
+      "name": "Template trigger targets resolve: RepeatButton",
+      "passed": true,
+      "detail": []
+    },
+    {
+      "name": "Old presentation hides before changing resources and showing preview",
+      "passed": true
+    },
+    {
+      "name": "Preview switch does not restart process, close launcher or replace pages",
+      "passed": true
+    },
+    {
+      "name": "Preview active flag is actual visual mode",
+      "passed": true
+    },
+    {
+      "name": "Config preserves enabled mode across launcher sessions",
+      "passed": true
+    },
+    {
+      "name": "Switch failure restores previous theme and mode",
+      "passed": true
+    },
+    {
+      "name": "Preview toggle follows actual owner state and remains interactive",
+      "passed": true
+    },
+    {
+      "name": "Home subscribes to actual mode changes",
+      "passed": true
+    },
+    {
+      "name": "Preview toggle handlers switch complete launcher mode",
+      "passed": true
+    },
+    {
+      "name": "Checked preview toggle has a visible accent background",
+      "passed": true
+    },
+    {
+      "name": "Window uses custom caption with native chrome behavior",
+      "passed": true
+    },
+    {
+      "name": "Preview layout keeps custom title bar and window controls",
+      "passed": true
+    },
+    {
+      "name": "F11 uses preview caption height and full-screen hides caption",
+      "passed": true
+    },
+    {
+      "name": "Real navigation implementation reachable: NavHomeButton",
+      "passed": true,
+      "detail": {
+        "handler": "NavHome_Click",
+        "target": "HomePage"
+      }
+    },
+    {
+      "name": "Real navigation implementation reachable: NavVersionsButton",
+      "passed": true,
+      "detail": {
+        "handler": "NavVersions_Click",
+        "target": "VersionSelectPage"
+      }
+    },
+    {
+      "name": "Real navigation implementation reachable: NavDownloadButton",
+      "passed": true,
+      "detail": {
+        "handler": "NavDownload_Click",
+        "target": "DownloadCenterPage"
+      }
+    },
+    {
+      "name": "Real navigation implementation reachable: NavMultiplayerButton",
+      "passed": true,
+      "detail": {
+        "handler": "NavMultiplayer_Click",
+        "target": "MultiplayerPage"
+      }
+    },
+    {
+      "name": "Real navigation implementation reachable: NavWorldsButton",
+      "passed": true,
+      "detail": {
+        "handler": "NavWorlds_Click",
+        "target": "WorldArchivePage"
+      }
+    },
+    {
+      "name": "Real navigation implementation reachable: NavModManagerButton",
+      "passed": true,
+      "detail": {
+        "handler": "NavModManager_Click",
+        "target": "ModManagerPage"
+      }
+    },
+    {
+      "name": "Real navigation implementation reachable: NavServerManagerButton",
+      "passed": true,
+      "detail": {
+        "handler": "NavServerManager_Click",
+        "target": "ServerManagerPage"
+      }
+    },
+    {
+      "name": "Real navigation implementation reachable: NavToolboxButton",
+      "passed": true,
+      "detail": {
+        "handler": "NavToolbox_Click",
+        "target": "ToolboxPage"
+      }
+    },
+    {
+      "name": "Real navigation implementation reachable: NavBedrockButton",
+      "passed": true,
+      "detail": {
+        "handler": "NavBedrock_Click",
+        "target": "BedrockPage"
+      }
+    },
+    {
+      "name": "Real navigation implementation reachable: NavAboutHelpButton",
+      "passed": true,
+      "detail": {
+        "handler": "NavAboutHelp_Click",
+        "target": "AboutHelpPage"
+      }
+    },
+    {
+      "name": "Real navigation implementation reachable: NavAccountsButton",
+      "passed": true,
+      "detail": {
+        "handler": "NavAccounts_Click",
+        "target": "LoginPage"
+      }
+    },
+    {
+      "name": "Real navigation implementation reachable: NavSettingsButton",
+      "passed": true,
+      "detail": {
+        "handler": "NavSettings_Click",
+        "target": "SettingsPage"
+      }
+    },
+    {
+      "name": "Real navigation implementation reachable: NavMoreButton",
+      "passed": true,
+      "detail": {
+        "handler": "NavMore_Click",
+        "target": "MorePage"
+      }
+    },
+    {
+      "name": "Real navigation implementation reachable: NavLogsButton",
+      "passed": true,
+      "detail": {
+        "handler": "NavLogs_Click",
+        "target": "LogsPage"
+      }
+    },
+    {
+      "name": "Real navigation implementation reachable: NavAiAssistantButton",
+      "passed": true,
+      "detail": {
+        "handler": "NavAiAssistant_Click",
+        "target": "AiAssistantPanel"
+      }
+    },
+    {
+      "name": "Real navigation implementation reachable: NavExperimentalButton",
+      "passed": true,
+      "detail": {
+        "handler": "NavExperimental_Click",
+        "target": "ExperimentalFeaturesWindow"
+      }
+    },
+    {
+      "name": "Real navigation implementation reachable: NavApiDocumentationButton",
+      "passed": true,
+      "detail": {
+        "handler": "NavApiDocumentation_Click",
+        "target": "PluginApiDocumentationPage"
+      }
+    },
+    {
+      "name": "Real navigation implementation reachable: NavPluginsButton",
+      "passed": true,
+      "detail": {
+        "handler": "NavPlugins_Click",
+        "target": "PluginManagerDialog"
+      }
+    },
+    {
+      "name": "New sidebar entry supports icon-only collapse: ApiDocumentation",
+      "passed": true
+    },
+    {
+      "name": "New sidebar entry supports icon-only collapse: Plugins",
+      "passed": true
+    },
+    {
+      "name": "Plugin home card routes to live functionality: home",
+      "passed": true
+    },
+    {
+      "name": "Plugin home card routes to live functionality: instances",
+      "passed": true
+    },
+    {
+      "name": "Plugin home card routes to live functionality: worlds",
+      "passed": true
+    },
+    {
+      "name": "Plugin home card routes to live functionality: settings",
+      "passed": true
+    },
+    {
+      "name": "Plugin home card routes to live functionality: ai",
+      "passed": true
+    },
+    {
+      "name": "Plugin home card routes to live functionality: downloads",
+      "passed": true
+    },
+    {
+      "name": "Plugin home card routes to live functionality: plugins",
+      "passed": true
+    },
+    {
+      "name": "Plugin home cards are actual clickable buttons",
+      "passed": true
+    }
+  ],
+  "passed": 115,
+  "failed": 0,
+  "navigation": [
+    {
+      "button": "NavHomeButton",
+      "handler": "NavHome_Click",
+      "business_page_or_dialog": "HomePage",
+      "reachable_from_handler": true
+    },
+    {
+      "button": "NavVersionsButton",
+      "handler": "NavVersions_Click",
+      "business_page_or_dialog": "VersionSelectPage",
+      "reachable_from_handler": true
+    },
+    {
+      "button": "NavDownloadButton",
+      "handler": "NavDownload_Click",
+      "business_page_or_dialog": "DownloadCenterPage",
+      "reachable_from_handler": true
+    },
+    {
+      "button": "NavMultiplayerButton",
+      "handler": "NavMultiplayer_Click",
+      "business_page_or_dialog": "MultiplayerPage",
+      "reachable_from_handler": true
+    },
+    {
+      "button": "NavWorldsButton",
+      "handler": "NavWorlds_Click",
+      "business_page_or_dialog": "WorldArchivePage",
+      "reachable_from_handler": true
+    },
+    {
+      "button": "NavModManagerButton",
+      "handler": "NavModManager_Click",
+      "business_page_or_dialog": "ModManagerPage",
+      "reachable_from_handler": true
+    },
+    {
+      "button": "NavServerManagerButton",
+      "handler": "NavServerManager_Click",
+      "business_page_or_dialog": "ServerManagerPage",
+      "reachable_from_handler": true
+    },
+    {
+      "button": "NavToolboxButton",
+      "handler": "NavToolbox_Click",
+      "business_page_or_dialog": "ToolboxPage",
+      "reachable_from_handler": true
+    },
+    {
+      "button": "NavBedrockButton",
+      "handler": "NavBedrock_Click",
+      "business_page_or_dialog": "BedrockPage",
+      "reachable_from_handler": true
+    },
+    {
+      "button": "NavAboutHelpButton",
+      "handler": "NavAboutHelp_Click",
+      "business_page_or_dialog": "AboutHelpPage",
+      "reachable_from_handler": true
+    },
+    {
+      "button": "NavAccountsButton",
+      "handler": "NavAccounts_Click",
+      "business_page_or_dialog": "LoginPage",
+      "reachable_from_handler": true
+    },
+    {
+      "button": "NavSettingsButton",
+      "handler": "NavSettings_Click",
+      "business_page_or_dialog": "SettingsPage",
+      "reachable_from_handler": true
+    },
+    {
+      "button": "NavMoreButton",
+      "handler": "NavMore_Click",
+      "business_page_or_dialog": "MorePage",
+      "reachable_from_handler": true
+    },
+    {
+      "button": "NavLogsButton",
+      "handler": "NavLogs_Click",
+      "business_page_or_dialog": "LogsPage",
+      "reachable_from_handler": true
+    },
+    {
+      "button": "NavAiAssistantButton",
+      "handler": "NavAiAssistant_Click",
+      "business_page_or_dialog": "AiAssistantPanel",
+      "reachable_from_handler": true
+    },
+    {
+      "button": "NavExperimentalButton",
+      "handler": "NavExperimental_Click",
+      "business_page_or_dialog": "ExperimentalFeaturesWindow",
+      "reachable_from_handler": true
+    },
+    {
+      "button": "NavApiDocumentationButton",
+      "handler": "NavApiDocumentation_Click",
+      "business_page_or_dialog": "PluginApiDocumentationPage",
+      "reachable_from_handler": true
+    },
+    {
+      "button": "NavPluginsButton",
+      "handler": "NavPlugins_Click",
+      "business_page_or_dialog": "PluginManagerDialog",
+      "reachable_from_handler": true
+    }
+  ],
+  "limitations": [
+    "Static contracts and C# grammar/XML parsing only; they do not prove C# semantic compilation or WPF XAML compilation.",
+    "Windows build, visual rendering, mouse/keyboard interactions and end-to-end account/download/game/AI actions were not run in this Linux environment.",
+    "The preview is Fluent/WinUI 3 visual styling of the complete existing WPF launcher, not replacement Microsoft.UI.Xaml controls.",
+    "Control-template part names and navigation source reachability are checked; runtime behavior still requires Windows validation."
+  ],
+  "windows_build": "NOT_RUN: .NET CoreCLR initialization fails (0x8007000E) and Windows UI is unavailable."
+}

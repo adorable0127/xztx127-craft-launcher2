@@ -46,9 +46,22 @@ public partial class MainWindow
                     try
                     {
                         entry.Context.Permissions.Demand(PluginPermissionNames.UiNavigation);
-                        var content = definition.CreateContent(new PluginUiContext(entry.Context, "navigation:" + entry.Id));
-                        if (content == null || content.Parent != null) throw new InvalidOperationException("插件页面必须返回新的控件。");
-                        SetMainContent(content); if (ReferenceEquals(MainContent.Content, content)) _activePluginPage = entry.Id;
+                        NavigateLazy(() =>
+                        {
+                            try
+                            {
+                                entry.Context.Permissions.Demand(PluginPermissionNames.UiNavigation);
+                                var content = definition.CreateContent(new PluginUiContext(entry.Context, "navigation:" + entry.Id));
+                                if (content == null || content.Parent != null)
+                                    throw new InvalidOperationException("插件页面必须返回新的控件。");
+                                return content;
+                            }
+                            catch (Exception ex)
+                            {
+                                entry.Context.Log("PageCreationFailed: " + ex.GetType().Name);
+                                throw;
+                            }
+                        }, _ => _activePluginPage = entry.Id);
                     }
                     catch (Exception ex) { entry.Context.Log("PageCreationFailed: " + ex.GetType().Name); MessageBoxDialog.ShowWarning(Loc.T("Str_Plugin_PageFailed", "插件页面创建失败，可以返回首页。"), definition.Title); }
                 };

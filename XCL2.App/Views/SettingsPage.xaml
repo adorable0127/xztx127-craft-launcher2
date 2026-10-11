@@ -1,7 +1,8 @@
 <UserControl x:Class="XCL2.App.Views.SettingsPage"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-             xmlns:services="clr-namespace:XCL2.App.Services">
+             xmlns:services="clr-namespace:XCL2.App.Services"
+             xmlns:local="clr-namespace:XCL2.App.Views">
     <Border Background="{DynamicResource PanelBrush}" CornerRadius="10" Padding="24">
         <ScrollViewer VerticalScrollBarVisibility="Auto" services:ScrollWheelBehavior.EnableFastWheel="True">
         <StackPanel x:Name="SettingsRootPanel">
@@ -235,6 +236,8 @@
                 <ComboBoxItem Content="{DynamicResource Str_Ui_Bmclapi_Mirror_Recommended_Faster_In_Mai}"/>
                 <ComboBoxItem Content="{DynamicResource Str_Ui_Official_Mojang}"/>
             </ComboBox>
+            <Button Content="镜像管理…（社区资源 / GitHub / 自定义）" Click="OpenMirrorSettings_Click"
+                    HorizontalAlignment="Left" Padding="14,8" Margin="0,0,0,20"/>
 
             <!-- CurseForge 地图下载功能使用内置 API Key（见 CurseForgeKeyService.BuiltInKey），
                  不需要用户自己申请/填写。这里之前有过一个"填 Key"输入框，但内置 key 本来就够用，
@@ -262,12 +265,6 @@
                  默认 "XCL2"，用户可以改成任意文字，留空则退回官方原始的 "release"。 -->
             <TextBlock Text="{DynamicResource Str_Ui_In_Game_Watermark_Text_Shown_In_The_Bott}" Margin="0,0,0,4"/>
             <TextBox x:Name="GameVersionTypeLabelBox" Width="220" HorizontalAlignment="Left" Margin="0,0,0,20"/>
-
-            <!-- 界面切换动画开关：控制左侧导航栏切页时右侧内容区的淡入过渡效果。
-                 默认开启；觉得切页慢/动画多余的用户可以关掉，关闭后切页恢复瞬间直接替换，
-                 不跑任何动画。见 MainWindow.SetMainContent。 -->
-            <CheckBox x:Name="PageAnimationsCheck" Content="{DynamicResource Str_Ui_Page_Transition_Animation_The_Fade_When_}"
-                      Margin="0,0,0,8"/>
 
             <CheckBox x:Name="InjectionScanCheck" Content="{DynamicResource Str_Ui_Enable_Injection_Scanning_Checks_For_Sus}"
                       Margin="0,0,0,8"/>
@@ -387,6 +384,16 @@
                  见 AppConfig.EnableWin11VisualEffects / EnableWindowTransparency 注释、
                  Services/Win11EffectsService.cs 的具体实现。 -->
             <TextBlock Text="外观与视觉效果" FontSize="14" FontWeight="Bold" Margin="0,0,0,4"/>
+            <CheckBox x:Name="ShowFeatureSearchCheck" Content="显示顶部功能搜索框"
+                      ToolTip="关闭时隐藏主窗口顶部搜索入口；仍可按 Ctrl+K 打开搜索。保存设置后，下次启动沿用此选择。"
+                      Margin="0,0,0,8" Checked="ShowFeatureSearchCheck_Changed" Unchecked="ShowFeatureSearchCheck_Changed"/>
+            <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                <TextBlock Text="顶部搜索框样式：" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                <ComboBox x:Name="FeatureSearchStyleCombo" Width="240" SelectionChanged="FeatureSearchStyleCombo_SelectionChanged">
+                    <ComboBoxItem Tag="Floating" Content="悬浮窗（默认，左上角半透明）"/>
+                    <ComboBoxItem Tag="Top" Content="固定在页面顶部（原样式）"/>
+                </ComboBox>
+            </StackPanel>
             <CheckBox x:Name="Win11EffectsCheck"
                       Content="启用 Windows 11 新光效设计（云母材质背景 / 窗口圆角 / 沉浸光感过渡，仅 Windows 11 生效，默认关闭）"
                       ToolTip="依赖 Windows 11 才有的 DWM 特性；在 Windows 10 或更早系统上会被自动忽略，不影响正常使用。"
@@ -574,6 +581,8 @@
                         ValueChanged="GlobalWindowOpacitySlider_ValueChanged"/>
                 <TextBlock x:Name="GlobalWindowOpacityValueText" VerticalAlignment="Center" Margin="8,0,0,0" Width="40"/>
             </StackPanel>
+            <TextBlock x:Name="GlobalWindowTransparencyHint" Text="启用整窗透明时暂时停用云母 / 亚克力背景，关闭或调到 100% 后恢复。拖动立即预览，保存后保留。"
+                       FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,8" TextWrapping="Wrap"/>
             <StackPanel Orientation="Horizontal" Margin="0,0,0,4"
                         ToolTip="只调整主要文字的可见度，不改变背景；背景很通透时可以单独提高文字清晰度。">
                 <TextBlock Text="文字透明度设置" VerticalAlignment="Center" Width="200"/>
@@ -644,31 +653,58 @@
             </StackPanel>
 
 
-            <!-- 低性能模式：关闭动画、阴影、透视效果，减少渲染负担，提升流畅度。
-                 勾选后界面将变得更基础，但启动器在老旧硬件上将更流畅运行。 -->
+            <TextBlock Text="动画与性能" FontSize="14" FontWeight="Bold" Margin="0,16,0,8"/>
             <CheckBox x:Name="LowPerformanceModeCheck"
-                      Content="启用低性能模式（关闭动画、阴影、透视效果）"
+                      Content="启用低性能模式（暂停所有动画并减少渲染开销）"
                       Margin="0,0,0,4"
                       Checked="LowPerformanceModeCheck_Changed"
                       Unchecked="LowPerformanceModeCheck_Changed"/>
-            <!-- 高性能模式：跟"低性能模式"相反，追加更强的切页/交互动效（缩放+位移+回弹缓动，
-                 类似 macOS/游戏 UI 那种"约束感"动画），不做自动降级——用户自己权衡，只在
-                 FrameRateMonitorService 检测到持续低帧率时用一次性 Toast 提醒可以关闭，
-                 不会强制关闭。跟低性能模式同时开启时以低性能模式为准（见 MainWindow.SetMainContent
-                 判断顺序），毕竟"关闭动效"和"加强动效"同时打开没有意义，低性能模式的诉求更明确。 -->
-            <CheckBox x:Name="HighPerformanceModeCheck" Content="启用高性能模式（更强的界面动效，可能增加渲染开销）"
+            <!-- 沿用旧配置字段作为 FrameRateMonitorService 的显示开关。 -->
+            <CheckBox x:Name="HighPerformanceModeCheck" Content="显示界面帧率（用于观察动画流畅度）"
                       Margin="0,0,0,4"/>
-            <TextBlock Text="（低配设备上如果持续掉帧，启动器会用一次提示建议你关闭这个开关，不会自动关）"
+            <TextBlock Text="显示实时渲染帧率，方便观察动画是否流畅；动画卡顿时可降低下方强度或关闭对应动画。"
                        FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,-2,0,4" TextWrapping="Wrap"/>
             <CheckBox x:Name="AlwaysOnTopCheck" Content="启动器始终置顶（F3 可临时切换，本次会话有效）"
                       Margin="0,0,0,8"/>
-            <!-- 窗口级过渡动画（打开淡入/最小化收起/从最小化恢复/最大化⇄还原回弹/关闭淡出）
-                 单独一个开关，跟上面"页面切换动画"是两回事：这个只管窗口本身的开合/状态切换，
-                 关掉之后 UiAnimationHelper.FadeInMove/FadeOutMove/SettleScale 会直接同步
-                 定终值，不播放任何过渡，等同于旧版本"傻快傻快"瞬切的效果，方便低配设备或
-                 不喜欢动效的用户关掉。 -->
-            <CheckBox x:Name="WindowAnimationsCheck" Content="启用窗口过渡动画（打开/最小化/还原/最大化/关闭时的淡入淡出与位移）"
-                      Margin="0,0,0,8"/>
+            <CheckBox x:Name="WindowAnimationsCheck" Content="启用动画（总开关）"
+                      Margin="0,0,0,8" Checked="AnimationSettingsCheck_Changed" Unchecked="AnimationSettingsCheck_Changed"/>
+            <CheckBox x:Name="CompletelyDisableAnimationsCheck" Content="完全没有动画模式"
+                      Margin="0,0,0,6" Checked="CompletelyDisableAnimationsCheck_Changed" Unchecked="CompletelyDisableAnimationsCheck_Changed"/>
+            <StackPanel x:Name="NoAnimationOptimizationPanel" Margin="20,0,0,10" Visibility="Collapsed">
+                <StackPanel Orientation="Horizontal" Margin="0,0,0,4">
+                    <TextBlock Text="资源优化方式" VerticalAlignment="Center" Width="180"/>
+                    <ComboBox x:Name="NoAnimationOptimizationCombo" Width="220" SelectionChanged="NoAnimationOptimizationCombo_SelectionChanged">
+                        <ComboBoxItem Content="内存优先" Tag="Memory"/>
+                        <ComboBoxItem Content="CPU 优先" Tag="Cpu"/>
+                        <ComboBoxItem Content="全能模式（默认）" Tag="Balanced"/>
+                    </ComboBox>
+                </StackPanel>
+                <TextBlock Text="内存优先：减少缓存；CPU 优先：复用缓存减少重复绘制；全能模式：在两者之间取得平衡。关闭此模式后恢复原来的动画设置。"
+                           FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap"/>
+            </StackPanel>
+            <StackPanel x:Name="AnimationSpeedPanel" Orientation="Horizontal" Margin="0,0,0,4">
+                <TextBlock Text="动画速度" VerticalAlignment="Center" Width="240"/>
+                <Slider x:Name="AnimationSpeedSlider" Width="220" Minimum="25" Maximum="100" Value="75"
+                        TickFrequency="5" IsSnapToTickEnabled="True" IsMoveToPointEnabled="True"
+                        ValueChanged="AnimationSpeedSlider_ValueChanged"/>
+                <TextBlock x:Name="AnimationSpeedValueText" Text="75%" VerticalAlignment="Center" Margin="8,0,0,0" Width="52"/>
+            </StackPanel>
+            <TextBlock x:Name="AnimationSpeedHintText" Text="默认 75%；数值越大，播放越快。总速度与下方每类动画的强度分别调节，调整立即预览，保存后保留。"
+                       FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,8" TextWrapping="Wrap"/>
+            <TextBlock Text="强度控制淡入、位移等效果的幅度，速度单独控制播放快慢。0% 等同关闭，100% 为完整效果；松开常用动画的滑块后，右侧按钮会播放一次预览，也可点击重播。动画卡顿时可关闭对应动画。"
+                       FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,8" TextWrapping="Wrap"/>
+            <StackPanel x:Name="AnimationOptionsPanel" Margin="0,0,0,8">
+                <!-- 保留旧配置的页面动画开关；其它分类行由 InitializeAnimationSettings 构建。 -->
+                <Grid x:Name="PageAnimationRow" Margin="0,0,0,6">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="240"/>
+                        <ColumnDefinition Width="220"/>
+                        <ColumnDefinition Width="52"/>
+                    </Grid.ColumnDefinitions>
+                    <CheckBox x:Name="PageAnimationsCheck" Content="页面切换" VerticalAlignment="Center"
+                              Checked="AnimationSettingsCheck_Changed" Unchecked="AnimationSettingsCheck_Changed"/>
+                </Grid>
+            </StackPanel>
 
             <TextBlock Text="鼠标滚轮" FontSize="14" FontWeight="Bold" Margin="0,10,0,4"/>
             <StackPanel Orientation="Horizontal" Margin="0,0,0,4">
@@ -1021,12 +1057,14 @@
                        TextWrapping="Wrap" FontSize="11" Margin="0,0,0,8"/>
             <Button Content="一键尝试安装 OpenGL 显卡驱动" HorizontalAlignment="Left" Padding="12,8"
                     Click="InstallDisplayDriver_Click" Margin="0,0,0,8"/>
+            <local:DriverDownloadLinks/>
 
             <TextBlock Text="DirectX 运行库" FontSize="14" FontWeight="Bold" Margin="0,8,0,6"/>
             <TextBlock Text="如果游戏或原生库提示缺少 d3dx9 / d3dcompiler / xinput 等 DLL，可以从微软官方下载并安装 DirectX 运行库（不是显卡驱动）。"
                        TextWrapping="Wrap" FontSize="11" Margin="0,0,0,8"/>
             <Button Content="补全 DirectX" HorizontalAlignment="Left" Padding="12,8"
-                    ToolTip="从微软官方安装 DirectX 运行库" Click="InstallDirectX_Click" Margin="0,0,0,20"/>
+                    ToolTip="从微软官方安装 DirectX 运行库" Click="InstallDirectX_Click" Margin="0,0,0,4"/>
+            <Button Content="一键打开官方下载链接 ↗" Click="OpenDirectXPage_Click" HorizontalAlignment="Left" Margin="0,0,0,20" Padding="12,6"/>
 
             <!-- 更新日志：两个入口分别打开两个**互相独立**的窗口（Views/ChangelogWindow），
                  可以同时开着对照看，关掉一个不影响另一个。一个指向 XCL 自己的 GitHub
@@ -1036,12 +1074,14 @@
             <TextBlock Text="查看启动器自己的版本更新内容，或者 Minecraft 各版本的更新说明。两者会在各自独立的窗口里打开，可以同时开着对照。"
                        FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,8" TextWrapping="Wrap"/>
             <StackPanel Orientation="Horizontal" Margin="0,0,0,20">
-                <Button x:Name="XclChangelogButton" Content="📋 查看 XCL 更新日志" Padding="14,8"
+                <StackPanel Margin="0,0,8,0"><Button x:Name="XclChangelogButton" Content="📋 查看 XCL 更新日志" Padding="14,8"
                         Click="OpenXclChangelog_Click"
                         ToolTip="https://github.com/adorable0127/xztx127-craft-launcher2/releases"/>
-                <Button x:Name="MinecraftChangelogButton" Content="🧱 Minecraft 更新日志页" Padding="14,8" Margin="8,0,0,0"
+<Button Content="一键打开链接 ↗" Tag="https://github.com/adorable0127/xztx127-craft-launcher2/releases" Click="OpenExternalPage_Click" Margin="0,5,0,0" Padding="12,6"/></StackPanel>
+                <StackPanel Margin="0,0,8,0"><Button x:Name="MinecraftChangelogButton" Content="🧱 Minecraft 更新日志页" Padding="14,8" Margin="8,0,0,0"
                         Click="OpenMinecraftChangelog_Click"
                         ToolTip="中文 Minecraft Wiki 的 Java 版版本列表"/>
+<Button Content="一键打开链接 ↗" Tag="https://zh.minecraft.wiki/w/Java%E7%89%88" Click="OpenExternalPage_Click" Margin="0,5,0,0" Padding="12,6"/></StackPanel>
             </StackPanel>
 
             <!-- 协议：只读查看当前协议全文（不影响任何配置），以及"注销应用"——主动放弃已同意的

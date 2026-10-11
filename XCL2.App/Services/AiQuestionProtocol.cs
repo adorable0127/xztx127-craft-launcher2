@@ -1,6 +1,5 @@
 using System.Text;
 using System.Text.Json;
-using System.Text.RegularExpressions;
 
 namespace XCL2.App.Services;
 
@@ -52,9 +51,6 @@ public sealed class AiQuestionAnswer
 /// </summary>
 public static class AiQuestionProtocol
 {
-    private static readonly Regex MarkerRegex = new(
-        @"<<XCL2_ASK:(\{.*\})>>\s*$", RegexOptions.Singleline | RegexOptions.Compiled);
-
     public const int MaxQuestions = 4;
     public const int MaxOptions = 8;
     private const int MaxTextLength = 300;
@@ -65,26 +61,15 @@ public static class AiQuestionProtocol
     /// <summary>摘出提问标记。返回（去掉标记后的正文，解析出的问题；没有/解析失败则为 null）。</summary>
     public static (string DisplayText, AiQuestionSet? Questions) Extract(string? reply)
     {
-        var text = reply ?? "";
-        var match = MarkerRegex.Match(text);
-        if (!match.Success) return (text, null);
-
-        var display = MarkerRegex.Replace(text, "").TrimEnd();
-        try
-        {
-            using var doc = JsonDocument.Parse(match.Groups[1].Value);
-            var set = Parse(doc.RootElement);
-            return (display, set.Questions.Count > 0 ? set : null);
-        }
-        catch
-        {
-            // JSON 不合法：当没提问，只摘掉标记，不影响正常回复。
-            return (display, null);
-        }
+        var parsed = AiControlProtocol.Parse(reply);
+        if (parsed.Kind != "ASK") return (reply ?? "", null);
+        if (!parsed.IsValid) return (parsed.DisplayText, null);
+        var set = Parse(parsed.Request);
+        return (parsed.DisplayText, set.Questions.Count > 0 ? set : null);
     }
 
     /// <summary>只摘标记、不弹卡片（达到本轮提问上限后用）。</summary>
-    public static string Strip(string? reply) => MarkerRegex.Replace(reply ?? "", "").TrimEnd();
+    public static string Strip(string? reply) => AiControlProtocol.Strip(reply, "ASK");
 
     private static AiQuestionSet Parse(JsonElement root)
     {

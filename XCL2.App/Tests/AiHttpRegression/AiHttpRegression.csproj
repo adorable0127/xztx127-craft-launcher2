@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net8.0</TargetFramework><Nullable>enable</Nullable><ImplicitUsings>enable</ImplicitUsings></PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../../Services/AiAssistantService.Workbench.cs" Link="AiAssistantService.Workbench.cs" />
+    <Compile Include="../../Services/Workbench/*.cs" Link="Workbench/%(Filename)%(Extension)" />
+    <Compile Include="../../Models/AiAssistantModels.cs" Link="AiAssistantModels.cs" />
+    <Compile Include="../../Models/AiAssistantActivity.cs" Link="AiAssistantActivity.cs" />
+    <Compile Include="../../Models/AiFileDiff.cs" Link="AiFileDiff.cs" />
+    <Compile Include="../../Services/AiAssistantService.cs" Link="AiAssistantService.cs" />
+    <Compile Include="../../Services/AiToolActionBudget.cs" Link="AiToolActionBudget.cs" />
+    <Compile Include="../../Services/AiWorkModePolicy.cs" Link="AiWorkModePolicy.cs" />
+    <Compile Include="../../Services/AiEndpointRouting.cs" Link="AiEndpointRouting.cs" />
+    <Compile Include="../../Services/AiReasoningPolicy.cs" Link="AiReasoningPolicy.cs" />
+    <Compile Include="../../Services/AiRequestExecutionPolicy.cs" Link="AiRequestExecutionPolicy.cs" />
+    <Compile Include="../../Services/AiUsageAccounting.cs" Link="AiUsageAccounting.cs" />
+    <Compile Include="../../Services/AiCompletionContentParser.cs" Link="AiCompletionContentParser.cs" />
+    <Compile Include="../../Services/AiStreamingCompletion.cs" Link="AiStreamingCompletion.cs" />
+    <Compile Include="../../Services/AiQuestionProtocol.cs" Link="AiQuestionProtocol.cs" />
+    <Compile Include="../../Services/AiSubAgentProtocol.cs" Link="AiSubAgentProtocol.cs" />
+    <Compile Include="../../Services/AiProviderJson.cs" Link="AiProviderJson.cs" />
+    <Compile Include="../../Services/AiControlProtocol.cs" Link="AiControlProtocol.cs" />
+  </ItemGroup>
+</Project>

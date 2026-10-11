@@ -20,6 +20,11 @@
     <ApplicationIcon>Resources\app.ico</ApplicationIcon>
     <GenerateErrorReport>true</GenerateErrorReport>
     <RollForward>LatestMinor</RollForward>
+    <!-- 将 NuGet 运行依赖复制到构建目录，避免只产生可编译但不能运行的 WPF 程序。 -->
+    <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
+    <!-- WinUI 与回归测试使用各自的项目；工具及发布产物也不能被 WPF 递归收集。 -->
+    <DefaultItemExcludes>$(DefaultItemExcludes);WinUI.Preview\**;Tests\**;tools\**;artifacts\**;dist\**</DefaultItemExcludes>
+    <DisableFastUpToDateCheck>true</DisableFastUpToDateCheck>
   </PropertyGroup>
 
   <ItemGroup>
@@ -33,8 +38,53 @@
     <PackageReference Include="Microsoft.Win32.Registry" Version="5.0.0" />
   </ItemGroup>
 
+  <!-- WebView2 的托管组件和架构对应的 Loader 必须随程序分发。
+       即使主程序单文件发布，也保留 WebView2 为独立文件，供 SDK / 本机 Loader 稳定加载。 -->
+  <Target Name="XclKeepWebView2PublishFiles"
+          AfterTargets="ComputeResolvedFilesToPublishList"
+          BeforeTargets="_ComputeFilesToBundle;_ComputeResolvedFilesToPublishTypes">
+    <ItemGroup>
+      <ResolvedFileToPublish Update="@(ResolvedFileToPublish)"
+                             Condition="'%(ResolvedFileToPublish.Filename)' == 'Microsoft.Web.WebView2.Core' or '%(ResolvedFileToPublish.Filename)' == 'Microsoft.Web.WebView2.Wpf' or '%(ResolvedFileToPublish.Filename)' == 'Microsoft.Web.WebView2.WinForms' or '%(ResolvedFileToPublish.Filename)' == 'WebView2Loader'">
+        <ExcludeFromSingleFile>true</ExcludeFromSingleFile>
+        <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+      </ResolvedFileToPublish>
+    </ItemGroup>
+  </Target>
+
+  <Target Name="XclResolveWebView2Architectures">
+    <PropertyGroup>
+      <_XclWebView2Architecture Condition="'$(RuntimeIdentifier)' == 'win-x64' or '$(PlatformTarget)' == 'x64'">x64</_XclWebView2Architecture>
+      <_XclWebView2Architecture Condition="'$(RuntimeIdentifier)' == 'win-x86' or '$(PlatformTarget)' == 'x86'">x86</_XclWebView2Architecture>
+      <_XclWebView2Architecture Condition="'$(RuntimeIdentifier)' == 'win-arm64' or '$(PlatformTarget)' == 'ARM64'">arm64</_XclWebView2Architecture>
+    </PropertyGroup>
+    <ItemGroup>
+      <_XclWebView2RequiredArchitecture Include="$(_XclWebView2Architecture)" Condition="'$(_XclWebView2Architecture)' != ''" />
+      <_XclWebView2RequiredArchitecture Include="x86;x64;arm64" Condition="'$(_XclWebView2Architecture)' == ''" />
+    </ItemGroup>
+  </Target>
+
+  <Target Name="XclValidateWebView2Build" AfterTargets="Build"
+          DependsOnTargets="XclResolveWebView2Architectures"
+          Condition="'$(DesignTimeBuild)' != 'true'">
+    <Error Condition="!Exists('$(TargetDir)Microsoft.Web.WebView2.Wpf.dll') or !Exists('$(TargetDir)Microsoft.Web.WebView2.Core.dll')"
+           Text="WebView2 构建不完整：缺少 Microsoft.Web.WebView2.Wpf.dll 或 Microsoft.Web.WebView2.Core.dll。请还原 NuGet 包后重新构建；不要只复制 XCL2.exe。" />
+    <Error Condition="!Exists('$(TargetDir)runtimes\win-%(_XclWebView2RequiredArchitecture.Identity)\native\WebView2Loader.dll') and !('$(_XclWebView2Architecture)' != '' and Exists('$(TargetDir)WebView2Loader.dll'))"
+           Text="WebView2 构建不完整：缺少 %(_XclWebView2RequiredArchitecture.Identity) 架构的 WebView2Loader.dll。请保留 runtimes 目录并还原 Microsoft.Web.WebView2 NuGet 包。" />
+  </Target>
+
+  <Target Name="XclValidateWebView2Publish" AfterTargets="Publish"
+          DependsOnTargets="XclResolveWebView2Architectures"
+          Condition="'$(DesignTimeBuild)' != 'true'">
+    <Error Condition="!Exists('$(PublishDir)Microsoft.Web.WebView2.Wpf.dll') or !Exists('$(PublishDir)Microsoft.Web.WebView2.Core.dll')"
+           Text="WebView2 发布不完整：缺少 Wpf/Core DLL。单文件发布也应保留 WebView2 的独立组件；请分发完整发布目录。" />
+    <Error Condition="!Exists('$(PublishDir)runtimes\win-%(_XclWebView2RequiredArchitecture.Identity)\native\WebView2Loader.dll') and !('$(_XclWebView2Architecture)' != '' and Exists('$(PublishDir)WebView2Loader.dll'))"
+           Text="WebView2 发布不完整：缺少 %(_XclWebView2RequiredArchitecture.Identity) 架构的 WebView2Loader.dll。发布已停止，请勿分发不完整目录。" />
+  </Target>
+
   <ItemGroup>
     <Resource Include="Resources\app.ico" />
+    <Resource Include="Resources\Loading\orbit-loading.gif" />
     <Resource Include="Resources\app-dark.ico" Condition="Exists('Resources\app-dark.ico')" />
   </ItemGroup>
 
@@ -88,6 +138,9 @@
     <EmbeddedResource Include="Resources\Terracotta\terracotta-0.4.2-windows-x86_64.exe" Condition="Exists('Resources\Terracotta\terracotta-0.4.2-windows-x86_64.exe')">
       <LogicalName>XCL2.App.Resources.Terracotta.terracotta-0.4.2-windows-x86_64.exe</LogicalName>
     </EmbeddedResource>
+    <EmbeddedResource Include="Resources\Data\FeatureSearchCatalog.json">
+      <LogicalName>XCL2.App.Resources.Data.FeatureSearchCatalog.json</LogicalName>
+    </EmbeddedResource>
     <EmbeddedResource Include="Resources\Data\WikiEntries.txt">
       <LogicalName>XCL2.App.Resources.Data.WikiEntries.txt</LogicalName>
     </EmbeddedResource>
@@ -111,4 +164,41 @@
     </EmbeddedResource>
   </ItemGroup>
 
+  <!-- 一次准备完整 WinUI 发布目录；普通 Build 和 Publish 均复制全部运行依赖。
+       不使用 ProjectReference，避免把 WinUI XAML / WindowsAppSDK 依赖带入 WPF。 -->
+  <Target Name="PrepareNativePreview"
+          Condition="'$(OS)' == 'Windows_NT' and '$(DesignTimeBuild)' != 'true' and '$(SkipNativePreview)' != 'true'">
+    <PropertyGroup>
+      <NativePreviewProject>$(MSBuildProjectDirectory)\WinUI.Preview\XCL2.WinUI.Preview.csproj</NativePreviewProject>
+      <NativePreviewStagingDir>$([System.IO.Path]::GetFullPath($([System.IO.Path]::Combine('$(MSBuildProjectDirectory)', '$(IntermediateOutputPath)', 'native-preview-publish'))))</NativePreviewStagingDir>
+      <NativePreviewDotNetExe Condition="'$(DotNetHostPath)' != ''">$(DotNetHostPath)</NativePreviewDotNetExe>
+      <NativePreviewDotNetExe Condition="'$(NativePreviewDotNetExe)' == ''">dotnet</NativePreviewDotNetExe>
+    </PropertyGroup>
+    <Error Condition="!Exists('$(NativePreviewProject)')" Text="缺少项目目录中的 WinUI.Preview 子项目，请使用完整源码目录。" />
+    <Exec Command="&quot;$(NativePreviewDotNetExe)&quot; publish &quot;$(NativePreviewProject)&quot; -c &quot;$(Configuration)&quot; -p:Platform=x64 -r win-x64 --self-contained true -p:PublishSingleFile=false --output &quot;$(NativePreviewStagingDir)&quot;" />
+    <Error Condition="!Exists('$(NativePreviewStagingDir)\XCL2.WinUI.Preview.exe')" Text="WinUI 3 预览发布不完整，未生成预览程序。" />
+    <ItemGroup>
+      <NativePreviewFiles Include="$(NativePreviewStagingDir)\**\*" />
+    </ItemGroup>
+  </Target>
+
+  <Target Name="BuildNativePreview" AfterTargets="Build" DependsOnTargets="PrepareNativePreview"
+          Condition="'$(OS)' == 'Windows_NT' and '$(DesignTimeBuild)' != 'true' and '$(SkipNativePreview)' != 'true'">
+    <Copy SourceFiles="@(NativePreviewFiles)"
+          DestinationFiles="@(NativePreviewFiles->'$(TargetDir)WinUI.Preview\%(RecursiveDir)%(Filename)%(Extension)')"
+          SkipUnchangedFiles="true" />
+    <ItemGroup>
+      <FileWrites Include="@(NativePreviewFiles->'$(TargetDir)WinUI.Preview\%(RecursiveDir)%(Filename)%(Extension)')" />
+    </ItemGroup>
+  </Target>
+
+  <Target Name="PublishNativePreview" AfterTargets="Publish" DependsOnTargets="PrepareNativePreview"
+          Condition="'$(OS)' == 'Windows_NT' and '$(DesignTimeBuild)' != 'true' and '$(SkipNativePreview)' != 'true'">
+    <PropertyGroup>
+      <NativePreviewPublishDir>$([System.IO.Path]::GetFullPath($([System.IO.Path]::Combine('$(MSBuildProjectDirectory)', '$(PublishDir)', 'WinUI.Preview'))))</NativePreviewPublishDir>
+    </PropertyGroup>
+    <Copy SourceFiles="@(NativePreviewFiles)"
+          DestinationFiles="@(NativePreviewFiles->'$(NativePreviewPublishDir)\%(RecursiveDir)%(Filename)%(Extension)')"
+          SkipUnchangedFiles="true" />
+  </Target>
 </Project>

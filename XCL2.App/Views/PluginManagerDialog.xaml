@@ -34,8 +34,11 @@
      <Button Content="导入插件（DLL / EXE / .xclplugin）" Padding="10,6" Margin="0,0,8,8" Click="Import_Click"/>
      <Button x:Name="OpenDirButton" Content="📂 打开插件目录" Padding="10,6" Margin="0,0,8,8" Click="OpenDir_Click"/>
      <Button x:Name="GenerateTemplateButton" Content="🧪 生成插件项目模板" Padding="10,6" Margin="0,0,8,8" Click="GenerateTemplate_Click"/>
+     <Button Content="API 设置" Padding="10,6" Margin="0,0,8,8" Click="ApiSettings_Click"/>
+     <Button Content="打开升级备份" Padding="10,6" Margin="0,0,8,8" Click="OpenBackups_Click"/>
+     <Button Content="恢复升级备份" Padding="10,6" Margin="0,0,8,8" Click="RestoreBackup_Click"/>
      <Button x:Name="OpenGuideButton" Content="一键打开查看插件开发指南" Padding="10,6" Margin="0,0,8,8" Click="OpenGuide_Click"/>
-     <Button x:Name="OpenApiReferenceButton" Content="📘 一键查看API接口" Padding="10,6" Margin="0,0,8,8" Click="OpenApiReference_Click"/>
+     <Button x:Name="OpenApiReferenceButton" Content="📘 查看 API 开发文件" Padding="10,6" Margin="0,0,8,8" Click="OpenApiReference_Click"/>
      <Button x:Name="OpenExeProtocolButton" Content="EXE 插件协议" Padding="10,6" Margin="0,0,8,8" Click="OpenExeProtocol_Click"/>
     </WrapPanel>
 

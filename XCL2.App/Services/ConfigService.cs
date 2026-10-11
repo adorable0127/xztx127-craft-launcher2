@@ -13,6 +13,7 @@ namespace XCL2.App.Services;
 public class ConfigService
 {
     private static readonly JsonSerializerOptions JsonOpts = new() { WriteIndented = true };
+    private static readonly object SettingsBackupIoGate = new();
 
     /// <summary>配置主副本：%APPDATA%\XCL2\config.json。所有保存先写这里。</summary>
     public string ConfigPath { get; }
@@ -233,6 +234,10 @@ public class ConfigService
         Config.AiAssistant ??= new AiAssistantConfig();
         Config.AiAssistant.CustomModels ??= new List<AiModelDefinition>();
         Config.AiAssistant.CustomModels.RemoveAll(m => m == null || string.IsNullOrWhiteSpace(m.Id));
+        Config.AiAssistant.ModelTierOverrides ??= new Dictionary<string, AiModelTier>();
+        Config.AiAssistant.NormalizeToolActionLimit();
+        AiShellPolicy.NormalizeGrantedShellPermission(Config.AiAssistant);
+        AiEndpointRouting.NormalizeConfig(Config.AiAssistant);
         if (Config.AiAssistantFloatingButton && !Config.AiAssistant.ShowFloatingButton)
             Config.AiAssistant.ShowFloatingButton = true;
         if (Config.AiAssistant.RoutingMode == AiRoutingMode.Auto && !Config.AiAssistant.AutoModelRouting)
@@ -321,6 +326,9 @@ public class ConfigService
     {
         Directory.CreateDirectory(Path.GetDirectoryName(ConfigPath)!);
         Config.AiAssistant ??= new AiAssistantConfig();
+        Config.AiAssistant.NormalizeToolActionLimit();
+        AiShellPolicy.NormalizeGrantedShellPermission(Config.AiAssistant);
+        AiEndpointRouting.NormalizeConfig(Config.AiAssistant);
         Config.AiAssistant.AutoModelRouting = Config.AiAssistant.RoutingMode == AiRoutingMode.Auto;
         Config.AiAssistantFloatingButton = Config.AiAssistant.ShowFloatingButton;
 
@@ -369,19 +377,37 @@ public class ConfigService
     /// <summary>每次进入设置页先备份当前 AppData 主配置。仅保留最近 20 份，防止无限增长。</summary>
     public string CreateSettingsOpenBackup()
     {
-        var backupDir = Path.Combine(Path.GetDirectoryName(ConfigPath)!, "backups", "settings");
-        Directory.CreateDirectory(backupDir);
-        var backupPath = Path.Combine(backupDir, $"config-settings-open-{DateTime.Now:yyyyMMdd-HHmmss-fff}.json");
+        return WriteSettingsOpenBackup(CreateSettingsBackupJson());
+    }
+
+    /// <summary>调用线程仅捕获配置快照；目录创建、写文件与备份清理放在后台。</summary>
+    public Task<(string BackupPath, bool ShowRestoreTip)> CreateSettingsOpenBackupAsync()
+    {
+        var snapshot = CreateSettingsBackupJson();
+        return Task.Run(() =>
+        {
+            lock (SettingsBackupIoGate)
+                return (WriteSettingsOpenBackup(snapshot), RecordSettingsPageOpenAndShouldShowRestoreTip());
+        });
+    }
+
+    private string CreateSettingsBackupJson()
+    {
         var sessionGuestMode = Config.GuestModeEnabled;
         try
         {
             Config.GuestModeEnabled = false;
-            File.WriteAllText(backupPath, JsonSerializer.Serialize(Config, JsonOpts));
+            return JsonSerializer.Serialize(Config, JsonOpts);
         }
-        finally
-        {
-            Config.GuestModeEnabled = sessionGuestMode;
-        }
+        finally { Config.GuestModeEnabled = sessionGuestMode; }
+    }
+
+    private string WriteSettingsOpenBackup(string snapshot)
+    {
+        var backupDir = Path.Combine(Path.GetDirectoryName(ConfigPath)!, "backups", "settings");
+        Directory.CreateDirectory(backupDir);
+        var backupPath = Path.Combine(backupDir, $"config-settings-open-{DateTime.Now:yyyyMMdd-HHmmss-fff}.json");
+        File.WriteAllText(backupPath, snapshot);
 
         try
         {

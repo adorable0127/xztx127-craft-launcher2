@@ -312,6 +312,17 @@ public partial class MessageBoxDialog : OverlayDialogControl
         return OverlayDialogService.ShowModal(dlg) == true;
     }
 
+    /// <summary>"返回并取消 / 我已理解并同意"两键确认弹窗：只有点「我已理解并同意」才返回 true，
+    /// 点返回、按 Esc 都返回 false。「返回并取消」是默认按钮，避免误按 Enter 就同意。</summary>
+    public static bool ShowAgreeOrBack(string message, string title)
+    {
+        var dlg = new MessageBoxDialog(message, title, XclMessageKind.Warning, XclMessageButtons.OK);
+        dlg.ButtonPanel.Children.Clear();
+        dlg.ButtonPanel.Children.Add(dlg.MakeButton("返回并取消", false, isPrimary: true, isDefault: true));
+        dlg.ButtonPanel.Children.Add(dlg.MakeButton("我已理解并同意", true, isPrimary: false, isDefault: false));
+        return OverlayDialogService.ShowModal(dlg) == true;
+    }
+
     /// <summary>红色危险确认弹窗：标题图标、正文用危险红色，"确认"按钮为红底白字；
     /// 默认焦点在"取消"上，避免只按 Enter 就误确认。返回 true 表示点了确认。</summary>
     public static bool ShowDangerConfirm(string message, string title, string cancelText = "取消", string confirmText = "我已了解风险，继续")

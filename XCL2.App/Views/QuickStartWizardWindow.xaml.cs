@@ -47,6 +47,13 @@ public partial class QuickStartWizardWindow : OverlayDialogControl
     private const int TotalSteps = 5;
 
     private readonly FolderService _folderService = new();
+    private CancellationTokenSource? _sourceFoldersScan;
+    private CancellationTokenSource? _sourceVersionsScan;
+    private int _sourceFoldersGeneration;
+    private int _sourceVersionsGeneration;
+    private bool _updatingSourceFolders;
+    private bool _existingFolderWasBrowsed;
+    private List<GameFolder> _simpleFolders = new();
 
     /// <summary>"使用现有实例"模式下选中的 GameFolder + 版本，直接跳到 Java 检测+启动。</summary>
     private bool _useExistingInstance;
@@ -110,10 +117,16 @@ public partial class QuickStartWizardWindow : OverlayDialogControl
 
         UpdateAccountStatusText();
         RefreshExistingAccountCombo();
-        RefreshExistingFolderCombo();
-        RefreshSimpleModeAvailability();
-
         _initialized = true;
+        // 首先把向导与加载提示交给 WPF；目录/JSON 扫描只在工作线程执行。
+        Loaded += (_, _) =>
+        {
+            if (_step == 0) _ = RefreshSourceFoldersAsync();
+        };
+        Unloaded += (_, _) => CancelSourceScans();
+        RequestClose += (_, _) => CancelSourceScans();
+        SourceModeSimple.IsEnabled = false;
+        SimpleModeHintText.Text = "正在加载已导入的安装文件夹…";
         _ = LoadMcVersionsAsync();
     }
 
@@ -124,23 +137,91 @@ public partial class QuickStartWizardWindow : OverlayDialogControl
     /// 底下能扫到已装好的版本），否则这个选项禁用并提示原因，避免用户选了之后卡在"文件夹是空的"
     /// 这种更困惑的状态。
     /// </summary>
-    private void RefreshSimpleModeAvailability()
+    private async Task RefreshSourceFoldersAsync()
     {
-        var cfg = _owner.ConfigService.Config;
-        var hasImportedFolder = cfg.Folders.Any(f => Directory.Exists(f.Path) && _folderService.ScanVersions(f.Path).Any(v => v.IsInstalled));
+        if (!IsLoaded || _step != 0) return;
+        _sourceFoldersScan?.Cancel();
+        var cancellation = new CancellationTokenSource();
+        _sourceFoldersScan = cancellation;
+        var generation = ++_sourceFoldersGeneration;
+        var token = cancellation.Token;
+        // 工作线程只读取这个快照，不枚举可能正被导入流程更新的配置集合。
+        var folders = _owner.ConfigService.Config.Folders.Select(folder => new GameFolder
+        {
+            Name = folder.Name, Path = folder.Path, IsDefault = folder.IsDefault
+        }).ToArray();
+        SourceFoldersLoadingPanel.Visibility = Visibility.Visible;
+        SourceModeSimple.IsEnabled = false;
+        SimpleModeHintText.Text = "正在加载已导入的安装文件夹…";
+        UpdateSourceNavigationState();
+        try
+        {
+            var available = await Task.Run(() =>
+            {
+                var result = new List<(GameFolder Folder, bool HasInstalledVersions)>();
+                foreach (var folder in folders)
+                {
+                    token.ThrowIfCancellationRequested();
+                    if (!Directory.Exists(folder.Path)) continue;
+                    var hasVersions = _folderService.ScanVersions(folder.Path, token).Any(version => version.IsInstalled);
+                    result.Add((folder, hasVersions));
+                }
+                return result;
+            }, token);
+            if (token.IsCancellationRequested || generation != _sourceFoldersGeneration || !IsLoaded || _step != 0) return;
 
-        SourceModeSimple.IsEnabled = hasImportedFolder;
-        SimpleModeHintText.Text = hasImportedFolder
-            ? "已经导入过安装文件夹，可以直接选一个装好的版本快速启动，不用再走一遍下载流程。"
-            : "需要先导入一个安装文件夹（用「一键下载游戏」装过版本，或者在下面选「使用现有实例」导入一次）才能使用这个选项。";
+            var selectedExistingPath = (ExistingFolderCombo.SelectedItem as GameFolder)?.Path
+                ?? _existingInstanceFolderPath ?? _owner.ConfigService.Config.SelectedFolderPath;
+            var selectedSimplePath = (SimpleFolderCombo.SelectedItem as GameFolder)?.Path
+                ?? _owner.ConfigService.Config.SelectedFolderPath;
+            _updatingSourceFolders = true;
+            try
+            {
+                var existingFolders = available.Select(item => item.Folder).ToList();
+                ExistingFolderCombo.ItemsSource = existingFolders;
+                ExistingFolderCombo.SelectedItem = _existingFolderWasBrowsed ? null
+                    : existingFolders.FirstOrDefault(folder => SameFolder(folder.Path, selectedExistingPath))
+                        ?? existingFolders.FirstOrDefault(folder => SameFolder(folder.Path, _owner.ConfigService.Config.SelectedFolderPath))
+                        ?? existingFolders.FirstOrDefault(folder => folder.IsDefault) ?? existingFolders.FirstOrDefault();
+                _simpleFolders = available.Where(item => item.HasInstalledVersions).Select(item => item.Folder).ToList();
+                SimpleFolderCombo.ItemsSource = _simpleFolders;
+                SimpleFolderCombo.SelectedItem = _simpleFolders.FirstOrDefault(folder => SameFolder(folder.Path, selectedSimplePath))
+                    ?? _simpleFolders.FirstOrDefault(folder => SameFolder(folder.Path, _owner.ConfigService.Config.SelectedFolderPath))
+                    ?? _simpleFolders.FirstOrDefault(folder => folder.IsDefault) ?? _simpleFolders.FirstOrDefault();
+            }
+            finally { _updatingSourceFolders = false; }
+
+            var hasImportedFolder = _simpleFolders.Count > 0;
+            SourceModeSimple.IsEnabled = hasImportedFolder;
+            SimpleModeHintText.Text = hasImportedFolder
+                ? "已经导入过安装文件夹，可以直接选一个装好的版本快速启动，不用再走一遍下载流程。"
+                : "需要先导入一个安装文件夹（用「一键下载游戏」装过版本，或者在下面选「使用现有实例」导入一次）才能使用这个选项。";
+            RefreshSelectedSourceVersions();
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception ex)
+        {
+            if (generation == _sourceFoldersGeneration && IsLoaded && _step == 0)
+            {
+                SimpleModeHintText.Text = "加载安装文件夹失败：" + ex.Message;
+                SimpleVersionCombo.ItemsSource = null;
+                ExistingVersionCombo.ItemsSource = null;
+            }
+        }
+        finally
+        {
+            if (generation == _sourceFoldersGeneration)
+            {
+                _sourceFoldersScan = null;
+                SourceFoldersLoadingPanel.Visibility = Visibility.Collapsed;
+                UpdateSourceNavigationState();
+            }
+            cancellation.Dispose();
+        }
     }
 
-    private void RefreshExistingFolderCombo()
-    {
-        var cfg = _owner.ConfigService.Config;
-        ExistingFolderCombo.ItemsSource = cfg.Folders.Where(f => Directory.Exists(f.Path)).ToList();
-        if (ExistingFolderCombo.Items.Count > 0) ExistingFolderCombo.SelectedIndex = 0;
-    }
+    private static bool SameFolder(string? first, string? second)
+        => string.Equals(first, second, StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
     /// "傻瓜式启动"专用：只列出 cfg.Folders 里已经导入过、且能扫到已装好版本的文件夹——
@@ -149,12 +230,8 @@ public partial class QuickStartWizardWindow : OverlayDialogControl
     /// </summary>
     private void RefreshSimpleFolderCombo()
     {
-        var cfg = _owner.ConfigService.Config;
-        var foldersWithVersions = cfg.Folders
-            .Where(f => Directory.Exists(f.Path) && _folderService.ScanVersions(f.Path).Any(v => v.IsInstalled))
-            .ToList();
-        SimpleFolderCombo.ItemsSource = foldersWithVersions;
-        if (foldersWithVersions.Count > 0) SimpleFolderCombo.SelectedIndex = 0;
+        if (SimpleFolderCombo.SelectedItem is GameFolder folder)
+            _ = RefreshSourceVersionsAsync(folder.Path, simple: true);
         else
         {
             SimpleVersionCombo.ItemsSource = null;
@@ -164,21 +241,9 @@ public partial class QuickStartWizardWindow : OverlayDialogControl
 
     private void SimpleFolderCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        if (!_initialized) return;
+        if (!_initialized || _updatingSourceFolders || _step != 0 || SourceModeSimple.IsChecked != true) return;
         if (SimpleFolderCombo.SelectedItem is not GameFolder folder) return;
-
-        var versions = _folderService.ScanVersions(folder.Path).Where(v => v.IsInstalled).ToList();
-        SimpleVersionCombo.ItemsSource = versions;
-        SimpleVersionCombo.DisplayMemberPath = nameof(GameVersion.SubTitle);
-        if (versions.Count > 0)
-        {
-            SimpleVersionCombo.SelectedIndex = 0;
-            SimpleModeStatusText.Text = $"找到 {versions.Count} 个已装好的版本，选一个然后点「下一步」，选好账户就能直接启动。";
-        }
-        else
-        {
-            SimpleModeStatusText.Text = "这个文件夹里暂时没有已装好的版本。";
-        }
+        _ = RefreshSourceVersionsAsync(folder.Path, simple: true);
     }
 
     private void RefreshExistingAccountCombo()
@@ -208,10 +273,28 @@ public partial class QuickStartWizardWindow : OverlayDialogControl
     private void SourceMode_Changed(object sender, RoutedEventArgs e)
     {
         if (!_initialized) return;
+        CancelSourceVersionScan();
         SimpleModePanel.Visibility = SourceModeSimple.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
         ExistingInstancePanel.Visibility = SourceModeExisting.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
         ModpackImportPanel.Visibility = SourceModeModpack.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
+        RefreshSelectedSourceVersions();
+    }
+
+    private void RefreshSelectedSourceVersions()
+    {
+        if (!IsLoaded || _step != 0) return;
         if (SourceModeSimple.IsChecked == true) RefreshSimpleFolderCombo();
+        else if (SourceModeExisting.IsChecked == true)
+        {
+            var path = _existingFolderWasBrowsed ? _existingInstanceFolderPath
+                : (ExistingFolderCombo.SelectedItem as GameFolder)?.Path;
+            if (!string.IsNullOrWhiteSpace(path)) _ = RefreshSourceVersionsAsync(path, simple: false);
+            else
+            {
+                ExistingVersionCombo.ItemsSource = null;
+                ExistingInstanceStatusText.Text = "请选择一个安装文件夹，或者点「浏览其它位置...」。";
+            }
+        }
     }
 
     private void BrowseExistingFolder_Click(object sender, RoutedEventArgs e)
@@ -222,41 +305,108 @@ public partial class QuickStartWizardWindow : OverlayDialogControl
         // ShowDialog 要 Window，改用 Window.GetWindow(this) 找到宿主 MainWindow。
         if (dialog.ShowDialog(Window.GetWindow(this)) != true) return;
 
-        var path = dialog.FolderName;
-        var versions = _folderService.ScanVersions(path).Where(v => v.IsInstalled).ToList();
-        if (versions.Count == 0)
-        {
-            ExistingInstanceStatusText.Text = "这个文件夹里没有找到任何已装好的版本，请确认选的是正确的 .minecraft 文件夹。";
-            ExistingVersionCombo.ItemsSource = null;
-            return;
-        }
-
-        _existingInstanceFolderPath = path;
-        ExistingVersionCombo.ItemsSource = versions;
-        ExistingVersionCombo.DisplayMemberPath = nameof(GameVersion.SubTitle);
-        ExistingVersionCombo.SelectedIndex = 0;
-        ExistingInstanceStatusText.Text = $"找到 {versions.Count} 个已装好的版本，选一个然后点「下一步」即可自动匹配 Java 并启动。";
+        _existingFolderWasBrowsed = true;
+        _existingInstanceFolderPath = dialog.FolderName;
+        _updatingSourceFolders = true;
+        try { ExistingFolderCombo.SelectedItem = null; }
+        finally { _updatingSourceFolders = false; }
+        _ = RefreshSourceVersionsAsync(dialog.FolderName, simple: false);
     }
 
     private void ExistingFolderCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        if (!_initialized) return;
+        if (!_initialized || _updatingSourceFolders || _step != 0 || SourceModeExisting.IsChecked != true) return;
         if (ExistingFolderCombo.SelectedItem is not GameFolder folder) return;
+        _existingFolderWasBrowsed = false;
+        _ = RefreshSourceVersionsAsync(folder.Path, simple: false);
+    }
 
-        var versions = _folderService.ScanVersions(folder.Path).Where(v => v.IsInstalled).ToList();
-        _existingInstanceFolderPath = folder.Path;
-        ExistingVersionCombo.ItemsSource = versions;
-        ExistingVersionCombo.DisplayMemberPath = nameof(GameVersion.SubTitle);
-        if (versions.Count > 0)
+    private async Task RefreshSourceVersionsAsync(string path, bool simple)
+    {
+        if (!IsLoaded || _step != 0
+            || (simple ? SourceModeSimple.IsChecked != true : SourceModeExisting.IsChecked != true)) return;
+        CancelSourceVersionScan();
+        var cancellation = new CancellationTokenSource();
+        _sourceVersionsScan = cancellation;
+        var generation = _sourceVersionsGeneration;
+        var token = cancellation.Token;
+        var combo = simple ? SimpleVersionCombo : ExistingVersionCombo;
+        var status = simple ? SimpleModeStatusText : ExistingInstanceStatusText;
+        var loading = simple ? SimpleVersionsLoadingPanel : ExistingVersionsLoadingPanel;
+        var selectedId = (combo.SelectedItem as GameVersion)?.Id ?? _existingInstanceVersionId
+            ?? _owner.ConfigService.Config.SelectedVersionId;
+        var configuredId = _owner.ConfigService.Config.SelectedVersionId;
+        combo.ItemsSource = null;
+        combo.IsEnabled = false;
+        status.Text = "正在加载已安装版本…";
+        loading.Visibility = Visibility.Visible;
+        NextBtn.IsEnabled = false;
+        if (!simple) _existingInstanceFolderPath = path;
+        try
         {
-            ExistingVersionCombo.SelectedIndex = 0;
-            ExistingInstanceStatusText.Text = $"找到 {versions.Count} 个已装好的版本，选一个然后点「下一步」即可自动匹配 Java 并启动。";
+            var versions = await Task.Run(() => _folderService.ScanVersions(path, token)
+                .Where(version => version.IsInstalled).ToList(), token);
+            if (!IsCurrentSourceScan(generation, simple, token)) return;
+
+            combo.DisplayMemberPath = nameof(GameVersion.SubTitle);
+            combo.ItemsSource = versions;
+            combo.SelectedItem = versions.FirstOrDefault(version => string.Equals(version.Id, selectedId, StringComparison.OrdinalIgnoreCase))
+                ?? versions.FirstOrDefault(version => string.Equals(version.Id, configuredId, StringComparison.OrdinalIgnoreCase))
+                ?? versions.FirstOrDefault();
+            status.Text = versions.Count > 0
+                ? simple
+                    ? $"找到 {versions.Count} 个已装好的版本，选一个然后点「下一步」，选好账户就能直接启动。"
+                    : $"找到 {versions.Count} 个已装好的版本，选一个然后点「下一步」即可自动匹配 Java 并启动。"
+                : simple ? "这个文件夹里暂时没有已装好的版本。"
+                    : "这个文件夹里没有找到任何已装好的版本，可以点「浏览其它位置...」换一个文件夹。";
         }
-        else
+        catch (OperationCanceledException) { }
+        catch (Exception ex)
         {
-            ExistingInstanceStatusText.Text = "这个文件夹里没有找到任何已装好的版本，可以点「浏览其它位置...」换一个文件夹。";
+            if (IsCurrentSourceScan(generation, simple, token)) status.Text = "加载已安装版本失败：" + ex.Message;
+        }
+        finally
+        {
+            if (generation == _sourceVersionsGeneration)
+            {
+                _sourceVersionsScan = null;
+                loading.Visibility = Visibility.Collapsed;
+                combo.IsEnabled = true;
+                UpdateSourceNavigationState();
+            }
+            cancellation.Dispose();
         }
     }
+
+    private bool IsCurrentSourceScan(int generation, bool simple, CancellationToken token)
+        => !token.IsCancellationRequested && generation == _sourceVersionsGeneration && IsLoaded && _step == 0
+            && (simple ? SourceModeSimple.IsChecked == true : SourceModeExisting.IsChecked == true);
+
+    private void CancelSourceVersionScan()
+    {
+        ++_sourceVersionsGeneration;
+        _sourceVersionsScan?.Cancel();
+        _sourceVersionsScan = null;
+        SimpleVersionsLoadingPanel.Visibility = Visibility.Collapsed;
+        ExistingVersionsLoadingPanel.Visibility = Visibility.Collapsed;
+        SimpleVersionCombo.IsEnabled = true;
+        ExistingVersionCombo.IsEnabled = true;
+        UpdateSourceNavigationState();
+    }
+
+    private void CancelSourceScans()
+    {
+        ++_sourceFoldersGeneration;
+        _sourceFoldersScan?.Cancel();
+        _sourceFoldersScan = null;
+        SourceFoldersLoadingPanel.Visibility = Visibility.Collapsed;
+        CancelSourceVersionScan();
+    }
+
+    private void UpdateSourceNavigationState()
+        => NextBtn.IsEnabled = _step != 0
+            || (SourceModeSimple.IsChecked != true && SourceModeExisting.IsChecked != true)
+            || (_sourceFoldersScan == null && _sourceVersionsScan == null);
 
     // ========== 步骤 1：账户 ==========
 
@@ -732,6 +882,7 @@ public partial class QuickStartWizardWindow : OverlayDialogControl
 
     private void Next_Click(object sender, RoutedEventArgs e)
     {
+        if (!NextBtn.IsEnabled) return;
         if (_step == 0)
         {
             if (SourceModeSimple.IsChecked == true)
@@ -841,6 +992,7 @@ public partial class QuickStartWizardWindow : OverlayDialogControl
 
     private void GoToStep(int step)
     {
+        CancelSourceScans();
         _step = Math.Clamp(step, 0, TotalSteps);
 
         Step0Panel.Visibility = _step == 0 ? Visibility.Visible : Visibility.Collapsed;
@@ -861,7 +1013,7 @@ public partial class QuickStartWizardWindow : OverlayDialogControl
         BackBtn.IsEnabled = _step > 0;
         NextBtn.Visibility = _step < TotalSteps ? Visibility.Visible : Visibility.Collapsed;
 
-        if (_step == 0) RefreshSimpleModeAvailability();
+        if (_step == 0) _ = RefreshSourceFoldersAsync();
         if (_step == 1) { UpdateAccountStatusText(); RefreshExistingAccountCombo(); }
         if (_step == 3 && _modResults.Count == 0) _ = RunModSearchAsync();
         if (_step == 4 && _resourceResults.Count == 0) _ = RunResourceSearchAsync();

@@ -165,6 +165,13 @@ public static class OverlayDialogService
 
     private static void Push(OverlayEntry entry, Action unsubscribe)
     {
+        // 冷知识提示属于当前顶层弹窗，进入下一层时收起旧提示。
+        ToastService.DismissActionPrompt("esc-close-hint");
+        if (_stack.TryPeek(out var previous))
+        {
+            previous.EscHintTimer?.Stop();
+            previous.EscHintTimer = null;
+        }
         _unsubscribers[entry.Content] = unsubscribe;
         if (entry.Content is IOverlayDialog dialog)
             entry.PluginView = new PluginOverlayView(dialog);
@@ -197,6 +204,8 @@ public static class OverlayDialogService
     /// </summary>
     private static void StartEscHintTimerIfNeeded(OverlayEntry entry)
     {
+        entry.EscHintTimer?.Stop();
+        entry.EscHintTimer = null;
         if (!entry.DismissOnEsc) return;
         if (_host?.ConfigService.Config.ShowEscCloseHint != true) return;
 
@@ -219,7 +228,8 @@ public static class OverlayDialogService
                     _host.ConfigService.Config.ShowEscCloseHint = false;
                     _host.ConfigService.Save();
                 },
-                key: "esc-close-hint");
+                key: "esc-close-hint",
+                dismissible: true);
         };
         entry.EscHintTimer = timer;
         timer.Start();
@@ -257,6 +267,8 @@ public static class OverlayDialogService
         var top = _stack.Pop();
         top.EscHintTimer?.Stop();
         top.EscHintTimer = null;
+        // Esc/确定/叉号关闭弹窗后，提示随之向左退场，不留下孤立的冷知识卡片。
+        ToastService.DismissActionPrompt("esc-close-hint");
 
         _host!.OverlayDismissEntry(top.PresentedContent, () =>
         {

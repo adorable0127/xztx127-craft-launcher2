@@ -1,6 +1,7 @@
 using System;
 using System.Diagnostics;
 using System.Linq;
+using System.Runtime.CompilerServices;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
@@ -15,19 +16,13 @@ namespace XCL2.App.Services;
 /// <see cref="AprilFoolsService"/> 的 WPF 落地层：具体"怎么弹窗、怎么挪按钮、怎么改窗口位置"
 /// 都在这里，AprilFoolsService 本身不引用任何 WPF 类型。
 ///
-/// ===== 唯一的显示前提 =====
-/// 本类里所有对外可见的效果（小白旗、乱窜按钮、乱跳磁贴、乱窜窗口……）最终都要经过
-/// <see cref="AprilFoolsService.IsActive"/>，而它的第一个条件就是"今天是不是 4 月 1 日"
-/// （见 AprilFoolsService.IsAprilFoolsDate）。也就是说：不是 4 月 1 日的话，
-/// <see cref="AprilFoolsService.EnsureTodaysStateLoaded"/> 一开始就会把内部状态清空成
-/// "什么都没抽中"，本类这边不管哪个方法被调用到，能查到的都是"没有生效的效果"，
-/// 小白旗、乱窜、乱跳等等一律不会出现——不需要在每个效果方法里各自重复判断日期，
-/// 只要 Attach 里那一次 Timer 回调按 IsActive 收起白旗，别的地方都已经天然被挡住了。
+/// 彩蛋的激活状态由 AprilFoolsService 决定，窗口、按钮和磁贴移动同时遵守统一动画设置。
+/// 动效定时器只在对应效果激活、界面已加载且可见时运行；业务提醒倒计时保持原有行为。
 /// </summary>
 public static class AprilFoolsUi
 {
-    private static DispatcherTimer? _watchdogTimer;
-    private static DispatcherTimer? _windowChaosTimer;
+    private static readonly ConditionalWeakTable<MainWindow, object> WindowAttachments = new();
+    private static readonly ConditionalWeakTable<Panel, object> HomeAttachments = new();
     private static DispatcherTimer? _recoveryNotificationTimer;
     private static DispatcherTimer? _recoveryWin32Timer;
     private static readonly Random Rng = new();
@@ -41,48 +36,109 @@ public static class AprilFoolsUi
     /// （HomePage 是后创建的 UserControl，这里拿不到它的控件引用）。</summary>
     public static void Attach(MainWindow owner)
     {
-        RefreshFlagVisibility(owner);
-        AprilFoolsService.StateChanged += () => owner.Dispatcher.BeginInvoke(() =>
+        if (WindowAttachments.TryGetValue(owner, out _)) return;
+        WindowAttachments.Add(owner, new object());
+        var closed = false;
+        var subscribed = false;
+        var watchdog = new DispatcherTimer(DispatcherPriority.Background, owner.Dispatcher)
+            { Interval = TimeSpan.FromSeconds(2) };
+        var windowChaos = new DispatcherTimer(DispatcherPriority.Background, owner.Dispatcher)
+            { Interval = TimeSpan.FromSeconds(3) };
+
+        bool CanMove() => !closed && subscribed && owner.IsLoaded && owner.IsVisible
+            && owner.WindowState != WindowState.Minimized
+            && AnimationSettingsService.IsEnabled(AnimationKind.WindowFullscreen)
+            && AprilFoolsService.Has(AprilFoolsService.Effect.WindowChaos);
+
+        void UpdateMotion()
         {
+            if (CanMove()) windowChaos.Start();
+            else windowChaos.Stop();
+        }
+        void Dispatch(Action action)
+        {
+            if (closed || owner.Dispatcher.HasShutdownStarted) return;
+            if (owner.Dispatcher.CheckAccess()) action();
+            else owner.Dispatcher.BeginInvoke(new Action(() => { if (!closed && subscribed) action(); }));
+        }
+        void StateChanged() => Dispatch(() =>
+        {
+            if (!subscribed) return;
             RefreshFlagVisibility(owner);
+            UpdateMotion();
             ScheduleRecoveryPrompts(owner);
         });
-
-        // 每 2 秒复查一次：防止某些极端情况下 StateChanged 事件没触发（比如刚好跨天但
-        // 进程一直没重启），白旗显隐/窗口乱窜状态还是能自己收敛到正确状态。
-        _watchdogTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
-        _watchdogTimer.Tick += (_, _) => RefreshFlagVisibility(owner);
-        _watchdogTimer.Start();
-
-        // 5 号：窗口乱窜 + 强制窗口模式。F11 拦截已经在 MainWindow.xaml.cs 里做了，
-        // 这里只负责随机挪动窗口位置；F1 在下面作为所有彩蛋统一的紧急恢复键。
-        _windowChaosTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(3) };
-        _windowChaosTimer.Tick += (_, _) =>
+        void SettingsChanged() => Dispatch(UpdateMotion);
+        void VisibilityChanged(object sender, DependencyPropertyChangedEventArgs e) => UpdateMotion();
+        void WindowStateChanged(object? sender, EventArgs e) => UpdateMotion();
+        void Loaded(object sender, RoutedEventArgs e)
         {
-            if (!AprilFoolsService.Has(AprilFoolsService.Effect.WindowChaos)) return;
-            if (owner.WindowState == WindowState.Maximized) owner.WindowState = WindowState.Normal;
-            var screenWidth = SystemParameters.PrimaryScreenWidth;
-            var screenHeight = SystemParameters.PrimaryScreenHeight;
-            owner.Left = Rng.NextDouble() * Math.Max(0, screenWidth - owner.Width);
-            owner.Top = Rng.NextDouble() * Math.Max(0, screenHeight - owner.Height);
-        };
-        _windowChaosTimer.Start();
-
-        // F1：作为所有愚人节彩蛋的紧急恢复键。它和点击小白旗一样会关闭当天彩蛋并落盘，
-        // 但不额外弹出“刚才遇到了什么”的说明，保证用户真的点不到按钮时可以一键恢复。
-        owner.PreviewKeyDown += (_, e) =>
+            if (closed || subscribed) return;
+            subscribed = true;
+            AprilFoolsService.StateChanged += StateChanged;
+            AnimationSettingsService.Changed += SettingsChanged;
+            watchdog.Start();
+            RefreshFlagVisibility(owner);
+            UpdateMotion();
+            ScheduleRecoveryPrompts(owner);
+        }
+        void Unloaded(object sender, RoutedEventArgs e)
+        {
+            subscribed = false;
+            AprilFoolsService.StateChanged -= StateChanged;
+            AnimationSettingsService.Changed -= SettingsChanged;
+            watchdog.Stop();
+            windowChaos.Stop();
+            _recoveryNotificationTimer?.Stop();
+            _recoveryWin32Timer?.Stop();
+            _recoveryNotificationTimer = null;
+            _recoveryWin32Timer = null;
+        }
+        void PreviewKeyDown(object sender, KeyEventArgs e)
         {
             if (e.Key != Key.F1 || !AprilFoolsService.IsActive) return;
             e.Handled = true;
-            // 不停止窗口乱窜 Timer 本体，只让 Has(WindowChaos) 变成 false。这样用户之后如果
-            // 再从“千万别点”红色确定重新抽到窗口彩蛋，同一进程内仍能再次正常触发。
             AprilFoolsService.DismissForToday();
             owner.AprilFoolsFlagButton.Visibility = Visibility.Collapsed;
-        };
+        }
+        void Closed(object? sender, EventArgs e)
+        {
+            closed = true;
+            Unloaded(owner, new RoutedEventArgs());
+            owner.Loaded -= Loaded;
+            owner.Unloaded -= Unloaded;
+            owner.IsVisibleChanged -= VisibilityChanged;
+            owner.StateChanged -= WindowStateChanged;
+            owner.PreviewKeyDown -= PreviewKeyDown;
+            owner.Closed -= Closed;
+            WindowAttachments.Remove(owner);
+        }
 
-        // 真实 4 月 1 日启动时从这里开始计时；“千万别点”第三按钮之后则会由
-        // StateChanged 再调用一次 ScheduleRecoveryPrompts，从点击的那一刻重新算 10/60 秒。
-        ScheduleRecoveryPrompts(owner);
+        // 跨日复查是状态维护，保持两秒周期；只有窗口实际移动受动画开关约束。
+        watchdog.Tick += (_, _) =>
+        {
+            if (!closed && subscribed) { RefreshFlagVisibility(owner); UpdateMotion(); }
+        };
+        windowChaos.Tick += (_, _) =>
+        {
+            if (!CanMove()) { UpdateMotion(); return; }
+            if (owner.WindowState == WindowState.Maximized) owner.WindowState = WindowState.Normal;
+            var screenWidth = SystemParameters.PrimaryScreenWidth;
+            var screenHeight = SystemParameters.PrimaryScreenHeight;
+            var intensity = AnimationSettingsService.Intensity(AnimationKind.WindowFullscreen);
+            var targetLeft = Rng.NextDouble() * Math.Max(0, screenWidth - owner.Width);
+            var targetTop = Rng.NextDouble() * Math.Max(0, screenHeight - owner.Height);
+            owner.Left += (targetLeft - owner.Left) * intensity;
+            owner.Top += (targetTop - owner.Top) * intensity;
+        };
+        owner.Loaded += Loaded;
+        owner.Unloaded += Unloaded;
+        owner.IsVisibleChanged += VisibilityChanged;
+        owner.StateChanged += WindowStateChanged;
+        owner.PreviewKeyDown += PreviewKeyDown;
+        owner.Closed += Closed;
+        RefreshFlagVisibility(owner);
+        if (owner.IsLoaded) Loaded(owner, new RoutedEventArgs());
     }
 
     private static void ScheduleRecoveryPrompts(MainWindow owner)
@@ -217,6 +273,14 @@ public static class AprilFoolsUi
     /// 操作，不关心当前具体排在第几格）。</summary>
     public static void AttachHomeTileEffects(Panel tileGrid, Button launchTile, Button quickStartTile)
     {
+        if (HomeAttachments.TryGetValue(tileGrid, out _)) return;
+        HomeAttachments.Add(tileGrid, new object());
+        var subscribed = false;
+        Window? homeWindow = null;
+        bool CanAnimate(AnimationKind kind) => subscribed && tileGrid.IsLoaded && tileGrid.IsVisible
+            && homeWindow is { IsVisible: true } && homeWindow.WindowState != WindowState.Minimized
+            && AnimationSettingsService.IsEnabled(kind);
+
         EnsureTransform(launchTile);
         EnsureTransform(quickStartTile);
 
@@ -252,8 +316,9 @@ public static class AprilFoolsUi
         dodgeTimer.Tick += (_, _) =>
         {
             var transform = (TranslateTransform)launchTile.RenderTransform;
-            if (!AprilFoolsService.Has(AprilFoolsService.Effect.DodgeLaunchButton))
+            if (!CanAnimate(AnimationKind.ControlFeedback) || !AprilFoolsService.Has(AprilFoolsService.Effect.DodgeLaunchButton))
             {
+                dodgeTimer.Stop();
                 transform.X = 0;
                 transform.Y = 0;
                 return;
@@ -268,28 +333,30 @@ public static class AprilFoolsUi
             if (dx * dx + dy * dy > DangerRadius * DangerRadius) return;
 
             // 往远离鼠标的方向跳开一大步，角度加一点随机扰动，防止被"卡在角落等它跳"这种
-            // 固定套路破解；跳跃距离本身也比警戒半径大出不少，保证跳完之后立刻脱离危险区。
+            // 固定套路破解；默认强度的跳跃距离大于警戒半径，降低强度时按比例减小。
             var angle = Math.Atan2(dy, dx) + (Rng.NextDouble() - 0.5) * 0.6;
-            const double JumpDistance = 150;
-            var newX = transform.X + Math.Cos(angle) * JumpDistance;
-            var newY = transform.Y + Math.Sin(angle) * JumpDistance;
+            var intensity = AnimationSettingsService.Intensity(AnimationKind.ControlFeedback);
+            var jumpDistance = 150 * intensity;
+            var newX = transform.X + Math.Cos(angle) * jumpDistance;
+            var newY = transform.Y + Math.Sin(angle) * jumpDistance;
 
             // 限制偏移范围，别把按钮跳到 tileGrid 可见区域外面去，那样反而找不到它，
             // 也失去了"看得见点不到"的整蛊效果。
-            var maxOffsetX = Math.Max(40, tileGrid.ActualWidth / 2 - launchTile.ActualWidth / 2);
-            var maxOffsetY = Math.Max(40, tileGrid.ActualHeight / 2 - launchTile.ActualHeight / 2);
+            // 同时缩小累计活动范围，避免低强度连续跳动后仍跑到满幅度的位置。
+            var maxOffsetX = Math.Max(40, tileGrid.ActualWidth / 2 - launchTile.ActualWidth / 2) * intensity;
+            var maxOffsetY = Math.Max(40, tileGrid.ActualHeight / 2 - launchTile.ActualHeight / 2) * intensity;
             transform.X = Math.Clamp(newX, -maxOffsetX, maxOffsetX);
             transform.Y = Math.Clamp(newY, -maxOffsetY, maxOffsetY);
         };
-        dodgeTimer.Start();
 
         // 8 号：磁贴乱跳，用一个定时器随机给磁贴总控台里的每个磁贴一个小幅度随机偏移；
         // 点击"启动游戏"磁贴时不再走正常启动，改成弹一句台词。
         var tileChaosTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(600) };
         tileChaosTimer.Tick += (_, _) =>
         {
-            if (!AprilFoolsService.Has(AprilFoolsService.Effect.TileChaos))
+            if (!CanAnimate(AnimationKind.Page) || !AprilFoolsService.Has(AprilFoolsService.Effect.TileChaos))
             {
+                tileChaosTimer.Stop();
                 foreach (var child in tileGrid.Children.OfType<Button>())
                 {
                     EnsureTransform(child);
@@ -299,15 +366,84 @@ public static class AprilFoolsUi
                 }
                 return;
             }
+            var intensity = AnimationSettingsService.Intensity(AnimationKind.Page);
             foreach (var child in tileGrid.Children.OfType<Button>())
             {
                 EnsureTransform(child);
                 var t = (TranslateTransform)child.RenderTransform;
-                t.X = (Rng.NextDouble() - 0.5) * 24;
-                t.Y = (Rng.NextDouble() - 0.5) * 24;
+                t.X = (Rng.NextDouble() - 0.5) * 24 * intensity;
+                t.Y = (Rng.NextDouble() - 0.5) * 24 * intensity;
             }
         };
-        tileChaosTimer.Start();
+
+        void ResetTransform(Button button)
+        {
+            if (button.RenderTransform is not TranslateTransform transform) return;
+            transform.X = 0;
+            transform.Y = 0;
+        }
+        void UpdateTimers()
+        {
+            var dodge = CanAnimate(AnimationKind.ControlFeedback)
+                && AprilFoolsService.Has(AprilFoolsService.Effect.DodgeLaunchButton);
+            var chaos = CanAnimate(AnimationKind.Page)
+                && AprilFoolsService.Has(AprilFoolsService.Effect.TileChaos);
+            if (dodge) dodgeTimer.Start();
+            else dodgeTimer.Stop();
+            if (chaos) tileChaosTimer.Start();
+            else
+            {
+                tileChaosTimer.Stop();
+                foreach (var child in tileGrid.Children.OfType<Button>())
+                    if (!dodge || child != launchTile) ResetTransform(child);
+            }
+            if (!dodge && !chaos) ResetTransform(launchTile);
+        }
+        void PreferencesChanged()
+        {
+            if (!subscribed || tileGrid.Dispatcher.HasShutdownStarted) return;
+            if (tileGrid.Dispatcher.CheckAccess()) UpdateTimers();
+            else tileGrid.Dispatcher.BeginInvoke(new Action(() => { if (subscribed) UpdateTimers(); }));
+        }
+        void VisibilityChanged(object sender, DependencyPropertyChangedEventArgs e) => UpdateTimers();
+        void WindowStateChanged(object? sender, EventArgs e) => UpdateTimers();
+        void OwnerClosed(object? sender, EventArgs e) => Unloaded(tileGrid, new RoutedEventArgs());
+        void Loaded(object sender, RoutedEventArgs e)
+        {
+            if (subscribed) return;
+            subscribed = true;
+            homeWindow = Window.GetWindow(tileGrid);
+            AprilFoolsService.StateChanged += PreferencesChanged;
+            AnimationSettingsService.Changed += PreferencesChanged;
+            if (homeWindow != null)
+            {
+                homeWindow.IsVisibleChanged += VisibilityChanged;
+                homeWindow.StateChanged += WindowStateChanged;
+                homeWindow.Closed += OwnerClosed;
+            }
+            UpdateTimers();
+        }
+        void Unloaded(object sender, RoutedEventArgs e)
+        {
+            subscribed = false;
+            AprilFoolsService.StateChanged -= PreferencesChanged;
+            AnimationSettingsService.Changed -= PreferencesChanged;
+            dodgeTimer.Stop();
+            tileChaosTimer.Stop();
+            foreach (var child in tileGrid.Children.OfType<Button>()) ResetTransform(child);
+            ResetTransform(launchTile);
+            if (homeWindow != null)
+            {
+                homeWindow.IsVisibleChanged -= VisibilityChanged;
+                homeWindow.StateChanged -= WindowStateChanged;
+                homeWindow.Closed -= OwnerClosed;
+                homeWindow = null;
+            }
+        }
+        tileGrid.Loaded += Loaded;
+        tileGrid.Unloaded += Unloaded;
+        tileGrid.IsVisibleChanged += VisibilityChanged;
+        if (tileGrid.IsLoaded) Loaded(tileGrid, new RoutedEventArgs());
 
         launchTile.PreviewMouseLeftButtonDown += (_, e) =>
         {

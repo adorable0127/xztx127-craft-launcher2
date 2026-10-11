@@ -16,6 +16,7 @@ public sealed class PluginSkinModelHost : ContentControl
     private string _username = "";
     private string? _motion;
     private long _lastFrame;
+    private bool _pluginRenderingEnabled = true;
     private bool _subscribed;
 
     public PluginSkinModelHost()
@@ -50,10 +51,19 @@ public sealed class PluginSkinModelHost : ContentControl
         catch (Exception ex) { Fail(ex); }
     }
 
+    /// <summary>插件接口不支持幅度/滤镜控制时，回退内置模型并释放插件的自有渲染循环。</summary>
+    public void SetPluginRenderingEnabled(bool enabled)
+    {
+        if (_pluginRenderingEnabled == enabled) return;
+        _pluginRenderingEnabled = enabled;
+        if (enabled) RefreshRenderer();
+        else RestoreBuiltIn();
+    }
+
     private void RefreshRenderer()
     {
         RestoreBuiltIn();
-        if (!IsLoaded || _skin == null || _builtIn == null) return;
+        if (!_pluginRenderingEnabled || !IsLoaded || _skin == null || _builtIn == null) return;
         _renderer = PluginRuntimeRegistry.CreateSkinModelRenderer(_skin, _slim, _username);
         if (_renderer == null) return;
         try
@@ -65,15 +75,24 @@ public sealed class PluginSkinModelHost : ContentControl
         catch (Exception ex) { Fail(ex); }
     }
 
+    // 保留原有宿主入口，外部代码无需随本次内置动画修改而迁移。
     public bool RenderFrame(string motion)
+    {
+        var now = Environment.TickCount64;
+        var elapsed = TimeSpan.FromMilliseconds(Math.Max(0, now - _lastFrame));
+        _lastFrame = now;
+        return RenderFrame(motion, elapsed);
+    }
+
+    public bool RenderFrame(string motion, TimeSpan elapsed)
     {
         if (_renderer == null) return false;
         try
         {
             if (_motion != motion) { _renderer.SetMotion(motion); _motion = motion; }
-            var now = Environment.TickCount64;
-            _renderer.RenderFrame(TimeSpan.FromMilliseconds(Math.Clamp(now - _lastFrame, 0, 250)));
-            _lastFrame = now;
+            // 同一套单调时钟给出实际经过时间；封顶只用于避免外部物理引擎的大步长。
+            _renderer.RenderFrame(TimeSpan.FromMilliseconds(Math.Clamp(elapsed.TotalMilliseconds, 0, 250)));
+            _lastFrame = Environment.TickCount64;
             return true;
         }
         catch (Exception ex) { Fail(ex); return false; }

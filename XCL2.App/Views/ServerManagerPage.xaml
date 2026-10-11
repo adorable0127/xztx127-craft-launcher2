@@ -5,7 +5,7 @@
               AllowDrop="True" DragOver="ServerManagerPage_DragOver" Drop="ServerManagerPage_Drop">
     <UserControl.Resources>
         <!-- 磁贴样式：跟 HomePage.xaml 里那一套"首页四宫格"磁贴保持完全一致的视觉语言
-             (描边发光 hover + 轻微上浮)，这里复制一份而不是共享同一个 x:Key，因为
+             (浅色背景 + 细描边 hover)，这里复制一份而不是共享同一个 x:Key，因为
              HomePage.xaml 里这几个样式是定义在它自己的 UserControl.Resources 里、
              没有提到 App.xaml 全局资源字典，两个 UserControl 之间不能直接互相引用对方的
              局部资源，最简单可靠的办法就是各自保留一份同名同内容的样式定义。 -->
@@ -21,35 +21,13 @@
                     <ControlTemplate TargetType="Button">
                         <Border x:Name="TileBorder" Background="{TemplateBinding Background}"
                                 BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}"
-                                CornerRadius="12" Padding="{TemplateBinding Padding}"
-                                RenderTransformOrigin="0.5,0.5">
-                            <Border.RenderTransform>
-                                <TranslateTransform x:Name="TileTranslate" Y="0"/>
-                            </Border.RenderTransform>
+                                CornerRadius="12" Padding="{TemplateBinding Padding}">
                             <ContentPresenter/>
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Trigger.EnterActions>
-                                    <BeginStoryboard>
-                                        <Storyboard>
-                                            <DoubleAnimation Storyboard.TargetName="TileTranslate" Storyboard.TargetProperty="Y" To="-2" Duration="0:0:0.12"/>
-                                        </Storyboard>
-                                    </BeginStoryboard>
-                                </Trigger.EnterActions>
-                                <Trigger.ExitActions>
-                                    <BeginStoryboard>
-                                        <Storyboard>
-                                            <DoubleAnimation Storyboard.TargetName="TileTranslate" Storyboard.TargetProperty="Y" To="0" Duration="0:0:0.12"/>
-                                        </Storyboard>
-                                    </BeginStoryboard>
-                                </Trigger.ExitActions>
                                 <Setter TargetName="TileBorder" Property="Background" Value="{DynamicResource GlowSoftBrush}"/>
                                 <Setter TargetName="TileBorder" Property="BorderBrush" Value="{DynamicResource GlowBrush}"/>
-                                <Setter TargetName="TileBorder" Property="Effect" Value="{StaticResource GlowEffect}"/>
-                            </Trigger>
-                            <Trigger Property="IsPressed" Value="True">
-                                <Setter TargetName="TileBorder" Property="Background" Value="{DynamicResource SideBrush}"/>
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>

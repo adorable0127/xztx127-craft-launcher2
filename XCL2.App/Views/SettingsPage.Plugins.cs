@@ -40,9 +40,12 @@ public partial class SettingsPage
         var openManager = new Button { Content = "插件管理…", Padding = new Thickness(14, 8, 14, 8), Margin = new Thickness(0, 0, 8, 8) };
         var rescan = new Button { Content = "重新扫描 / 重新加载", Padding = new Thickness(14, 8, 14, 8), Margin = new Thickness(0, 0, 8, 8) };
         var openDirectory = new Button { Content = "打开插件目录", Padding = new Thickness(14, 8, 14, 8), Margin = new Thickness(0, 0, 8, 8) };
+        var apiCenter = new Button { Content = "API 开发中心 / 样例", Padding = new Thickness(14, 8, 14, 8), Margin = new Thickness(0, 0, 8, 8) };
+        apiCenter.Click += (_, _) => _owner.NavigateToApiDocumentation();
         toolbar.Children.Add(openManager);
         toolbar.Children.Add(rescan);
         toolbar.Children.Add(openDirectory);
+        toolbar.Children.Add(apiCenter);
         area.Children.Add(toolbar);
 
         var status = new TextBlock
@@ -83,9 +86,9 @@ public partial class SettingsPage
         var timeoutHint = new TextBlock { FontSize = 11, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(8, 0, 0, 0) };
         applyTimeout.Click += (_, _) =>
         {
-            if (!double.TryParse(timeout.Text, NumberStyles.Float, CultureInfo.InvariantCulture, out var seconds) || !double.IsFinite(seconds) || seconds < 0.1 || seconds > 30)
+            if (!double.TryParse(timeout.Text, NumberStyles.Float, CultureInfo.InvariantCulture, out var seconds) || !double.IsFinite(seconds) || seconds < 0.1 || seconds > 3600)
             {
-                timeoutHint.Text = "请输入 0.1～30 秒。";
+                timeoutHint.Text = "请输入 0.1～3600 秒（最长 1 小时）。";
                 return;
             }
             _owner.ConfigService.Config.PluginCallbackTimeoutSeconds = seconds;
@@ -97,6 +100,7 @@ public partial class SettingsPage
         timeoutRow.Children.Add(applyTimeout);
         timeoutRow.Children.Add(timeoutHint);
         area.Children.Add(timeoutRow);
+        area.Children.Add(new TextBlock { Text = "可为耗时任务设置最长 1 小时的回调等待；默认 3 秒。停止插件或取消任务仍会取消等待。此设置不改变 EXE 握手与网络请求的超时。", TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 0, 0, 12) });
 
         area.Children.Add(new TextBlock
         {

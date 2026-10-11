@@ -1,0 +1,12 @@
+{
+  "layout": "single application project root",
+  "root_folder": "XCL2.App",
+  "main_project": "XCL2.App.csproj",
+  "nested_project_folder": false,
+  "prior_version_files_preserved": 673,
+  "project_local_includes_checked": 87,
+  "static_checks_passed": 98,
+  "feature_search_destinations_checked": 560,
+  "windows_build": "NOT_RUN",
+  "touch_hardware": "NOT_RUN"
+}

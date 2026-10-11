@@ -488,15 +488,21 @@ public partial class LauncherService
         HighPerformanceGpuService.ApplyForLaunch(psi, opts.JavaPath, opts.UseHighPerformanceGpu);
 
         bool? originalTouchInput = null;
+        LegacyTouchOptions? legacyTouch = null;
         if (opts.UseTouchMode)
         {
             originalTouchInput = TouchVersionPolicy.Resolve(opts.MinecraftDir, opts.VersionId);
             // 仅在明确选择触屏时恢复旧触屏包留下的覆盖；键鼠启动不读写这些设置。
             GlfwTouchLaunchCompatibility.RestorePreviousOverride(opts.EffectiveGameDir);
+            if (originalTouchInput == false) legacyTouch = LegacyTouchOptions.Acquire(opts.EffectiveGameDir);
         }
 
         var process = new Process { StartInfo = psi, EnableRaisingEvents = true };
-        process.Start();
+        if (legacyTouch != null) process.Exited += (_, _) => legacyTouch.Dispose();
+        try { process.Start(); } catch { legacyTouch?.Dispose(); throw; }
+        if (process.HasExited) legacyTouch?.Dispose();
+        else if (legacyTouch != null)
+            try { legacyTouch.Attach(process); } catch (Exception ex) { LauncherLogService.AppendLine("[旧版触屏] 记录进程恢复信息失败：" + ex.Message); }
 
         var info = new GameProcessInfo(process, opts.VersionId, opts.Account.DisplayLabel, opts.EffectiveGameDir)
         {

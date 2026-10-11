@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Diagnostics;
@@ -128,6 +128,9 @@ public partial class MainWindow : Window
     private AiAssistantPanel? _aiAssistantPanel;
 
     private readonly DispatcherTimer _pruneTimer;
+    private UiPerformancePolicy? _uiPerformancePolicy;
+    private CancellationTokenSource? _pageNavigationCancellation;
+    private int _pageNavigationGeneration;
 
     /// <summary>「自动循环」深浅色模式的定时检查器：每分钟醒一次，比较当前系统时间落在
     /// 哪个区间（浅色/深色），需要切换时才动配置+重新应用配色，不需要切换时什么都不做——
@@ -159,12 +162,10 @@ public partial class MainWindow : Window
     private bool _closeRequestAccepted;
     private bool _shutdownAfterClose;
     private bool _forceExitRequested;
-    private int _windowStateAnimationGeneration;
+    private bool _changingFullScreen;
+    private Action? _completeOverlayDismiss;
     private Windows11SnapLayoutService? _snapLayouts;
-    /// <summary>配合 MainWindow_StateChanged 判断"这次状态变化是不是从最小化恢复"——
-    /// 从最小化恢复要接 FadeInMove(呼应 MinimizeWithAnimation 收起时的淡出)，
-    /// 其它 Normal⇄Maximized 之间的切换则接 SettleScale，两种过渡不一样，需要先知道
-    /// "上一个状态"才能分辨，仅从 StateChanged 事件本身拿不到旧值。</summary>
+    /// <summary>同步区分从最小化恢复与普通尺寸切换。</summary>
     private WindowState _previousWindowStateForAnimation = WindowState.Normal;
     /// <summary>MainWindow 是否已经被真正 Close() 掉（"仅关闭启动器"场景：进程可能还在
     /// 后台跑，但这个窗口对象本身已经关闭，不能再对它调用 Show()/Activate()）。
@@ -292,7 +293,12 @@ public partial class MainWindow : Window
         // EnableWorkAreaAwareMaximize 顶部注释里关于 Per-Monitor-V2 DPI 下已知 bug 的说明），
         // 这里接一个 Win32 级别的钩子自己算工作区，SourceInitialized 时 HWND 才真正创建，
         // 必须放在这个事件里而不是构造函数本体直接调用。
-        SourceInitialized += (_, _) => WindowChromeService.EnableWorkAreaAwareMaximize(this);
+        SourceInitialized += (_, _) =>
+        {
+            WindowChromeService.EnableWorkAreaAwareMaximize(this);
+            // 只播放应用的一次轻过渡，避免 DWM 缩放和内容动画先后叠加。
+            WindowChromeService.DisableNativeTransitions(this);
+        };
 
         // Win10 不创建计时器或弹层；Win11 首次悬停才构建布局界面。
         if (OperatingSystem.IsWindowsVersionAtLeast(10, 0, 22000))
@@ -363,25 +369,26 @@ public partial class MainWindow : Window
         {
             var key = e.Key == Key.System ? e.SystemKey : e.Key;
             if (key != Key.F11) return;
+            if (_closeAnimationPlayed) { e.Handled = true; return; }
             // 愚人节彩蛋 5 号手段生效期间："无法全屏，强制窗口模式"——直接吃掉这次 F11，
             // 不调用 ToggleFullScreen，也不改任何 Chrome/标题栏状态。
             if (AprilFoolsService.Has(AprilFoolsService.Effect.WindowChaos)) { e.Handled = true; return; }
-            // 全屏切换会瞬间改变标题栏高度/内容区尺寸，直接跳变很生硬——这里用 CrossFade：
-            // 先把主内容区淡出，等看不见了再真正执行 ToggleFullScreen + 尺寸调整，最后淡回来，
-            // 这样"切全屏"在视觉上是一次过渡而不是硬闪。
-            UiAnimationHelper.CrossFade(MainContent, () =>
+            _changingFullScreen = true;
+            UiAnimationHelper.Reset(RootWindowGrid, RootWindowMoveTransform, RootWindowScaleTransform);
+            try
             {
                 WindowChromeService.ToggleFullScreen(this);
-                // 全屏时把自绘标题栏这一行整个收起来（Height=0），同时把 WindowChrome 的
-                // CaptionHeight 一起降到 0：不然虽然标题栏在视觉上被收起了，窗口最上面那
-                // 36px 依然会被当成"可拖拽标题区"响应鼠标，全屏下这块区域应该完全让位给
-                // 页面内容本身。退出全屏时两者一起恢复回 36。
                 var isFullScreen = WindowChromeService.IsFullScreen;
-                TitleBarRow.Height = new GridLength(isFullScreen ? 0 : 32);
+                double captionHeight = isFullScreen ? 0 : IsNativePreviewOpen ? 40 : 32;
+                TitleBarRow.Height = new GridLength(captionHeight);
                 CustomTitleBar.Visibility = isFullScreen ? Visibility.Collapsed : Visibility.Visible;
                 var chrome = System.Windows.Shell.WindowChrome.GetWindowChrome(this);
-                if (chrome != null) chrome.CaptionHeight = isFullScreen ? 0 : 32;
-            });
+                if (chrome != null) chrome.CaptionHeight = captionHeight;
+            }
+            finally { _changingFullScreen = false; }
+            // 同一次消息内设好起点，不在渲染后再跳回半透明/缩小的状态。
+            UiAnimationHelper.SettleScale(RootWindowGrid, RootWindowScaleTransform,
+                kind: AnimationKind.WindowFullscreen);
             e.Handled = true;
         };
 
@@ -455,6 +462,7 @@ public partial class MainWindow : Window
         ApplySidebarCollapsedState(collapsed: false);
 
         ConfigService.Load();
+        InitializeFeatureSearch();
         var pluginHost = new Services.Plugins.PluginHostBridge(this);
         Plugins.BindHost(pluginHost);
         EventHandler? pluginReady = null;
@@ -509,10 +517,23 @@ public partial class MainWindow : Window
         // 直接启动到首页看不出效果。这里在窗口首帧出现前补一次，跟主题一样从启动就生效。
         ThemeService.ApplyFontFamily(loadedCfg.AppFontFamily, loadedCfg.EnableWinUi3Design);
         FontService.ApplyScopedFonts(this, loadedCfg);
+        InitializePreviewVisualMode();
         var loadedMaterial = Enum.TryParse<Win11EffectsService.BackdropMaterial>(loadedCfg.Win11BackdropMaterial, out var lm)
             ? lm : Win11EffectsService.BackdropMaterial.Mica;
         Win11EffectsService.SetEnabled(loadedCfg.EnableWin11VisualEffects, loadedMaterial);
         FrameRateMonitorService.SetEnabled(loadedCfg.EnableHighPerformanceMode);
+        _uiPerformancePolicy = new UiPerformancePolicy(this, CustomBackgroundImageLayer);
+        AnimationSettingsService.Changed += OnPerformancePreferencesChanged;
+        IsVisibleChanged += (_, _) => ApplyBackgroundPlaybackPolicy();
+        StateChanged += (_, _) => ApplyBackgroundPlaybackPolicy();
+        Closed += (_, _) =>
+        {
+            AnimationSettingsService.Changed -= OnPerformancePreferencesChanged;
+            CancelPageNavigation();
+            HidePageLoading();
+            _uiPerformancePolicy?.Dispose();
+            StopAnimatedBackground();
+        };
 
         // 路径已经由上面的 ResolveBackground 选好（固定的那一张，或者今天轮到的那一张），
         // 这里只负责真正套上去。解码失败时不再简单地把路径清空——那样用户会丢掉这条候选，
@@ -595,14 +616,9 @@ public partial class MainWindow : Window
 
         RefreshSidebar();
 
-        // 隐藏参数 --preview-session（只由 RequestPreviewModeRestart 重启生成，磁盘配置永远不
-        // 记录这个状态）：这次启动只展示新界面预览，直接顶替默认的 ShowHome()，而不是先显示
-        // 默认首页再切换——避免用户先看到一闪而过的默认界面。侧边栏依然是上面 RefreshSidebar()
-        // 刷新出来的那一套完整侧边栏，跟平时完全一样，每个导航按钮都能正常点击/正常导航。
-        // "新界面预览"现在是落盘配置（ConfigService.Config.PreviewModeEnabled），不再只靠
-        // 一次性的 --preview-session 隐藏参数：正常双击启动也会读到上次保存的选择。
-        // 命令行参数继续兼容保留（比如脚本/快捷方式里手动加的场景）。
-        ShowHome(); // 内部按 IsPreviewModeActive 决定显示新界面预览还是默认首页
+        // 预览资源在首次显示前按保存的选择加载；首页和其它页面共享完整业务逻辑。
+        // --preview-session 参数保留兼容，不再另开只有部分功能的预览进程。
+        ShowHome();
 
         // 启动时自动扫描本机的 .minecraft 文件夹（AppData + 每个磁盘 1/2/3 级目录），
         // 找到新的就自动加入"版本选择"页的文件夹列表，不需要用户手动一个个"添加文件夹"。
@@ -960,9 +976,10 @@ public partial class MainWindow : Window
 
         var gatedButtons = new[]
         {
-            NavDownloadButton, NavMultiplayerButton, NavModManagerButton, NavServerManagerButton,
+            NavDownloadButton, NavMultiplayerButton, NavModManagerButton, NavServerManagerButton, NavWorldsButton,
             NavToolboxButton, NavBedrockButton, NavAboutHelpButton, NavAccountsButton,
             NavSettingsButton, NavLogsButton, NavExperimentalButton, NavMoreButton,
+            NavPluginsButton,
         };
         foreach (var btn in gatedButtons)
         {
@@ -1004,19 +1021,143 @@ public partial class MainWindow : Window
     private DispatcherTimer? _animatedBackgroundTimer;
     private System.Collections.Generic.IReadOnlyList<System.Windows.Media.Imaging.BitmapFrame>? _backgroundGifFrames;
     private int _backgroundGifFrameIndex;
+    private string? _backgroundMediaPath;
+    private bool _backgroundPlaybackSuspended;
+    private bool _backgroundGifFramesReleased;
+    private bool _backgroundVideoReleased;
 
     private void StopAnimatedBackground()
     {
         _animatedBackgroundTimer?.Stop();
         _animatedBackgroundTimer = null;
         _backgroundGifFrames = null;
+        _backgroundMediaPath = null;
+        _backgroundPlaybackSuspended = false;
+        _backgroundGifFramesReleased = false;
+        _backgroundVideoReleased = false;
         CustomBackgroundVideoLayer.Stop();
+        CustomBackgroundVideoLayer.Close();
         CustomBackgroundVideoLayer.Source = null;
         CustomBackgroundVideoLayer.Visibility = Visibility.Collapsed;
     }
 
+    private void OnPerformancePreferencesChanged()
+    {
+        if (_isWindowClosed) return;
+        if (Dispatcher.CheckAccess()) ApplyBackgroundPlaybackPolicy();
+        else if (!Dispatcher.HasShutdownStarted) Dispatcher.BeginInvoke(new Action(ApplyBackgroundPlaybackPolicy));
+    }
+
+    private void ApplyBackgroundPlaybackPolicy()
+    {
+        if (_isWindowClosed || string.IsNullOrWhiteSpace(_backgroundMediaPath)) return;
+        var extension = Path.GetExtension(_backgroundMediaPath).ToLowerInvariant();
+        var isGif = extension == ".gif";
+        var isVideo = extension is ".mp4" or ".wmv" or ".webm" or ".avi";
+        if (!isGif && !isVideo) return;
+
+        var noAnimationMode = AnimationSettingsService.NoAnimationModeEnabled;
+        if (!noAnimationMode && IsVisible && WindowState != WindowState.Minimized)
+        {
+            if (!_backgroundPlaybackSuspended) return;
+            var path = _backgroundMediaPath;
+            _backgroundPlaybackSuspended = false;
+            if (_backgroundGifFramesReleased || _backgroundVideoReleased)
+            {
+                // 内存模式释放了解码表面；退出后从原路径重载，不改用户保存的壁纸设置。
+                if (!SetCustomBackgroundImage(path))
+                    LauncherLogService.AppendLine("[背景] 退出无动画模式后重载背景失败：" + path);
+            }
+            else if (isGif) _animatedBackgroundTimer?.Start();
+            else if (CustomBackgroundVideoLayer.Source != null)
+            {
+                ApplyCustomBackgroundVideoSound();
+                CustomBackgroundVideoLayer.Play();
+            }
+            return;
+        }
+
+        _backgroundPlaybackSuspended = true;
+        var memoryFirst = noAnimationMode &&
+                          AnimationSettingsService.OptimizationPreference == NoAnimationOptimization.Memory;
+        if (isGif)
+        {
+            _animatedBackgroundTimer?.Stop();
+            if (memoryFirst && !_backgroundGifFramesReleased &&
+                CustomBackgroundImageLayer.Source is System.Windows.Media.Imaging.BitmapSource frame)
+            {
+                // 复制为独立像素表面，当前帧不再通过 GifBitmapFrame 保留整个解码器和多帧列表。
+                try
+                {
+                    var still = new System.Windows.Media.Imaging.WriteableBitmap(frame);
+                    still.Freeze();
+                    CustomBackgroundImageLayer.Source = still;
+                    _backgroundGifFrames = null;
+                    _animatedBackgroundTimer = null;
+                    _backgroundGifFramesReleased = true;
+                }
+                catch (Exception ex)
+                {
+                    LauncherLogService.AppendLine("[背景] GIF 静态帧复制失败，已停止播放：" + ex.Message);
+                }
+            }
+        }
+        else
+        {
+            ApplyCustomBackgroundVideoSound();
+            if (_backgroundVideoReleased)
+            {
+                if (memoryFirst) return;
+                // 无动画模式内从“内存优先”切到 CPU / 全能时，重新打开暂停表面。
+                // 不走 SetCustomBackgroundImage -> ApplyBackgroundPlaybackPolicy 的重入路径，
+                // 也不调用 Play；模式退出后仍由上面的分支恢复正常播放。
+                if (!File.Exists(_backgroundMediaPath))
+                {
+                    LauncherLogService.AppendLine("[背景] 恢复暂停视频失败，文件不存在：" + _backgroundMediaPath);
+                    return;
+                }
+                try
+                {
+                    CustomBackgroundVideoLayer.Source = new Uri(_backgroundMediaPath, UriKind.Absolute);
+                    _backgroundVideoReleased = false;
+                    CustomBackgroundVideoLayer.Visibility = Visibility.Visible;
+                    CustomBackgroundTintLayer.Visibility = Visibility.Visible;
+                    ApplyCustomBackgroundVideoFitMode();
+                    CustomBackgroundVideoLayer.Pause();
+                    ThemeService.SetCustomBackgroundActive(true);
+                }
+                catch (Exception ex)
+                {
+                    CustomBackgroundVideoLayer.Close();
+                    CustomBackgroundVideoLayer.Source = null;
+                    CustomBackgroundVideoLayer.Visibility = Visibility.Collapsed;
+                    CustomBackgroundTintLayer.Visibility = Visibility.Collapsed;
+                    _backgroundVideoReleased = true;
+                    ThemeService.SetCustomBackgroundActive(false);
+                    LauncherLogService.AppendLine("[背景] 恢复暂停视频失败：" + ex.Message);
+                }
+                return;
+            }
+            CustomBackgroundVideoLayer.Pause();
+            if (memoryFirst)
+            {
+                CustomBackgroundVideoLayer.Close();
+                CustomBackgroundVideoLayer.Source = null;
+                CustomBackgroundVideoLayer.Visibility = Visibility.Collapsed;
+                CustomBackgroundTintLayer.Visibility = Visibility.Collapsed;
+                _backgroundVideoReleased = true;
+                ThemeService.SetCustomBackgroundActive(false);
+            }
+        }
+    }
+
     private void CustomBackgroundVideoLayer_MediaEnded(object sender, RoutedEventArgs e)
     {
+        if (_isWindowClosed || AnimationSettingsService.NoAnimationModeEnabled || !IsVisible || WindowState == WindowState.Minimized)
+        {
+            ApplyBackgroundPlaybackPolicy();
+            return;
+        }
         CustomBackgroundVideoLayer.Position = TimeSpan.Zero;
         CustomBackgroundVideoLayer.Play();
     }
@@ -1037,6 +1178,7 @@ public partial class MainWindow : Window
             CustomBackgroundImageLayer.Visibility = Visibility.Collapsed;
             CustomBackgroundImageLayer.Opacity = 0;
             CustomBackgroundTintLayer.Visibility = Visibility.Collapsed;
+            _uiPerformancePolicy?.SetBackgroundIsStatic(false);
             ThemeService.SetCustomBackgroundActive(false);
             return true;
         }
@@ -1048,6 +1190,8 @@ public partial class MainWindow : Window
             if (ext is ".mp4" or ".wmv" or ".webm" or ".avi")
             {
                 StopAnimatedBackground();
+                _backgroundMediaPath = Path.GetFullPath(path);
+                _uiPerformancePolicy?.SetBackgroundIsStatic(false);
                 CustomBackgroundImageLayer.Source = null;
                 CustomBackgroundImageLayer.Visibility = Visibility.Collapsed;
                 CustomBackgroundVideoLayer.Source = new Uri(Path.GetFullPath(path));
@@ -1055,8 +1199,9 @@ public partial class MainWindow : Window
                 CustomBackgroundTintLayer.Visibility = Visibility.Visible;
                 ApplyCustomBackgroundVideoSound();
                 ApplyCustomBackgroundVideoFitMode();
-                CustomBackgroundVideoLayer.Play();
                 ThemeService.SetCustomBackgroundActive(true);
+                _backgroundPlaybackSuspended = true;
+                ApplyBackgroundPlaybackPolicy();
                 return true;
             }
             if (ext == ".gif")
@@ -1065,13 +1210,34 @@ public partial class MainWindow : Window
                 if (new FileInfo(path).Length > 30 * 1024 * 1024)
                     throw new InvalidOperationException("GIF 动图超过 30 MB，出于内存保护未启用。");
                 using var stream = File.OpenRead(path);
+                var memoryStatic = AnimationSettingsService.NoAnimationModeEnabled &&
+                                   AnimationSettingsService.OptimizationPreference == NoAnimationOptimization.Memory;
                 var decoder = new System.Windows.Media.Imaging.GifBitmapDecoder(stream,
                     System.Windows.Media.Imaging.BitmapCreateOptions.None,
-                    System.Windows.Media.Imaging.BitmapCacheOption.OnLoad);
+                    memoryStatic ? System.Windows.Media.Imaging.BitmapCacheOption.OnDemand
+                                 : System.Windows.Media.Imaging.BitmapCacheOption.OnLoad);
                 if (decoder.Frames.Count == 0 || decoder.Frames.Count > 200)
                     throw new InvalidOperationException("GIF 动图帧数无效或超过 200 帧，请压缩后重试。");
+                if (memoryStatic)
+                {
+                    // 按需解码首帧并复制，避免内存优先模式启动时还预解码整套 GIF。
+                    var still = new System.Windows.Media.Imaging.WriteableBitmap(decoder.Frames[0]);
+                    still.Freeze();
+                    StopAnimatedBackground();
+                    _backgroundMediaPath = Path.GetFullPath(path);
+                    _backgroundGifFramesReleased = true;
+                    _backgroundPlaybackSuspended = true;
+                    _uiPerformancePolicy?.SetBackgroundIsStatic(false);
+                    CustomBackgroundImageLayer.Source = still;
+                    CustomBackgroundImageLayer.Visibility = Visibility.Visible;
+                    CustomBackgroundTintLayer.Visibility = Visibility.Visible;
+                    RefreshCustomBackgroundVisualEffect();
+                    return true;
+                }
                 var frames = decoder.Frames.ToArray();
                 StopAnimatedBackground();
+                _backgroundMediaPath = Path.GetFullPath(path);
+                _uiPerformancePolicy?.SetBackgroundIsStatic(false);
                 _backgroundGifFrames = frames;
                 _backgroundGifFrameIndex = 0;
                 CustomBackgroundImageLayer.Source = frames[0];
@@ -1080,11 +1246,17 @@ public partial class MainWindow : Window
                 _animatedBackgroundTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(100) };
                 _animatedBackgroundTimer.Tick += (_, _) =>
                 {
+                    if (_isWindowClosed || AnimationSettingsService.NoAnimationModeEnabled || !IsVisible || WindowState == WindowState.Minimized)
+                    {
+                        ApplyBackgroundPlaybackPolicy();
+                        return;
+                    }
                     if (_backgroundGifFrames == null || _backgroundGifFrames.Count == 0) return;
                     _backgroundGifFrameIndex = (_backgroundGifFrameIndex + 1) % _backgroundGifFrames.Count;
                     CustomBackgroundImageLayer.Source = _backgroundGifFrames[_backgroundGifFrameIndex];
                 };
-                _animatedBackgroundTimer.Start();
+                _backgroundPlaybackSuspended = true;
+                ApplyBackgroundPlaybackPolicy();
                 RefreshCustomBackgroundVisualEffect();
                 return true;
             }
@@ -1106,6 +1278,8 @@ public partial class MainWindow : Window
             image.Freeze();
 
             StopAnimatedBackground();
+            _backgroundMediaPath = Path.GetFullPath(path);
+            _uiPerformancePolicy?.SetBackgroundIsStatic(true);
             CustomBackgroundImageLayer.Source = image;
             CustomBackgroundImageLayer.Visibility = Visibility.Visible;
             CustomBackgroundTintLayer.Visibility = Visibility.Visible;
@@ -1144,8 +1318,10 @@ public partial class MainWindow : Window
     public void ApplyCustomBackgroundVideoSound()
     {
         if (CustomBackgroundVideoLayer == null) return;
-        CustomBackgroundVideoLayer.IsMuted = !ConfigService.Config.CustomBackgroundVideoSoundEnabled;
-        CustomBackgroundVideoLayer.Volume = ConfigService.Config.CustomBackgroundVideoSoundEnabled ? 1.0 : 0.0;
+        var soundEnabled = ConfigService.Config.CustomBackgroundVideoSoundEnabled &&
+                           !AnimationSettingsService.NoAnimationModeEnabled && IsVisible && WindowState != WindowState.Minimized;
+        CustomBackgroundVideoLayer.IsMuted = !soundEnabled;
+        CustomBackgroundVideoLayer.Volume = soundEnabled ? 1.0 : 0.0;
     }
 
     /// <summary>
@@ -1472,7 +1648,7 @@ public partial class MainWindow : Window
     /// 才能对所有切页场景统一生效。cfg.EnablePageAnimations 关闭时直接退回原来的
     /// "瞬间替换"，不跑任何动画、不产生任何额外开销。
     /// </summary>
-    private void SetMainContent(object page)
+    private bool TryLeaveMainContent(object? page)
     {
         // 修复"设置页有未保存改动时静默切页"：SettingsPage.HasUnsavedChanges/SaveNow/
         // DiscardUnsavedChangesWithoutNavigating 这几个成员原本就是专门为这里准备的
@@ -1497,7 +1673,7 @@ public partial class MainWindow : Window
                 {
                     case XclMessageResult.Cancel: // 重新编辑：取消这次切页，留在设置页
                         leavingSettingsPage.ShowPendingEditPromptIfNeeded();
-                        return;
+                        return false;
                     case XclMessageResult.No: // 放弃改动
                         leavingSettingsPage.DiscardUnsavedChangesWithoutNavigating();
                         break;
@@ -1508,156 +1684,43 @@ public partial class MainWindow : Window
             }
         }
 
-        // 修复"切换大界面时下载窗口还在"：旧页面（比如下载中心）弹出的 ProgressWindow
-        // 是独立顶层窗口，不会因为 MainContent.Content 被替换而自动关闭。这里在真正
-        // 切换内容之前统一关掉所有当前存活的进度弹窗，视为"打断操作"。
+        return true;
+    }
+
+    private void CancelPageNavigation()
+    {
+        _pageNavigationGeneration++;
+        _pageNavigationCancellation?.Cancel();
+        _pageNavigationCancellation?.Dispose();
+        _pageNavigationCancellation = null;
+        UiAnimationHelper.Reset(MainContent, MainContentTransform, MainContentScaleTransform);
+    }
+
+    private void HidePageLoading()
+    {
+        PageLoadingOverlay.Visibility = Visibility.Collapsed;
+        PageLoadingOverlay.Content = null;
+        MainContent.IsHitTestVisible = true;
+    }
+
+    private void SetMainContent(object page)
+    {
+        if (ReferenceEquals(MainContent.Content, page) || !TryLeaveMainContent(page)) return;
+        CancelPageNavigation();
+        HidePageLoading();
         Views.ProgressDialog.CloseAll();
-
-        MainContent.Content = page;
         _activePluginPage = null;
-        UiAnimationHelper.PageEntrance(MainContent, MainContentTransform, MainContentScaleTransform);
+        UiAnimationHelper.PrepareEntrance(MainContent);
+        MainContent.Content = page;
+        UiAnimationHelper.StartPreparedEntrance(MainContent);
     }
 
-    /// <summary>当前是否应当显示"新界面预览"：落盘配置 PreviewModeEnabled 为准，
-    /// 同时兼容 --preview-session 命令行参数。</summary>
-    private bool IsPreviewModeActive =>
-        App.StartupArgs.EnterPreviewMode || ConfigService.Config.PreviewModeEnabled;
+    // Both visual modes use the complete, interactive launcher pages.
+    private void ShowHome() => NavigateLazy(() => new HomePage(this));
 
-    private void ShowHome()
-    {
-        // 修复：之前只有启动时的那一次会走 ShowExperimentalPreview，之后切到别的页面再回首页
-        // （NavHome_Click / NavigateToHome / 关闭 AI 面板等都会调用 ShowHome）会新建一份
-        // 普通 HomePage，新界面预览的样式就丢了。现在每次回首页都按配置决定是否仍是预览首页。
-        if (IsPreviewModeActive)
-        {
-            ShowExperimentalPreview();
-            return;
-        }
-        var page = new HomePage(this);
-        SetMainContent(page);
-    }
-
-    /// <summary>
-    /// 以 --preview-session 重启后的这次启动专用：直接把新界面预览放进 MainContent，
-    /// 复用的是 MainWindow 本来就有的完整侧边栏 + 标题栏，不再像旧版那样另外弹一个没有
-    /// 侧边栏、按钮点不动的独立浮动窗口。见 HomePage.MarkAsMainWindowPreviewSession 的注释。
-    /// </summary>
-    private void ShowExperimentalPreview()
-    {
-        ApplyPreviewSessionTitleBarStyle();
-        var page = new HomePage(this);
-        page.MarkAsMainWindowPreviewSession();
-        SetMainContent(page);
-    }
-
-    /// <summary>
-    /// 只在"新界面预览"会话里，把标题栏最小化/最大化/关闭三个按钮换成 PCL 风格的圆形按钮
-    /// （见 App.xaml 里 PreviewRoundCaptionButton / PreviewRoundCaptionCloseButton），
-    /// 正常模式下这三个按钮维持原来 Windows 风格的方形样式，不受影响——这是预览会话
-    /// 专属的皮肤，不是改全局默认样式。
-    /// </summary>
-    private void ApplyPreviewSessionTitleBarStyle()
-    {
-        MinimizeButton.Style = (Style)FindResource("PreviewRoundCaptionButton");
-        MaximizeRestoreButton.Style = (Style)FindResource("PreviewRoundCaptionButton");
-        CloseButton.Style = (Style)FindResource("PreviewRoundCaptionCloseButton");
-
-        // 需求：预览会话下不能全屏/最大化，只能最小化+关闭；普通模式（ShowHome 那条路径
-        // 完全不调用这个方法）不受影响，还是原来能拖拽缩放、能最大化的正常窗口。
-        // ResizeMode=CanMinimize 这一个设置就同时关掉了：拖边框缩放、双击标题栏最大化、
-        // 拖到屏幕顶部/Win+上 的贴边最大化——这些都是 WindowChrome 按 ResizeMode 判断要
-        // 不要响应的系统级手势，不用逐个手动拦截。自绘的最大化按钮本身也直接隐藏掉，
-        // 避免留一个点了没反应的按钮。
-        ResizeMode = ResizeMode.CanMinimize;
-        MaximizeRestoreButton.Visibility = Visibility.Collapsed;
-    }
-
-    /// <summary>
-    /// 首页"新界面预览"开关被打开时调用：重启整个启动器，新进程带上隐藏参数
-    /// --preview-session，让新窗口的 MainWindow 直接展示新界面预览（见构造函数里对
-    /// App.StartupArgs.EnterPreviewMode 的判断 + ShowExperimentalPreview），同时保留
-    /// 完整侧边栏、所有导航按钮都能正常点击——不是旧版那种关掉侧边栏的独立浮动窗口。
-    /// 跟 RequestGuestModeRestart 是同一套重启模式：磁盘配置永远不记录这个状态，
-    /// 只由这一次性的隐藏参数决定，正常双击/下次启动不会带这个参数。
-    /// </summary>
-    public bool RequestPreviewModeRestart()
-    {
-        try
-        {
-            // 现在要落盘：跟访客模式相反，这个状态需要在磁盘配置里持久化，下次正常启动
-            // （不带任何命令行参数）也要记住。先保存再重启，新进程读配置就能拿到。
-            ConfigService.Config.PreviewModeEnabled = true;
-            ConfigService.Save();
-
-            var exe = Environment.ProcessPath;
-            if (string.IsNullOrWhiteSpace(exe))
-            {
-                MessageBoxDialog.ShowWarning("无法确定启动器程序路径，因此暂时不能重启进入新界面预览。", "新界面预览");
-                return false;
-            }
-
-            var psi = new ProcessStartInfo(exe)
-            {
-                UseShellExecute = true,
-                WorkingDirectory = AppContext.BaseDirectory
-            };
-            psi.ArgumentList.Add("--preview-session");
-            psi.ArgumentList.Add("--wait-pid");
-            psi.ArgumentList.Add(Environment.ProcessId.ToString());
-            Process.Start(psi);
-            Application.Current.Shutdown();
-            return true;
-        }
-        catch (Exception ex)
-        {
-            // 重启没成功，磁盘上不能留一个"已开启"但其实这次并没有真正进入预览的状态。
-            ConfigService.Config.PreviewModeEnabled = false;
-            ConfigService.Save();
-            LauncherLogService.AppendLine($"[新界面预览] 重启失败：{ex}");
-            MessageBoxDialog.ShowWarning($"新界面预览需要重启启动器，但重启失败：{ex.Message}", "新界面预览");
-            return false;
-        }
-    }
-
-    /// <summary>
-    /// 首页"新界面预览"开关被关闭时调用（此时当前进程本身就是 --preview-session 那次启动）：
-    /// 同样走重启，但这次不带任何预览相关参数，新窗口只会打开原有默认界面（ShowHome），
-    /// 不会再打开新界面预览或其它界面，跟"从来没开过预览"完全一致。
-    /// </summary>
-    public bool RequestExitPreviewModeRestart()
-    {
-        try
-        {
-            ConfigService.Config.PreviewModeEnabled = false;
-            ConfigService.Save();
-
-            var exe = Environment.ProcessPath;
-            if (string.IsNullOrWhiteSpace(exe))
-            {
-                MessageBoxDialog.ShowWarning("无法确定启动器程序路径，因此暂时不能重启退出新界面预览。", "新界面预览");
-                return false;
-            }
-
-            var psi = new ProcessStartInfo(exe)
-            {
-                UseShellExecute = true,
-                WorkingDirectory = AppContext.BaseDirectory
-            };
-            psi.ArgumentList.Add("--wait-pid");
-            psi.ArgumentList.Add(Environment.ProcessId.ToString());
-            Process.Start(psi);
-            Application.Current.Shutdown();
-            return true;
-        }
-        catch (Exception ex)
-        {
-            ConfigService.Config.PreviewModeEnabled = true;
-            ConfigService.Save();
-            LauncherLogService.AppendLine($"[新界面预览] 退出重启失败：{ex}");
-            MessageBoxDialog.ShowWarning($"退出新界面预览需要重启启动器，但重启失败：{ex.Message}", "新界面预览");
-            return false;
-        }
-    }
+    // Compatibility entrypoints: switch visuals without restarting running work.
+    public bool RequestPreviewModeRestart() => OpenWinUiPreview();
+    public bool RequestExitPreviewModeRestart() => SetPreviewVisualMode(false);
 
     /// <summary>
     /// 「自动循环」核心逻辑：如果 cfg.AutoThemeCycleEnabled 关闭，什么都不做——完全交给
@@ -1797,101 +1860,86 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
-    /// 通用的"懒加载切页"辅助方法：先立刻切一个极轻量的"正在加载…"占位内容，让点击
-    /// 有即时反馈、界面不冻结；真正的目标页面挪到下一帧（Background 优先级）再构造，
-    /// 构造完成后再换上去。如果这段时间内用户已经手动切去了别的页面，就不再把过时的
-    /// 页面插回去。
-    ///
-    /// 之前只有「百宝箱」一个入口这么处理，其余 NavigateToXxx 都是点击的同一帧里同步
-    /// new 一个较重的页面（XAML 控件树 + 构造函数里的业务逻辑），在控件多、样式/资源
-    /// 绑定复杂的页面上会有肉眼可见的卡顿——这正是"首页十分卡，特别是切换页面时"的
-    /// 根因：卡顿其实发生在"构造目标页面"这一步，不是首页本身的问题，只是切走/切回
-    /// 首页时正好会经过这一步而被用户感知成"首页卡"。这里把同一套懒加载模式抽成
-    /// 公共方法，应用到所有会切主内容区的导航点。
+    /// 主导航统一流程：稳定加载层 → 一次合成提交 → 创建轻量 UI → 首次布局 → 单次入场。
+    /// 页面数据 IO 由各页面的异步加载处理；Dispatcher 优先级从不被当作工作线程。
     /// </summary>
-    /// <param name="factory">构造目标页面的工厂方法，会在下一帧的后台优先级里调用。</param>
-    /// <param name="onLoaded">页面真正显示出来之后要做的收尾操作（比如带参数跳转时
-    /// 顺带触发一次搜索），只有页面没有被过时切换打断时才会调用。</param>
-    private UIElement CreateLoadingPlaceholder()
+    private void NavigateLazy(Func<UIElement> factory, Action<UIElement>? onLoaded = null, string? safeCacheKey = null)
     {
-        var dots = new StackPanel
+        if (_isWindowClosed || !TryLeaveMainContent(null)) return;
+        CancelPageNavigation();
+        Views.ProgressDialog.CloseAll();
+        _activePluginPage = null;
+        var cancellation = new CancellationTokenSource();
+        _pageNavigationCancellation = cancellation;
+        var generation = _pageNavigationGeneration;
+        UIElement? cachedPage = null;
+        _uiPerformancePolicy?.TryGetPage(safeCacheKey, out cachedPage);
+        MainContent.Content = null;
+        MainContent.IsHitTestVisible = false;
+        if (cachedPage == null)
         {
-            Orientation = Orientation.Horizontal,
-            HorizontalAlignment = HorizontalAlignment.Center,
-            Margin = new Thickness(0, 10, 0, 0)
-        };
-        for (int i = 0; i < 3; i++)
-        {
-            var dot = new System.Windows.Shapes.Ellipse
-            {
-                Width = 7,
-                Height = 7,
-                Margin = new Thickness(i == 0 ? 0 : 6, 0, 0, 0),
-                Fill = (Brush)FindResource("AccentBrush"),
-                Opacity = 0.28
-            };
-            dots.Children.Add(dot);
-            if (!ConfigService.Config.LowPerformanceMode)
-            {
-                var pulse = new DoubleAnimation(0.28, 1.0, TimeSpan.FromMilliseconds(520))
-                {
-                    AutoReverse = true,
-                    RepeatBehavior = RepeatBehavior.Forever,
-                    BeginTime = TimeSpan.FromMilliseconds(i * 150),
-                    EasingFunction = new SineEase { EasingMode = EasingMode.EaseInOut }
-                };
-                dot.BeginAnimation(OpacityProperty, pulse);
-            }
+            PageLoadingOverlay.Content = LoadingPlaceholderFactory.Create();
+            PageLoadingOverlay.Visibility = Visibility.Visible;
         }
-
-        var content = new StackPanel
-        {
-            HorizontalAlignment = HorizontalAlignment.Center,
-            VerticalAlignment = VerticalAlignment.Center
-        };
-        content.Children.Add(new TextBlock
-        {
-            Text = Loc.T("Str_Ui_Loading", "正在加载页面…"),
-            FontSize = 14,
-            FontWeight = FontWeights.SemiBold,
-            Foreground = (Brush)FindResource("TextPrimaryBrush"),
-            HorizontalAlignment = HorizontalAlignment.Center
-        });
-        content.Children.Add(dots);
-        content.Children.Add(new TextBlock
-        {
-            Text = "正在准备界面与数据",
-            FontSize = 10,
-            Margin = new Thickness(0, 9, 0, 0),
-            Foreground = (Brush)FindResource("TextSecondaryBrush"),
-            HorizontalAlignment = HorizontalAlignment.Center
-        });
-
-        return new Border
-        {
-            Background = (Brush)FindResource("PanelBrush"),
-            BorderBrush = (Brush)FindResource("BorderBrush2"),
-            BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(16),
-            Margin = new Thickness(10),
-            Child = content
-        };
+        else HidePageLoading();
+        _ = NavigatePageAsync(factory, onLoaded, safeCacheKey, cachedPage, generation, cancellation);
     }
 
-    private void NavigateLazy(Func<UIElement> factory, Action<UIElement>? onLoaded = null)
+    private async Task NavigatePageAsync(Func<UIElement> factory, Action<UIElement>? onLoaded,
+        string? safeCacheKey, UIElement? cachedPage, int generation, CancellationTokenSource cancellation)
     {
-        var placeholder = CreateLoadingPlaceholder();
-        SetMainContent(placeholder);
-
-        _ = Dispatcher.BeginInvoke(new Action(() =>
+        bool IsCurrent() => !_isWindowClosed && !cancellation.IsCancellationRequested
+            && generation == _pageNavigationGeneration;
+        try
         {
-            var page = factory();
-            if (ReferenceEquals(MainContent.Content, placeholder))
+            if (cachedPage == null)
+                await UiRenderScheduler.AfterRenderAsync(PageLoadingOverlay, cancellation.Token);
+            if (!IsCurrent()) return;
+            // WPF 控件只能在 UI 线程构造。耗时磁盘/网络扫描已从页面构造移到异步数据流程。
+            var page = cachedPage ?? factory();
+            if (!IsCurrent()) return;
+            UiAnimationHelper.PrepareEntrance(MainContent);
+            MainContent.Content = page;
+            if (!AnimationSettingsService.IsEnabled(AnimationKind.Page))
+                await UiRenderScheduler.AfterRenderAsync(MainContent, cancellation.Token);
+            if (!IsCurrent()) return;
+            await UiAnimationHelper.StartPreparedEntranceAsync(MainContent,
+                () => { if (IsCurrent()) HidePageLoading(); }, cancellation.Token);
+            if (!IsCurrent() || !ReferenceEquals(MainContent.Content, page)) return;
+            HidePageLoading();
+            _uiPerformancePolicy?.RememberPage(safeCacheKey, page);
+            // 真正完成 Loaded/首布局及入场之后再调用，避免搜索/参数绑定挤占动画首帧。
+            onLoaded?.Invoke(page);
+        }
+        catch (OperationCanceledException) when (!IsCurrent()) { }
+        catch (Exception ex)
+        {
+            if (!IsCurrent()) return;
+            UiAnimationHelper.Reset(MainContent);
+            MainContent.Content = null;
+            LauncherLogService.AppendLine("[页面加载] " + ex);
+            var message = new TextBlock
             {
-                SetMainContent(page);
-                onLoaded?.Invoke(page);
+                Text = "页面加载失败，请重试。", FontSize = 14,
+                TextWrapping = TextWrapping.Wrap, HorizontalAlignment = HorizontalAlignment.Center
+            };
+            message.SetResourceReference(TextBlock.ForegroundProperty, "TextPrimaryBrush");
+            var retry = new Button { Content = "重新加载", Margin = new Thickness(0, 16, 0, 0), Padding = new Thickness(18, 7, 18, 7) };
+            retry.Click += (_, _) => NavigateLazy(factory, onLoaded, safeCacheKey);
+            var content = new StackPanel { HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
+            content.Children.Add(message);
+            content.Children.Add(retry);
+            PageLoadingOverlay.Content = content;
+            PageLoadingOverlay.Visibility = Visibility.Visible;
+        }
+        finally
+        {
+            if (ReferenceEquals(_pageNavigationCancellation, cancellation))
+            {
+                _pageNavigationCancellation = null;
+                cancellation.Dispose();
             }
-        }), System.Windows.Threading.DispatcherPriority.Background);
+        }
     }
 
     private void NavHome_Click(object sender, RoutedEventArgs e) => ShowHome();
@@ -2150,6 +2198,7 @@ public partial class MainWindow : Window
         ("下载中心", "下载 Mod 资源包 光影 整合包", NavigateToDownloadCenter),
         ("联机", "多人游戏 陶瓦联机 局域网", NavigateToMultiplayer),
         ("Mod 管理", "本地 Mod 管理", NavigateToModManager),
+        ("存档", "世界 设置 投影 结构 litematic NBT", NavigateToWorlds),
         ("服务端管理", "开服 服务器", NavigateToServerManager),
         ("账户", "登录 正版 离线", NavigateToAccounts),
         ("设置", "配置 选项", NavigateToSettings),
@@ -2225,6 +2274,9 @@ public partial class MainWindow : Window
 
     /// <summary>供其他页面调用的公开导航方法，跳转到「联机」页（陶瓦联机入口）。</summary>
     public void NavigateToMultiplayer() => NavigateLazy(() => new MultiplayerPage(this));
+
+    public void NavigateToWorlds() => NavigateLazy(() => new WorldArchivePage());
+    private void NavWorlds_Click(object sender, RoutedEventArgs e) => NavigateToWorlds();
 
     private void NavModManager_Click(object sender, RoutedEventArgs e)
     {
@@ -2404,25 +2456,9 @@ public partial class MainWindow : Window
     /// 磁贴点击直接转发到各自原有的 NavigateToXxx()，不重复实现导航逻辑，见 MorePage.xaml.cs。</summary>
     private void NavMore_Click(object sender, RoutedEventArgs e) => NavigateToMore();
 
-    public void NavigateToMore() => NavigateLazy(() => new MorePage(this));
+    public void NavigateToMore() => NavigateLazy(() => new MorePage(this), safeCacheKey: UiPerformancePolicy.MorePageKey);
 
-    /// <summary>
-    /// 供其他页面/窗口调用的公开导航方法，跳转到「百宝箱」页。
-    ///
-    /// 「百宝箱」页 XAML 一次性铺了 5 个 Tab 的完整控件树（成就图片生成器、皮肤头像、
-    /// 文件/皮肤下载、加载器 Jar 下载、系统工具），首次 InitializeComponent 时这些控件、
-    /// 样式、DynamicResource 绑定要一次性建好，实测首次点开会有一下明显的卡顿——卡在
-    /// "构造 ToolboxPage 本身"这一步，跟某个具体 Tab 的业务逻辑无关（那些已经各自做过
-    /// 异步化，见 ToolboxPage.xaml.cs 里的相关注释）。
-    ///
-    /// 这里把"构造 ToolboxPage"从点击的同一帧里挪开，做成简单的懒加载：先立刻切一个
-    /// 极轻量的"正在加载…"占位内容，让点击有即时反馈、界面不冻结；真正的 ToolboxPage
-    /// 放到下一帧（Background 优先级）再构造，构造完成后再换上去。如果这段时间内用户
-    /// 已经手动切去了别的页面，就不再把过时的 ToolboxPage 插回去。
-    ///
-    /// 只对百宝箱这一个入口做这个处理，其他所有 NavigateToXxx 方法保持原来的同步
-    /// SetMainContent(new XxxPage(this)) 不变，不会因为这个改动变慢或变卡。
-    /// </summary>
+    /// <summary>通过统一加载及单次入场流程打开百宝箱。</summary>
     public void NavigateToToolbox()
     {
         NavigateLazy(() => new ToolboxPage(this));
@@ -2461,7 +2497,7 @@ public partial class MainWindow : Window
             ConfigService.Config.BedrockAgreementAccepted = true;
             ConfigService.Save();
         }
-        SetMainContent(new BedrockPage(this));
+        NavigateLazy(() => new BedrockPage(this));
     }
 
     private void NavAboutHelp_Click(object sender, RoutedEventArgs e)
@@ -2487,7 +2523,7 @@ public partial class MainWindow : Window
         {
             return;
         }
-        SetMainContent(new AboutHelpPage(this));
+        NavigateLazy(() => new AboutHelpPage(this), safeCacheKey: UiPerformancePolicy.AboutHelpPageKey);
     }
 
     /// <summary>侧边栏当前是否处于"收起"状态。</summary>
@@ -2538,6 +2574,7 @@ public partial class MainWindow : Window
     /// </summary>
     public void ApplyFeatureVisibility()
     {
+        ApplyFeatureSearchVisibility();
         var cfg = ConfigService.Config;
         NavDownloadButton.Visibility = FeatureVisibilityService.IsVisible(cfg, FeatureVisibilityService.NavDownload) ? Visibility.Visible : Visibility.Collapsed;
         NavSettingsButton.Visibility = FeatureVisibilityService.IsVisible(cfg, FeatureVisibilityService.NavSettings) ? Visibility.Visible : Visibility.Collapsed;
@@ -2579,7 +2616,7 @@ public partial class MainWindow : Window
     {
         _sidebarCollapsed = collapsed;
 
-        SidebarColumn.Width = new GridLength(collapsed ? SidebarCollapsedWidth : SidebarExpandedWidth);
+        SidebarColumn.Width = new GridLength(collapsed ? SidebarCollapsedWidth : IsNativePreviewOpen ? 236 : SidebarExpandedWidth);
 
         // ===== 修复「收起后图标只剩 1 像素」=====
         // 旧版只改了列宽，没有同步收掉内边距，于是留给图标的净宽被一路吃到只剩 10px：
@@ -2588,7 +2625,7 @@ public partial class MainWindow : Window
         // 而图标至少需要 20px（NavIconBox 固定尺寸）。收起态必须把 Margin/Padding 一起收掉，
         // 否则不管图标换成 emoji 还是矢量，都一样会被裁掉。
         //     56 − 8(Margin 左右各 4) − 0(Padding 归零) − 2(左描边) = 46px ≥ 20px，宽裕。
-        SidebarPanel.Margin = collapsed ? new Thickness(4, 12, 4, 12) : new Thickness(12);
+        SidebarPanel.Margin = collapsed ? new Thickness(4, 12, 4, 12) : new Thickness(IsNativePreviewOpen ? 16 : 12);
 
         // 折叠切换按钮的图标：三横杠 ↔ 一个圆点。现在是 Path 不是 TextBlock，改的是 Data。
         SidebarToggleIcon.Data = (Geometry)FindResource(collapsed ? "IconDot" : "IconMenu");
@@ -2605,13 +2642,18 @@ public partial class MainWindow : Window
                      (NavDownloadButton, NavDownloadIcon, NavDownloadLabel),
                      (NavMultiplayerButton, NavMultiplayerIcon, NavMultiplayerLabel),
                      (NavModManagerButton, NavModManagerIcon, NavModManagerLabel),
+                     (NavWorldsButton, NavWorldsIcon, NavWorldsLabel),
                      (NavServerManagerButton, NavServerManagerIcon, NavServerManagerLabel),
                      (NavToolboxButton, NavToolboxIcon, NavToolboxLabel),
                      (NavBedrockButton, NavBedrockIcon, NavBedrockLabel),
+                     (NavAboutHelpButton, NavAboutHelpIcon, NavAboutHelpLabel),
                      (NavAccountsButton, NavAccountsIcon, NavAccountsLabel),
                      (NavSettingsButton, NavSettingsIcon, NavSettingsLabel),
+                     (NavMoreButton, NavMoreIcon, NavMoreLabel),
                      (NavLogsButton, NavLogsIcon, NavLogsLabel),
+                     (NavAiAssistantButton, NavAiAssistantIcon, NavAiAssistantLabel),
                      (NavExperimentalButton, NavExperimentalIcon, NavExperimentalLabel),
+                     (NavPluginsButton, NavPluginsIcon, NavPluginsLabel),
                  })
         {
             label.Visibility = collapsed ? Visibility.Collapsed : Visibility.Visible;
@@ -2947,9 +2989,6 @@ public partial class MainWindow : Window
     ///      纳入进来（见该方法上方注释）。
     /// 两处场景的下载逻辑完全一样，只是触发时机不同，没必要维护两份几乎相同的代码。
     /// </summary>
-    private Task RepairMissingLibrariesAsync(string minecraftDir, string versionId, AppConfig cfg, ProgressDialog repairWin)
-        => RepairMissingLibrariesAsync(minecraftDir, versionId, cfg, repairWin.Progress);
-
     private async Task RepairMissingLibrariesAsync(string minecraftDir, string versionId, AppConfig cfg, IProgress<ProgressInfo> progress,
         CancellationToken ct = default)
     {
@@ -2969,6 +3008,8 @@ public partial class MainWindow : Window
         // 两份都要补，跟 BuildArguments 里 AddLibs 对父子两份 json 都扫描的逻辑一致。
         if (!string.IsNullOrEmpty(detail.InheritsFrom))
         {
+            DownloadQueueService.Instance.FindActiveForVersion(minecraftDir, versionId)
+                ?.RegisterInstallationTarget(detail.InheritsFrom);
             var parentDir = Path.Combine(minecraftDir, "versions", detail.InheritsFrom);
             var parentJsonPath = File.Exists(Path.Combine(parentDir, $"{detail.InheritsFrom}.json"))
                 ? Path.Combine(parentDir, $"{detail.InheritsFrom}.json")
@@ -2989,10 +3030,6 @@ public partial class MainWindow : Window
     /// 再补上 client jar（缺失/0 字节时重新下载）和 assets（缺失的资源对象重新下载）。
     /// 这两块原来完全没有补全入口——用户以前遇到这种问题只能去「版本选择」页整个重装。
     /// </summary>
-    private Task RepairInstanceIntegrityAsync(string minecraftDir, VersionDetail detail,
-        InstanceIntegrityService.IntegrityCheckResult check, AppConfig cfg, ProgressDialog repairWin)
-        => RepairInstanceIntegrityAsync(minecraftDir, detail, check, cfg, repairWin.Progress);
-
     private async Task RepairInstanceIntegrityAsync(string minecraftDir, VersionDetail detail,
         InstanceIntegrityService.IntegrityCheckResult check, AppConfig cfg, IProgress<ProgressInfo> progress,
         CancellationToken ct = default)
@@ -3048,6 +3085,8 @@ public partial class MainWindow : Window
                 if (!string.IsNullOrEmpty(detail.InheritsFrom))
                 {
                     var parentId = detail.InheritsFrom;
+                    DownloadQueueService.Instance.FindActiveForVersion(folder.Path, versionId)
+                        ?.RegisterInstallationTarget(parentId);
                     var parentDir = Path.Combine(folder.Path, "versions", parentId);
                     var parentCheck = Directory.Exists(parentDir)
                         ? await Task.Run(() => integrity.Check(folder.Path, parentId, IntegrityCheckMode.Strict))
@@ -3150,7 +3189,8 @@ public partial class MainWindow : Window
             return true;
         }
 
-        if (!check.HasProblems || cancelToken.IsCancellationRequested) return true;
+        if (cancelToken.IsCancellationRequested) return false;
+        if (!check.HasProblems) return true;
 
         var problems = new List<string>();
         if (check.VersionJsonMissing) problems.Add("版本描述文件(json)缺失或已损坏");
@@ -3191,25 +3231,28 @@ public partial class MainWindow : Window
 
             case IncompleteVersionDialog.ResultChoice.ContinueAndRepair:
             default:
-                if (check.Detail == null) return true; // 理论不会发生：VersionJsonMissing 时 Detail 必为 null，但那种情况这里也没法补
-                var repairWin = new ProgressDialog("正在补全文件...");
-                repairWin.Show();
                 try
                 {
-                    await RepairInstanceIntegrityAsync(folder.Path, check.Detail, check, cfg, repairWin);
+                    await DownloadQueueService.Instance.RunAndWaitAsync($"启动前补全文件 {versionId}", async (item, ct) =>
+                    {
+                        var error = await RepairInstanceWithoutLaunchAsync(folder, versionId, item.CreateProgress(), ct);
+                        if (error != null) throw new InvalidOperationException(error);
+                        return true;
+                    }, cancelToken, targetVersionId: versionId, targetFolderPath: folder.Path);
+                    return !cancelToken.IsCancellationRequested;
+                }
+                catch (OperationCanceledException)
+                {
+                    ToastService.ShowInfo("已取消补全，本次不启动游戏。");
+                    return false;
                 }
                 catch (Exception repairEx)
                 {
                     ErrorPresenter.ShowFriendlyError(
-                        "自动补全失败，请检查网络连接后重试，或前往「版本选择」页重新安装该版本。" +
-                        "\n（也可以选择「强行启动」跳过补全，游戏内可能会有部分内容异常。）",
+                        "自动补全失败，本次启动已停止。请检查网络后重试，或在「版本选择」页重新安装该版本。",
                         $"[启动前补全文件失败] {repairEx}", "补全失败");
+                    return false;
                 }
-                finally
-                {
-                    repairWin.Close();
-                }
-                return true;
         }
     }
 
@@ -3514,33 +3557,16 @@ public partial class MainWindow : Window
                     "游戏缺少 Java");
                 if (!result) return;
 
-                var progressWin = new ProgressDialog("正在下载 Java 运行时...");
-                // ProgressDialog 迁移成 Overlay 之后已经不是独立 Window，没有 Owner 属性了——
-                // 它现在挂在 MainWindow 自己的 Overlay 层里，天然"属于"当前主窗口，不需要
-                // 也不能再显式赋 Owner（迁移前遗留的这行赋值如果留着会导致编译失败）。
-                progressWin.Show();
-                try
-                {
-                    // 下载时同样优先用上面算出的 preferMajor(单版本覆盖 > 自动探测)；
-                    // 只有连自动探测都没有结果、且不是高级模式时，才退回旧的
-                    // "下载一个通用推荐版本(21)"逻辑。
-                    if (preferMajor is > 0)
-                    {
-                        var arch = cfg.AdvancedMode ? cfg.PreferredJavaArch
-                            : (Environment.Is64BitOperatingSystem ? "x64" : "x86");
-                        var installMode = cfg.AdvancedMode && cfg.PreferredJavaInstallMode == "System"
-                            ? JavaInstallMode.System : JavaInstallMode.Portable;
-                        javaPath = await javaService.DownloadJavaAsync(
-                            new JavaDownloadRequest(JavaService.GetDownloadTargetMajorVersion(preferMajor.Value), arch, installMode),
-                            progressWin.Progress);
-                    }
-                    else
-                    {
-                        javaPath = await javaService.DownloadRecommendedJavaAsync(progressWin.Progress);
-                    }
-                    justDownloaded = true;
-                }
-                finally { progressWin.Close(); }
+                // 启动等待统一下载列表的真实结果；取消或失败不会继续启动。
+                var arch = cfg.AdvancedMode ? cfg.PreferredJavaArch
+                    : (Environment.Is64BitOperatingSystem ? "x64" : "x86");
+                var installMode = cfg.AdvancedMode && cfg.PreferredJavaInstallMode == "System"
+                    ? JavaInstallMode.System : JavaInstallMode.Portable;
+                var request = new JavaDownloadRequest(
+                    JavaService.GetDownloadTargetMajorVersion(preferMajor is > 0 ? preferMajor.Value : 21),
+                    arch, installMode);
+                javaPath = await JavaDownloadQueueService.DownloadAsync(javaService, request, ct: cancelToken);
+                justDownloaded = true;
             }
 
             // 只有"手动指定路径为空、这次是靠自动探测/下载补上的"才写回配置里的"便携版已下载"记录；
@@ -3552,73 +3578,9 @@ public partial class MainWindow : Window
                 ConfigService.Save();
             }
 
-            // 自定义皮肤/认证服务器(AuthServer)账户都需要"万能皮肤补丁"(authlib-injector)
-            // 才能在客户端里正确显示皮肤、通过对应服务器的会话校验。
-            //
-            // 修复 1：这里原来只判断"离线账户 + 自定义皮肤"，完全没覆盖 AuthServer 账户——
-            // AuthServer 账户的登录/取 token/启动传参这条主链路本身是完整可用的，
-            // 唯独这里"首次启动自动下载 jar"的条件写漏了 AuthServer 分支。
-            // 后果就是：如果用户电脑上从来没下载过 authlib-injector.jar，第一次用皮肤站
-            // 账户启动时，这个 if 直接不成立 -> EnsureAuthlibInjectorAsync 根本不会被调用
-            // -> jar 依然不存在 -> BuildSkinJvmArgs 内部的 File.Exists 检查失败，
-            // 静默返回空列表，玩家会发现皮肤没生效、也没有任何报错提示，一头雾水。
-            // 现在两种情况统一判断"这个账户是否需要皮肤补丁"，需要就统一走同一套
-            // "jar 不存在则先下载"的流程，跟离线自定义皮肤完全一致的体验。
-            //
-            // 修复 2（本次）：离线账户不再要求 SkinType==Custom 才挂 authlib-injector，
-            // 史蒂夫/艾利克斯这种内置骨架也统一挂上。根因见 SkinService.BuildSkinJvmArgs 的
-            // 详细注释：不挂补丁时离线账户的 accessToken 是假的，部分版本（实测 1.16.5 复现，
-            // 1.20.1 不复现）会因为多人游戏资格在线校验失败而直接禁用"多人游戏"按钮，
-            // 跟版本号本身无关，是"这个版本的客户端代码遇到校验失败时选择禁用还是放行"的差异，
-            // 统一挂上 authlib-injector 之后校验会走皮肤站而不是真正的 Mojang/Xbox 接口，
-            // 所有版本下离线账户的多人游戏都能正常使用。
-            //
-            // 挂在启动前而不是"下载/安装某个版本"时：这样即使用户很早之前就下载好了
-            // 版本、后来才改选自定义皮肤/切换成皮肤站账户，也能在真正启动的这一刻补齐 jar，不会漏掉。
-            // 根据用户明确反馈改回：纯离线账户（史蒂夫/艾利克斯，未选自定义皮肤）不应该被强制
-            // 联网下载"万能皮肤补丁"——离线模式本来就该是完全离线、不依赖任何皮肤站的。
-            // 只有离线账户主动选了"自定义皮肤"，或者本来就是皮肤站(AuthServer)账户，才需要这个补丁。
-            // 1.16.5 "多人游戏被禁用"是 Minecraft 客户端自己在线校验假 accessToken 失败导致的，
-            // 跟皮肤补丁无关，这里不再用"顺带修掉这个"作为强制下载的理由。
-            // 离线账户还没设置过任何皮肤（SkinType.None：既没选史蒂夫/艾利克斯，也没上传自定义
-            // 皮肤）时，先按用户名试着查一次是否存在同名的正版账户——如果有，默认就用这个正版
-            // 账户当前的皮肤来启动，而不是本地的史蒂夫/艾利克斯占位骨架，效果上更接近"这本来就
-            // 是我的正版角色，只是用离线模式登录"。只做一次尝试，查不到（多数离线账户用的是
-            // 随手起的名字，本来就不对应任何正版玩家）就静默放弃，不打扰用户、也不阻塞启动——
-            // 成功匹配到之后会把结果落盘成这个账户的 SkinType=Custom，以后启动直接复用本地文件，
-            // 不用每次启动都重新联网查一遍。
-            // 跟百宝箱「下载正版账户皮肤」Tab（ToolboxPage.StandaloneOfficialSkinDownload_Click）
-            // 用的是同一个 OfficialSkinFetchService、同一套查询-下载逻辑，这里是"启动离线账户时
-            // 自动做一遍"，那边是"用户自己主动手动做一遍"，两处不重复实现，行为/报错口径一致。
-            if (account.Type == AccountType.Offline && account.SkinType == OfflineSkinType.None
-                && string.IsNullOrWhiteSpace(account.CustomSkinPath))
-            {
-                try
-                {
-                    var skinServiceForLookup = new SkinService();
-                    using var officialSkinService = new OfficialSkinFetchService();
-                    var info = await officialSkinService.LookupAsync(account.Username, cancelToken);
-                    var skinBytes = await officialSkinService.DownloadSkinBytesAsync(info, cancelToken);
-                    Directory.CreateDirectory(skinServiceForLookup.SkinsDir);
-                    var savedPath = Path.Combine(skinServiceForLookup.SkinsDir, $"{account.Id}.png");
-                    await File.WriteAllBytesAsync(savedPath, skinBytes, cancelToken);
-
-                    account.SkinType = OfflineSkinType.Custom;
-                    account.CustomSkinPath = savedPath;
-                    account.CustomSkinSlim = info.IsSlimModel;
-                    ConfigService.AddOrUpdateAccount(account);
-                    ConfigService.Save();
-                }
-                catch
-                {
-                    // 查无此正版玩家 / 网络问题 / 接口变更，都不应该打断启动流程——
-                    // 静默回退到原来"史蒂夫/艾利克斯默认骨架、不挂皮肤补丁"的行为。
-                }
-            }
-
-            // 自定义皮肤(含上面刚自动匹配到的同名正版皮肤)/认证服务器(AuthServer)账户都需要
-            // "万能皮肤补丁"(authlib-injector) 才能在客户端里正确显示皮肤、通过对应服务器的
-            // 会话校验。史蒂夫/艾利克斯这种内置骨架不需要，见下面注释。
+            // 用户主动选择的离线自定义皮肤、认证服务器账户继续使用原有皮肤补丁流程。
+            // 未配置皮肤的离线账户保持 None 标记，启动器使用内嵌默认 Steve 外观；
+            // 不按用户名抓取同名正版皮肤，也不自动写成 Custom 或强制下载补丁。
             List<string>? skinJvmArgs = null;
             var needsAuthlibInjector =
                 (account.Type == AccountType.Offline && account.SkinType == OfflineSkinType.Custom) ||
@@ -3767,6 +3729,7 @@ public partial class MainWindow : Window
                 var shouldContinueLaunch = await RunInstanceIntegrityCheckAsync(folder, cfg, cancelToken);
                 if (!shouldContinueLaunch) return;
             }
+            catch (OperationCanceledException) { return; }
             catch (Exception precheckEx)
             {
                 // 主动检查本身失败(比如读取版本 json 出错)不应该阻止启动——只是少了一次
@@ -3877,22 +3840,26 @@ public partial class MainWindow : Window
                     Loc.T("Str_Cs_Missing_Library", "缺少依赖库"));
                 if (!repair) return;
 
-                var repairWin = new ProgressDialog("正在补全缺失的依赖库...");
-                // 同上：ProgressDialog 现在是 Overlay 弹窗，没有 Owner 属性了。
-                repairWin.Show();
                 try
                 {
-                    await RepairMissingLibrariesAsync(folder.Path, mle.VersionId, cfg, repairWin);
+                    await DownloadQueueService.Instance.RunAndWaitAsync($"补全缺失依赖 {mle.VersionId}", async (item, ct) =>
+                    {
+                        await RepairMissingLibrariesAsync(folder.Path, mle.VersionId, cfg, item.CreateProgress(), ct);
+                        return true;
+                    }, cancelToken, targetVersionId: mle.VersionId, targetFolderPath: folder.Path);
+                }
+                catch (OperationCanceledException)
+                {
+                    ToastService.ShowInfo("已取消补全，本次不启动游戏。");
+                    return;
                 }
                 catch (Exception repairEx)
                 {
-                    repairWin.Close();
                     ErrorPresenter.ShowFriendlyError(
                         "自动补全依赖库失败，请检查网络连接后重试，或前往「版本选择」页重新安装该版本。",
                         $"[补全依赖库失败] {repairEx}", "补全失败");
                     return;
                 }
-                repairWin.Close();
 
                 // 补全依赖库同样是一段可能耗时不短的下载，期间用户也可能点了"取消启动"——
                 // 跟上面主流程一样，重试启动之前必须重新检查一次 cancelToken，否则会重演
@@ -4085,6 +4052,11 @@ public partial class MainWindow : Window
             commandResult?.TrySetResult(new(1, "launch", "Canceled", canceled.Code));
             MessageBoxDialog.ShowInfo(canceled.SafeMessage, Loc.T("Str_Plugin_Canceled", "插件取消了操作"));
         }
+        catch (OperationCanceledException)
+        {
+            commandResult?.TrySetResult(new(1, "launch", "Canceled", "DownloadOrLaunchCanceled"));
+            ToastService.ShowInfo("已取消下载或启动，本次不启动游戏。");
+        }
         catch (Exception ex)
         {
             commandResult?.TrySetResult(new(1, "launch", "Failed", ex is Services.Plugins.PluginOperationException operation ? operation.Code : "LaunchFailed"));
@@ -4132,9 +4104,10 @@ public partial class MainWindow : Window
         await processInfo.WaitForOutputDrainAsync(TimeSpan.FromMilliseconds(900));
 
         var exitCode = -1;
-        try { exitCode = processInfo.Process.ExitCode; } catch { /* 进程句柄极端情况下已不可读 */ }
+        var exitCodeKnown = false;
+        try { exitCode = processInfo.Process.ExitCode; exitCodeKnown = true; } catch { /* 进程句柄极端情况下已不可读 */ }
 
-        var assessment = GameExitClassifier.Assess(processInfo, exitCode);
+        var assessment = GameExitClassifier.Assess(processInfo, exitCode, exitCodeKnown);
         switch (assessment.Kind)
         {
             case GameExitKind.UserRequested:
@@ -4267,104 +4240,36 @@ public partial class MainWindow : Window
     /// 进场动画，避免用户以为又打开了一个全新的弹窗。</summary>
     internal void OverlayRenderEntry(object content, bool animateIn)
     {
+        // 新层覆盖关闭中的旧层时，先完成旧层结果，避免丢失模态等待者。
+        var completePrevious = _completeOverlayDismiss;
+        _completeOverlayDismiss = null;
+        completePrevious?.Invoke();
+        UiAnimationHelper.Reset(OverlayScrim);
+        UiAnimationHelper.Reset(OverlayCard, scale: OverlayCardScale);
         OverlayRoot.Visibility = Visibility.Visible;
         OverlayContentHost.Content = content;
-
-        // 修复"关掉某个提示框/弹窗后，整页所有按钮都点不动"系列问题的根因：
-        // OverlayDismissEntry 淡出时是用 BeginAnimation 在 OverlayScrim/OverlayCard/
-        // OverlayCardScale 这几个属性上挂了动画时钟；WPF 里"动画时钟"的优先级高于
-        // "直接赋值的本地值"——只要那个时钟还挂在属性上没有被显式清除，即使外面
-        // 简单地写 OverlayScrim.Opacity = 1，实际生效的值仍然由那个（可能还没走完，
-        // 或者已经走完但没有被清除）的动画时钟决定，赋值会被静默忽略。
-        // 如果上一次 OverlayDismissEntry 的淡出动画/兜底延时判定跟这一次
-        // "恢复显示上一层"(animateIn=false，比如从一个子弹窗如 MessageBoxDialog
-        // 返回到它上面的 ExperimentalFeaturesWindow) 前后脚发生，遗留的旧时钟就可能
-        // 让 OverlayScrim 视觉上停留在透明（Opacity 实际还是 0）却仍然
-        // Visibility=Visible 且占据命中测试，表现就是"看不见任何弹窗了，但整个界面
-        // 点哪里都没反应"——不是没收起遮罩，而是遮罩收起了"看起来"，命中测试没收起。
-        // 这里在每次重新渲染 Overlay 内容之前，先显式清空这几个属性上可能残留的动画
-        // 时钟（BeginAnimation(prop, null)），保证接下来的赋值/新动画一定是从干净状态
-        // 开始生效，不会被过期的旧时钟顶掉。
-        OverlayScrim.BeginAnimation(OpacityProperty, null);
-        OverlayCard.BeginAnimation(OpacityProperty, null);
-        OverlayCardScale.BeginAnimation(ScaleTransform.ScaleXProperty, null);
-        OverlayCardScale.BeginAnimation(ScaleTransform.ScaleYProperty, null);
-
-        // 每次都重新测量一次内容尺寸：不同弹窗大小不同，OverlayCard 靠
-        // HorizontalAlignment/VerticalAlignment=Center 自动居中，不需要手动算坐标。
-        if (!animateIn)
-        {
-            OverlayScrim.Opacity = 1;
-            OverlayCardScale.ScaleX = 1;
-            OverlayCardScale.ScaleY = 1;
-            OverlayCard.Opacity = 1;
-            return;
-        }
-
-        // 进场动画：遮罩淡入 + 卡片从 96% 缩放到 100% 同时淡入，跟主流弹窗库（比如网页端
-        // Modal）的观感一致，比"瞬间出现"更柔和，也能让用户明确注意到"有新内容出现了"。
-        OverlayScrim.Opacity = 0;
-        OverlayCard.Opacity = 0;
-        OverlayCardScale.ScaleX = 0.96;
-        OverlayCardScale.ScaleY = 0.96;
-
-        var duration = TimeSpan.FromMilliseconds(140);
-        var ease = new QuadraticEase { EasingMode = EasingMode.EaseOut };
-
-        OverlayScrim.BeginAnimation(OpacityProperty, new DoubleAnimation(0, 1, duration) { EasingFunction = ease });
-        OverlayCard.BeginAnimation(OpacityProperty, new DoubleAnimation(0, 1, duration) { EasingFunction = ease });
-        OverlayCardScale.BeginAnimation(ScaleTransform.ScaleXProperty, new DoubleAnimation(0.96, 1, duration) { EasingFunction = ease });
-        OverlayCardScale.BeginAnimation(ScaleTransform.ScaleYProperty, new DoubleAnimation(0.96, 1, duration) { EasingFunction = ease });
+        if (!animateIn) return;
+        UiAnimationHelper.PopupFadeIn(OverlayScrim);
+        UiAnimationHelper.PopupFadeIn(OverlayCard);
     }
 
-    /// <summary>播放退场动画后调用 onComplete（由 OverlayDialogService 传入，负责把结果
-    /// 回传给等待方、以及恢复上一层弹窗或彻底收起 Overlay）。</summary>
+    /// <summary>退场回调只执行一次；取消动画、关闭设置和新层覆盖也能完成模态等待。</summary>
     internal void OverlayDismissEntry(object content, Action onComplete)
     {
-        var duration = TimeSpan.FromMilliseconds(110);
-        var ease = new QuadraticEase { EasingMode = EasingMode.EaseIn };
-
-        // 修复："实验性功能"关掉之后整页按钮全部点不动"：根因是这里以前只靠
-        // cardFade.Completed 事件来触发 onComplete()（进而触发 OverlayHideRoot()
-        // 把 OverlayRoot 收起来）。但 OverlayRenderEntry 在恢复上一层弹窗时
-        // （CloseTop 里 _stack.Count > 0 的分支）会立刻对同一个 OverlayCard.Opacity
-        // 再调一次 BeginAnimation——WPF 里对同一个依赖属性重新 BeginAnimation 会
-        // 直接替换掉前一个动画时钟，被替换掉的动画的 Completed 事件不保证触发。
-        // 一旦这次 Completed 没触发，onComplete()/OverlayHideRoot() 就永远不会被
-        // 调用，OverlayRoot 卡在 Visibility=Visible（即便看起来透明），继续占据
-        // 全屏命中测试，导致底下所有按钮的点击全部被这个隐形遮罩吃掉。
-        // 用一个一次性标记 + Dispatcher 兜底延时代替"只信任动画事件"，保证无论
-        // Completed 是否触发，onComplete 都会且只会被调用一次。
-        var completedOnce = false;
-        void RunOnce()
+        var completed = false;
+        void Complete()
         {
-            if (completedOnce) return;
-            completedOnce = true;
+            if (completed) return;
+            completed = true;
+            _completeOverlayDismiss = null;
             if (ReferenceEquals(OverlayContentHost.Content, content)) OverlayContentHost.Content = null;
             onComplete();
         }
-
-        var cardFade = new DoubleAnimation(1, 0, duration) { EasingFunction = ease };
-        cardFade.Completed += (_, _) => RunOnce();
-
-        OverlayCard.BeginAnimation(OpacityProperty, cardFade);
-        OverlayScrim.BeginAnimation(OpacityProperty, new DoubleAnimation(1, 0, duration) { EasingFunction = ease });
-        OverlayCardScale.BeginAnimation(ScaleTransform.ScaleXProperty, new DoubleAnimation(1, 0.96, duration) { EasingFunction = ease });
-        OverlayCardScale.BeginAnimation(ScaleTransform.ScaleYProperty, new DoubleAnimation(1, 0.96, duration) { EasingFunction = ease });
-
-        // 兜底：动画本该在 duration 之后完成，多给 150ms 余量；如果 Completed 因为
-        // 上面说的替换问题没能触发，这里保证 onComplete 依然会被调用一次，
-        // OverlayRoot 不会永久卡住。
-        // 注意：Dispatcher.InvokeAsync 没有直接接受延时的重载（那是 DispatcherTimer 的
-        // 职责，上一版写成 InvokeAsync(..., TimeSpan) 导致编译错误 CS1503），
-        // 这里改用一次性 DispatcherTimer 来做延时兜底。
-        var fallbackTimer = new DispatcherTimer { Interval = duration + TimeSpan.FromMilliseconds(150) };
-        fallbackTimer.Tick += (_, _) =>
-        {
-            fallbackTimer.Stop();
-            RunOnce();
-        };
-        fallbackTimer.Start();
+        _completeOverlayDismiss?.Invoke();
+        _completeOverlayDismiss = Complete;
+        // 先挂背景退场，卡片禁用动画时的同步回调可安全恢复上层。
+        UiAnimationHelper.FadeOut(OverlayScrim, from: OverlayScrim.Opacity);
+        UiAnimationHelper.FadeOut(OverlayCard, Complete, OverlayCard.Opacity);
     }
 
     /// <summary>整个弹窗栈都关闭完了，彻底收起 OverlayRoot（Visibility=Collapsed，
@@ -4646,7 +4551,8 @@ public partial class MainWindow : Window
         // 而不是内容还没淡完窗口就没了——那样等于没做动画。EnableUiAnimations 关闭时
         // UiAnimationHelper 内部会直接同步 Hide，不引入任何延迟。
         _snapLayouts?.Close();
-        UiAnimationHelper.FadeOutMove(RootWindowGrid, RootWindowMoveTransform, onCompleted: Hide);
+        UiAnimationHelper.FadeOutMove(RootWindowGrid, RootWindowMoveTransform,
+            onCompleted: Hide, kind: AnimationKind.WindowMinimize);
     }
 
     /// <summary>游戏窗口成功出现后，按设置页「游戏启动后」选项处理启动器主窗口——跟
@@ -4685,7 +4591,8 @@ public partial class MainWindow : Window
         _trayIcon?.Hide();
         // 从后台切回前台：Show() 之后窗口是瞬间满 Opacity 出现的，这里补一个淡入，
         // 呼应上面 MinimizeToTray 的淡出，让"托盘还原"也有过渡而不是硬切。
-        UiAnimationHelper.FadeInMove(RootWindowGrid, RootWindowMoveTransform);
+        UiAnimationHelper.FadeInMove(RootWindowGrid, RootWindowMoveTransform, offset: 0,
+            kind: AnimationKind.WindowRestore);
     }
 
     /// <summary>绑定标题栏下载列表的数据源，并在集合变化时刷新角标数字/显示状态。</summary>
@@ -4815,24 +4722,21 @@ public partial class MainWindow : Window
         MinimizeWithAnimation();
     }
 
-    /// <summary>真正把窗口最小化之前，先播一遍"淡出+下沉"过渡，动画播完的回调里才调用
-    /// SystemCommands.MinimizeWindow——不这样做的话，窗口内容会在按钮点下去那一刻瞬间消失，
-    /// 是"傻快傻快"的典型场景。所有会把主窗口最小化的入口(标题栏按钮、关闭时选择"最小化"、
-    /// 四选一提示里的"最小化"、游戏启动后的"最小化")都统一走这一个方法，保证观感一致，
-    /// 不用每处各自复制一遍动画调用代码。</summary>
+    /// <summary>短暂轻反馈后直接最小化，不先隐藏内容再等待第二段系统缩放。</summary>
     private void MinimizeWithAnimation()
     {
-        if (WindowState == WindowState.Minimized || _isWindowClosed) return;
+        if (WindowState == WindowState.Minimized || _isWindowClosed || _closeAnimationPlayed) return;
         _snapLayouts?.Close();
         UiAnimationHelper.FadeOutMove(RootWindowGrid, RootWindowMoveTransform,
             onCompleted: () =>
             {
                 if (!_isWindowClosed) SystemCommands.MinimizeWindow(this);
-            });
+            }, kind: AnimationKind.WindowMinimize);
     }
 
     private void MaximizeRestoreButton_Click(object sender, RoutedEventArgs e)
     {
+        if (_closeAnimationPlayed || _isWindowClosed) return;
         _snapLayouts?.Close();
         var restore = WindowState == WindowState.Maximized;
         UiAnimationHelper.BeforeWindowStateChange(RootWindowGrid, RootWindowScaleTransform, () =>
@@ -5118,15 +5022,7 @@ public partial class MainWindow : Window
         SystemCommands.ShowSystemMenu(this, screenPos);
     }
 
-    /// <summary>窗口最大化⇄还原后，标题栏按钮的图标（□ ⇄ 两个重叠的方块）要跟着切换，
-    /// 否则用户点了最大化，按钮图标却还停在"最大化"那个样子，看起来像没生效。</summary>
-    /// <summary>窗口状态(Normal/Maximized/Minimized)每次变化都会经过这里，除了原有的图标
-    /// 刷新，还负责给"最小化恢复"和"最大化⇄还原"接上收尾过渡动画：
-    /// - 从 Minimized 恢复：接 FadeInMove，呼应 MinimizeWithAnimation 收起前播的淡出+下沉。
-    /// - Normal⇄Maximized 之间切换(不管是点按钮、双击标题栏，还是 Aero 贴靠触发的)：接
-    ///   SettleScale 短促回弹，缓解原生 resize 瞬间跳变的生硬感。
-    /// - 进入 Minimized 本身不用在这里处理：那一下的动画是 MinimizeWithAnimation 在真正
-    ///   调用 SystemCommands.MinimizeWindow 之前就已经播完了。</summary>
+    /// <summary>状态改变的同一次消息内设置轻淡入起点，避免先完整绘制再延后一帧重播。</summary>
     private void MainWindow_StateChanged(object? sender, EventArgs e)
     {
         UpdateMaximizeRestoreIcon();
@@ -5134,18 +5030,12 @@ public partial class MainWindow : Window
         _snapLayouts?.Close();
         var previous = _previousWindowStateForAnimation;
         _previousWindowStateForAnimation = WindowState;
-        var generation = ++_windowStateAnimationGeneration;
+        // 已接受的关闭不能因最后一刻的系统尺寸消息而取消收尾回调。
+        if (_closeAnimationPlayed) return;
         UiAnimationHelper.Reset(RootWindowGrid, RootWindowMoveTransform, RootWindowScaleTransform);
-        if (WindowState == WindowState.Minimized || previous == WindowState) return;
-        var fromMinimized = previous == WindowState.Minimized;
-        _ = Dispatcher.BeginInvoke(new Action(() =>
-        {
-            if (_isWindowClosed || generation != _windowStateAnimationGeneration || WindowState == WindowState.Minimized) return;
-            if (fromMinimized)
-                UiAnimationHelper.FadeInMove(RootWindowGrid, RootWindowMoveTransform);
-            else
-                UiAnimationHelper.SettleScale(RootWindowGrid, RootWindowScaleTransform);
-        }), DispatcherPriority.Loaded);
+        if (_changingFullScreen || _isWindowClosed || WindowState == WindowState.Minimized || previous == WindowState) return;
+        UiAnimationHelper.SettleScale(RootWindowGrid, RootWindowScaleTransform,
+            kind: previous == WindowState.Minimized ? AnimationKind.WindowRestore : AnimationKind.WindowFullscreen);
     }
 
     /// <summary>

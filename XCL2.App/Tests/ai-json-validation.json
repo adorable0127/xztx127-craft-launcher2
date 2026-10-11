@@ -1,0 +1,33 @@
+{
+  "source_files_parsed": 23,
+  "syntax_errors": [],
+  "missing_test_source_includes": [],
+  "checks": {
+    "single_control_helper_no_greedy_regex": true,
+    "invalid_arguments_checked_before_budget": true,
+    "task_arguments_prevalidated": true,
+    "registry_values_prepared_before_create": true,
+    "valid_frames_streamed_without_blank_lines": true
+  },
+  "runtime_regression": {
+    "command": "dotnet run --project Tests/AiHttpRegression/AiHttpRegression.csproj",
+    "status": "not_run",
+    "exit_code": 137,
+    "diagnostic": "Failed to create CoreCLR, HRESULT: 0x8007000E"
+  },
+  "regression_fixtures": [
+    "invalid extra closing brace",
+    "multiple JSON values",
+    "mixed control marker kinds",
+    "duplicate action fields",
+    "path object",
+    "timeout string",
+    "task steps wrong type/null fields",
+    "finite budget 1 after invalid arguments",
+    "registry type/missing value/DWord/QWord overflow",
+    "SSE no blank separators",
+    "partial SSE followed by malformed JSON",
+    "typed HTTP/SSE response shapes",
+    "literal braces and marker prefixes inside a command"
+  ]
+}

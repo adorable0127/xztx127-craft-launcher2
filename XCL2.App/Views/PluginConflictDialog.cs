@@ -13,7 +13,7 @@ internal sealed class PluginConflictDialog : OverlayDialogControl
         Width = 520;
         var panel = new StackPanel { Margin = new Thickness(20) };
         panel.Children.Add(new TextBlock { Text = "发现同名插件", FontSize = 18, FontWeight = FontWeights.Bold });
-        panel.Children.Add(new TextBlock { Text = $"{name}\n已安装：{existing}\n\n复制为副本：保留原版，使用独立配置与数据。\n替换：停止旧实例后更新，保留配置与数据。",
+        panel.Children.Add(new TextBlock { Text = $"{name}\n已安装：{existing}\n\n复制为副本：保留原版，使用独立配置与数据。\n🪖 替换可能损坏插件或文件。启动器将暂停插件，先自动备份全部插件文件、配置、数据与启用状态（不含游戏存档），校验成功后再更新。备份可在插件管理中恢复。",
             TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 12, 0, 16) });
         var buttons = new WrapPanel { HorizontalAlignment = HorizontalAlignment.Right };
         foreach (var (text, action) in new[] { ("复制为副本", PluginInstallConflictAction.Copy),

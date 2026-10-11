@@ -34,7 +34,10 @@
                 <ComboBox x:Name="VersionCombo" Grid.Column="1" SelectionChanged="VersionCombo_SelectionChanged"/>
             </Grid>
 
-            <ListBox x:Name="ModsListBox" Grid.Row="2" BorderThickness="0">
+            <ListBox x:Name="ModsListBox" Grid.Row="2" BorderThickness="0"
+                     ScrollViewer.CanContentScroll="True"
+                     VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling"
+                     VirtualizingPanel.ScrollUnit="Pixel">
                 <ListBox.ItemTemplate>
                     <DataTemplate>
                         <Grid Margin="4,6">
@@ -68,6 +71,8 @@
             <TextBlock x:Name="EmptyHint" Grid.Row="2" Text="{DynamicResource Str_Ui_No_Mods_Installed_For_This_Version_Yet_H}"
                        FontSize="13" Foreground="{DynamicResource TextSecondaryBrush}"
                        HorizontalAlignment="Center" VerticalAlignment="Center" Visibility="Collapsed"/>
+            <ContentControl x:Name="LoadingHost" Grid.Row="2" Visibility="Collapsed"
+                            HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch"/>
         </Grid>
     </Border>
 </UserControl>

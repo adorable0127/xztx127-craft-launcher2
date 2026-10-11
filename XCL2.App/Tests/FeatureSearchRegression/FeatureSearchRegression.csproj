@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../../Models/FeatureSearchEntry.cs" Link="FeatureSearchEntry.cs" />
+    <Compile Include="../../Services/FeatureSearchMatcher.cs" Link="FeatureSearchMatcher.cs" />
+    <Compile Include="../../Services/FeatureSearchCatalog.cs" Link="FeatureSearchCatalog.cs" />
+    <EmbeddedResource Include="../../Resources/Data/FeatureSearchCatalog.json"
+                      LogicalName="XCL2.App.Resources.Data.FeatureSearchCatalog.json" />
+  </ItemGroup>
+</Project>

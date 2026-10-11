@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../../Models/AiAssistantModels.cs" Link="AiAssistantModels.cs" />
+    <Compile Include="../../Models/AiAssistantActivity.cs" Link="AiAssistantActivity.cs" />
+    <Compile Include="../../Models/AiFileDiff.cs" Link="AiFileDiff.cs" />
+    <Compile Include="../../Services/AiShellPolicy.cs" Link="AiShellPolicy.cs" />
+    <Compile Include="../../Services/WindowsCommandAdapter.cs" Link="WindowsCommandAdapter.cs" />
+  </ItemGroup>
+</Project>

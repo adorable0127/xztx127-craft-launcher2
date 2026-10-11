@@ -5,17 +5,23 @@ namespace XCL2.App.Services;
 /// <summary>从当前构建的程序集读取帮助文档，查看和导出均不依赖外部 MD 文件或网络。</summary>
 public static class EmbeddedDocumentationService
 {
-    public const string SolutionsFileName = "PAPERDOLL_FIX.md";
     public const string ApiFileName = "API_REFERENCE.md";
     public const string PluginExeProtocolFileName = "PLUGIN_EXE_PROTOCOL.md";
     public const string PluginGuideFileName = "PLUGIN_GUIDE.md";
+    public const string LauncherControlFileName = "API_LAUNCHER_CONTROL.md";
+    public const string ApiExamplesFileName = "API_EXAMPLES.md";
+    public const string WorldsApiFileName = "API_WORLDS.md";
+    public const string CompositionApiFileName = "API_LAUNCHER_COMPOSITION.md";
 
     public static string GetTitle(string fileName) => fileName switch
     {
-        SolutionsFileName => "解决方法与修复说明",
         ApiFileName => "启动器 API 接入说明",
         PluginExeProtocolFileName => "EXE 插件协议",
         PluginGuideFileName => "插件开发指南",
+        LauncherControlFileName => "启动器控制与界面定制 API",
+        ApiExamplesFileName => "API 完整样例与常见错误",
+        WorldsApiFileName => "存档读写 API",
+        CompositionApiFileName => "组合自己的启动器界面",
         _ => throw new ArgumentException("未知的帮助文档。", nameof(fileName))
     };
 

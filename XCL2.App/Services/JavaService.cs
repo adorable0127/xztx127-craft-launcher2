@@ -1,4 +1,4 @@
-using System.IO;
+﻿using System.IO;
 using System.IO.Compression;
 using System.Net.Http;
 using System.Text.Json;
@@ -690,17 +690,21 @@ public class JavaService
         Directory.CreateDirectory(RuntimeDir);
         progress?.Report(new ProgressInfo("获取 Java 列表", 0, 1, $"查询 Java {request.MajorVersion} ({arch})"));
 
-        (string downloadUrl, string fileName) source;
+        JavaDownloadSource source;
         try
         {
-            source = await ResolveAdoptiumDownloadAsync(request.MajorVersion, arch, ct);
+            source = await ResolveAdoptiumDownloadAsync(request.MajorVersion, arch, request.InstallMode, ct);
         }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
         catch (Exception primaryEx)
         {
+            if (request.InstallMode == JavaInstallMode.System)
+                throw new InvalidOperationException("无法获取可验证的 Java 系统安装包。请稍后重试或改用便携版。", primaryEx);
             try
             {
                 source = await ResolveBmclapiDownloadAsync(request.MajorVersion, arch, ct);
             }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
             catch (Exception fallbackEx)
             {
                 var hint = KnownGoodMajorVersions.Contains(request.MajorVersion)
@@ -719,13 +723,14 @@ public class JavaService
         return await DownloadAndExtractPortableAsync(source, progress, ct);
     }
 
-    private async Task<string> DownloadAndExtractPortableAsync((string downloadUrl, string fileName) source,
+    private async Task<string> DownloadAndExtractPortableAsync(JavaDownloadSource source,
         IProgress<ProgressInfo>? progress, CancellationToken ct)
     {
-        var zipPath = Path.Combine(RuntimeDir, source.fileName);
-        await DownloadToFileAsync(source.downloadUrl, zipPath, source.fileName, progress, ct);
+        var zipPath = Path.Combine(RuntimeDir, source.FileName);
+        await DownloadToFileAsync(source, zipPath, progress, ct);
 
-        var extractDir = Path.Combine(RuntimeDir, Path.GetFileNameWithoutExtension(source.fileName));
+        var extractDir = Path.Combine(RuntimeDir, Path.GetFileNameWithoutExtension(source.FileName));
+        ct.ThrowIfCancellationRequested();
         progress?.Report(new ProgressInfo("解压 Java 运行时", 0, 1, "解压中..."));
         if (Directory.Exists(extractDir)) Directory.Delete(extractDir, true);
         ZipFile.ExtractToDirectory(zipPath, extractDir);
@@ -744,16 +749,13 @@ public class JavaService
     /// 系统安装模式：下载 Adoptium 提供的 .msi 安装包并静默安装到系统目录（Program Files）。
     /// 注意：需要用户在弹出的 UAC 提示中确认管理员权限；MSI 安装完成后从注册表探测安装路径。
     /// </summary>
-    private async Task<string> DownloadAndRunSystemInstallerAsync((string downloadUrl, string fileName) source,
+    private async Task<string> DownloadAndRunSystemInstallerAsync(JavaDownloadSource source,
         IProgress<ProgressInfo>? progress, CancellationToken ct)
     {
-        // 系统安装模式需要 .msi 包，如果解析到的是 zip（便携包），改为向 Adoptium 请求 msi 格式
-        var msiUrl = source.downloadUrl.EndsWith(".msi", StringComparison.OrdinalIgnoreCase)
-            ? source.downloadUrl
-            : source.downloadUrl.Replace(".zip", ".msi");
-
-        var msiPath = Path.Combine(Path.GetTempPath(), Path.GetFileName(msiUrl));
-        await DownloadToFileAsync(msiUrl, msiPath, Path.GetFileName(msiUrl), progress, ct);
+        // 使用官方 installer 清单的 MSI 链接及独立校验值，不从 ZIP 地址推测安装程序。
+        var msiPath = Path.Combine(Path.GetTempPath(), source.FileName);
+        await DownloadToFileAsync(source, msiPath, progress, ct);
+        ct.ThrowIfCancellationRequested();
 
         progress?.Report(new ProgressInfo("安装 Java 到系统目录", 0, 1, "正在运行安装程序（可能需要管理员确认）..."));
 
@@ -766,12 +768,18 @@ public class JavaService
 
         try
         {
-            using var proc = System.Diagnostics.Process.Start(psi);
-            if (proc != null) await proc.WaitForExitAsync(ct);
+            using var proc = System.Diagnostics.Process.Start(psi)
+                ?? throw new InvalidOperationException("无法启动 Java 系统安装程序。");
+            // 启动 MSI 后不可通过取消等待假装安装已结束；必须等进程退出再清理安装包。
+            await proc.WaitForExitAsync();
+            if (proc.ExitCode == 1602) throw new OperationCanceledException("用户取消了 Java 系统安装。");
+            if (proc.ExitCode is not (0 or 1641 or 3010))
+                throw new InvalidOperationException($"Java 系统安装失败，退出码：{proc.ExitCode}。");
+            ct.ThrowIfCancellationRequested();
         }
-        catch (System.ComponentModel.Win32Exception)
+        catch (System.ComponentModel.Win32Exception ex) when (ex.NativeErrorCode == 1223)
         {
-            throw new InvalidOperationException("安装已取消（未授予管理员权限），可改用便携版(zip)安装方式，无需管理员权限。");
+            throw new OperationCanceledException("安装已取消（未授予管理员权限），可改用便携版(zip)安装方式，无需管理员权限。", ex);
         }
         finally
         {
@@ -787,27 +795,12 @@ public class JavaService
         return found;
     }
 
-    private async Task DownloadToFileAsync(string url, string destPath, string displayName,
+    private async Task DownloadToFileAsync(JavaDownloadSource source, string destPath,
         IProgress<ProgressInfo>? progress, CancellationToken ct)
     {
-        progress?.Report(new ProgressInfo(Loc.T("Str_Cs_Downloading_The_Java_Runtime", "下载 Java 运行时"), 0, 1, displayName));
-        using var resp = await _http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, ct);
-        if (!resp.IsSuccessStatusCode)
-            throw new InvalidOperationException($"下载 Java 失败: HTTP {(int)resp.StatusCode} {resp.ReasonPhrase} ({url})");
-
-        var total = resp.Content.Headers.ContentLength ?? -1;
-        await using var fs = File.Create(destPath);
-        await using var stream = await resp.Content.ReadAsStreamAsync(ct);
-        var buffer = new byte[81920];
-        long read = 0;
-        int n;
-        while ((n = await stream.ReadAsync(buffer, ct)) > 0)
-        {
-            await fs.WriteAsync(buffer.AsMemory(0, n), ct);
-            read += n;
-            if (total > 0)
-                progress?.Report(new ProgressInfo(Loc.T("Str_Cs_Downloading_The_Java_Runtime", "下载 Java 运行时"), (int)(read * 100 / total), 100, displayName));
-        }
+        progress?.Report(new ProgressInfo(Loc.T("Str_Cs_Downloading_The_Java_Runtime", "下载 Java 运行时"), 0, 0, source.FileName));
+        await DownloadEndpoints.DownloadFileWithFallbackAsync(_http, source.DownloadUrl, DownloadEndpoints.PreferMirror,
+            destPath, "下载 Java 运行时失败", progress, ct, expectedSize: source.Size, expectedSha256: source.Sha256);
     }
 
     /// <summary>
@@ -815,7 +808,7 @@ public class JavaService
     /// GET https://api.adoptium.net/v3/assets/latest/{majorVersion}/hotspot?os=windows&image_type=jre&architecture={x64|x86}&vendor=eclipse
     /// 返回数组，取第一个的 binary.package.link 作为下载地址（zip 格式）。
     /// </summary>
-    private async Task<(string downloadUrl, string fileName)> ResolveAdoptiumDownloadAsync(int majorVersion, string arch, CancellationToken ct)
+    private async Task<JavaDownloadSource> ResolveAdoptiumDownloadAsync(int majorVersion, string arch, JavaInstallMode installMode, CancellationToken ct)
     {
         var url = $"https://api.adoptium.net/v3/assets/latest/{majorVersion}/hotspot" +
                    $"?os=windows&image_type=jre&architecture={arch}&vendor=eclipse";
@@ -825,17 +818,11 @@ public class JavaService
         if (first.ValueKind != JsonValueKind.Object)
             throw new InvalidOperationException($"Adoptium 未返回可用的 JDK {majorVersion} ({arch}) 版本信息");
 
-        var package = first.GetProperty("binary").GetProperty("package");
-        var link = package.GetProperty("link").GetString();
-        var name = package.TryGetProperty("name", out var n) ? n.GetString() : null;
-        if (string.IsNullOrEmpty(link))
-            throw new InvalidOperationException("Adoptium 响应中缺少下载链接");
-
-        return (link, name ?? $"jdk-{majorVersion}-{arch}-adoptium.zip");
+        return JavaDownloadSource.FromAdoptiumBinary(first.GetProperty("binary"), installMode == JavaInstallMode.System);
     }
 
     /// <summary>BMCLAPI 镜像回退方案（仅覆盖常见 LTS 版本，且仅支持 x64）。</summary>
-    private async Task<(string downloadUrl, string fileName)> ResolveBmclapiDownloadAsync(int majorVersion, string arch, CancellationToken ct)
+    private async Task<JavaDownloadSource> ResolveBmclapiDownloadAsync(int majorVersion, string arch, CancellationToken ct)
     {
         if (arch != "x64")
             throw new InvalidOperationException("BMCLAPI 镜像仅支持 x64 架构");
@@ -851,7 +838,7 @@ public class JavaService
             {
                 var component = item.TryGetProperty("component", out var c) ? c.GetString() : "jre";
                 var downloadUrl = $"https://bmclapi2.bangbang93.com/java/download/windows/x64/{component}/{v}";
-                return (downloadUrl, $"jdk-{v}-bmclapi.zip");
+                return new JavaDownloadSource(downloadUrl, $"jdk-{v}-bmclapi.zip");
             }
         }
         throw new InvalidOperationException($"BMCLAPI 未返回 Java {majorVersion} 的可用版本");

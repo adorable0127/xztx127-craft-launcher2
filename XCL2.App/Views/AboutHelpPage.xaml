@@ -38,8 +38,8 @@
                         <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
                             <TextBlock Text="帮助" FontSize="16" FontWeight="Bold" VerticalAlignment="Center"/>
                             <!-- 跳转到中文 Minecraft Wiki 的「教程」页面 -->
-                            <Button Content="查看帮助" Padding="12,5" Margin="14,0,0,0" VerticalAlignment="Center"
-                                    ToolTip="在浏览器中打开中文 Minecraft Wiki 的教程页面" Click="OpenMinecraftWikiHelp_Click"/>
+                            <StackPanel Margin="0,0,8,8"><Button Content="查看帮助" Padding="12,5" Margin="14,0,0,0" VerticalAlignment="Center"
+                                    ToolTip="在浏览器中打开中文 Minecraft Wiki 的教程页面" Click="OpenMinecraftWikiHelp_Click"/></StackPanel>
                         </StackPanel>
 
                         <!-- 1. 如何登录微软账户 -->
@@ -57,8 +57,8 @@
                                     <LineBreak/>
                                     <Run Text="5. 如果长时间卡在登录页面加载不出来，通常是网络问题，请检查网络连接或稍后重试。"/>
                                 </TextBlock>
-                                <Button Content="打开微软登录页面" HorizontalAlignment="Left" Padding="12,6" Margin="0,10,0,0"
-                                        Click="OpenMicrosoftLogin_Click"/>
+                                <StackPanel Margin="0,0,8,8"><Button Content="打开微软登录页面" HorizontalAlignment="Left" Padding="12,6" Margin="0,10,0,0"
+                                        Click="OpenMicrosoftLogin_Click"/></StackPanel>
                             </StackPanel>
                         </Border>
 
@@ -77,8 +77,8 @@
                                     <LineBreak/>
                                     <Run Text="（本启动器本身不销售、不提供游戏本体，购买行为需要在官方渠道完成。）"/>
                                 </TextBlock>
-                                <Button Content="打开 Minecraft 官网购买页面" HorizontalAlignment="Left" Padding="12,6" Margin="0,10,0,0"
-                                        Click="OpenMinecraftBuy_Click"/>
+                                <StackPanel Margin="0,0,8,8"><Button Content="打开 Minecraft 官网购买页面" HorizontalAlignment="Left" Padding="12,6" Margin="0,10,0,0"
+                                        Click="OpenMinecraftBuy_Click"/></StackPanel>
                             </StackPanel>
                         </Border>
 
@@ -120,7 +120,7 @@
                                 <StackPanel Orientation="Horizontal" Margin="0,10,0,0">
                                     <Button x:Name="OpenLogsPageBtn" Content="前往日志页" Padding="12,6" Margin="0,0,10,0"
                                             Click="OpenLogsPage_Click"/>
-                                    <Button Content="去仓库提交 Issue" Padding="12,6" Click="OpenIssue_Click"/>
+                                    <StackPanel Margin="0,0,8,8"><Button Content="去仓库提交 Issue" Padding="12,6" Click="OpenIssue_Click"/></StackPanel>
                                 </StackPanel>
                             </StackPanel>
                         </Border>
@@ -290,25 +290,25 @@
                                     <Run Text="xztx127" FontWeight="Bold" Foreground="{DynamicResource AccentBrush}"/>
                                 </TextBlock>
                                 <WrapPanel Orientation="Horizontal">
-                                    <Button Content="💬 联系作者" Style="{StaticResource PrimaryButton}" Padding="14,7" Margin="0,0,10,8"
+                                    <StackPanel Margin="0,0,8,8"><Button Content="💬 联系作者" Style="{StaticResource PrimaryButton}" Padding="14,7" Margin="0,0,10,8"
                                             Click="OpenContact_Click"
-                                            ToolTip="https://xztx127.dpdns.org/arcade#contact"/>
-                                    <Button Content="💖 赞助作者" Padding="14,7" Margin="0,0,10,8"
+                                            ToolTip="https://xztx127.dpdns.org/arcade#contact"/></StackPanel>
+                                    <StackPanel Margin="0,0,8,8"><Button Content="💖 赞助作者" Padding="14,7" Margin="0,0,10,8"
                                             Click="OpenDonate_Click"
-                                            ToolTip="https://ifdian.net/a/xztx127"/>
-                                    <Button Content="📂 作者的本项目的开源仓库" Padding="14,7" Margin="0,0,10,8" Click="OpenRepo_Click"
-                                            ToolTip="https://github.com/adorable0127/xztx127-craft-launcher2"/>
-                                    <Button Content="📦 所有项目的开源仓库" Padding="14,7" Margin="0,0,10,8" Click="OpenAllProjects_Click"
-                                            ToolTip="https://github.com/adorable0127"/>
-                                    <Button Content="🚀 项目发布页" Padding="14,7" Margin="0,0,10,8"
+                                            ToolTip="https://ifdian.net/a/xztx127"/></StackPanel>
+                                    <StackPanel Margin="0,0,8,8"><Button Content="📂 作者的本项目的开源仓库" Padding="14,7" Margin="0,0,10,8" Click="OpenRepo_Click"
+                                            ToolTip="https://github.com/adorable0127/xztx127-craft-launcher2"/></StackPanel>
+                                    <StackPanel Margin="0,0,8,8"><Button Content="📦 所有项目的开源仓库" Padding="14,7" Margin="0,0,10,8" Click="OpenAllProjects_Click"
+                                            ToolTip="https://github.com/adorable0127"/></StackPanel>
+                                    <StackPanel Margin="0,0,8,8"><Button Content="🚀 项目发布页" Padding="14,7" Margin="0,0,10,8"
                                             Click="OpenRelease_Click"
-                                            ToolTip="https://github.com/adorable0127/xztx127-craft-launcher2"/>
+                                            ToolTip="https://github.com/adorable0127/xztx127-craft-launcher2"/></StackPanel>
                                     <!-- 官方下载页：跟上面的 GitHub 发布页是两个不同的去处——GitHub 面向
                                          能翻墙/习惯看 Release 的用户，这个下载站是给普通用户直接拿安装包的，
                                          所以两个按钮都留着，不合并。 -->
-                                    <Button Content="⬇ XCL 官方下载页" Padding="14,7" Margin="0,0,0,8"
+                                    <StackPanel Margin="0,0,8,8"><Button Content="⬇ XCL 官方下载页" Padding="14,7" Margin="0,0,0,8"
                                             Click="OpenDownloadSite_Click"
-                                            ToolTip="https://xcl.xztx127.dpdns.org"/>
+                                            ToolTip="https://xcl.xztx127.dpdns.org"/></StackPanel>
                                 </WrapPanel>
                                 <TextBlock TextWrapping="Wrap" FontSize="12" Margin="0,10,0,0"
                                            Foreground="{DynamicResource TextSecondaryBrush}"

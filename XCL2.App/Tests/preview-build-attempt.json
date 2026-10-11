@@ -1,0 +1,11 @@
+{
+  "version": 17,
+  "attempted_command": "dotnet build XCL2.App.csproj -c Debug -p:EnableWindowsTargeting=true --nologo",
+  "environment": "Linux sandbox, local .NET SDK 8.0.425",
+  "exit_code": 137,
+  "output": "Failed to create CoreCLR, HRESULT: 0x8007000E",
+  "msbuild_reached": false,
+  "windows_build": "NOT_RUN",
+  "rendering": "NOT_RUN: Windows UI unavailable",
+  "native_preview_pri_fix_preserved": "EnableMsixTooling=true; WindowsPackageType=None"
+}

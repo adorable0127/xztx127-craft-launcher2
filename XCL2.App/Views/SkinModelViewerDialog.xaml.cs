@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.IO;
 using System.Windows;
 using System.Windows.Controls;
@@ -5,7 +6,7 @@ using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Media.Media3D;
-using System.Windows.Threading;
+using System.Windows.Media.Animation;
 using XCL2.App.Models;
 using XCL2.App.Services;
 
@@ -14,23 +15,35 @@ namespace XCL2.App.Views;
 /// <summary>原生 WPF 3D：模型网格各面按 Minecraft 64x64 皮肤图集进行 UV 映射。</summary>
 public partial class SkinModelViewerDialog : OverlayDialogControl
 {
-    private readonly DispatcherTimer _animation = new() { Interval = TimeSpan.FromMilliseconds(40) };
+    private readonly Stopwatch _motionClock = new();
     private readonly Dictionary<string, AxisAngleRotation3D> _bones = new();
+    // 红色只叠加在模型材质上，不会把背景、按钮和说明文字染红。
+    private readonly SolidColorBrush _hurtTint = new(Colors.Red) { Opacity = 0 };
     private readonly ImageBrush _textureBrush;
     private readonly string _fallbackSkinDescription;
     // 包围球覆盖身体和四肢绕关节运动的范围，并给取景留出少量边距。
     private const double CameraTargetY = 1.9;
     private const double ModelFramingRadius = 2.65;
-    private double _yaw, _pitch = 7, _zoom = 1, _tick;
+    private const double HurtCycleSeconds = 1.1;
+    private const double HurtFlashSeconds = .08;
+    private double _yaw, _pitch = 7, _zoom = 1, _lastFrameSeconds;
+    private string _activeMotion = "idle";
+    private double _motionIntensity;
+    private double _motionSpeed = 1;
+    private TimeSpan _lastRenderingTime = TimeSpan.MinValue;
+    private int _lastHurtCycle = -1;
+    private bool _animationReady, _rendering, _settingsSubscribed, _closing;
+    private Window? _ownerWindow;
     private System.Windows.Point? _dragFrom;
 
     public SkinModelViewerDialog(Account account)
     {
         InitializeComponent();
-        // 未设置皮肤的离线账户使用内嵌的完整 Steve 贴图，并忽略残留的自定义皮肤路径。
-        bool useOfflineDefault = account.Type == AccountType.Offline && account.SkinType == OfflineSkinType.None;
+        // 未设置皮肤/选 Steve 的离线账户使用完整内嵌 PNG，并忽略残留的自定义皮肤路径。
+        bool useOfflineDefault = OfflineDefaultSkin.AppliesTo(account);
         bool isAlex = account.Type == AccountType.Offline && account.SkinType == OfflineSkinType.Alex;
-        BitmapSource texture = useOfflineDefault ? LoadOfflineDefaultSkin() : BuildDefaultSkin();
+        BitmapSource texture = account.Type == AccountType.Offline && !isAlex
+            ? OfflineDefaultSkin.LoadBitmap() : BuildDefaultSkin();
         var fallbackDescription = isAlex ? "艾利克斯默认模型" : "史蒂夫默认模型";
         if (!useOfflineDefault && !string.IsNullOrWhiteSpace(account.CustomSkinPath) && File.Exists(account.CustomSkinPath))
         {
@@ -71,7 +84,9 @@ public partial class SkinModelViewerDialog : OverlayDialogControl
         };
         RenderOptions.SetBitmapScalingMode(_textureBrush, BitmapScalingMode.NearestNeighbor);
         RenderOptions.SetBitmapScalingMode(ModelViewport, BitmapScalingMode.NearestNeighbor);
-        var material = new DiffuseMaterial(_textureBrush);
+        var material = new MaterialGroup();
+        material.Children.Add(new DiffuseMaterial(_textureBrush));
+        material.Children.Add(new EmissiveMaterial(_hurtTint));
         // 坐标：x 左右、y 上下、z 前后；像素 UV 使用原版 Minecraft 标准 64x64 图集。
         AddPart(group, material, "head", 0, 3.14, 0, 1, 1, 1,
             (8, 8, 8, 8), (24, 8, 8, 8), (0, 8, 8, 8), (16, 8, 8, 8), (8, 0, 8, 8), (16, 0, 8, 8), 0, 2.75);
@@ -99,11 +114,17 @@ public partial class SkinModelViewerDialog : OverlayDialogControl
         else if (account.Type == AccountType.AuthServer && !string.IsNullOrWhiteSpace(account.AuthServerApiRoot) && !string.IsNullOrWhiteSpace(account.Uuid))
             _ = LoadAuthServerSkinAsync(account);
 
-        _animation.Tick += Animation_Tick;
-        _animation.Start();
-        Loaded += (_, _) => _animation.Start();
-        RequestClose += (_, _) => _animation.Stop();
-        Unloaded += (_, _) => _animation.Stop();
+        _animationReady = true;
+        Loaded += Viewer_Loaded;
+        IsVisibleChanged += (_, _) => ApplyAnimationSettings();
+        RequestClose += (_, _) =>
+        {
+            _closing = true;
+            StopAnimation();
+            ModelRenderHost.SetPluginRenderingEnabled(false);
+        };
+        Unloaded += Viewer_Unloaded;
+        ApplyAnimationSettings();
     }
 
     private async Task LoadMicrosoftSkinAsync(Account account)
@@ -167,17 +188,6 @@ public partial class SkinModelViewerDialog : OverlayDialogControl
                 SkinSourceText.Text = $"当前账户：{account.Username} · 皮肤站皮肤读取失败，已回退到{_fallbackSkinDescription}。{ex.Message}";
             });
         }
-    }
-
-    /// <summary>未设置皮肤的离线账户专用默认贴图，直接读取内嵌 PNG，无需联网。</summary>
-    private static BitmapSource LoadOfflineDefaultSkin()
-    {
-        using var stream = typeof(SkinModelViewerDialog).Assembly.GetManifestResourceStream("XCL2.App.Resources.Skins.steve.png")
-            ?? throw new FileNotFoundException("找不到内置离线默认皮肤资源 steve.png。");
-        var decoder = new PngBitmapDecoder(stream, BitmapCreateOptions.PreservePixelFormat, BitmapCacheOption.OnLoad);
-        var bitmap = decoder.Frames[0];
-        bitmap.Freeze();
-        return bitmap;
     }
 
     private static BitmapSource LoadBitmapFromFile(string path)
@@ -292,7 +302,7 @@ public partial class SkinModelViewerDialog : OverlayDialogControl
         foreach (int k in new[] { 0, 1, 2, 0, 2, 3 }) mesh.TriangleIndices.Add(start + k);
     }
 
-    /// <summary>其他账户原有的简化回退贴图；未设置皮肤的离线账户改用 LoadOfflineDefaultSkin
+    /// <summary>其他账户原有的简化回退贴图；默认 Steve 离线账户改用 OfflineDefaultSkin
     /// 读取完整的内嵌 Steve PNG，不再使用这里绘制的纯色部件。</summary>
     private static BitmapSource BuildDefaultSkin()
     {
@@ -409,25 +419,143 @@ public partial class SkinModelViewerDialog : OverlayDialogControl
         _zoom = Math.Clamp(_zoom - e.Delta / 120.0 * .075, .5, 1.75);
         UpdateCamera();
     }
-    private void MotionCombo_SelectionChanged(object sender, SelectionChangedEventArgs e) => _tick = 0;
-    private void Animation_Tick(object? sender, EventArgs e)
+    private string CurrentMotion => (MotionCombo.SelectedItem as ComboBoxItem)?.Tag as string ?? "idle";
+
+    private static double MotionIntensity(string motion) => AnimationSettingsService.Intensity(motion switch
     {
-        _tick += .09;
-        string mode = (MotionCombo.SelectedItem as ComboBoxItem)?.Tag as string ?? "idle";
-        if (ModelRenderHost.RenderFrame(mode)) return;
-        double gait = Math.Sin(_tick * (mode == "sprint" ? 3.4 : 2.0));
-        double amplitude = mode == "sprint" ? 75 : mode == "walk" ? 38 : 0;
+        "attack" => AnimationKind.SkinAttack,
+        "hurt" => AnimationKind.SkinHurt,
+        _ => AnimationKind.SkinMotion
+    });
+
+    private void Viewer_Loaded(object sender, RoutedEventArgs e)
+    {
+        _closing = false;
+        if (!_settingsSubscribed)
+        {
+            AnimationSettingsService.Changed += AnimationSettings_Changed;
+            _settingsSubscribed = true;
+        }
+        if (_ownerWindow != null) _ownerWindow.StateChanged -= OwnerWindow_StateChanged;
+        _ownerWindow = Window.GetWindow(this);
+        if (_ownerWindow != null) _ownerWindow.StateChanged += OwnerWindow_StateChanged;
+        ApplyAnimationSettings();
+    }
+
+    private void Viewer_Unloaded(object sender, RoutedEventArgs e)
+    {
+        StopAnimation();
+        if (_settingsSubscribed) AnimationSettingsService.Changed -= AnimationSettings_Changed;
+        _settingsSubscribed = false;
+        if (_ownerWindow != null) _ownerWindow.StateChanged -= OwnerWindow_StateChanged;
+        _ownerWindow = null;
+    }
+
+    private void OwnerWindow_StateChanged(object? sender, EventArgs e) => ApplyAnimationSettings();
+
+    private void AnimationSettings_Changed()
+    {
+        if (!Dispatcher.CheckAccess())
+        {
+            if (!Dispatcher.HasShutdownStarted) _ = Dispatcher.BeginInvoke(new Action(ApplyAnimationSettings));
+            return;
+        }
+        ApplyAnimationSettings();
+    }
+
+    private void MotionCombo_SelectionChanged(object sender, SelectionChangedEventArgs e) => ApplyAnimationSettings();
+
+    private void ApplyAnimationSettings()
+    {
+        if (!_animationReady) return; // InitializeComponent 会先触发 ComboBox 的初次选择。
+        StopAnimation();
+        _motionClock.Reset();
+        _lastFrameSeconds = 0;
+        _lastRenderingTime = TimeSpan.MinValue;
+        _lastHurtCycle = -1;
+        string motion = _activeMotion = CurrentMotion;
+        double intensity = _motionIntensity = MotionIntensity(motion);
+        _motionSpeed = AnimationSettingsService.SpeedRatio / .75;
+        bool visible = !_closing && IsLoaded && IsVisible && _ownerWindow?.WindowState != WindowState.Minimized;
+
+        // 既有插件接口没有动作幅度/受击滤镜参数。受控动作与降低强度时使用内置
+        // 模型，防止第三方自有渲染循环绕过“关闭动画”；正常默认展示恢复插件。
+        ModelRenderHost.SetPluginRenderingEnabled(visible && intensity >= 1 && motion != "attack" && motion != "hurt");
+        RenderBuiltInFrame(motion, 0, visible ? intensity : 0);
+        if (!visible || intensity <= 0) return;
+        _motionClock.Start();
+        CompositionTarget.Rendering += Animation_Rendering;
+        _rendering = true;
+    }
+
+    private void StopAnimation()
+    {
+        if (_rendering) CompositionTarget.Rendering -= Animation_Rendering;
+        _rendering = false;
+        _motionClock.Stop();
+        _hurtTint.BeginAnimation(Brush.OpacityProperty, null);
+        _hurtTint.Opacity = 0;
+    }
+
+    private void Animation_Rendering(object? sender, EventArgs e)
+    {
+        if (e is RenderingEventArgs frame)
+        {
+            if (frame.RenderingTime == _lastRenderingTime) return;
+            _lastRenderingTime = frame.RenderingTime;
+        }
+        double seconds = _motionClock.Elapsed.TotalSeconds;
+        double elapsed = Math.Max(0, seconds - _lastFrameSeconds);
+        _lastFrameSeconds = seconds;
+        string motion = _activeMotion;
+        // 75% 保持原有节奏，100% 播放快 1/3；幅度由独立的单类强度控制。
+        // 受击始终用实际秒计时，80 ms 红色滤镜不随速度设置被拉长。
+        double speed = motion == "hurt" ? 1 : _motionSpeed;
+        if (ModelRenderHost.RenderFrame(motion, TimeSpan.FromSeconds(elapsed * speed))) return;
+        RenderBuiltInFrame(motion, seconds * speed, _motionIntensity);
+    }
+
+    private void RenderBuiltInFrame(string motion, double seconds, double intensity)
+    {
+        double gait = Math.Sin(seconds * (motion == "sprint" ? 7.5 : 4.5));
+        double amplitude = (motion == "sprint" ? 50 : motion == "walk" ? 30 : 0) * intensity;
         _bones["leftArm"].Angle = amplitude * gait;
         _bones["rightArm"].Angle = -amplitude * gait;
         _bones["leftLeg"].Angle = -amplitude * gait;
         _bones["rightLeg"].Angle = amplitude * gait;
-        _bones["head"].Angle = Math.Sin(_tick * .6) * 2;
-        if (mode == "attack") _bones["rightArm"].Angle = -90 + 75 * Math.Sin(_tick * 2);
-        if (mode == "hurt")
+        _bones["body"].Angle = 0;
+        _bones["head"].Angle = Math.Sin(seconds * 1.35) * intensity;
+
+        if (motion == "attack")
         {
-            _bones["leftArm"].Angle = -40 + 10 * Math.Sin(_tick * 3);
-            _bones["rightArm"].Angle = -40 + 10 * Math.Sin(_tick * 3);
-            _bones["head"].Angle = -14 + 10 * Math.Sin(_tick * 3);
+            // 24° 的平滑挥臂替代原来的 -90° ± 75°；每次挥击后自然回到站姿。
+            double phase = seconds % 1.05;
+            double swing = phase < .48 ? Math.Pow(Math.Sin(Math.PI * phase / .48), 2) * intensity : 0;
+            _bones["rightArm"].Angle = -24 * swing;
+            _bones["leftArm"].Angle = -3 * swing;
+            _bones["body"].Angle = 2 * swing;
+        }
+        else if (motion == "hurt")
+        {
+            double phase = seconds % HurtCycleSeconds;
+            double recoil = phase < .28 ? Math.Pow(Math.Sin(Math.PI * phase / .28), 2) * intensity : 0;
+            _bones["leftArm"].Angle = -8 * recoil;
+            _bones["rightArm"].Angle = -8 * recoil;
+            _bones["head"].Angle = -4 * recoil;
+            _bones["body"].Angle = 3 * recoil;
+            int cycle = (int)(seconds / HurtCycleSeconds);
+            if (cycle != _lastHurtCycle)
+            {
+                _lastHurtCycle = cycle;
+                _hurtTint.BeginAnimation(Brush.OpacityProperty, null);
+                _hurtTint.Opacity = 0;
+                // 用独立动画时钟归零：即使 UI 帧很晚，也不会把红色留到下一次帧回调。
+                // 迟到超过 80 ms 的帧直接略过闪光，绝不补播/延长受击滤镜。
+                if (phase < HurtFlashSeconds && intensity > 0)
+                    _hurtTint.BeginAnimation(Brush.OpacityProperty, new DoubleAnimation(
+                        .10 * intensity * (1 - phase / HurtFlashSeconds), 0,
+                        TimeSpan.FromSeconds(HurtFlashSeconds - phase)) { FillBehavior = FillBehavior.Stop });
+            }
         }
     }
     private void Close_Click(object sender, RoutedEventArgs e) => Close();

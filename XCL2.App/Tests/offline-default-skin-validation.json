@@ -1,0 +1,33 @@
+{
+  "status": "PASS_STATIC",
+  "source_attachment": "xztx127(1).png",
+  "embedded_asset": "Resources/Skins/steve.png",
+  "sha256": "31f477eb1a7beee631c2ca64d06f8f68fa93a3386d04452ab27f43acdf1b60cb",
+  "dimensions": [
+    64,
+    64
+  ],
+  "pixel_format": "RGBA",
+  "asset_identical_to_uploaded_png": true,
+  "embedded_resource_logical_name": "XCL2.App.Resources.Skins.steve.png",
+  "default_accounts": [
+    "Offline/None",
+    "Offline/Steve"
+  ],
+  "default_avatar": "Rendered from the same embedded skin PNG; no username lookup or stale custom path",
+  "default_3d_model": "Uses the same complete embedded PNG; custom/online skins retain their own loading paths",
+  "account_auto_conversion_on_launch": "Removed None-to-Custom matching by username",
+  "account_creation_review": [
+    "LoginPage creates ordinary Offline account with default SkinType.None",
+    "GuestModeService creates temporary Offline account with default SkinType.None"
+  ],
+  "csharp_syntax": {
+    "Services/OfflineDefaultSkin.cs": true,
+    "Services/AccountAvatarConverter.cs": true,
+    "Services/AccountAvatarCacheService.cs": true,
+    "Views/SkinModelViewerDialog.xaml.cs": true,
+    "Views/MainWindow.xaml.cs": true
+  },
+  "runtime_validation": "NOT_RUN: Windows WPF runtime unavailable in this Linux workspace",
+  "game_client_scope": "Launcher avatar/model resource only. Vanilla game skin lookup is not overridden by these changes."
+}

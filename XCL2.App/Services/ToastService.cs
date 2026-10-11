@@ -1,4 +1,4 @@
-﻿using System.Windows;
+using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
@@ -33,9 +33,168 @@ namespace XCL2.App.Services;
 public static class ToastService
 {
     private static MainWindow? _host;
+    private sealed class CardState
+    {
+        public required ItemsControl Owner;
+        public DispatcherTimer? Timer;
+        public int Generation;
+        public bool Dismissing;
+        public bool SlideOutLeft;
+    }
+    private static readonly Dictionary<Border, CardState> Cards = new();
+
+    static ToastService()
+    {
+        AnimationSettingsService.Changed += () =>
+        {
+            if (AnimationSettingsService.IsEnabled(AnimationKind.Toast) || _host == null) return;
+            void FinishTransitions()
+            {
+                foreach (var pair in Cards.ToArray())
+                {
+                    if (pair.Value.Dismissing) RemoveCard(pair.Key);
+                    else StopAnimations(pair.Key, pair.Value);
+                }
+            }
+            if (_host.Dispatcher.CheckAccess()) FinishTransitions();
+            else if (!_host.Dispatcher.HasShutdownStarted)
+                _host.Dispatcher.BeginInvoke(new Action(FinishTransitions));
+        };
+    }
 
     /// <summary>MainWindow 构造完成后注册一次，跟 OverlayDialogService.Register 同一个时机。</summary>
-    public static void Register(MainWindow host) => _host = host;
+    public static void Register(MainWindow host)
+    {
+        if (_host != null && !ReferenceEquals(_host, host))
+            foreach (var card in Cards.Keys.ToArray()) RemoveCard(card);
+        _host = host;
+    }
+
+    private static void TrackCard(Border card, ItemsControl owner)
+    {
+        Cards.Add(card, new CardState { Owner = owner, SlideOutLeft = ReferenceEquals(owner, _host?.ActionToastHost) });
+        card.Unloaded += Card_Unloaded;
+    }
+
+    private static void Card_Unloaded(object sender, RoutedEventArgs e)
+    {
+        if (sender is Border card) RemoveCard(card);
+    }
+
+    private static void StopAnimations(Border card, CardState state)
+    {
+        state.Generation++;
+        card.BeginAnimation(UIElement.OpacityProperty, null);
+        card.Opacity = 1;
+        if (card.RenderTransform is TranslateTransform slide)
+        {
+            slide.BeginAnimation(TranslateTransform.XProperty, null);
+            slide.X = 0;
+        }
+    }
+
+    private static void ReleaseCard(Border card)
+    {
+        if (!Cards.Remove(card, out var state)) return;
+        state.Timer?.Stop();
+        state.Timer = null;
+        StopAnimations(card, state);
+        card.Unloaded -= Card_Unloaded;
+    }
+
+    private static void RemoveCard(Border card)
+    {
+        if (!Cards.TryGetValue(card, out var state))
+        {
+            _host?.ToastHost.Items.Remove(card);
+            _host?.ActionToastHost.Items.Remove(card);
+            return;
+        }
+        var owner = state.Owner;
+        ReleaseCard(card);
+        owner.Items.Remove(card);
+    }
+
+    private static TranslateTransform ShowCard(Border card, double direction)
+    {
+        var slide = new TranslateTransform();
+        card.RenderTransform = slide;
+        var state = Cards[card];
+        StopAnimations(card, state);
+        var intensity = AnimationSettingsService.Intensity(AnimationKind.Toast);
+        if (intensity <= 0) return slide;
+
+        var generation = state.Generation;
+        var duration = AnimationSettingsService.Duration(180, AnimationKind.Toast);
+        var fade = new DoubleAnimation(1 - 0.6 * intensity, 1, duration) { FillBehavior = FillBehavior.Stop };
+        fade.Completed += (_, _) =>
+        {
+            if (Cards.TryGetValue(card, out var current) && current.Generation == generation)
+                StopAnimations(card, current);
+        };
+        slide.BeginAnimation(TranslateTransform.XProperty,
+            new DoubleAnimation(direction * 20 * intensity, 0, duration)
+            {
+                FillBehavior = FillBehavior.Stop,
+                EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut }
+            }, HandoffBehavior.SnapshotAndReplace);
+        card.BeginAnimation(UIElement.OpacityProperty, fade, HandoffBehavior.SnapshotAndReplace);
+        return slide;
+    }
+
+    private static void StartLifetime(Border card, double seconds)
+    {
+        if (!Cards.TryGetValue(card, out var state)) return;
+        state.Timer?.Stop();
+        var timer = new DispatcherTimer(DispatcherPriority.Background, card.Dispatcher)
+        {
+            Interval = TimeSpan.FromSeconds(double.IsFinite(seconds) ? Math.Max(0.05, seconds) : 3.5)
+        };
+        state.Timer = timer;
+        timer.Tick += (_, _) =>
+        {
+            timer.Stop();
+            if (Cards.TryGetValue(card, out var current)) current.Timer = null;
+            DismissCard(card);
+        };
+        timer.Start();
+    }
+
+    private static void DismissCard(Border card, double? slideTarget = null)
+    {
+        if (!Cards.TryGetValue(card, out var state) || state.Dismissing) return;
+        state.Dismissing = true;
+        card.IsHitTestVisible = false;
+        if (card.IsMouseCaptured) card.ReleaseMouseCapture();
+        card.ReleaseAllTouchCaptures();
+        state.Timer?.Stop();
+        state.Timer = null;
+        if (!slideTarget.HasValue && state.SlideOutLeft)
+            slideTarget = -Math.Max(card.ActualWidth, card.DesiredSize.Width) - 24;
+        var intensity = AnimationSettingsService.Intensity(AnimationKind.Toast);
+        if (intensity <= 0) { RemoveCard(card); return; }
+        var from = card.Opacity;
+        var fromX = (card.RenderTransform as TranslateTransform)?.X ?? 0;
+        StopAnimations(card, state);
+        var generation = state.Generation;
+        var duration = AnimationSettingsService.Duration(150, AnimationKind.Toast);
+        // 强度控制退场幅度；即使只轻微淡出，完成后也照常移除通知。
+        var fade = new DoubleAnimation(from, from * (1 - intensity), duration)
+        { FillBehavior = FillBehavior.Stop };
+        fade.Completed += (_, _) =>
+        {
+            if (Cards.TryGetValue(card, out var current) && current.Generation == generation)
+                RemoveCard(card);
+        };
+        if (slideTarget.HasValue && card.RenderTransform is TranslateTransform slide)
+            slide.BeginAnimation(TranslateTransform.XProperty,
+                new DoubleAnimation(fromX, fromX + (slideTarget.Value - fromX) * intensity, duration)
+                {
+                    FillBehavior = FillBehavior.Stop,
+                    EasingFunction = new CubicEase { EasingMode = EasingMode.EaseIn }
+                }, HandoffBehavior.SnapshotAndReplace);
+        card.BeginAnimation(UIElement.OpacityProperty, fade, HandoffBehavior.SnapshotAndReplace);
+    }
 
     public enum ToastKind { Info, Success, Warning, Error }
 
@@ -55,36 +214,16 @@ public static class ToastService
         try
         {
             var card = BuildCard(message, kind);
+            TrackCard(card, _host.ToastHost);
             _host.ToastHost.Items.Add(card);
 
             // 同屏最多留 4 条，超出就把最老的挤掉——否则批量操作时会糊满整个右侧。
             while (_host.ToastHost.Items.Count > 4)
-                _host.ToastHost.Items.RemoveAt(0);
+                if (_host.ToastHost.Items[0] is Border oldest) RemoveCard(oldest);
+                else _host.ToastHost.Items.RemoveAt(0);
 
-            // 淡入 + 从右侧滑入
-            var slide = new TranslateTransform(24, 0);
-            card.RenderTransform = slide;
-            card.Opacity = 0;
-            card.BeginAnimation(UIElement.OpacityProperty,
-                new DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(160)));
-            slide.BeginAnimation(TranslateTransform.XProperty,
-                new DoubleAnimation(24, 0, TimeSpan.FromMilliseconds(160))
-                { EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut } });
-
-            // 到点淡出并移除
-            var timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(durationSeconds) };
-            timer.Tick += (_, _) =>
-            {
-                timer.Stop();
-                var fade = new DoubleAnimation(1, 0, TimeSpan.FromMilliseconds(220));
-                fade.Completed += (_, _) =>
-                {
-                    if (_host?.ToastHost != null && _host.ToastHost.Items.Contains(card))
-                        _host.ToastHost.Items.Remove(card);
-                };
-                card.BeginAnimation(UIElement.OpacityProperty, fade);
-            };
-            timer.Start();
+            ShowCard(card, 1);
+            StartLifetime(card, durationSeconds);
         }
         catch
         {
@@ -164,43 +303,28 @@ public static class ToastService
                 for (int i = _host.ActionToastHost.Items.Count - 1; i >= 0; i--)
                 {
                     if (_host.ActionToastHost.Items[i] is Border b && Equals(b.Tag, key))
-                        _host.ActionToastHost.Items.RemoveAt(i);
+                        RemoveCard(b);
                 }
             }
 
             var card = BuildActionCard(message, hint, primaryText, primaryAction, secondaryText, secondaryAction, dismissible);
             card.Tag = key;
+            TrackCard(card, _host.ActionToastHost);
             _host.ActionToastHost.Items.Add(card);
 
             // 同屏最多留 3 条，避免用户攒了一堆没处理的通知糊满左下角。
             while (_host.ActionToastHost.Items.Count > 3)
-                _host.ActionToastHost.Items.RemoveAt(0);
+                if (_host.ActionToastHost.Items[0] is Border oldest) RemoveCard(oldest);
+                else _host.ActionToastHost.Items.RemoveAt(0);
 
-            var slide = new TranslateTransform(-24, 0);
-            card.RenderTransform = slide;
-            card.Opacity = 0;
-            card.BeginAnimation(UIElement.OpacityProperty,
-                new DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(160)));
-            var slideIn = new DoubleAnimation(-24, 0, TimeSpan.FromMilliseconds(160))
-            { EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut } };
-            // 入场动画结束后释放对 X 的占用，否则后面拖动时改不动它。
-            slideIn.Completed += (_, _) => { slide.BeginAnimation(TranslateTransform.XProperty, null); slide.X = 0; };
-            slide.BeginAnimation(TranslateTransform.XProperty, slideIn);
+            var slide = ShowCard(card, -1);
             if (dismissible) EnableSwipeToDismiss(card, slide);
 
             // 操作卡片默认不会自动消失；只有某个调用点明确传入 autoDismissSeconds 时才挂计时器。
             // 设置页的“自动保存 / 回退”和“未保存 / 保存 / 撤销”都不传该参数，因此会一直保留
             // 到用户主动操作，避免回退入口在用户来得及点击前消失。
             if (autoDismissSeconds is > 0)
-            {
-                var timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(autoDismissSeconds.Value) };
-                timer.Tick += (_, _) =>
-                {
-                    timer.Stop();
-                    DismissActionCard(card);
-                };
-                timer.Start();
-            }
+                StartLifetime(card, autoDismissSeconds.Value);
         }
         catch (Exception ex)
         {
@@ -231,16 +355,7 @@ public static class ToastService
     }
 
     private static void DismissActionCard(Border card)
-    {
-        if (_host?.ActionToastHost == null) return;
-        var fade = new DoubleAnimation(1, 0, TimeSpan.FromMilliseconds(180));
-        fade.Completed += (_, _) =>
-        {
-            if (_host?.ActionToastHost != null && _host.ActionToastHost.Items.Contains(card))
-                _host.ActionToastHost.Items.Remove(card);
-        };
-        card.BeginAnimation(UIElement.OpacityProperty, fade);
-    }
+        => DismissCard(card);
 
     /// <summary>支持按住卡片向左拖动（从右往左滑）关闭：拖过约 1/4 宽度松手即关闭，否则弹回。
     /// 按下后移动超过阈值才开始接管鼠标，所以卡片上的按钮仍可正常点击。</summary>
@@ -248,24 +363,76 @@ public static class ToastService
     {
         Point start = default;
         bool pressed = false, dragging = false;
+        int? touchId = null;
 
-        card.PreviewMouseLeftButtonDown += (_, e) =>
+        void RestorePosition()
         {
-            pressed = true; dragging = false;
-            start = e.GetPosition(card);
-        };
-        card.PreviewMouseMove += (_, e) =>
+            if (!Cards.TryGetValue(card, out var state) || state.Dismissing) return;
+            var fromX = slide.X;
+            var fromOpacity = card.Opacity;
+            StopAnimations(card, state);
+            var intensity = AnimationSettingsService.Intensity(AnimationKind.Toast);
+            if (intensity <= 0) return;
+            var generation = state.Generation;
+            var duration = AnimationSettingsService.Duration(150, AnimationKind.Toast);
+            var restore = new DoubleAnimation(1 - (1 - fromOpacity) * intensity, 1, duration)
+                { FillBehavior = FillBehavior.Stop };
+            restore.Completed += (_, _) =>
+            {
+                if (Cards.TryGetValue(card, out var current) && current.Generation == generation)
+                    StopAnimations(card, current);
+            };
+            slide.BeginAnimation(TranslateTransform.XProperty,
+                new DoubleAnimation(fromX * intensity, 0, duration)
+                {
+                    FillBehavior = FillBehavior.Stop,
+                    EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut }
+                }, HandoffBehavior.SnapshotAndReplace);
+            card.BeginAnimation(UIElement.OpacityProperty, restore, HandoffBehavior.SnapshotAndReplace);
+        }
+
+        bool Move(Point point)
         {
-            if (!pressed || e.LeftButton != System.Windows.Input.MouseButtonState.Pressed) return;
-            var dx = e.GetPosition(card).X - start.X;
+            if (!Cards.TryGetValue(card, out var state) || state.Dismissing) return false;
+            var dx = point.X - start.X;
+            var dy = point.Y - start.Y;
             if (!dragging)
             {
-                if (dx > -8) return; // 只响应向左的拖动
+                // 垂直滚动和普通点击不应被卡片误判成关闭手势。
+                if (dx > -8 || Math.Abs(dx) < Math.Abs(dy) * 1.25) return false;
+                StopAnimations(card, state);
                 dragging = true;
-                card.CaptureMouse();
             }
             slide.X = Math.Min(0, dx);
             card.Opacity = Math.Max(0.3, 1 + slide.X / Math.Max(card.ActualWidth, 1));
+            return true;
+        }
+
+        void FinishDrag()
+        {
+            if (slide.X < -Math.Max(card.ActualWidth, 1) / 4)
+                DismissCard(card, -card.ActualWidth - 24);
+            else
+                RestorePosition();
+        }
+
+        card.PreviewMouseLeftButtonDown += (_, e) =>
+        {
+            if (touchId.HasValue) return;
+            if (!Cards.TryGetValue(card, out var state) || state.Dismissing) return;
+            pressed = true; dragging = false;
+            start = e.GetPosition(state.Owner);
+        };
+        card.PreviewMouseMove += (_, e) =>
+        {
+            if (touchId.HasValue || !pressed || e.LeftButton != System.Windows.Input.MouseButtonState.Pressed ||
+                !Cards.TryGetValue(card, out var state) || state.Dismissing) return;
+            // 用不随卡片移动的宿主坐标计算，避免平移卡片后 dx 反复归零而抖动。
+            if (Move(e.GetPosition(state.Owner)))
+            {
+                if (!card.IsMouseCaptured) card.CaptureMouse();
+                e.Handled = true;
+            }
         };
         card.PreviewMouseLeftButtonUp += (_, e) =>
         {
@@ -274,20 +441,48 @@ public static class ToastService
             if (!wasDragging) return;
             card.ReleaseMouseCapture();
             e.Handled = true;
-            if (slide.X < -Math.Max(card.ActualWidth, 1) / 4)
+            FinishDrag();
+        };
+        card.LostMouseCapture += (_, e) =>
+        {
+            // 子按钮捕获转交给卡片时也会冒泡，只有卡片自身丢失捕获才取消手势。
+            if (!ReferenceEquals(e.OriginalSource, card)) return;
+            var restore = dragging;
+            pressed = false; dragging = false;
+            if (restore) RestorePosition();
+        };
+        card.PreviewTouchDown += (_, e) =>
+        {
+            if ((touchId.HasValue && dragging) || !Cards.TryGetValue(card, out var state) || state.Dismissing) return;
+            touchId = e.TouchDevice.Id;
+            start = e.GetTouchPoint(state.Owner).Position;
+            pressed = false; dragging = false;
+        };
+        card.PreviewTouchMove += (_, e) =>
+        {
+            if (touchId != e.TouchDevice.Id || !Cards.TryGetValue(card, out var state)) return;
+            if (Move(e.GetTouchPoint(state.Owner).Position))
             {
-                var off = new DoubleAnimation(slide.X, -card.ActualWidth - 40, TimeSpan.FromMilliseconds(140));
-                off.Completed += (_, _) => DismissActionCard(card);
-                slide.BeginAnimation(TranslateTransform.XProperty, off);
+                e.TouchDevice.Capture(card);
+                e.Handled = true;
             }
-            else
-            {
-                slide.BeginAnimation(TranslateTransform.XProperty,
-                    new DoubleAnimation(slide.X, 0, TimeSpan.FromMilliseconds(140)) { FillBehavior = FillBehavior.Stop });
-                slide.X = 0;
-                card.BeginAnimation(UIElement.OpacityProperty, null);
-                card.Opacity = 1;
-            }
+        };
+        card.PreviewTouchUp += (_, e) =>
+        {
+            if (touchId != e.TouchDevice.Id) return;
+            var wasDragging = dragging;
+            touchId = null; dragging = false;
+            if (!wasDragging) return; // 保留点按按钮的 WPF 鼠标提升行为。
+            e.TouchDevice.Capture(null);
+            e.Handled = true;
+            FinishDrag();
+        };
+        card.LostTouchCapture += (_, e) =>
+        {
+            if (!ReferenceEquals(e.OriginalSource, card) || touchId != e.TouchDevice.Id) return;
+            var restore = dragging;
+            touchId = null; dragging = false;
+            if (restore) RestorePosition();
         };
     }
 
@@ -383,13 +578,6 @@ public static class ToastService
         };
         card.SetResourceReference(Border.BackgroundProperty, "PanelBrush");
         card.BorderBrush = accent;
-        card.Effect = new System.Windows.Media.Effects.DropShadowEffect
-        {
-            Color = Colors.Black,
-            Opacity = 0.22,
-            BlurRadius = 16,
-            ShadowDepth = 2,
-        };
 
         return card;
     }
@@ -445,13 +633,6 @@ public static class ToastService
         card.SetResourceReference(Border.BackgroundProperty, "PanelBrush");
         card.BorderBrush = accent;
         card.BorderThickness = new Thickness(3, 1, 1, 1);
-        card.Effect = new System.Windows.Media.Effects.DropShadowEffect
-        {
-            Color = Colors.Black,
-            Opacity = 0.22,
-            BlurRadius = 16,
-            ShadowDepth = 2,
-        };
 
         return card;
     }

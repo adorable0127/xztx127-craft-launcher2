@@ -868,4 +868,7 @@
     <system:String x:Key="Str_Cs_Import_Complete_2">匯入完成</system:String>
     <system:String x:Key="Str_Ui_Full_Launcher_Log">完整啟動器日誌</system:String>
     <system:String x:Key="Str_Ui_Open_In_Independent_Window">獨立視窗開啟</system:String>
+    <system:String x:Key="Str_Plugin_ModSourceMenu">外掛 Mod 來源…</system:String>
+    <system:String x:Key="Str_Plugin_BackToBuiltInSources">返回內建來源</system:String>
+    <system:String x:Key="Str_Plugin_OpenModSourcesFailed">無法開啟外掛 Mod 來源：</system:String>
 </ResourceDictionary>

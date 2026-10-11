@@ -1,0 +1,62 @@
+{
+  "scope": "Plan and Build work modes, request mode inheritance and action enforcement",
+  "static_status": "PASS",
+  "changed_files": [
+    "Tests/AiHttpRegression/AiHttpRegression.csproj",
+    "Tests/AiHttpRegression/Program.cs",
+    "Tests/AiHttpRegression/Stubs.cs",
+    "XCL2.App/Models/AiAssistantModels.cs",
+    "XCL2.App/Resources/Data/FeatureSearchCatalog.json",
+    "XCL2.App/Services/AiAssistantService.cs",
+    "XCL2.App/Services/AiEndpointRouting.cs",
+    "XCL2.App/Services/AiFileAccessService.Activities.cs",
+    "XCL2.App/Services/AiFileAccessService.cs",
+    "XCL2.App/Views/AiAssistantPanel.xaml",
+    "XCL2.App/Views/AiAssistantPanel.xaml.cs",
+    "XCL2.App/Views/AiAssistantSettingsPanel.xaml",
+    "XCL2.App/Views/AiAssistantSettingsPanel.xaml.cs"
+  ],
+  "added_files": [
+    "PLAN_BUILD_NOTES.md",
+    "Tests/plan-build-static-validation.json",
+    "XCL2.App/Services/AiWorkModePolicy.cs"
+  ],
+  "missing_baseline_files": [],
+  "changed_csharp_syntax_checked": [
+    "Tests/AiHttpRegression/Program.cs",
+    "Tests/AiHttpRegression/Stubs.cs",
+    "XCL2.App/Models/AiAssistantModels.cs",
+    "XCL2.App/Services/AiAssistantService.cs",
+    "XCL2.App/Services/AiEndpointRouting.cs",
+    "XCL2.App/Services/AiFileAccessService.Activities.cs",
+    "XCL2.App/Services/AiFileAccessService.cs",
+    "XCL2.App/Services/AiWorkModePolicy.cs",
+    "XCL2.App/Views/AiAssistantPanel.xaml.cs",
+    "XCL2.App/Views/AiAssistantSettingsPanel.xaml.cs"
+  ],
+  "xml_files_checked": 142,
+  "compile_source_links_checked": 63,
+  "xaml_event_handlers_checked": 85,
+  "regression_projects_wired": [
+    "Tests/AiActivityRegression/AiActivityRegression.csproj",
+    "Tests/AiCommandRegression/AiCommandRegression.csproj",
+    "Tests/AiEndpointRegression/AiEndpointRegression.csproj",
+    "Tests/AiFileDiffRegression/AiFileDiffRegression.csproj",
+    "Tests/AiHttpRegression/AiHttpRegression.csproj",
+    "Tests/AiReasoningRegression/AiReasoningRegression.csproj",
+    "Tests/AiUsageRegression/AiUsageRegression.csproj",
+    "Tests/FeatureRegression/FeatureRegression.csproj",
+    "Tests/FeatureSearchRegression/FeatureSearchRegression.csproj",
+    "Tests/WebView2Regression/WebView2Regression.csproj"
+  ],
+  "feature_catalog_validation": "PASS: 556 catalog destinations; exact named controls, routes, category panels and 36 tab indices verified.",
+  "runtime_tests": {
+    "status": "NOT_RUN",
+    "reason": "CoreCLR cannot start (HRESULT 0x8007000E); no Windows desktop session",
+    "pending": [
+      "C# compilation",
+      "regression program execution",
+      "Windows WPF/WinUI and published bundle checks"
+    ]
+  }
+}

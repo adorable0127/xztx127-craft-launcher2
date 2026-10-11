@@ -12,13 +12,14 @@ namespace XCL2.App.Services;
 /// 账户列表（「账户」导航页 LoginPage、启动前的「选择账户」弹窗 AccountPickerDialog）里
 /// 用户名左边那个静态头像的取图逻辑。四档优先级，从高到低：
 ///   1) 用户自己导入的头像照片（Account.AvatarPhotoPath，任意图片，跟 Minecraft 皮肤无关）；
+///   未配置皮肤/选择 Steve 的离线账户在照片之后直接渲染内嵌默认 Steve PNG 的正脸。
 ///   2) <see cref="AccountAvatarCacheService"/> 后台从服务器查到的"当前公开皮肤"缓存文件——
-///      覆盖皮肤站(AuthServer)账户、正版(Microsoft)账户，以及设置过皮肤(SkinType != None)的
+///      覆盖皮肤站(AuthServer)账户、正版(Microsoft)账户，以及 Custom/Alex 的
 ///      离线账户，皮肤随时可能在服务器端被换掉，这份缓存比下面的本地文件更"新"；
 ///   3) 绑定了自定义 Minecraft 皮肤（Account.CustomSkinPath）时，从皮肤贴图截出正脸——
 ///      多数是第 2 档还没来得及查到结果、或本来就没有服务器端皮肤可查时的本地兜底；
 ///   4) 都没有——不管是"离线账户还没设置皮肤"还是"选了史蒂夫/艾利克斯默认骨架且服务器
-///      端查不到"，按 SkinType 显示内置的史蒂夫/艾利克斯默认头像图片，不需要下载/依赖任何
+///      端查不到"，离线 Steve 使用完整内嵌皮肤的正脸，Alex 使用原有默认头像，不需要下载/依赖任何
 ///      外部资源。
 /// 任何一步读取/解码失败都静默退回下一档，最终兜底一定是史蒂夫/艾利克斯默认头像，
 /// 不会出现空白头像。
@@ -45,6 +46,14 @@ public sealed class AccountAvatarConverter : IValueConverter
             catch { /* 照片损坏/被移动了，落到下一档而不是显示空白 */ }
         }
 
+        // 未配置皮肤或主动选 Steve 的离线账户固定使用内嵌默认皮肤的正脸。
+        // 忽略残留 CustomSkinPath/同名正版缓存，保留用户主动导入的头像照片优先级。
+        if (OfflineDefaultSkin.AppliesTo(account))
+        {
+            try { return OfflineDefaultSkin.LoadAvatar(); }
+            catch { /* 损坏的资源仍按最后一档兜底，转换器不向 UI 抛异常。 */ }
+        }
+
         // 第二档：后台查到的服务器端"当前公开皮肤"缓存。
         var onlineCachePath = AccountAvatarCacheService.GetCachePath(account);
         if (AccountAvatarCacheService.ShouldFetch(account) && File.Exists(onlineCachePath))
@@ -61,7 +70,8 @@ public sealed class AccountAvatarConverter : IValueConverter
         }
 
         // 第三档：自定义 Minecraft 皮肤正脸渲染。
-        if (!string.IsNullOrWhiteSpace(account.CustomSkinPath) && File.Exists(account.CustomSkinPath))
+        if (!OfflineDefaultSkin.AppliesTo(account)
+            && !string.IsNullOrWhiteSpace(account.CustomSkinPath) && File.Exists(account.CustomSkinPath))
         {
             try
             {
@@ -76,6 +86,11 @@ public sealed class AccountAvatarConverter : IValueConverter
 
         // 第四档：按 SkinType 显示内置的史蒂夫/艾利克斯默认头像图片。
         bool isAlex = account.Type == AccountType.Offline && account.SkinType == OfflineSkinType.Alex;
+        if (account.Type == AccountType.Offline && !isAlex)
+        {
+            try { return OfflineDefaultSkin.LoadAvatar(); }
+            catch { /* 资源损坏时继续使用原有安全兜底。 */ }
+        }
         return isAlex ? AlexDefaultAvatar : SteveDefaultAvatar;
     }
 

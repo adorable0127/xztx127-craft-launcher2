@@ -6,7 +6,6 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Input;
-using System.Windows.Media.Animation;
 using XCL2.App.Services;
 
 namespace XCL2.App;
@@ -492,25 +491,8 @@ public partial class App : Application
         LauncherLogService.BeginSession(earlyConfig);
         RegisterUiInteractionLogging();
 
-        // 高性能模式的按钮"约束感"微交互：跟切页动画（MainWindow.SetMainContent 里
-        // highPerf 分支）同一套设计语言——按下瞬间轻微缩小、抬起时 BackEase 回弹冲过头再
-        // 弹回，模拟 macOS/游戏 UI 那种"有重量感"的点击反馈。用全局类处理器挂在
-        // ButtonBase 上，不用逐个按钮样式改 Trigger（那样没法在运行时按设置开关热切换），
-        // 每次按下/抬起时临时读一次 ConfigService.Active?.Config.EnableHighPerformanceMode，
-        // 开关状态在设置页保存后立即对新的点击生效，不需要重启或重建按钮。
-        // 关闭时（默认）这两个处理器直接短路返回，不创建任何 Transform/动画，零额外开销。
-        EventManager.RegisterClassHandler(typeof(ButtonBase), UIElement.PreviewMouseLeftButtonDownEvent,
-            new MouseButtonEventHandler((sender, _) =>
-            {
-                if (sender is ButtonBase b && ConfigService.Active?.Config.EnableHighPerformanceMode == true)
-                    AnimateButtonPress(b, pressed: true);
-            }), handledEventsToo: true);
-        EventManager.RegisterClassHandler(typeof(ButtonBase), UIElement.PreviewMouseLeftButtonUpEvent,
-            new MouseButtonEventHandler((sender, _) =>
-            {
-                if (sender is ButtonBase b && ConfigService.Active?.Config.EnableHighPerformanceMode == true)
-                    AnimateButtonPress(b, pressed: false);
-            }), handledEventsToo: true);
+        // 轻微背景反馈不缩放文字，也不改变文字透明度；统一尊重动画设置。
+        ControlFeedbackBehavior.Register();
 
         // 兜底：正常情况下 MainWindow.Closed 会调用一次 EndSessionAndFlush（见 MainWindow 构造函数），
         // 但如果窗口没能正常触发 Closed 就整个应用退出了（比如上面 Shutdown() 分支、或者其它
@@ -656,41 +638,6 @@ public partial class App : Application
     /// Dispatcher.InvokeAsync 扔到 Background 优先级（比正常输入/布局/渲染都低，只在
     /// UI 线程真正闲下来之后才执行），不再阻塞当前这一次事件处理，视觉上的卡顿就消失了。
     /// </summary>
-    /// <summary>高性能模式按钮按下/抬起的"约束感"缩放反馈。给按钮临时挂一个
-    /// ScaleTransform(RenderTransformOrigin=0.5,0.5) 当宿主——大多数按钮本来没有自己的
-    /// RenderTransform，直接复用；如果已经有别的 Transform（少数自定义按钮），跳过不处理，
-    /// 避免互相覆盖冲突，这类按钮本来就没多少，缺个动效不影响使用。
-    /// 按下：短促 EaseOut 缩到 0.94；抬起：BackEase(Amplitude 0.6) 从 0.94 冲回 1 再轻微
-    /// 回弹，这个"冲过头再弹回"的手感就是 macOS/游戏 UI 点击反馈的核心。</summary>
-    private static void AnimateButtonPress(ButtonBase button, bool pressed)
-    {
-        if (button.RenderTransform is not System.Windows.Media.ScaleTransform scale)
-        {
-            if (button.RenderTransform != null && button.RenderTransform != System.Windows.Media.Transform.Identity)
-                return;
-            scale = new System.Windows.Media.ScaleTransform(1, 1);
-            button.RenderTransform = scale;
-            button.RenderTransformOrigin = new Point(0.5, 0.5);
-        }
-
-        scale.BeginAnimation(System.Windows.Media.ScaleTransform.ScaleXProperty, null);
-        scale.BeginAnimation(System.Windows.Media.ScaleTransform.ScaleYProperty, null);
-
-        DoubleAnimation anim;
-        if (pressed)
-        {
-            anim = new DoubleAnimation(scale.ScaleX, 0.94, TimeSpan.FromMilliseconds(80))
-            { EasingFunction = new QuadraticEase { EasingMode = EasingMode.EaseOut } };
-        }
-        else
-        {
-            anim = new DoubleAnimation(scale.ScaleX, 1.0, TimeSpan.FromMilliseconds(320))
-            { EasingFunction = new BackEase { EasingMode = EasingMode.EaseOut, Amplitude = 0.6 } };
-        }
-        scale.BeginAnimation(System.Windows.Media.ScaleTransform.ScaleXProperty, anim);
-        scale.BeginAnimation(System.Windows.Media.ScaleTransform.ScaleYProperty, anim);
-    }
-
     private static void RegisterUiInteractionLogging()
     {
         EventManager.RegisterClassHandler(typeof(ButtonBase), ButtonBase.ClickEvent,

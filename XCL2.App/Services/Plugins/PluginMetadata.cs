@@ -17,7 +17,7 @@ public sealed record PluginMetadata(string DeclaredId, string InstanceId, string
 
 internal static class PluginApi
 {
-    internal static readonly Version Version = new(1, 9);
+    internal static readonly Version Version = new(2, 3);
 }
 
 internal sealed record PluginSemanticVersion(BigInteger Major, BigInteger Minor, BigInteger Patch, string[] Prerelease)
@@ -110,7 +110,8 @@ internal static class PluginManifestReader
         var manifest = JsonSerializer.Deserialize<Manifest>(File.ReadAllText(path), JsonOptions)
             ?? throw new InvalidDataException("插件清单为空。");
         ValidateId(manifest.Id);
-        if (manifest.SchemaVersion != 1) throw new InvalidDataException("不支持此插件清单版本。");
+        if (manifest.SchemaVersion is not (1 or 2)) throw new InvalidDataException("不支持此插件清单版本。");
+        if (manifest.SchemaVersion == 2) _ = PluginPackageSignature.Verify(Path.GetDirectoryName(entryPath)!);
         if (string.IsNullOrWhiteSpace(manifest.Name)) throw new InvalidDataException("插件清单缺少名称。");
         _ = PluginSemanticVersion.Parse(manifest.Version);
         if (manifest.Entry != Path.GetFileName(entryPath) || manifest.Entry.Contains('\\') || manifest.Entry.Contains('/') ||
@@ -163,6 +164,11 @@ internal static class PluginManifestReader
 /// <summary>权限字符串与清单共用；授权仅限制通过宿主 API 的访问。</summary>
 public static class PluginPermissionNames
 {
+    public const string ProjectsRead = "projects.read", ProjectsWrite = "projects.write", TasksManage = "tasks.manage";
+    public const string DownloadsControl = "downloads.control", InstancesWrite = "instances.write", ModsWrite = "mods.write",
+        ResourcesRead = "resources.read", ResourcesInstall = "resources.install", JavaRead = "java.read", JavaSelect = "java.select";
+    public const string LauncherControl = "launcher.control", SettingsWrite = "settings.write", UiWindow = "ui.window";
+    public const string UiPreview = "ui.preview", WorldsRead = "worlds.read", WorldsWrite = "worlds.write";
     public const string AccountsRead = "accounts.read", InstancesRead = "instances.read", ModsRead = "mods.read",
         DownloadsRead = "downloads.read", SettingsRead = "settings.read", EnvironmentRead = "environment.read",
         Lifecycle = "events.lifecycle", LaunchModify = "launch.modify", DownloadIntercept = "downloads.intercept",
@@ -173,7 +179,7 @@ public static class PluginPermissionNames
         ProcessInstall = "process.install", UiBasic = "ui.basic", UiComponents = "ui.components",
         UiNavigation = "ui.navigation", UiInstanceActions = "ui.instanceActions", UiSettings = "ui.settings",
         UiBackground = "ui.background", Messaging = "plugin.messaging";
-    public static ImmutableArray<string> All { get; } = ImmutableArray.Create(AccountsRead, InstancesRead, ModsRead, DownloadsRead,
+    public static ImmutableArray<string> All { get; } = ImmutableArray.Create(ProjectsRead, ProjectsWrite, TasksManage, DownloadsControl, InstancesWrite, ModsWrite, ResourcesRead, ResourcesInstall, JavaRead, JavaSelect, LauncherControl, SettingsWrite, UiWindow, UiPreview, WorldsRead, WorldsWrite, AccountsRead, InstancesRead, ModsRead, DownloadsRead,
         SettingsRead, EnvironmentRead, Lifecycle, LaunchModify, DownloadIntercept, InstanceValidate, Network,
         DownloadProvider, ModProvider, LoaderProvider, AuthProvider, InstanceFilesRead, InstanceFilesWrite,
         ExternalFilesRead, ExternalFilesWrite, ProcessInstall, UiBasic, UiComponents, UiNavigation, UiInstanceActions,

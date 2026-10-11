@@ -933,4 +933,7 @@
 
     <system:String x:Key="Str_Ui_Channel_Client">渠道：</system:String>
 
+    <system:String x:Key="Str_Plugin_ModSourceMenu">插件 Mod 来源…</system:String>
+    <system:String x:Key="Str_Plugin_BackToBuiltInSources">返回内置来源</system:String>
+    <system:String x:Key="Str_Plugin_OpenModSourcesFailed">无法打开插件 Mod 来源：</system:String>
 </ResourceDictionary>

@@ -1,7 +1,6 @@
 using System.IO;
 using System.Net.Http;
 using System.Net.Http.Headers;
-using System.Security.Cryptography;
 using System.Text.Json;
 using XCL2.App.Models;
 
@@ -55,9 +54,8 @@ public class ModrinthService
         var q = Uri.EscapeDataString(query ?? "");
         var url = $"{BaseUrl}/search?query={q}&facets={facets}&offset={offset}&limit={limit}&index=relevance";
 
-        var resp = await _http.GetAsync(url, ct);
-        resp.EnsureSuccessStatusCode();
-        var json = await resp.Content.ReadAsStringAsync(ct);
+        var json = await DownloadEndpoints.GetStringWithFallbackAsync(_http, url, DownloadEndpoints.PreferMirror,
+            "读取 Modrinth 资源信息失败", ct);
         return JsonSerializer.Deserialize<ModrinthSearchResult>(json) ?? new ModrinthSearchResult();
     }
 
@@ -77,9 +75,8 @@ public class ModrinthService
         if (!string.IsNullOrWhiteSpace(gameVersion))
             url += $"?game_versions={Uri.EscapeDataString($"[\"{gameVersion}\"]")}";
 
-        var resp = await _http.GetAsync(url, ct);
-        resp.EnsureSuccessStatusCode();
-        var json = await resp.Content.ReadAsStringAsync(ct);
+        var json = await DownloadEndpoints.GetStringWithFallbackAsync(_http, url, DownloadEndpoints.PreferMirror,
+            "读取 Modrinth 资源信息失败", ct);
         return JsonSerializer.Deserialize<List<ModrinthVersion>>(json) ?? new List<ModrinthVersion>();
     }
 
@@ -117,9 +114,8 @@ public class ModrinthService
         var url = $"{BaseUrl}/project/{Uri.EscapeDataString(projectId)}/version";
         if (query.Count > 0) url += "?" + string.Join("&", query);
 
-        var resp = await _http.GetAsync(url, ct);
-        resp.EnsureSuccessStatusCode();
-        var json = await resp.Content.ReadAsStringAsync(ct);
+        var json = await DownloadEndpoints.GetStringWithFallbackAsync(_http, url, DownloadEndpoints.PreferMirror,
+            "读取 Modrinth 资源信息失败", ct);
         var all = JsonSerializer.Deserialize<List<ModrinthVersion>>(json) ?? new List<ModrinthVersion>();
 
         // 服务端已经过滤过一次，这里再兜底校验一遍，防止接口行为变化时又混进别的加载器的文件。
@@ -226,42 +222,13 @@ public class ModrinthService
 
         progress?.Report($"下载 {file.Filename} ...");
 
-        const int maxAttempts = 3;
-        Exception? lastError = null;
-        for (var attempt = 1; attempt <= maxAttempts; attempt++)
-        {
-            var tmp = destPath + $".tmp{attempt}";
-            try
-            {
-                var resolved = await Plugins.PluginInterceptionRegistry.PrepareDownloadAsync(file.Url, file.Filename, file.Hashes?.Sha1, ct);
-                using (var resp = await _http.GetAsync(resolved, HttpCompletionOption.ResponseHeadersRead, ct))
-                {
-                    resp.EnsureSuccessStatusCode();
-                    await using var fs = File.Create(tmp);
-                    await resp.Content.CopyToAsync(fs, ct);
-                }
-
-                if (!string.IsNullOrEmpty(file.Hashes?.Sha1) && !VerifySha1(tmp, file.Hashes.Sha1))
-                {
-                    lastError = new IOException("文件校验失败(SHA1 不匹配)，可能下载不完整。");
-                    TryDelete(tmp);
-                    continue;
-                }
-
-                if (File.Exists(destPath)) File.Delete(destPath);
-                File.Move(tmp, destPath);
-                Plugins.PluginHostBridge.Current?.NotifyModChange(destPath, "installed");
-                progress?.Report("下载完成");
-                return destPath;
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException and not Plugins.PluginFlowCanceledException)
-            {
-                lastError = ex;
-                TryDelete(tmp);
-            }
-        }
-
-        throw new IOException($"下载失败，已重试 {maxAttempts} 次: {file.Filename}", lastError);
+        await DownloadEndpoints.DownloadFileWithFallbackAsync(_http, file.Url, DownloadEndpoints.PreferMirror,
+            destPath, $"下载 {file.Filename} 失败", ct: ct,
+            expectedSha1: file.Hashes?.Sha1, expectedSha512: file.Hashes?.Sha512,
+            expectedSize: file.Size > 0 ? file.Size : null);
+        Plugins.PluginHostBridge.Current?.NotifyModChange(destPath, "installed");
+        progress?.Report("下载完成");
+        return destPath;
     }
 
     private static string ToProjectTypeString(ModrinthResourceType type) => type switch
@@ -275,21 +242,4 @@ public class ModrinthService
         _ => throw new ArgumentOutOfRangeException(nameof(type))
     };
 
-    private static void TryDelete(string path)
-    {
-        try { if (File.Exists(path)) File.Delete(path); }
-        catch { /* 忽略清理失败 */ }
-    }
-
-    private static bool VerifySha1(string path, string expectedSha1)
-    {
-        try
-        {
-            using var sha1 = SHA1.Create();
-            using var fs = File.OpenRead(path);
-            var hash = Convert.ToHexString(sha1.ComputeHash(fs)).ToLowerInvariant();
-            return hash == expectedSha1.ToLowerInvariant();
-        }
-        catch { return false; }
-    }
 }

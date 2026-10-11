@@ -128,6 +128,40 @@ public sealed class PluginManager
         EnsureDirectories();
     }
     public string InstalledDirectory => _installedDir;
+    public string BackupDirectory => Path.Combine(_pluginsRoot, "backups");
+    public string? LastBackupPath { get; private set; }
+    public async Task<string> BackupBeforeUpgradeAsync(CancellationToken ct)
+    {
+        ShutdownAll(); ct.ThrowIfCancellationRequested();
+        LastBackupPath = await Task.Run(() => PluginUpgradeBackup.Create(_pluginsRoot), ct);
+        return LastBackupPath;
+    }
+    public string BackupBeforeUpgrade()
+    {
+        ShutdownAll();
+        LastBackupPath = PluginUpgradeBackup.Create(_pluginsRoot);
+        _logSink("[PluginUpgrade] 备份已校验：" + LastBackupPath);
+        return LastBackupPath;
+    }
+    public void RestoreUpgradeBackup(string backup)
+    {
+        ShutdownAll(); LastBackupPath = PluginUpgradeBackup.Create(_pluginsRoot);
+        PluginUpgradeBackup.Restore(backup, _pluginsRoot);
+    }
+    public string InstallUpgrade(string package, string targetEntry)
+    {
+        var target = RequireInstalledEntry(targetEntry);
+        var parent = Path.GetDirectoryName(target)!;
+        var conflict = parent.Equals(_installedDir, StringComparison.OrdinalIgnoreCase) ? target : parent;
+        var unpack = Path.Combine(_pluginsRoot, "staging", Guid.NewGuid().ToString("N"));
+        try
+        {
+            ExtractPackage(package, unpack); var entry = PluginManifestReader.ReadEntry(unpack);
+            if (entry != Path.GetFileName(target)) throw new IOException("升级包入口与原插件不一致。");
+            return InstallEntry(Path.Combine(unpack, entry), PluginInstallConflictAction.Replace, unpack, conflict, false)!;
+        }
+        finally { TryDelete(unpack); }
+    }
     private void EnsureDirectories()
     {
         Directory.CreateDirectory(_installedDir);
@@ -264,14 +298,14 @@ public sealed class PluginManager
         }
     }
 
-    private string? InstallEntry(string sourcePath, PluginInstallConflictAction action, string? payloadDirectory)
+    private string? InstallEntry(string sourcePath, PluginInstallConflictAction action, string? payloadDirectory, string? targetOverride = null, bool enableOnInstall = true)
     {
         if (!Enum.IsDefined(action)) throw new ArgumentOutOfRangeException(nameof(action));
-        var conflict = FindInstallConflict(sourcePath);
+        var conflict = targetOverride ?? FindInstallConflict(sourcePath);
         if (conflict != null && action == PluginInstallConflictAction.Cancel) return null;
         ValidateSource(sourcePath);
         var name = SafeFileName(Path.GetFileNameWithoutExtension(sourcePath));
-        var destinationDir = Path.Combine(_installedDir, name);
+        var destinationDir = targetOverride != null && Directory.Exists(targetOverride) ? targetOverride : Path.Combine(_installedDir, name);
         string? suffix = null;
         var copyDependenciesFrom = action == PluginInstallConflictAction.Copy && conflict != null && Directory.Exists(conflict) ? conflict : null;
         if (conflict != null && action == PluginInstallConflictAction.Copy)
@@ -313,8 +347,10 @@ public sealed class PluginManager
                 _ = PluginManifestReader.Read(sourcePath, "");
                 File.Copy(publicManifest, Path.Combine(stage, PluginManifestReader.FileName), true);
             }
+            _ = PluginManifestReader.Read(Path.Combine(stage, entryName), "");
             File.WriteAllText(Path.Combine(stage, ManifestName), JsonSerializer.Serialize(new InstallManifest
             { EntryFile = entryName, InstanceSuffix = suffix }));
+            if (conflict != null) BackupBeforeUpgrade();
             foreach (var old in oldEntries) StopOne(old);
             if (conflict != null)
             {
@@ -326,7 +362,7 @@ public sealed class PluginManager
             movedNew = true;
             var destination = Path.Combine(destinationDir, entryName);
             foreach (var old in oldEntries) state.Remove(StateKey(old));
-            state[StateKey(destination)] = new PluginState(); // 替换也算新导入，OnceOnImport 可运行新版本。
+            state[StateKey(destination)] = new PluginState { Enabled = enableOnInstall }; // 替换也算新导入，OnceOnImport 可运行新版本。
             WriteState(state);
             TryDelete(backup);
             return destination;

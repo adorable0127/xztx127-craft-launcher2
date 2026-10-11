@@ -68,6 +68,15 @@ public static class WindowChromeService
         _ = DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE_OLD, ref useDark, sizeof(int));
     }
 
+    /// <summary>主窗口自带轻过渡，关闭 DWM 的额外尺寸过渡，避免两套动画叠加。</summary>
+    public static void DisableNativeTransitions(Window window)
+    {
+        var hwnd = new WindowInteropHelper(window).Handle;
+        if (hwnd == IntPtr.Zero) return;
+        var disabled = 1;
+        _ = DwmSetWindowAttribute(hwnd, 3 /* DWMWA_TRANSITIONS_FORCEDISABLED */, ref disabled, sizeof(int));
+    }
+
     // ===== F11 全屏（仅 MainWindow 使用） =====
 
     private static WindowStyle _savedStyle;
@@ -96,17 +105,21 @@ public static class WindowChromeService
 
             // 顺序很重要：先去掉 ResizeMode/WindowStyle 系统边框，再设 Maximized，
             // 避免中间态短暂露出"半全屏带边框"的闪烁。
+            _isFullScreen = true;
+            // 从已经最大化的窗口进入全屏也必须重新计算 monitor 边界。
+            // 同一消息内完成，不修改正常窗口的尺寸/RestoreBounds。
+            if (window.WindowState == WindowState.Maximized) window.WindowState = WindowState.Normal;
             window.ResizeMode = ResizeMode.NoResize;
             window.WindowStyle = WindowStyle.None;
             window.WindowState = WindowState.Maximized;
-            _isFullScreen = true;
         }
         else
         {
+            _isFullScreen = false;
+            window.WindowState = WindowState.Normal;
             window.WindowStyle = _savedStyle;
             window.ResizeMode = _savedResizeMode;
             window.WindowState = _savedState;
-            _isFullScreen = false;
         }
     }
 
@@ -199,10 +212,11 @@ public static class WindowChromeService
                     // ptMaxPosition/ptMaxSize 要用"相对显示器左上角"的偏移，而不是屏幕
                     // 绝对坐标——多屏且非主屏在左/上方向有负坐标时，直接抄绝对坐标会导致
                     // 窗口最大化后跑到别的显示器上，这里统一减去 rcMonitor 的偏移量。
-                    mmi.ptMaxPosition.X = info.rcWork.Left - info.rcMonitor.Left;
-                    mmi.ptMaxPosition.Y = info.rcWork.Top - info.rcMonitor.Top;
-                    mmi.ptMaxSize.X = info.rcWork.Right - info.rcWork.Left;
-                    mmi.ptMaxSize.Y = info.rcWork.Bottom - info.rcWork.Top;
+                    var bounds = _isFullScreen ? info.rcMonitor : info.rcWork;
+                    mmi.ptMaxPosition.X = bounds.Left - info.rcMonitor.Left;
+                    mmi.ptMaxPosition.Y = bounds.Top - info.rcMonitor.Top;
+                    mmi.ptMaxSize.X = bounds.Right - bounds.Left;
+                    mmi.ptMaxSize.Y = bounds.Bottom - bounds.Top;
                 }
             }
 

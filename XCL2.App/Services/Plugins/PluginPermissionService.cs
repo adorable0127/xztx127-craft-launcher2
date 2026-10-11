@@ -30,7 +30,12 @@ public sealed class PluginPermissionService
     private static bool IsUi(string permission) => permission.StartsWith("ui.", StringComparison.Ordinal);
     internal static bool IsAvailable(string permission) => permission switch
     {
-        PluginPermissionNames.UiBasic or PluginPermissionNames.UiComponents => true,
+        PluginPermissionNames.ProjectsRead or PluginPermissionNames.ProjectsWrite or PluginPermissionNames.TasksManage => PluginApi.Version >= new Version(2, 3),
+        PluginPermissionNames.DownloadsControl or PluginPermissionNames.InstancesWrite or PluginPermissionNames.ModsWrite or
+        PluginPermissionNames.ResourcesRead or PluginPermissionNames.ResourcesInstall or PluginPermissionNames.JavaRead or
+        PluginPermissionNames.JavaSelect => PluginApi.Version >= new Version(2, 2),
+        PluginPermissionNames.LauncherControl or PluginPermissionNames.SettingsWrite or PluginPermissionNames.UiWindow => PluginApi.Version >= new Version(2, 1),
+        PluginPermissionNames.UiBasic or PluginPermissionNames.UiComponents or PluginPermissionNames.UiPreview or PluginPermissionNames.WorldsRead or PluginPermissionNames.WorldsWrite => true,
         PluginPermissionNames.AccountsRead or PluginPermissionNames.InstancesRead or PluginPermissionNames.ModsRead or
         PluginPermissionNames.DownloadsRead or PluginPermissionNames.SettingsRead or PluginPermissionNames.EnvironmentRead or
         PluginPermissionNames.Lifecycle => PluginApi.Version >= new Version(1, 5),

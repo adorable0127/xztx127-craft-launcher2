@@ -1,0 +1,677 @@
+[
+  {
+    "path": "AI_USAGE_NOTES.md",
+    "action": "modified",
+    "sha256": "9902e3135ef94ba33a79260924f60e28fe38ecb447eef7523a06ec2d8d823816"
+  },
+  {
+    "path": "API开放文件.md",
+    "action": "added",
+    "sha256": "d56ba3a0250debf056c2a290ebecffc2c0a15914a0427d340da7ceac2aa16974"
+  },
+  {
+    "path": "App.xaml",
+    "action": "modified",
+    "sha256": "07689869a8323de12768de21e7d2037a121e15eb0a2465a0958b6ca02158c3b6"
+  },
+  {
+    "path": "Docs/AI执行过程显示.md",
+    "action": "modified",
+    "sha256": "16362b7b55fa3a4019e3d73ef151b7d2ca817d664128f322871f2f8fc6755cd5"
+  },
+  {
+    "path": "Docs/动画修复说明.md",
+    "action": "modified",
+    "sha256": "1c915604494abe1c0ce84561303604259cb82b3306e7a60e77b41d9e8bb16c6d"
+  },
+  {
+    "path": "MULTI_API_NOTES.md",
+    "action": "modified",
+    "sha256": "54be834a434f6bc017571a474287a9afcf536221a94234fbe666e9037eec4171"
+  },
+  {
+    "path": "Models/AiAssistantActivity.cs",
+    "action": "modified",
+    "sha256": "c50534d4af6da2b06ff4cb57bf128bda01808c087513678029d94b1d7f1e4352"
+  },
+  {
+    "path": "Models/AiAssistantModels.cs",
+    "action": "modified",
+    "sha256": "0492aaade078e3c7cebb0767060e662e9ee1f7b88e786e839a23c4d8a41da618"
+  },
+  {
+    "path": "Models/AppConfig.cs",
+    "action": "modified",
+    "sha256": "1f108efe53dbcc26bc262b8287da5a84f5e1faec9b4ec89b19b0e3c3150d4713"
+  },
+  {
+    "path": "PLAN_BUILD_NOTES.md",
+    "action": "modified",
+    "sha256": "1d5252b07164f9d56777308ae1e1392a6acd91f8276ccbc5f4eba8798a1328a3"
+  },
+  {
+    "path": "README_本次更新.md",
+    "action": "modified",
+    "sha256": "f5926ce8dadd3e121ce4a1f349d6f983fd3868362f0c79f30e5bd5b48a2a10b1"
+  },
+  {
+    "path": "Resources/Data/FeatureSearchCatalog.json",
+    "action": "modified",
+    "sha256": "2abe6ea97188cdda3c1f3b06e48277a99603fd214359baf7e224dcfc7bd9ce95"
+  },
+  {
+    "path": "Resources/Docs/API_REFERENCE.md",
+    "action": "modified",
+    "sha256": "d56ba3a0250debf056c2a290ebecffc2c0a15914a0427d340da7ceac2aa16974"
+  },
+  {
+    "path": "Resources/Skins/steve.png",
+    "action": "modified",
+    "sha256": "31f477eb1a7beee631c2ca64d06f8f68fa93a3386d04452ab27f43acdf1b60cb"
+  },
+  {
+    "path": "Resources/Themes/PreviewFluent.xaml",
+    "action": "added",
+    "sha256": "fcec32fd1ba91d67aa56a73dafe097fe2bb81d1d0ef6b64e0f21baab81426637"
+  },
+  {
+    "path": "SEARCH_NOTES.md",
+    "action": "modified",
+    "sha256": "7df3aa30f999e39744f50d1ef9697a79dadf8fca6851e0ec07aef874b056557c"
+  },
+  {
+    "path": "Services/AccountAvatarCacheService.cs",
+    "action": "modified",
+    "sha256": "3ad33e8a165cc72ef0ea3060f1b36ea89fa4ee0b05d41668c7d5c38a871d99a7"
+  },
+  {
+    "path": "Services/AccountAvatarConverter.cs",
+    "action": "modified",
+    "sha256": "d8ca3ab178c6666f06c6dead0f0e67d38eb01c48536daa196da68754dc129734"
+  },
+  {
+    "path": "Services/AiAssistantService.Workbench.cs",
+    "action": "added",
+    "sha256": "66aae8b66d22b7577c2680baf607036962f23ab60609a08967f2c7b8e7d40313"
+  },
+  {
+    "path": "Services/AiAssistantService.cs",
+    "action": "modified",
+    "sha256": "5176ae4b33c5e5fbf503f49fa8b834820e46aa4f9c6c340eae28911ef854ea08"
+  },
+  {
+    "path": "Services/AiControlProtocol.cs",
+    "action": "added",
+    "sha256": "da1973a10ef437238266872f0d5afee970fffcbf73d91d109b33774ba0d87e4d"
+  },
+  {
+    "path": "Services/AiFileAccessService.Activities.cs",
+    "action": "modified",
+    "sha256": "c54883838dc9e3c2690761cf8bf4c62f853c893f495a35d95e527788e277ccd5"
+  },
+  {
+    "path": "Services/AiFileAccessService.cs",
+    "action": "modified",
+    "sha256": "2f25874a4f1e903ece1e5b8681c4377bef803c9d19c208df458350174108e958"
+  },
+  {
+    "path": "Services/AiProviderJson.cs",
+    "action": "added",
+    "sha256": "f9886b0074f08b78444765e564471383971c461b86f41cdf3c4c36ce0beaef7f"
+  },
+  {
+    "path": "Services/AiQuestionProtocol.cs",
+    "action": "modified",
+    "sha256": "71a63a104f234ffbd9e92bc46e8ba2a6f5ff6b0502e3a77ea1889c7c3b986a5e"
+  },
+  {
+    "path": "Services/AiShellPolicy.cs",
+    "action": "modified",
+    "sha256": "6cc0c3e1b4df6b66894cec9b993d6d1d26a7e98742d47eaa3a0fdee864def0c1"
+  },
+  {
+    "path": "Services/AiStreamingCompletion.cs",
+    "action": "modified",
+    "sha256": "58e08cf952f5de6ab220a3fee92a206617814012127657ddbd0d28235fa503db"
+  },
+  {
+    "path": "Services/AiSubAgentProtocol.cs",
+    "action": "modified",
+    "sha256": "0fbd633a51fcdfb424e59513e336cda60ef48127bb3b718229b8d4829f48f702"
+  },
+  {
+    "path": "Services/AiToolActionBudget.cs",
+    "action": "added",
+    "sha256": "ec10b85cfd266dc0981baf7c0cf7c8203946a175667ccab02c19adf913b24957"
+  },
+  {
+    "path": "Services/AiWorkModePolicy.cs",
+    "action": "modified",
+    "sha256": "5476cc1b559ee5a8fd86e0d252663801f80038d6f34f903c678690287a2a0d6c"
+  },
+  {
+    "path": "Services/ConfigService.cs",
+    "action": "modified",
+    "sha256": "04b880cb147fa880bdddd5b6b6a24fa06e1cceac27a16924e51e9b3ada98a7b4"
+  },
+  {
+    "path": "Services/CrashAiLogService.cs",
+    "action": "added",
+    "sha256": "2c9724b186a54487856742b816716f10284592db42783fc20639f19ba739ce73"
+  },
+  {
+    "path": "Services/DefaultSystemPrompt.cs",
+    "action": "modified",
+    "sha256": "e186c31d57a48b26574babbd4dd00c6560065bc8554f330a1fd028cd285cf0b4"
+  },
+  {
+    "path": "Services/LauncherService.cs",
+    "action": "modified",
+    "sha256": "d9273ee431ad3341796213e512958b44fc080ef617c41c72a092522e2629d040"
+  },
+  {
+    "path": "Services/LegacyTouchInputBridge.cs",
+    "action": "added",
+    "sha256": "5f923db272a960294d0df1a638d41c214417cf26bb0cd51904caca2223fda566"
+  },
+  {
+    "path": "Services/LegacyTouchOptions.cs",
+    "action": "added",
+    "sha256": "0c0e06ac0f569b7f615293ba1c13878ddd2a15f4f1640414281e1da6d38b7cd8"
+  },
+  {
+    "path": "Services/OfflineDefaultSkin.cs",
+    "action": "added",
+    "sha256": "0d3877c7d3aaabadb9a582794f35e76005e7c196af8a626dcdb5df3837a203cf"
+  },
+  {
+    "path": "Services/Plugins/PluginChangeService.cs",
+    "action": "added",
+    "sha256": "83eeaff77ec11de3821e3c2f1fa4524d45f7938ee0dbde0d0b04b03066494be5"
+  },
+  {
+    "path": "Services/Plugins/PluginContext.cs",
+    "action": "modified",
+    "sha256": "9c2ab9d4aed80515cd51f581cd8576e7ebc583ebdbbf7edda7bdddd821d5e84d"
+  },
+  {
+    "path": "Services/Plugins/PluginMetadata.cs",
+    "action": "modified",
+    "sha256": "51ab3d8a9e3c57130d6ff1c7f1fece1b74a8763b7d8570f9ca1d7ec8f882467f"
+  },
+  {
+    "path": "Services/Plugins/PluginPermissionService.cs",
+    "action": "modified",
+    "sha256": "43a9c3aabf41754c6b0bc8d15b97b5eeecd6da78af2494004a8b9e18c9003c44"
+  },
+  {
+    "path": "Services/Plugins/PluginPipeSession.cs",
+    "action": "modified",
+    "sha256": "f32d868d5909a59011c587936cf7173b6b1532b76fd2b50d049578bf7244a025"
+  },
+  {
+    "path": "Services/Plugins/PluginProjectService.cs",
+    "action": "added",
+    "sha256": "67a107152aed455488bb45c8e14aaa14cc2d4a679e63b9784c8c3f14d22ca82c"
+  },
+  {
+    "path": "Services/Plugins/PluginQueryService.cs",
+    "action": "added",
+    "sha256": "b13fa767828e2da482ec7cec23f7c4dd4bfffe075fa176b2160fdd4bb45ec1ca"
+  },
+  {
+    "path": "Services/Plugins/PluginTaskService.cs",
+    "action": "added",
+    "sha256": "cca204045e03a5d684b99cb09c5077e12c26410a31e85864ab2c1123c23491dd"
+  },
+  {
+    "path": "Services/Plugins/PluginWorkbenchEndpoints.cs",
+    "action": "added",
+    "sha256": "81d26665431fa54209f77d0dd3bde24b6627cd48e74f59155418b86f16351fc4"
+  },
+  {
+    "path": "Services/PreviewFluentTheme.cs",
+    "action": "added",
+    "sha256": "4010a97f48d35462264dff1fa8bb77afbcffeaba2f3874458e791ed9ac686290"
+  },
+  {
+    "path": "Services/SettingsVisibilityService.cs",
+    "action": "modified",
+    "sha256": "07bdcf3b33d050990754d321af100015d6b78c5912835d84557fcfd9fb9fa1ab"
+  },
+  {
+    "path": "Services/ThemeService.cs",
+    "action": "modified",
+    "sha256": "737a1ad13f1e21e7767f3b4d89da799543323f5f91df798496e0f9955a3c7eb0"
+  },
+  {
+    "path": "Services/TouchInputInjector.cs",
+    "action": "modified",
+    "sha256": "c58b8eb4ace3d2be57a6fb3ad3fb702adb4fba5b04c82397ceae443ff08f0f75"
+  },
+  {
+    "path": "Services/TouchModeVersionPolicy.cs",
+    "action": "modified",
+    "sha256": "fabe5f118da9aaa42e500eb84886b37a0de5a179eb3619c7f4cbbd0d9d1e47d9"
+  },
+  {
+    "path": "Services/TouchVersionPolicy.cs",
+    "action": "modified",
+    "sha256": "397c7cd80d60926ee71be9a6f13d55e46a6478823230974ebc130d09120c86da"
+  },
+  {
+    "path": "Services/Workbench/ChangeJournal.cs",
+    "action": "added",
+    "sha256": "a0c354baaa1403f8df945a749d9ba89198db2758baf2b83e96fff343901b79c8"
+  },
+  {
+    "path": "Services/Workbench/ProjectFiles.cs",
+    "action": "added",
+    "sha256": "157996d0bfb80648a41fc3ef1f31a18348eccfc01667b2549cd8e733f9ccead0"
+  },
+  {
+    "path": "Services/Workbench/TaskStore.cs",
+    "action": "added",
+    "sha256": "1eb290d017f3f435ae8e5ce84adaa4eb9c5310aed0ab0819b0e9d6fb1f4501d4"
+  },
+  {
+    "path": "Tests/AiActivityRegression/AiActivityRegression.csproj",
+    "action": "modified",
+    "sha256": "5f924cf42ec3c0d23360d620ca3a20e944fb2f615f9578f58556e195bc1cf2af"
+  },
+  {
+    "path": "Tests/AiCommandRegression/AiCommandRegression.csproj",
+    "action": "modified",
+    "sha256": "6e739a1343a3aea2d9738956c3229942bde2326be87f48156bb03961d6141b6b"
+  },
+  {
+    "path": "Tests/AiCommandRegression/Program.cs",
+    "action": "modified",
+    "sha256": "f3950c3cf5a997e647435e6bd53063dd8ed30727afdcdb442db1703846451125"
+  },
+  {
+    "path": "Tests/AiEndpointRegression/AiEndpointRegression.csproj",
+    "action": "modified",
+    "sha256": "735bc14f960792282bfd3318c8db11b4a1b46b8865b473c05af7b7e50295064f"
+  },
+  {
+    "path": "Tests/AiFileDiffRegression/AiFileDiffRegression.csproj",
+    "action": "modified",
+    "sha256": "4e01b2474450f067a95f61123ad207b443985167047ca78d30ffb50287f0673b"
+  },
+  {
+    "path": "Tests/AiHttpRegression/AiHttpRegression.csproj",
+    "action": "modified",
+    "sha256": "89354db27e8de5b98e37ec6e99e70e9d2ef4e2d7b4024f6d033a427b3fa0abcf"
+  },
+  {
+    "path": "Tests/AiHttpRegression/Program.cs",
+    "action": "modified",
+    "sha256": "faa6fb6b2526e4979cee77bf5ceac63c5015cc6f8ab5806a63e8136251210a2e"
+  },
+  {
+    "path": "Tests/AiHttpRegression/Stubs.cs",
+    "action": "modified",
+    "sha256": "e2222a0175355d1112a7a9b8e37cfaf31066557e2f000f2f32411261c3fcd983"
+  },
+  {
+    "path": "Tests/AiReasoningRegression/AiReasoningRegression.csproj",
+    "action": "modified",
+    "sha256": "e4f2cfee1d8095bc14fa7ad5ae635cbb50b90dbe0777731bd83f4da902da72cf"
+  },
+  {
+    "path": "Tests/AiUsageRegression/AiUsageRegression.csproj",
+    "action": "modified",
+    "sha256": "c54a8821d87defdf520c118be4bba36f59b5917612328a989406a8398ff54cf6"
+  },
+  {
+    "path": "Tests/CrashAiRegression/CrashAiRegression.csproj",
+    "action": "added",
+    "sha256": "85890f9c4020fd865a8439cb5e4e425b4e5e3299c041ac6a257207c1c0b42f64"
+  },
+  {
+    "path": "Tests/CrashAiRegression/Program.cs",
+    "action": "added",
+    "sha256": "d1c38506099ed9142541282a4b0bf262adb9ed49729a087465eb644f66b87e13"
+  },
+  {
+    "path": "Tests/DownloadMirrorRegression/DownloadMirrorRegression.csproj",
+    "action": "modified",
+    "sha256": "a86c5d9fb397d59fc4e25781482be86112745132ce9a244cc961055889fd79f7"
+  },
+  {
+    "path": "Tests/DownloadQueueRegression/DownloadQueueRegression.csproj",
+    "action": "modified",
+    "sha256": "01d593afd0016cd7fbd92c808e62dd0d7116522ec4fbd27d8ab8346d11059187"
+  },
+  {
+    "path": "Tests/FeatureRegression/FeatureRegression.csproj",
+    "action": "modified",
+    "sha256": "15fbc0dfab1152636aac80cce5bc65372226bf12502def7c70486bd5eb4dd7a5"
+  },
+  {
+    "path": "Tests/FeatureSearchRegression/FeatureSearchRegression.csproj",
+    "action": "modified",
+    "sha256": "623bc64356ff47582d3d67b828e95ed367ff817061f2b109be1bb2727d2edd81"
+  },
+  {
+    "path": "Tests/FeatureSearchRegression/generate_catalog.py",
+    "action": "modified",
+    "sha256": "172e3a9a115fa93f637ce59c242f080ef292a986327268b7cd4540f3e8c2fc9f"
+  },
+  {
+    "path": "Tests/FeatureSearchRegression/validate_catalog.py",
+    "action": "modified",
+    "sha256": "6464da03fffbd3a22931233ddf724b196272db6fbc359135a49fa2d9bd818b50"
+  },
+  {
+    "path": "Tests/PluginManagementRegression/PluginManagementRegression.csproj",
+    "action": "modified",
+    "sha256": "ac228fefcae3e0cbfac9de62f7b4017f39190d98427188380f0c75881d3ff4a9"
+  },
+  {
+    "path": "Tests/PluginManagementRegression/validate_contracts.py",
+    "action": "modified",
+    "sha256": "996d7e9073762a6b73e6a49958a11d2f032684d9000b1c54658797b2fa965a4d"
+  },
+  {
+    "path": "Tests/PreviewInteractionRegression/validate_contracts.py",
+    "action": "added",
+    "sha256": "1f080f46bfea63ad2be616d7a0a49cd58168d3fd37b4558a71d0620dc49f135a"
+  },
+  {
+    "path": "Tests/PreviewInteractionRegression/validation.json",
+    "action": "added",
+    "sha256": "ac112e345565005c81edfbd161708860fd423bcaf38297de8b96c2bdce65fbef"
+  },
+  {
+    "path": "Tests/WebView2Regression/README.md",
+    "action": "modified",
+    "sha256": "89184ce286d7f336ce0e338496deafe61cfedfdfa026e176781b6859139d1d22"
+  },
+  {
+    "path": "Tests/WebView2Regression/WebView2Regression.csproj",
+    "action": "modified",
+    "sha256": "615c3ca6b10cec3f9b6487fddb059133a4be93198caf5945bf76092588aef6cd"
+  },
+  {
+    "path": "Tests/WorkbenchRegression/Program.cs",
+    "action": "added",
+    "sha256": "f3ab6dd36691f378b67bfbbb8cfce990547591a09849264ec1e3d3a21d3a863d"
+  },
+  {
+    "path": "Tests/WorkbenchRegression/Stubs.cs",
+    "action": "added",
+    "sha256": "037ef969bce43f6708c570651cda3e9fcb2948ee93cc7ba1640d4b0528ee072f"
+  },
+  {
+    "path": "Tests/WorkbenchRegression/WorkbenchRegression.csproj",
+    "action": "added",
+    "sha256": "eaadf956c62625f42e00bf426f5378c123de93121e5103440f51d3e5ae16642c"
+  },
+  {
+    "path": "Tests/ai-json-validation.json",
+    "action": "added",
+    "sha256": "e79e042ad1120c43536bb6386ec29088ba7360b426595f774e5d1da3dc4fa2e1"
+  },
+  {
+    "path": "Tests/crash-ai-validation.json",
+    "action": "added",
+    "sha256": "57c86afb9183a898ff72374d8e58c0f5e7c0d8a524fee64a24d4eeb76fe77dbb"
+  },
+  {
+    "path": "Tests/merged-layout-validation.json",
+    "action": "added",
+    "sha256": "b0eee014813e29c0a625f6255928b99f1314b2481ea8c3f3f6e647eee33894e9"
+  },
+  {
+    "path": "Tests/native-preview-build-validation.json",
+    "action": "added",
+    "sha256": "26aed71a087f3fbdc046871adabdbce4ac8b08a3dfffce8d13703e2ffa7b5697"
+  },
+  {
+    "path": "Tests/offline-default-skin-validation.json",
+    "action": "added",
+    "sha256": "95c5654fd4c86768c5cff16d6f9964db3880913823433afdeac861e1800762e8"
+  },
+  {
+    "path": "Tests/preview-build-attempt.json",
+    "action": "added",
+    "sha256": "ea56d451116dce47323ec58f3f807721febd7b0cb3df0f04b974d3023b69edbe"
+  },
+  {
+    "path": "Tests/v17-source-validation.json",
+    "action": "added",
+    "sha256": "87c4b7e0290247d5d64d1f53fd38ae2c6818b4f782fb15deed712690aa79199e"
+  },
+  {
+    "path": "Tests/v18-source-validation.json",
+    "action": "added",
+    "sha256": "1ba95ff7b8ed5582d5f642a3e8492dc03e0836ba20ed2ea3d015e07ad72059e4"
+  },
+  {
+    "path": "Tests/workbench-api-contracts.json",
+    "action": "added",
+    "sha256": "a0b409b1e84a9e3422c38790d192c2c790a32c7cd559cb5ac683d6198220b06e"
+  },
+  {
+    "path": "Tests/workbench-static-validation.json",
+    "action": "added",
+    "sha256": "1af10f29c91c213905cb014c0a092512517da3cbb9b89ea5abf62e79aee339d2"
+  },
+  {
+    "path": "Views/AboutHelpPage.xaml",
+    "action": "modified",
+    "sha256": "a5a96222b812eb8021783d92285ee5dc003e773bd8194d06cd737daabcf8a6c7"
+  },
+  {
+    "path": "Views/AiAssistantPanel.Workbench.cs",
+    "action": "added",
+    "sha256": "014f23375a55f84b87b40de8a7512447226b2ddda43c1d0bb0aaaf4921cb3431"
+  },
+  {
+    "path": "Views/AiAssistantPanel.xaml",
+    "action": "modified",
+    "sha256": "1f2afb4804a42156e5be633b6dbc8a512358b123f887426874df4c8ea95d284c"
+  },
+  {
+    "path": "Views/AiAssistantPanel.xaml.cs",
+    "action": "modified",
+    "sha256": "447c7bcefc13702001b1ba059192197d3524107ce55f5c835041f6d9790cd622"
+  },
+  {
+    "path": "Views/AiAssistantSettingsPanel.MultiApi.cs",
+    "action": "modified",
+    "sha256": "e6364352a6fd243119464b253be47884e4a2a28bae3db76976bf929aa594ecd3"
+  },
+  {
+    "path": "Views/AiAssistantSettingsPanel.WebSearch.cs",
+    "action": "added",
+    "sha256": "e2fe97662eb0f8bb9b94c57c533016ffeecac179c7f67f73ec82fd24735541eb"
+  },
+  {
+    "path": "Views/AiAssistantSettingsPanel.xaml",
+    "action": "modified",
+    "sha256": "6256ffe5afd56f4f23dec441b25b87ab6e653524a179179f6a61fd0dafd46ec1"
+  },
+  {
+    "path": "Views/AiAssistantSettingsPanel.xaml.cs",
+    "action": "modified",
+    "sha256": "d4c22d2e483b4883caaf4bfbb803ea8e8c4cac007f4bc0360e35bd33eda8cbcb"
+  },
+  {
+    "path": "Views/AiCrashAnalysisDialog.cs",
+    "action": "added",
+    "sha256": "ad822d2ed9fa37c1fdc533d9437cbdb983bf75a1f88116f5568f8bc303ba515a"
+  },
+  {
+    "path": "Views/AiWebSearchConfirmation.cs",
+    "action": "added",
+    "sha256": "c1821b07b8a0d589381befb8152e49fb504aaec87a7903a4c5bcea22de707228"
+  },
+  {
+    "path": "Views/AiWorkbenchDialogs.cs",
+    "action": "added",
+    "sha256": "9f80f8db6f0f078f6e383e11b26d87350547260671034afa45a7816fb43a6b06"
+  },
+  {
+    "path": "Views/CrashReportDialog.xaml",
+    "action": "modified",
+    "sha256": "2cf1c6c9a19fbf0f0c73615104bdb8bcd169d3c80711ad20d5c3a1b001e918e3"
+  },
+  {
+    "path": "Views/CrashReportDialog.xaml.cs",
+    "action": "modified",
+    "sha256": "cfc8f63399841b253167c00c7287ea629dd64b5528925c6bbd5cc3582149a610"
+  },
+  {
+    "path": "Views/DriverDownloadLinks.xaml",
+    "action": "modified",
+    "sha256": "9021ecac68faa2f67befb9a48ba99880fdfe51d1ef20434b06a08b210c972728"
+  },
+  {
+    "path": "Views/FeatureSearchBox.xaml",
+    "action": "modified",
+    "sha256": "787558e9becbef21b871d26f775579e70b7d9cabf17bb96e81b03b181fcabbb4"
+  },
+  {
+    "path": "Views/FeatureSearchBox.xaml.cs",
+    "action": "modified",
+    "sha256": "472bed8e62ea1552998db3f3dc9457f48993d4a0c24e6c2ddb39b2922d8cce26"
+  },
+  {
+    "path": "Views/HomePage.Preview.cs",
+    "action": "added",
+    "sha256": "14f4afdb93db2909c544beb1c5bc5311b9753d66cd8744e64dd256bc5a26eb3f"
+  },
+  {
+    "path": "Views/HomePage.xaml",
+    "action": "modified",
+    "sha256": "e954425dbbf72d10706e4da2a651f11824206817a16f2abcfcdd636930213bbe"
+  },
+  {
+    "path": "Views/HomePage.xaml.cs",
+    "action": "modified",
+    "sha256": "b373f73c8262662635a4e7f76ec7419a81548042fbaee650f52047f7ee8d9617"
+  },
+  {
+    "path": "Views/MainWindow.AiCrashOverlay.cs",
+    "action": "added",
+    "sha256": "7758224db04dd34aea12960fb0ad5e9960801d655e7eeccde5a735194c50bba9"
+  },
+  {
+    "path": "Views/MainWindow.FeatureSearch.cs",
+    "action": "modified",
+    "sha256": "1617ef36895373ca93c1844c3acda555fde6b07208da70c3f281cae4dcaa7e4a"
+  },
+  {
+    "path": "Views/MainWindow.WinUiPreview.cs",
+    "action": "modified",
+    "sha256": "122da39eaada329c3ca6e28243bf6eb05caa0c0a583ff067155c7445f85707b2"
+  },
+  {
+    "path": "Views/MainWindow.xaml",
+    "action": "modified",
+    "sha256": "f968e6d15b4d4bc9d1afeaecdf5554cc483fccb1528091620f715ca81ac589d6"
+  },
+  {
+    "path": "Views/MainWindow.xaml.cs",
+    "action": "modified",
+    "sha256": "ff650429ed5e425fe4d3836e5932a137ea3ad51eab6e0d776574b4c533d59f57"
+  },
+  {
+    "path": "Views/ModDetailPage.xaml",
+    "action": "modified",
+    "sha256": "15c570a608bc2958fbd8b1d6bb0bac8cb94e3e3c6a539e8c188c82e58295b25b"
+  },
+  {
+    "path": "Views/PluginPermissionsDialog.cs",
+    "action": "modified",
+    "sha256": "0d9fef182d23afb6f598094861703441130eb0f7155109113c034b57c0b1a8d7"
+  },
+  {
+    "path": "Views/SettingsPage.FeatureSearch.cs",
+    "action": "added",
+    "sha256": "e2416c5b7fcd8fd49ba0916d3db42a9771b0db9bc3179b47953e8426d84797ee"
+  },
+  {
+    "path": "Views/SettingsPage.xaml",
+    "action": "modified",
+    "sha256": "294f556b04cb2a421f7c4802ffd9d26b6eb98fe4a9e76f7d6547733b28ebde26"
+  },
+  {
+    "path": "Views/SettingsPage.xaml.cs",
+    "action": "modified",
+    "sha256": "6effd5ca919eac1ab134f2293dbdc61cbfcbeb4e7b623b951b69138bf2d95081"
+  },
+  {
+    "path": "Views/SkinModelViewerDialog.xaml.cs",
+    "action": "modified",
+    "sha256": "7f66c32fb2a883f4a33de76112888952831b2e524b6427a36e31ad214609132c"
+  },
+  {
+    "path": "Views/TouchOverlayWindow.xaml.cs",
+    "action": "modified",
+    "sha256": "7fc2111453e9ffc2e36263b60212fd334f6f851eb59bd45f531e2ff3d18f15ee"
+  },
+  {
+    "path": "WINDOWS_SHELL_NOTES.md",
+    "action": "modified",
+    "sha256": "9b581aac5ef4101ba34767e32ef84b7aefe6fff921fc7f1258f0d1afda535372"
+  },
+  {
+    "path": "WINDOW_NOTES.md",
+    "action": "modified",
+    "sha256": "f3d17d048e468c9747f1b274c0f8121f9cc7e111018f5ca284ace05ff2581ca0"
+  },
+  {
+    "path": "WinUI.Preview/MainWindow.cs",
+    "action": "modified",
+    "sha256": "1c167d9114c137950d0fe0563b9547f3539dc44c02b7ccc4e902aadf34d8a38d"
+  },
+  {
+    "path": "WinUI.Preview/XCL2.WinUI.Preview.csproj",
+    "action": "modified",
+    "sha256": "17c31bba8de8c082fe240d60e3d58a9db7c84a0719e83ac1a79a5595af403057"
+  },
+  {
+    "path": "XCL2.App.csproj",
+    "action": "modified",
+    "sha256": "647a96c05bb0b2550fb7f4b6376dabcea57d2d4d111d352308b6163e9101e9b8"
+  },
+  {
+    "path": "build-windows.ps1",
+    "action": "modified",
+    "sha256": "f510e913395ba3da93cd49e96e23616ca1eb3adc7db60120923636b0791cea72"
+  },
+  {
+    "path": "build.cmd",
+    "action": "modified",
+    "sha256": "5a98d85d382452954273801456b361d8ebfe56be50d87e181cb62c291e71a27e"
+  },
+  {
+    "path": "build.ps1",
+    "action": "modified",
+    "sha256": "648a5bf3f6a055025318c81136636b609d455cc58b1f6fb0734d0f0ddb677094"
+  },
+  {
+    "path": "tools/XCL2.proj",
+    "action": "modified",
+    "sha256": "27b9779f5c55c6abdda2764ff86ed03b7991aa86444f1feab05a44f0a4f62837"
+  },
+  {
+    "path": "tools/generate_api_catalog.py",
+    "action": "added",
+    "sha256": "8b79e7ef63532b9b922261d0045625531c08b3bd0e5fd30a2c87701756acded0"
+  },
+  {
+    "path": "tools/validate_workbench.py",
+    "action": "added",
+    "sha256": "56be47883dee60060d0daf5cbb3809d9057bc0ef4e09f83d4daa579d758a3c6f"
+  },
+  {
+    "path": "验证本次修改.ps1",
+    "action": "added",
+    "sha256": "3bd83cf23bcb84f9bfdbef25c80832f480525208b99c0dcdd711373bbd276819"
+  }
+]

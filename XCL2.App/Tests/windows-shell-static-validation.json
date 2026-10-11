@@ -1,0 +1,95 @@
+{
+  "scope": "WinUI nesting and Windows Shell changes",
+  "source": "XCL2_源码_增强版_12.zip",
+  "static_status": "PASS",
+  "changed_files": [
+    "README_本次更新.md",
+    "XCL2.App/Models/AiAssistantActivity.cs",
+    "XCL2.App/Models/AiAssistantModels.cs",
+    "XCL2.App/Services/AiAssistantService.cs",
+    "XCL2.App/Services/AiFileAccessService.Activities.cs",
+    "XCL2.App/Services/AiFileAccessService.cs",
+    "XCL2.App/Services/DefaultSystemPrompt.cs",
+    "XCL2.App/Services/Preview/WinUiPreviewHost.cs",
+    "XCL2.App/Views/AiAssistantActivityVm.cs",
+    "XCL2.App/Views/AiAssistantSettingsPanel.xaml",
+    "XCL2.App/Views/AiAssistantSettingsPanel.xaml.cs",
+    "XCL2.App/WinUI.Preview/XCL2.WinUI.Preview.csproj",
+    "XCL2.App/XCL2.App.csproj",
+    "XCL2.proj"
+  ],
+  "added_files": [
+    "Tests/AiCommandRegression/AiCommandRegression.csproj",
+    "Tests/AiCommandRegression/Program.cs",
+    "Tests/windows-shell-static-validation.json",
+    "WINDOWS_SHELL_NOTES.md",
+    "XCL2.App/Services/AiShellPolicy.cs",
+    "XCL2.App/Services/WindowsCommandAdapter.cs"
+  ],
+  "moved_files": [
+    {
+      "from": "XCL2.WinUI.Preview/app.manifest",
+      "to": "XCL2.App/WinUI.Preview/app.manifest"
+    },
+    {
+      "from": "XCL2.WinUI.Preview/App.xaml",
+      "to": "XCL2.App/WinUI.Preview/App.xaml"
+    },
+    {
+      "from": "XCL2.WinUI.Preview/XCL2.WinUI.Preview.csproj",
+      "to": "XCL2.App/WinUI.Preview/XCL2.WinUI.Preview.csproj"
+    },
+    {
+      "from": "XCL2.WinUI.Preview/MainWindow.cs",
+      "to": "XCL2.App/WinUI.Preview/MainWindow.cs"
+    },
+    {
+      "from": "XCL2.WinUI.Preview/WorldAdvancedEditor.cs",
+      "to": "XCL2.App/WinUI.Preview/WorldAdvancedEditor.cs"
+    },
+    {
+      "from": "XCL2.WinUI.Preview/PreviewClient.cs",
+      "to": "XCL2.App/WinUI.Preview/PreviewClient.cs"
+    },
+    {
+      "from": "XCL2.WinUI.Preview/App.xaml.cs",
+      "to": "XCL2.App/WinUI.Preview/App.xaml.cs"
+    }
+  ],
+  "unchanged_file_count": 563,
+  "missing_original_files": [],
+  "changed_csharp_syntax_checked": [
+    "Tests/AiCommandRegression/Program.cs",
+    "XCL2.App/Models/AiAssistantActivity.cs",
+    "XCL2.App/Models/AiAssistantModels.cs",
+    "XCL2.App/Services/AiAssistantService.cs",
+    "XCL2.App/Services/AiFileAccessService.Activities.cs",
+    "XCL2.App/Services/AiFileAccessService.cs",
+    "XCL2.App/Services/AiShellPolicy.cs",
+    "XCL2.App/Services/DefaultSystemPrompt.cs",
+    "XCL2.App/Services/Preview/WinUiPreviewHost.cs",
+    "XCL2.App/Services/WindowsCommandAdapter.cs",
+    "XCL2.App/Views/AiAssistantActivityVm.cs",
+    "XCL2.App/Views/AiAssistantSettingsPanel.xaml.cs"
+  ],
+  "xml_files_checked": 138,
+  "compile_links_checked": 36,
+  "feature_catalog_validation": "PASS: 552 destinations and 36 toolbox tabs",
+  "build_checks": [
+    "nested preview excluded from WPF default globs",
+    "Build and Publish prepare/copy all preview files",
+    "design-time and explicit skip guards retained",
+    "sixth regression wired to publish test gate",
+    "toast host aligned bottom-right"
+  ],
+  "runtime_tests": {
+    "status": "NOT_RUN",
+    "reason": "CoreCLR fails to start with HRESULT 0x8007000E; no Windows desktop session",
+    "pending": [
+      "C# compilation",
+      "six regression programs",
+      "Windows WPF/WinUI UI checks",
+      "PowerShell temporary-file execution checks"
+    ]
+  }
+}

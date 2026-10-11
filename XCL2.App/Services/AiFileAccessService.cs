@@ -1,10 +1,10 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.IO;
 using System.Text;
 using System.Text.Json;
-using System.Text.RegularExpressions;
+using System.Globalization;
 using System.Diagnostics;
 using Microsoft.Win32;
 using XCL2.App.Models;
@@ -31,13 +31,10 @@ namespace XCL2.App.Services;
 /// 3) 写操作二次校验：即使字段在白名单里，值也要过 <see cref="WritableKeys"/> 里登记的校验器
 ///    （类型、范围）才会真正写盘，校验失败直接拒绝，不做"尽量修正成合法值"这种自作主张的行为。
 /// </summary>
-public static class AiFileAccessService
+public static partial class AiFileAccessService
 {
     // AI 回复末尾用这个标记发起请求，不会展示给用户；<see cref="ProcessReply"/> 负责摘掉它。
     // 格式故意用 JSON，一是取值时不用自己写微型 DSL 解析器，二是"看得懂内容"，方便审计/调试。
-    private static readonly Regex MarkerRegex = new(
-        @"<<XCL2_ACCESS:(\{.*\})>>\s*$", RegexOptions.Singleline | RegexOptions.Compiled);
-
     private sealed record ReadableKey(string Label, Func<AppConfig, string> Get);
     private sealed record WritableKey(string Label, Func<AppConfig, string, (bool Ok, string? Error, string? AppliedDisplay)> TryApply);
 
@@ -252,6 +249,22 @@ public static class AiFileAccessService
                 error = "路径不在已批准的目录内，已拒绝。可以用 request_directory 向用户申请该目录。";
                 return false;
             }
+            // 仅比较字符串无法阻止目录联接/符号链接逃出已授权目录，或绕开系统目录保护。
+            // 最高级别绝对访问才允许这些路径；普通模式下要求用户直接批准实际目录。
+            if (!IsUnrestrictedAccess())
+            {
+                string? current = candidate;
+                while (!string.IsNullOrEmpty(current))
+                {
+                    if ((File.Exists(current) || Directory.Exists(current))
+                        && (File.GetAttributes(current) & FileAttributes.ReparsePoint) != 0)
+                    {
+                        error = "路径包含符号链接或目录联接，无法确认其实际位置仍在授权范围内。请使用并批准真实路径。";
+                        return false;
+                    }
+                    current = Path.GetDirectoryName(current);
+                }
+            }
             fullPath = candidate;
             return true;
         }
@@ -355,31 +368,32 @@ public static class AiFileAccessService
     /// 返回"展示给用户的正文"和"要不要再补一轮请求把结果喂回给模型"。
     /// confirm 由调用方（UI 层）传入，方便在非 WPF 环境（比如单元测试）里替换成假实现。
     /// </summary>
-    public static (string DisplayText, string? FollowUpForModel) ProcessReply(string replyText, ConfirmCallback confirm)
+    private static AiWorkModeContext CaptureWorkMode()
     {
-        var match = MarkerRegex.Match(replyText ?? "");
-        if (!match.Success)
-            return (replyText ?? "", null);
+        AiWorkMode Current() => AiWorkModePolicy.Normalize(ConfigService.Active?.Config.AiAssistant?.WorkMode ?? AiWorkMode.Build);
+        return new AiWorkModeContext(Current(), Current);
+    }
 
-        var displayText = MarkerRegex.Replace(replyText!, "").TrimEnd();
-
-        JsonElement root;
-        try
-        {
-            using var doc = JsonDocument.Parse(match.Groups[1].Value);
-            root = doc.RootElement.Clone();
-        }
-        catch
-        {
-            // 标记格式不对：当成没请求，只是把标记摘掉，不阻断正常回复。
-            return (displayText, null);
-        }
-
-        var action = root.TryGetProperty("action", out var a) ? a.GetString() : null;
-        var key = root.TryGetProperty("key", out var k) ? k.GetString() : null;
-        var value = root.TryGetProperty("value", out var v) ? v.GetString() : null;
-        var path = root.TryGetProperty("path", out var p) ? p.GetString() : null;
-        var content = root.TryGetProperty("content", out var c) ? c.GetString() : null;
+    public static (string DisplayText, string? FollowUpForModel) ProcessReply(string replyText, ConfirmCallback confirm,
+        AiWorkModeContext? workMode = null)
+    {
+        replyText ??= string.Empty;
+        workMode ??= CaptureWorkMode();
+        var parsedRequest = AiControlProtocol.Parse(replyText);
+        if (parsedRequest.Kind != "ACCESS") return (replyText, null);
+        var displayText = parsedRequest.DisplayText;
+        if (!parsedRequest.IsValid)
+            return (displayText, "系统：" + parsedRequest.Error + " 请修正请求 JSON 后继续。未执行任何操作。");
+        var root = parsedRequest.Request;
+        var action = OptionalString(root, "action");
+        if (!workMode.Allows(action)) return (displayText, AiWorkModePolicy.DeniedMessage);
+        var argumentError = AiControlProtocol.ValidateAccessArguments(root);
+        if (argumentError != null)
+            return (displayText, "系统：工具参数无效：" + argumentError + " 未执行任何操作。请修正参数后继续。");
+        var key = OptionalString(root, "key");
+        var value = AiControlProtocol.Scalar(root, "value");
+        var path = OptionalString(root, "path");
+        var content = OptionalString(root, "content");
 
         switch (action)
         {
@@ -427,6 +441,7 @@ public static class AiFileAccessService
                 if (cfg == null)
                     return (displayText, "系统：当前无法访问启动器配置（未初始化），未执行。");
 
+                if (!workMode.Allows(action)) return (displayText, AiWorkModePolicy.DeniedMessage);
                 var (ok, error, applied) = writable.TryApply(cfg.Config, value ?? "");
                 if (!ok)
                     return (displayText, $"系统：用户同意了，但这个值不合法，没有修改成功（原因：{error}）。请告诉用户具体原因，可以请他提供一个合法值再试一次，或引导去设置页手动改。");
@@ -470,6 +485,7 @@ public static class AiFileAccessService
                         $"AI 助手申请把下面这个目录加入可访问范围：\n{dirFull}\n\n理由：{reason}\n\n同意后，AI 之后可以在这个目录内发起列出/读取/写入请求（每次具体操作仍会再弹窗确认）。你可以随时在 AI 设置里移除。\n\n是否同意？"))
                     return (displayText, "用户拒绝了这个目录的使用申请，未做任何改动。请不要再次申请同一个目录，也不要猜测里面的内容。");
 
+                if (!workMode.Allows(action)) return (displayText, AiWorkModePolicy.DeniedMessage);
                 aiCfg.WorkingDirectories ??= new List<string>();
                 aiCfg.WorkingDirectories.Add(dirFull);
                 ConfigService.Active!.Save();
@@ -527,57 +543,27 @@ public static class AiFileAccessService
                     return (displayText, "用户拒绝了读取该文件的请求。请不要猜测文件内容。");
                 if (LooksBinary(file))
                     return (displayText, "系统：该文件看起来是二进制文件，不提供读取。请只处理文本文件。");
-                string text;
-                try { text = File.ReadAllText(file); }
-                catch (Exception ex)
+                try
                 {
-                    if (IsAbsoluteAccess()) AuditLog($"读取失败：{file}（{ex.Message}）");
-                    return (displayText, $"系统：读取文件失败：{ex.Message}");
+                    var page = Workbench.ProjectFiles.ReadPage(Path.GetDirectoryName(file)!, Path.GetFileName(file), 1, 200);
+                    return (displayText, "系统：文件分段内容（使用 read_file_range 从 NextLine 继续读取）：\n" + JsonSerializer.Serialize(page));
                 }
-                if (IsAbsoluteAccess()) AuditLog($"读取完成：{file}（{text.Length} 字符）");
-                if (text.Length > MaxWorkspaceReadChars)
-                    text = text[..MaxWorkspaceReadChars] + $"\n……（文件过长，仅提供前 {MaxWorkspaceReadChars} 字符）";
-                return (displayText, $"系统：用户已同意读取文件 {path}。内容如下：\n```text\n{text}\n```\n请基于内容继续回答。若要修改，必须另行发起写入请求并再次获得确认。");
+                catch (Exception ex) { return (displayText, "系统：读取文件失败：" + ex.Message); }
             }
 
             case "write_workspace_file":
-            {
-                if (!TryResolveWorkspacePath(path, allowRoot: false, out var file, out var pathError))
-                    return (displayText, $"系统：无法写入文件：{pathError}");
-                if (content == null)
-                    return (displayText, "系统：写入请求缺少 content，未执行。");
-                if (content.Length > MaxWorkspaceWriteChars)
-                    return (displayText, $"系统：单次写入超过 {MaxWorkspaceWriteChars} 字符上限，未执行。请缩小修改范围。");
+            case "delete_workspace_file":
+            case "patch_workspace_file":
+            case "search_project":
+            case "read_file_range":
+            case "list_project_files":
+                return ProcessCommandReplySynchronously(replyText, confirm, workMode);
 
-                if (IsProtectedForWrite(file))
-                {
-                    if (IsAbsoluteAccess()) AuditLog($"已拒绝写入系统目录：{file}");
-                }
-                if (IsProtectedForWrite(file))
-                    return (displayText, "系统：该位置属于系统关键目录（Windows / Program Files / ProgramData），即使在完全访问模式下也不允许写入（需要用户在设置里开启最高级别的「完全绝对访问」才可修改），未执行。");
-
-                var existed = File.Exists(file);
-                var verb = existed ? "覆盖" : "创建";
-                if (!ConfirmFileAction(confirm, "AI 请求写入文件", $"AI 助手想{verb}文件：\n{file}\n\n内容长度：{content.Length} 字符。是否同意？", $"{verb}文件（{content.Length} 字符）", file, isWrite: true))
-                    return (displayText, $"用户拒绝了{verb}文件的请求，磁盘内容保持不变。");
-                try
-                {
-                    var dir = Path.GetDirectoryName(file);
-                    if (!string.IsNullOrWhiteSpace(dir)) Directory.CreateDirectory(dir);
-                    File.WriteAllText(file, content, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
-                }
-                catch (Exception ex)
-                {
-                    if (IsAbsoluteAccess()) AuditLog($"{verb}失败：{file}（{ex.Message}）");
-                    return (displayText, $"系统：用户同意了，但写入失败：{ex.Message}");
-                }
-                if (IsAbsoluteAccess()) AuditLog($"{verb}完成：{file}（{content.Length} 字符）");
-                return (displayText, $"系统：已按用户授权{verb}工作目录文件：{path}。请确认操作完成，并说明修改的内容。不要声称执行了编译/测试，除非用户另外提供了实际结果。");
-            }
+            case "run_command":
+                return ProcessCommandReplySynchronously(replyText, confirm, workMode);
 
             case "registry_read":
             case "registry_write":
-            case "run_command":
             {
                 if (!IsSystemControlAccess())
                     return (displayText, "系统：注册表与系统命令能力未开启，未执行。需要用户在 AI 设置里依次开启「完全访问 → 绝对访问 → 完全绝对访问 → 彻底完全访问」。请告诉用户这一点，不要尝试用别的方式绕过。");
@@ -586,11 +572,7 @@ public static class AiFileAccessService
                     return action switch
                     {
                         "registry_read" => (displayText, RegistryRead(path, key ?? value)),
-                        "registry_write" => (displayText, RegistryWrite(path, key, value, root.TryGetProperty("type", out var tp) ? tp.GetString() : null)),
-                        _ => (displayText, RunSystemCommand(
-                            root.TryGetProperty("shell", out var sh) ? sh.GetString() : null,
-                            root.TryGetProperty("command", out var cm) ? cm.GetString() : content,
-                            root.TryGetProperty("timeout_seconds", out var to) && to.ValueKind == JsonValueKind.Number ? to.GetInt32() : 30))
+                        _ => (displayText, RegistryWrite(path, key, value, OptionalString(root, "type"), workMode))
                     };
                 }
                 catch (Exception ex)
@@ -601,8 +583,8 @@ public static class AiFileAccessService
             }
 
             default:
-                // 未知 action：当成没有这个能力，摘掉标记就好，不打断正常回复。
-                return (displayText, null);
+                // 未知工具必须反馈给模型，不能静默当成操作已完成。
+                return (displayText, "系统：未知工具 action：" + action + "，未执行。请使用已公开的工具名称。");
         }
     }
 
@@ -662,84 +644,51 @@ public static class AiFileAccessService
         _ => v.ToString() ?? ""
     };
 
-    private static string RegistryWrite(string? path, string? valueName, string? value, string? type)
+    private static string RegistryWrite(string? path, string? valueName, string? value, string? type, AiWorkModeContext workMode)
     {
+        if (!workMode.Allows("registry_write")) return AiWorkModePolicy.DeniedMessage;
         if (valueName == null) return "系统：registry_write 缺少值名称（key 字段，默认值请传空字符串）。";
+        if (value == null) return "系统：registry_write 缺少 value，未修改注册表。";
+        // Prepare and validate the value before opening/creating a registry key.
+        // A bad numeric value or unsupported type must have no side effects.
+        object data;
+        RegistryValueKind kind;
+        switch ((type ?? "String").ToLowerInvariant())
+        {
+            case "dword":
+                if (!uint.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var dword)) return "系统：DWord 值必须是 0 至 4294967295 的整数，未修改注册表。";
+                data = unchecked((int)dword); kind = RegistryValueKind.DWord; break;
+            case "qword":
+                if (!ulong.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var qword)) return "系统：QWord 值必须是 0 至 18446744073709551615 的整数，未修改注册表。";
+                data = unchecked((long)qword); kind = RegistryValueKind.QWord; break;
+            case "expandstring": data = value; kind = RegistryValueKind.ExpandString; break;
+            case "multistring": data = value.Split('\n'); kind = RegistryValueKind.MultiString; break;
+            case "string": data = value; kind = RegistryValueKind.String; break;
+            default: return "系统：type 只能是 String / ExpandString / MultiString / DWord / QWord，未修改注册表。";
+        }
         if (!TryOpenRegistryKey(path, true, true, out var key, out _, out var error))
             return $"系统：写入注册表失败：{error}（修改 HKEY_LOCAL_MACHINE 通常需要以管理员身份运行启动器）";
         using (key)
         {
-            var text = value ?? "";
-            switch ((type ?? "String").ToLowerInvariant())
-            {
-                case "dword": key!.SetValue(valueName, unchecked((int)uint.Parse(text)), RegistryValueKind.DWord); break;
-                case "qword": key!.SetValue(valueName, unchecked((long)ulong.Parse(text)), RegistryValueKind.QWord); break;
-                case "expandstring": key!.SetValue(valueName, text, RegistryValueKind.ExpandString); break;
-                case "multistring": key!.SetValue(valueName, text.Split('\n'), RegistryValueKind.MultiString); break;
-                case "string": key!.SetValue(valueName, text, RegistryValueKind.String); break;
-                default: return "系统：type 只能是 String / ExpandString / MultiString / DWord / QWord。";
-            }
+            if (!workMode.Allows("registry_write")) return AiWorkModePolicy.DeniedMessage;
+            key!.SetValue(valueName, data, kind);
         }
         AuditSystemLog($"写入注册表：{path} -> {valueName} = {value}（{type ?? "String"}）");
         return $"系统：已写入注册表 {path} -> {valueName}。请向用户说明修改了什么、为什么，以及如何还原。";
     }
 
-    private static string RunSystemCommand(string? shell, string? command, int timeoutSeconds)
+    // 旧同步入口也经过相同的转换、权限、提示和活动执行路径，避免两套规则漂移。
+    private static (string DisplayText, string? FollowUpForModel) ProcessCommandReplySynchronously(
+        string replyText, ConfirmCallback confirm, AiWorkModeContext workMode)
     {
-        if (string.IsNullOrWhiteSpace(command)) return "系统：run_command 缺少 command。";
-        timeoutSeconds = Math.Clamp(timeoutSeconds, 1, 120);
-        var useCmd = string.Equals(shell, "cmd", StringComparison.OrdinalIgnoreCase);
-        var psi = new ProcessStartInfo
-        {
-            FileName = useCmd ? "cmd.exe" : "powershell.exe",
-            UseShellExecute = false,
-            CreateNoWindow = true,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            RedirectStandardInput = true,
-        };
-        if (useCmd) { psi.ArgumentList.Add("/d"); psi.ArgumentList.Add("/c"); psi.ArgumentList.Add(command); }
-        else
-        {
-            psi.ArgumentList.Add("-NoProfile"); psi.ArgumentList.Add("-NonInteractive");
-            psi.ArgumentList.Add("-ExecutionPolicy"); psi.ArgumentList.Add("Bypass");
-            psi.ArgumentList.Add("-Command"); psi.ArgumentList.Add(command);
-        }
-        AuditSystemLog($"执行命令（{(useCmd ? "cmd" : "powershell")}，超时 {timeoutSeconds}s）：{command}");
-
-        // 在后台线程执行并在 UI 线程上泵消息等待，避免长命令冻结启动器界面。
-        string result = "";
-        Task task = Task.Run(() => { result = ExecuteProcess(psi, timeoutSeconds); });
+        var task = ProcessReplyAsync(replyText, confirm, workMode: workMode);
         var dispatcher = System.Windows.Application.Current?.Dispatcher;
-        if (dispatcher != null && dispatcher.CheckAccess())
+        if (!task.IsCompleted && dispatcher != null && dispatcher.CheckAccess())
         {
             var frame = new System.Windows.Threading.DispatcherFrame();
-            _ = task.ContinueWith(_ => frame.Continue = false, TaskScheduler.Default);
+            _ = task.ContinueWith(_ => dispatcher.BeginInvoke(new Action(() => frame.Continue = false)), TaskScheduler.Default);
             System.Windows.Threading.Dispatcher.PushFrame(frame);
         }
-        else task.Wait();
-        return result;
-    }
-
-    private static string ExecuteProcess(ProcessStartInfo psi, int timeoutSeconds)
-    {
-        using var proc = Process.Start(psi);
-        if (proc == null) return "系统：无法启动进程。";
-        proc.StandardInput.Close();
-        var stdoutTask = proc.StandardOutput.ReadToEndAsync();
-        var stderrTask = proc.StandardError.ReadToEndAsync();
-        if (!proc.WaitForExit(timeoutSeconds * 1000))
-        {
-            try { proc.Kill(entireProcessTree: true); } catch { }
-            AuditSystemLog($"命令超时被终止（{timeoutSeconds}s）");
-            return $"系统：命令执行超过 {timeoutSeconds} 秒，已强制结束。";
-        }
-        proc.WaitForExit();
-        var stdout = stdoutTask.GetAwaiter().GetResult();
-        var stderr = stderrTask.GetAwaiter().GetResult();
-        var output = (stdout + (string.IsNullOrWhiteSpace(stderr) ? "" : "\n[stderr]\n" + stderr)).Trim();
-        if (output.Length > MaxCommandOutputChars) output = output[..MaxCommandOutputChars] + "\n……（输出过长已截断）";
-        AuditSystemLog($"命令结束，退出码 {proc.ExitCode}");
-        return $"系统：命令已执行，退出码 {proc.ExitCode}。输出：\n```\n{(output.Length == 0 ? "(无输出)" : output)}\n```\n请如实向用户说明结果，不要声称做了没有做的事。";
+        return task.GetAwaiter().GetResult();
     }
 }

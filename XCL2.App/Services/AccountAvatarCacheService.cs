@@ -7,7 +7,7 @@ namespace XCL2.App.Services;
 /// 账户头像的"在线皮肤缓存"。
 ///
 /// 需求：皮肤站(AuthServer)账户、正版(Microsoft)账户，以及"设置过皮肤"的离线账户
-/// (SkinType != None，即用户主动选过史蒂夫/艾利克斯/自定义皮肤，不是全新的空白离线账户)，
+/// (Custom/Alex；None/Steve 固定使用内嵌默认 PNG，不查找同名正版账户)，
 /// 「账户」页头像都应该去查一次服务器当前公开皮肤，而不是只看本地一次性绑定的
 /// CustomSkinPath、更不该直接停在默认头像上——服务器端皮肤随时可能被玩家自己换掉，
 /// AccountAvatarConverter 之前完全没有这条查询链路，只能看本地文件。
@@ -31,8 +31,8 @@ public static class AccountAvatarCacheService
         AccountType.AuthServer => !string.IsNullOrWhiteSpace(account.AuthServerApiRoot) && !string.IsNullOrWhiteSpace(account.Uuid),
         // 离线账户没有账户体系认证，只能按用户名去正版接口"猜"一次——猜中说明这确实是某个
         // 正版玩家常用的用户名，猜不中（绝大多数情况）就静默放弃，不影响本地皮肤/默认头像显示。
-        // 只对"已经主动设置过皮肤"的离线账户做这件事，全新、什么都没选过的离线账户不打扰。
-        AccountType.Offline => account.SkinType != OfflineSkinType.None,
+        // 未设置皮肤/主动选 Steve 的账户始终使用同一内嵌默认皮肤，不能被同名正版角色覆盖。
+        AccountType.Offline => account.SkinType is OfflineSkinType.Custom or OfflineSkinType.Alex,
         _ => false
     };
 

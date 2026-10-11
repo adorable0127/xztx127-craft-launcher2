@@ -29,19 +29,11 @@ public partial class HomePage : UserControl
     private bool _previewToggleSyncing;
     private ExperimentalPreviewWindow? _previewWindow;
 
-    /// <summary>
-    /// 标记这份 HomePage 实例是不是"重启进入的新界面预览"那一次——也就是 MainWindow 本身
-    /// 就是用 --preview-session 启动、把这份 HomePage 直接当成首页放进 MainContent 的那种，
-    /// 跟旧的"套一层独立浮动窗口"（_previewWindow）是两回事：这种情况下侧边栏、标题栏都是
-    /// MainWindow 本来就有的那一套，天然可点、天然有侧边栏，不需要也不应该再额外禁用/锁定
-    /// PreviewToggle。见 MainWindow.RequestPreviewModeRestart / ShowExperimentalPreview。
-    /// </summary>
-    private bool _isMainWindowPreviewSession;
-
     public HomePage(MainWindow owner)
     {
         _owner = owner;
         InitializeComponent();
+        InitializePreviewHome();
 
         // 从配置里同步访客模式的当前状态；用 _guestToggleInitializing 避免这一步触发
         // GuestModeToggle_Changed（那里会去改配置+清理会话文件，只有用户手动点击才应该触发）。
@@ -59,96 +51,54 @@ public partial class HomePage : UserControl
         ApplyRestrictedModeGating(_owner.ConfigService.Config.RestrictedMode);
 
         UpdateLanguageEntryButtonText();
-        // LocalizationService.LanguageChanged 是静态事件：每 new 一次 HomePage 就多挂一个订阅，
-        // 之前没有对应的 -= 会一直泄漏下去（比如新界面预览关掉之后，这个委托还挂在静态事件上，
-        // 指向一个已经没有可视化树的实例）。现在存成具名委托，在 Unloaded 时摘掉。
+        ApplyCapsuleBarMargin();
+        SizeChanged += (_, _) => RefreshForSizeChange();
+        // 页面确认进入可视化树后才订阅静态事件，避免导航被取消时，未显示的实例仍被引用。
+        // 重新加载同一实例时先解绑再订阅，并刷新离开期间可能变化的语言。
         _onLanguageChanged = () => UpdateLanguageEntryButtonText();
-        LocalizationService.LanguageChanged += _onLanguageChanged;
-        Unloaded += (_, _) => LocalizationService.LanguageChanged -= _onLanguageChanged;
+        Loaded += (_, _) =>
+        {
+            RefreshForSizeChange();
+            LocalizationService.LanguageChanged -= _onLanguageChanged;
+            LocalizationService.LanguageChanged += _onLanguageChanged;
+            _owner.NativePreviewStateChanged -= SyncNativePreview;
+            _owner.NativePreviewStateChanged += SyncNativePreview;
+            SyncNativePreview();
+            UpdateLanguageEntryButtonText();
+        };
+        Unloaded += (_, _) =>
+        {
+            LocalizationService.LanguageChanged -= _onLanguageChanged;
+            _owner.NativePreviewStateChanged -= SyncNativePreview;
+            _previewCardsTimer.Stop();
+        };
 
         // 愚人节彩蛋 3 号（鼠标靠近就乱窜）+ 8 号（磁贴乱跳）：平时（非 4 月 1 日）这个调用
         // 内部全部是空操作，见 AprilFoolsUi 类注释。
         AprilFoolsUi.AttachHomeTileEffects(TileGrid, LaunchTile, QuickStartTile);
 
-        HomeSearchResultsPopup.Closed += (_, _) => HomeSearchResultsList.SelectedIndex = -1;
     }
 
-    // ===== 首页顶部搜索框：导航到应用内所有页面 =====
-    // 索引来自 _owner.GetHomeSearchEntries()（定义在 MainWindow 里，跟侧边栏导航按钮共用
-    // 同一套 NavigateToXxx() 跳转方法），这里只负责按输入文本筛选、展示结果列表、
-    // 处理点击/回车/上下键选中后调用 _owner.NavigateByHomeSearchTitle(title) 完成跳转。
-
-    private void HomeSearchBox_TextChanged(object sender, TextChangedEventArgs e)
+    /// <summary>窗口最大化/还原/缩放后刷新首页布局：磁贴区高度按当前可用高度匹配（全屏时不再是
+    /// 一小块漂在大片空白中间），胶囊条重新排列，并按当前搜索框样式重新让位。</summary>
+    public void RefreshForSizeChange()
     {
-        var keyword = HomeSearchBox.Text?.Trim() ?? "";
-        HomeSearchPlaceholder.Visibility = keyword.Length == 0 ? Visibility.Visible : Visibility.Collapsed;
-
-        if (keyword.Length == 0)
-        {
-            HomeSearchResultsPopup.IsOpen = false;
-            return;
-        }
-
-        var matches = _owner.GetHomeSearchEntries()
-            .Where(entry => entry.Title.Contains(keyword, StringComparison.OrdinalIgnoreCase)
-                             || entry.Keywords.Contains(keyword, StringComparison.OrdinalIgnoreCase))
-            .Select(entry => entry.Title)
-            .ToList();
-
-        HomeSearchResultsList.ItemsSource = matches;
-        HomeSearchResultsPopup.IsOpen = matches.Count > 0;
+        ApplyCapsuleBarMargin();
+        var h = HomeScroll.ActualHeight;
+        if (h > 0) TileGrid.MinHeight = Math.Clamp(h * 0.5, 0, 560);
+        CapsuleBar.InvalidateMeasure();
+        InvalidateMeasure();
+        UpdateLayout();
     }
 
-    private void HomeSearchBox_GotFocus(object sender, RoutedEventArgs e) => HomeSearchPlaceholder.Visibility = string.IsNullOrEmpty(HomeSearchBox.Text) ? Visibility.Visible : Visibility.Collapsed;
-
-    private void HomeSearchBox_LostFocus(object sender, RoutedEventArgs e)
+    /// <summary>顶部全局搜索框的悬浮窗紧贴标题栏下沿、盖在内容区最上方一小条。胶囊条不再在左侧留空
+    /// （那样会把可用宽度挤小、提前换行），而是整体往下让出这一小条，宽度完全留给胶囊，
+    /// 能一行放下的就一行从右往左排。</summary>
+    private void ApplyCapsuleBarMargin()
     {
-        // 延迟关闭：直接在这里关 Popup 会先于 ListBox 的点击事件触发，导致点结果永远点不到。
-        // Popup 自带的 StaysOpen="False" 已经会在点击外部区域时自动关闭，这里不用额外处理。
-    }
-
-    private void HomeSearchBox_KeyDown(object sender, KeyEventArgs e)
-    {
-        if (e.Key == Key.Down && HomeSearchResultsList.Items.Count > 0)
-        {
-            HomeSearchResultsList.Focus();
-            HomeSearchResultsList.SelectedIndex = 0;
-            e.Handled = true;
-        }
-        else if (e.Key == Key.Enter && HomeSearchResultsList.Items.Count > 0)
-        {
-            NavigateToHomeSearchResult(HomeSearchResultsList.Items[0] as string);
-            e.Handled = true;
-        }
-        else if (e.Key == Key.Escape)
-        {
-            HomeSearchResultsPopup.IsOpen = false;
-        }
-    }
-
-    private void HomeSearchResultsList_KeyDown(object sender, KeyEventArgs e)
-    {
-        if (e.Key == Key.Enter && HomeSearchResultsList.SelectedItem is string title)
-        {
-            NavigateToHomeSearchResult(title);
-            e.Handled = true;
-        }
-    }
-
-    private void HomeSearchResultsList_MouseLeftButtonUp(object sender, MouseButtonEventArgs e)
-    {
-        if (HomeSearchResultsList.SelectedItem is string title)
-        {
-            NavigateToHomeSearchResult(title);
-        }
-    }
-
-    private void NavigateToHomeSearchResult(string? title)
-    {
-        if (string.IsNullOrEmpty(title)) return;
-        HomeSearchResultsPopup.IsOpen = false;
-        HomeSearchBox.Text = "";
-        _owner.NavigateByHomeSearchTitle(title);
+        var cfg = _owner.ConfigService.Config;
+        var floating = cfg.ShowFeatureSearch && cfg.FeatureSearchStyle != "Top";
+        CapsuleBar.Margin = new Thickness(0, floating ? 17 : 0, 0, 10);
     }
 
     /// <summary>语言胶囊文字：Str_Lang_EntryButton 里的「*」通配符替换为当前语言的本地名，
@@ -185,6 +135,7 @@ public partial class HomePage : UserControl
         DownloadTile.IsEnabled = !restricted;
         ServerManagerTile.IsEnabled = !restricted;
         SettingsTile.IsEnabled = !restricted;
+        RefreshPreviewCards();
     }
 
     /// <summary>
@@ -435,110 +386,75 @@ public partial class HomePage : UserControl
     // 复用同一套防手滑冷却状态，跟左下角"启动游戏"按钮完全一致的行为。
 
     /// <summary>
-    /// 首页右上角简洁模式开关：跟「设置」页里的同款开关共享同一个配置项
-    /// （cfg.SimplifiedModeEnabled），点击立即写回 + 保存，统一走公开的
-    /// _owner.ApplySimplifiedModeChanged() 刷新侧边栏/处理当前页面，不直接调用
-    /// MainWindow 内部的 RefreshSimplifiedModeNavVisibility。
+    /// 新界面预览开关反映主窗口实际模式；导航回来后继续显示正确状态。
     /// </summary>
+    private void SyncNativePreview()
+    {
+        _previewToggleSyncing = true;
+        try
+        {
+            PreviewToggle.IsChecked = _previewWindow != null || _owner.IsNativePreviewOpen;
+            PreviewToggle.IsEnabled = true;
+            PreviewToggle.ToolTip = PreviewToggle.IsChecked == true
+                ? "关闭新界面预览，恢复原界面；现有页面与功能继续可用"
+                : "切换完整启动器为 WinUI 3 风格，使用自绘标题栏；所有页面继续使用现有功能";
+        }
+        finally { _previewToggleSyncing = false; }
+        ApplyPreviewHomeStyles();
+        RefreshPreviewCards();
+        if (IsLoaded && _owner.IsNativePreviewOpen) _previewCardsTimer.Start();
+        else _previewCardsTimer.Stop();
+    }
+
     private void OpenExperimentalPreview_Checked(object sender, RoutedEventArgs e)
     {
         if (_previewToggleSyncing) return;
 
-        // 已经处在"重启进入的新界面预览"会话里：这个开关本来就是靠 MarkAsMainWindowPreviewSession
-        // 同步成选中状态的，不是用户点出来的，不应该再弹一次确认框/再重启一次。
-        if (_isMainWindowPreviewSession) return;
-
-        if (!MessageBoxDialog.ShowConfirm(
-            "新界面预览是实验性功能，可能存在显示、交互或稳定性问题。开启后会重启启动器，" +
-            "重启后的新窗口会直接进入新界面预览，同时保留完整侧边栏，所有按钮都可以正常点击、正常导航。" +
-            "是否重启并打开？",
-            "实验性功能"))
+        // 进入新界面预览前必须依次同意两个提示；任意一个选「返回并取消」都不能进入。
+        if (!MessageBoxDialog.ShowAgreeOrBack("这可能是实验性功能，可能导致不稳定。", "新界面预览（1/2）")
+            || !MessageBoxDialog.ShowAgreeOrBack("当前实验性的新界面预览打开后会增高内存占用，建议不要使用。", "新界面预览（2/2）"))
         {
-            // 用户取消确认框：按钮不应该停在"已开启"（蓝色）状态，改回浅色但不能再触发
-            // 一次 Unchecked 里的重启逻辑（本来就没真正开启），用 _previewToggleSyncing 屏蔽掉。
-            _previewToggleSyncing = true;
-            PreviewToggle.IsChecked = false;
-            _previewToggleSyncing = false;
+            SyncNativePreview(); // 把开关恢复为未开启
             return;
         }
 
-        // 不再套一层独立的浮动预览窗口（没有侧边栏、按钮点不动、容易套娃假死）：
-        // 直接重启整个启动器，新进程的 MainWindow 用完整的自身（侧边栏 + 所有导航按钮都在）
-        // 直接展示新界面预览，见 MainWindow.RequestPreviewModeRestart。重启失败时把开关
-        // 复位回浅色，避免停在"看起来已开启但其实什么都没发生"的状态。
-        if (!_owner.RequestPreviewModeRestart())
-        {
-            _previewToggleSyncing = true;
-            PreviewToggle.IsChecked = false;
-            _previewToggleSyncing = false;
-        }
+        _owner.OpenWinUiPreview();
+        // 以窗口实际完成的切换状态为准；失败时不会留下亮着的按钮。
+        SyncNativePreview();
     }
 
     private void OpenExperimentalPreview_Unchecked(object sender, RoutedEventArgs e)
     {
         if (_previewToggleSyncing) return;
 
-        if (_isMainWindowPreviewSession)
+        if (_previewWindow != null)
         {
-            // 关闭预览：同样走重启，而不是简单地在当前进程里切回默认首页——保证"关闭后"
-            // 跟"从来没开过预览"是完全一致的干净状态（不带任何预览相关的隐藏启动参数），
-            // 新窗口只会打开原有默认界面，不会再打开新界面或其它界面。重启失败时把开关
-            // 复位回"已选中"，因为预览会话其实还在继续，没有真的退出。
-            if (!_owner.RequestExitPreviewModeRestart())
-            {
-                _previewToggleSyncing = true;
-                PreviewToggle.IsChecked = true;
-                _previewToggleSyncing = false;
-            }
+            var host = _previewWindow;
+            _previewWindow = null;
+            host.Close();
+            SyncNativePreview();
             return;
         }
-
-        _previewWindow?.Close();
+        _owner.CloseNativePreview();
+        SyncNativePreview();
     }
 
     /// <summary>
-    /// 供 MainWindow.ShowExperimentalPreview 在"以 --preview-session 重启后的这次启动"里，
-    /// 把首页直接当成新界面预览展示时调用一次：只是把开关同步成"已选中"，侧边栏、标题栏、
-    /// 每一个导航按钮都还是 MainWindow 原生的那一套，天然可点，不做任何禁用。
-    /// 跟 <see cref="ConfigureAsEmbeddedPreview"/>（旧的浮动窗口套娃场景）刻意区分开，
-    /// 那边需要锁死按钮防止再套一层，这边完全不需要。
+    /// 保留旧启动参数调用入口；预览状态统一由主窗口维护。
     /// </summary>
     public void MarkAsMainWindowPreviewSession()
     {
-        _isMainWindowPreviewSession = true;
-        _previewToggleSyncing = true;
-        PreviewToggle.IsChecked = true;
-        _previewToggleSyncing = false;
-        PreviewToggle.ToolTip = "点击关闭新界面预览（会重启启动器回到默认界面）";
+        SyncNativePreview();
     }
 
     /// <summary>
-    /// 供 ExperimentalPreviewWindow 在把这个 HomePage 实例塞进自己内容区之后调用一次。
-    ///
-    /// 根因：预览窗口内部是一份全新的 HomePage 实例，它自己的 PreviewToggle 默认是未选中——
-    /// 但此时"新界面预览"其实已经真正打开了（就是承载它的这个预览窗口本身）。之前没有同步
-    /// 这个状态，会出现两个问题：
-    /// 1. 按钮显示状态不对："已经打开了"却显示成"没打开"，容易误导用户再点一次；
-    /// 2. 更严重的是，如果用户真的点了这个内层按钮，会再触发一次
-    ///    OpenExperimentalPreview_Checked：确认框走的是 OverlayDialogService，只认全局唯一的
-    ///    MainWindow 宿主——而这个内层 HomePage 挂在一个盖在 MainWindow 上面的独立预览窗口里，
-    ///    确认框会渲染到被预览窗口挡住的 MainWindow 上，用户看不见也点不到，
-    ///    DispatcherFrame 局部消息泵却在等它关闭，界面就"卡住"了，表现为必须关掉整个启动器
-    ///    重新启动才能恢复——这正是套娃（预览里再开一层预览）导致的假死。
-    ///
-    /// 修复方式：把内层按钮直接锁定成"已选中且不可再点"，从根上让套娃这条路径永远走不到，
-    /// 而不是等它触发了再补救。
+    /// 兼容旧嵌入窗口；按钮仍可取消，正常主窗口路径不创建嵌入窗口。
     /// </summary>
     public void ConfigureAsEmbeddedPreview(ExperimentalPreviewWindow host)
     {
-        // 记录承载这份 HomePage 的预览窗口，供 OpenExperimentalPreview_Unchecked 里的
-        // _previewWindow?.Close() 使用（同时消除 CS0649：字段从未赋值）。
         _previewWindow = host;
-        _previewToggleSyncing = true;
-        PreviewToggle.IsChecked = true;
-        _previewToggleSyncing = false;
-        PreviewToggle.IsEnabled = false;
-        PreviewToggle.ToolTip = "当前正处于新界面预览窗口中，无法在预览里再次打开预览";
+        host.Closed += (_, _) => { if (ReferenceEquals(_previewWindow, host)) _previewWindow = null; SyncNativePreview(); };
+        SyncNativePreview();
     }
 
     private void SimplifiedModeToggle_Changed(object sender, RoutedEventArgs e)

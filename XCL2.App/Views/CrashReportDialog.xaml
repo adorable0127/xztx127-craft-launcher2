@@ -9,6 +9,7 @@
          （把启动器日志+游戏崩溃前输出+游戏日志文件合并成一个文件另存），这几个按钮塞进
          通用 MessageBoxDialog 的按钮方案（OK/OKCancel/YesNo/YesNoCancel）里都不合适，
          硬塞进去只会让那个通用类变得更难维护，所以单独建一个。-->
+    <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
     <StackPanel Margin="24" MaxWidth="640">
         <StackPanel Orientation="Horizontal" Margin="0,0,0,14">
             <TextBlock Text="✖" FontSize="26" FontFamily="Segoe UI Emoji" VerticalAlignment="Top"
@@ -25,6 +26,7 @@
                 <TextBlock x:Name="OpenGlEvidencePath" FontSize="11" TextWrapping="Wrap" Margin="0,8,0,0"/>
                 <Button Content="一键尝试安装显卡驱动（Windows Update）" Margin="0,10,0,0"
                         Padding="12,8" Click="InstallOpenGlDriver_Click"/>
+                <local:DriverDownloadLinks/>
             </StackPanel>
         </Border>
         <ScrollViewer MaxHeight="180" VerticalScrollBarVisibility="Auto">
@@ -54,7 +56,17 @@
              是为了让"关闭"这个主按钮始终排在最右（视觉上跟原来 HorizontalAlignment="Right"
              的效果一致），换行时次要按钮从右往左依次排列，不会因为换行改变了原有的
              视觉主次顺序。 -->
-        <WrapPanel HorizontalAlignment="Right" FlowDirection="RightToLeft" Margin="0,20,0,0">
+        <Grid Margin="0,20,0,0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+            <Button x:Name="AnalyzeCrashWithAiButton" Grid.Column="0" Padding="14,8" Margin="0,0,12,0"
+                    MaxWidth="180" VerticalAlignment="Top" ToolTip="在当前页面上方打开 AI 助手，并提交本次崩溃日志进行分析"
+                    Style="{DynamicResource SecondaryButton}" Click="AnalyzeCrashWithAi_Click">
+                <TextBlock Text="让AI分析当前崩溃日志" TextWrapping="Wrap" TextAlignment="Center"/>
+            </Button>
+        <WrapPanel Grid.Column="1" HorizontalAlignment="Right" FlowDirection="RightToLeft">
             <!-- 顺序（从右到左）：关闭 / 导出完整日志 / 在记事本中查看日志 / 补全 DirectX，
                  即"补全 DirectX"位于"在记事本中查看日志"的左边。 -->
             <Button Content="关闭" Padding="20,8" IsDefault="True" FlowDirection="LeftToRight"
@@ -76,5 +88,8 @@
                     FlowDirection="LeftToRight" ToolTip="从微软官方安装 DirectX 运行库（缺 d3dx9 / d3dcompiler / xinput 等 DLL 时使用）"
                     Style="{DynamicResource SecondaryButton}" Click="InstallDirectX_Click"/>
         </WrapPanel>
+        </Grid>
+        <Button Content="一键打开 DirectX 官方下载链接 ↗" Click="OpenDirectXPage_Click" HorizontalAlignment="Right" Margin="0,6,0,0" Padding="12,6"/>
     </StackPanel>
+    </ScrollViewer>
 </local:OverlayDialogControl>

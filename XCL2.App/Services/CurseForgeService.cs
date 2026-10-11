@@ -121,51 +121,17 @@ public class CurseForgeService
         return result.Data;
     }
 
-    /// <summary>
-    /// 修复"下载失败"核心 bug：CurseForge API 的 /mods/{id}/files 接口里，downloadUrl 字段
-    /// 在很多情况下是 null——不是文件真的没法下载，而是作者在后台关闭了"允许第三方工具直接下载"
-    /// 这个开关（API 侧就直接不给这个字段了），但文件本身仍然实实在在地躺在 CurseForge 的 CDN 上，
-    /// 用户在网页上点"下载"照样能下。之前的代码一看 DownloadUrl 是 null 就直接抛异常给用户看"下载失败"，
-    /// 等于把"API 没给字段"错误地当成了"文件真的不存在"。
-    ///
-    /// CurseForge 的 CDN 地址遵循一个公开、稳定的规律，只要有 file.Id 就能拼出来（CurseForge 官方
-    /// 启动器和 CFCore 等第三方工具都采用同样的规律作为 fallback）：
-    ///   https://edge.forgecdn.net/files/{id/1000}/{id%1000}/{fileName}
-    /// 例如 id=4567890 -&gt; https://edge.forgecdn.net/files/4567/890/xxx.jar
-    /// media.forgecdn.net 是同一套文件的另一个域名镜像，两个都试一遍，任何一个 404/超时就换下一个，
-    /// 全部失败才真的报错——不再是"只要 API 字段是 null 就直接放弃"。
-    /// </summary>
-    private async Task<HttpResponseMessage> GetFileResponseAsync(CurseForgeFile file, CancellationToken ct)
+    /// <summary>只下载官方 API 已授权提供的文件地址，保留官方哈希和大小，不推测受限制文件的 CDN 地址。</summary>
+    private Task<string> DownloadFileAsync(CurseForgeFile file, string destination, CancellationToken ct)
     {
-        var candidates = new List<string>();
-        if (!string.IsNullOrEmpty(file.DownloadUrl)) candidates.Add(file.DownloadUrl);
-
-        var part1 = file.Id / 1000;
-        var part2 = file.Id % 1000;
-        var encodedName = Uri.EscapeDataString(file.FileName);
-        candidates.Add($"https://edge.forgecdn.net/files/{part1}/{part2}/{encodedName}");
-        candidates.Add($"https://media.forgecdn.net/files/{part1}/{part2}/{encodedName}");
-
-        Exception? lastError = null;
-        foreach (var url in candidates)
-        {
-            try
-            {
-                var resolved = await Plugins.PluginInterceptionRegistry.PrepareDownloadAsync(url, file.FileName, null, ct);
-                var resp = await _http.GetAsync(resolved, HttpCompletionOption.ResponseHeadersRead, ct);
-                if (resp.IsSuccessStatusCode) return resp;
-                resp.Dispose();
-                lastError = new HttpRequestException($"HTTP {(int)resp.StatusCode}来自 {url}");
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException and not Plugins.PluginFlowCanceledException)
-            {
-                lastError = ex;
-            }
-        }
-
-        throw new InvalidOperationException(
-            "这个文件下载失败：已尝试官方链接和 CDN 镜像均无法访问，可能是作者彻底禁止了第三方下载，或文件已被下架，请尝试去 CurseForge 官网手动下载。",
-            lastError);
+        if (string.IsNullOrWhiteSpace(file.DownloadUrl))
+            throw new InvalidOperationException("作者未提供第三方下载链接，请从 CurseForge 官网获取这个文件。");
+        var sha1 = file.Hashes?.FirstOrDefault(hash => hash.Algo == 1)?.Value;
+        var md5 = file.Hashes?.FirstOrDefault(hash => hash.Algo == 2)?.Value;
+        return DownloadEndpoints.DownloadFileWithFallbackAsync(_http, file.DownloadUrl, DownloadEndpoints.PreferMirror,
+            destination, $"下载 {file.FileName} 失败", ct: ct, expectedSha1: sha1, expectedMd5: md5,
+            expectedSize: file.FileLength > 0 ? file.FileLength : null,
+            userAgent: "XCL2-Launcher/1.0 (+https://github.com/xztx127-craft/xcl2)");
     }
 
     /// <summary>
@@ -185,11 +151,7 @@ public class CurseForgeService
         try
         {
             progress?.Report($"下载 {file.FileName} ...");
-            using (var resp = await GetFileResponseAsync(file, ct))
-            {
-                await using var fs = File.Create(tmpZip);
-                await resp.Content.CopyToAsync(fs, ct);
-            }
+            await DownloadFileAsync(file, tmpZip, ct);
 
             progress?.Report("解压存档 ...");
             System.IO.Compression.ZipFile.ExtractToDirectory(tmpZip, targetDir, overwriteFiles: true);
@@ -217,14 +179,9 @@ public class CurseForgeService
         try
         {
             progress?.Report($"下载 {file.FileName} ...");
-            using (var resp = await GetFileResponseAsync(file, ct))
-            {
-                await using var fs = File.Create(tmp);
-                await resp.Content.CopyToAsync(fs, ct);
-            }
+            await DownloadFileAsync(file, tmp, ct);
 
-            if (File.Exists(destPath)) File.Delete(destPath);
-            File.Move(tmp, destPath);
+            File.Move(tmp, destPath, overwrite: true);
             progress?.Report("下载完成");
             return destPath;
         }
@@ -278,14 +235,9 @@ public class CurseForgeService
         try
         {
             progress?.Report($"下载 {file.FileName} ...");
-            using (var resp = await GetFileResponseAsync(file, ct))
-            {
-                await using var fs = File.Create(tmp);
-                await resp.Content.CopyToAsync(fs, ct);
-            }
+            await DownloadFileAsync(file, tmp, ct);
 
-            if (File.Exists(destPath)) File.Delete(destPath);
-            File.Move(tmp, destPath);
+            File.Move(tmp, destPath, overwrite: true);
             progress?.Report("下载完成");
             return destPath;
         }

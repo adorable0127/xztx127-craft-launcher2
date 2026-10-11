@@ -320,6 +320,10 @@
                         </ListBox.ItemTemplate>
                     </ListBox>
 
+                    <ContentControl x:Name="VersionLoadingHost" Grid.Row="2" Visibility="Collapsed"
+                                    Background="{DynamicResource PanelBrush}"
+                                    HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch"/>
+
                     <!-- 分页条：游戏版本清单条目非常多（官方 manifest 有上千个历史版本），
                          同样需要分页，不然列表照样被撑爆显示不全。 -->
                     <Grid Grid.Row="3" Margin="0,8,0,0">
@@ -807,6 +811,7 @@
                                         <ComboBoxItem Content="{DynamicResource Str_Ui_Combined_Modrinth_Curseforge}" IsSelected="True" Tag="combined"/>
                                         <ComboBoxItem Content="{DynamicResource Str_Ui_Modrinth_Only}" Tag="modrinth"/>
                                         <ComboBoxItem Content="{DynamicResource Str_Ui_Curseforge_Only}" Tag="curseforge"/>
+                                        <ComboBoxItem Content="{DynamicResource Str_Plugin_ModSourceMenu}" Tag="plugin-mod"/>
                                     </ComboBox>
                                 </StackPanel>
 

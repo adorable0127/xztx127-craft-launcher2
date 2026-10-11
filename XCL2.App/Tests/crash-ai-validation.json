@@ -1,0 +1,92 @@
+{
+  "checks": [
+    {
+      "name": "C# syntax: Services/CrashAiLogService.cs",
+      "passed": true
+    },
+    {
+      "name": "C# syntax: Services/AiAssistantService.cs",
+      "passed": true
+    },
+    {
+      "name": "C# syntax: Views/AiAssistantPanel.xaml.cs",
+      "passed": true
+    },
+    {
+      "name": "C# syntax: Views/AiCrashAnalysisDialog.cs",
+      "passed": true
+    },
+    {
+      "name": "C# syntax: Views/MainWindow.AiCrashOverlay.cs",
+      "passed": true
+    },
+    {
+      "name": "C# syntax: Views/CrashReportDialog.xaml.cs",
+      "passed": true
+    },
+    {
+      "name": "C# syntax: Tests/CrashAiRegression/Program.cs",
+      "passed": true
+    },
+    {
+      "name": "XML: Views/CrashReportDialog.xaml",
+      "passed": true
+    },
+    {
+      "name": "XML: Tests/CrashAiRegression/CrashAiRegression.csproj",
+      "passed": true
+    },
+    {
+      "name": "AI crash action is fixed to the left Grid column",
+      "passed": true
+    },
+    {
+      "name": "AI crash action label wraps on narrow screens",
+      "passed": true
+    },
+    {
+      "name": "Overlay preserves MainContent and current navigation",
+      "passed": true
+    },
+    {
+      "name": "Settings are displayed as a child overlay",
+      "passed": true
+    },
+    {
+      "name": "Crash AI generation uses a dedicated service and callback scope",
+      "passed": true
+    },
+    {
+      "name": "Closing analysis cancels only its own request",
+      "passed": true
+    },
+    {
+      "name": "Analysis enforces Plan without changing global mode",
+      "passed": true
+    },
+    {
+      "name": "Log permission and model/config checks occur before clearing draft",
+      "passed": true
+    },
+    {
+      "name": "Evidence is restricted to the current launch and incident",
+      "passed": true
+    },
+    {
+      "name": "Credentials are redacted before submission",
+      "passed": true
+    },
+    {
+      "name": "Log files and final submission are bounded",
+      "passed": true
+    },
+    {
+      "name": "Log content is identified as untrusted diagnostic data",
+      "passed": true
+    }
+  ],
+  "passed": 21,
+  "windows_build": "NOT_RUN: CoreCLR initialization failed in this environment (0x8007000E)",
+  "runtime_regression": "NOT_RUN: dotnet run --project Tests/CrashAiRegression/CrashAiRegression.csproj",
+  "ui_runtime": "NOT_RUN: requires Windows WPF environment"
+}

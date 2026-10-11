@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
@@ -28,6 +28,12 @@ public partial class SettingsPage : UserControl
     /// <summary>"补全 DirectX"：与崩溃弹窗里的按钮共用同一个安装服务（先确认，再从微软官方下载静默安装）。</summary>
     private void InstallDirectX_Click(object sender, RoutedEventArgs e)
         => DirectXRuntimeInstallService.StartWithConfirmation();
+
+    private void OpenDirectXPage_Click(object sender, RoutedEventArgs e)
+        => ExternalLinkService.Open(DirectXRuntimeInstallService.OfficialPage);
+
+    private void OpenExternalPage_Click(object sender, RoutedEventArgs e)
+        => ExternalLinkService.Open((sender as Button)?.Tag as string);
 
     private void InstallDisplayDriver_Click(object sender, RoutedEventArgs e)
         => WindowsDisplayDriverInstallService.StartWithConfirmation();
@@ -72,6 +78,10 @@ public partial class SettingsPage : UserControl
     // 「隐藏设置项」的编辑副本，跟上面那行同理：勾选先只留在页面里，点"保存设置"时才写回
     // cfg.HiddenSettingKeys。两个集合各管各的，不要互相赋值（一个是功能入口，一个是设置条目）。
     private HashSet<string> _pendingHiddenSettingKeys = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<AnimationKind, (CheckBox Enabled, Slider Intensity, TextBlock Value)> _animationControls = new();
+    private bool _noAnimationModeWasEnabled;
+    private CancellationTokenSource? _pageLoadCancellation;
+    private Task<IReadOnlyList<string>>? _installedFontNames;
 
     /// <summary>供 MainWindow.SetMainContent 在切页前查询："当前设置页是否有未保存的改动"。
     /// 只有非自动保存模式下才会变成 true——自动保存模式下每次改动都会立即落盘，
@@ -95,23 +105,44 @@ public partial class SettingsPage : UserControl
         // 300ms 后旧页面的计时器仍会突然改全局主题，看起来像“切页后按钮自己变色”。
         Unloaded += (_, _) =>
         {
+            _pageLoadCancellation?.Cancel();
+            _pageLoadCancellation?.Dispose();
+            _pageLoadCancellation = null;
             _accentApplyDebounceTimer?.Stop();
+            StopAnimationPreviews();
+            AnimationSettingsService.ClearPreview();
             // F10 的"临时显示"只对当前这一次停留在设置页有效：切走页面就复位，
             // 不然用户下次再进设置页会发现明明勾了隐藏却全都还在，以为设置没保存。
             SettingsVisibilityService.TemporaryRevealActive = false;
         };
-        Loaded += (_, _) =>
+        IsVisibleChanged += (_, _) =>
         {
+            if (!IsVisible) StopAnimationPreviews();
+        };
+        Loaded += async (_, _) =>
+        {
+            _pageLoadCancellation?.Cancel();
+            _pageLoadCancellation?.Dispose();
+            var cancellation = new CancellationTokenSource();
+            _pageLoadCancellation = cancellation;
+            // Loaded 正处于入场的布局阶段；先让加载提示和页面首帧完成呈现。
+            await System.Windows.Threading.Dispatcher.Yield(DispatcherPriority.ContextIdle);
+            if (!IsLoaded || cancellation.IsCancellationRequested) return;
+            _ = AutoDetectJavaOnLoadAsync(cancellation.Token);
             if (_settingsOpenBackupCreated) return;
             _settingsOpenBackupCreated = true;
             try
             {
-                var backup = _owner.ConfigService.CreateSettingsOpenBackup();
-                if (_owner.ConfigService.RecordSettingsPageOpenAndShouldShowRestoreTip())
+                var (backup, showTip) = await _owner.ConfigService.CreateSettingsOpenBackupAsync();
+                if (showTip && IsLoaded && !cancellation.IsCancellationRequested)
                 {
-                    _ = Dispatcher.BeginInvoke(new Action(() => MessageBoxDialog.ShowInfo(
+                    _ = Dispatcher.BeginInvoke(new Action(() =>
+                    {
+                        if (!IsLoaded || cancellation.IsCancellationRequested) return;
+                        MessageBoxDialog.ShowInfo(
                         $"你知道吗？如果你修改错误设置，可以在下面的文件夹里找到自动备份的 config，复制一份并替换 config 就可以还原了！\n\n{Path.GetDirectoryName(backup)}",
-                        "设置备份提示")), DispatcherPriority.ContextIdle);
+                        "设置备份提示");
+                    }), DispatcherPriority.ContextIdle);
                 }
             }
             catch (Exception ex)
@@ -131,6 +162,13 @@ public partial class SettingsPage : UserControl
         PageAnimationsCheck.IsChecked = cfg.EnablePageAnimations;
         WindowAnimationsCheck.IsChecked = cfg.EnableUiAnimations;
         LowPerformanceModeCheck.IsChecked = cfg.LowPerformanceMode;
+        AnimationSpeedSlider.Value = cfg.AnimationSpeedPercent;
+        AnimationSpeedValueText.Text = $"{(int)Math.Round(cfg.AnimationSpeedPercent)}%";
+        CompletelyDisableAnimationsCheck.IsChecked = cfg.CompletelyDisableAnimations;
+        _noAnimationModeWasEnabled = cfg.CompletelyDisableAnimations;
+        SelectComboByTag(NoAnimationOptimizationCombo, cfg.NoAnimationOptimization.ToString());
+        if (NoAnimationOptimizationCombo.SelectedItem == null) NoAnimationOptimizationCombo.SelectedIndex = 2;
+        InitializeAnimationSettings(cfg);
         AlwaysOnTopCheck.IsChecked = cfg.AlwaysOnTop;
         UiZoomEnabledCheck.IsChecked = cfg.EnableUiZoomShortcut;
         UiZoomWheelCheck.IsChecked = cfg.UiZoomShortcutBindings.Contains(UiZoomShortcutMode.CtrlWheel);
@@ -167,6 +205,7 @@ public partial class SettingsPage : UserControl
         // 外观与视觉效果：Win11 新光效 + 窗口透明度，均默认关闭，见 AppConfig 对应字段注释。
         Win11EffectsCheck.IsChecked = cfg.EnableWin11VisualEffects;
         WinUi3DesignCheck.IsChecked = cfg.EnableWinUi3Design;
+        ShowFeatureSearchCheck.IsChecked = cfg.ShowFeatureSearch;
         SelectComboByTag(AppFontCombo, cfg.AppFontFamily);
         if (AppFontCombo.SelectedItem == null) AppFontCombo.SelectedIndex = 0; // 兜底：旧配置没有这一项时默认选中"跟随系统"
 
@@ -262,6 +301,11 @@ public partial class SettingsPage : UserControl
         _simplifiedCheckInitializing = true;
         SimplifiedModeCheck.IsChecked = cfg.SimplifiedModeEnabled;
         _simplifiedCheckInitializing = false;
+        _featureSearchStyleInitializing = true;
+        foreach (ComboBoxItem item in FeatureSearchStyleCombo.Items)
+            if ((string?)item.Tag == cfg.FeatureSearchStyle) FeatureSearchStyleCombo.SelectedItem = item;
+        if (FeatureSearchStyleCombo.SelectedItem == null) FeatureSearchStyleCombo.SelectedIndex = 0;
+        _featureSearchStyleInitializing = false;
 
         // 窗口与托盘：下拉框选项顺序跟 XAML 里四个 ComboBoxItem 的声明顺序一一对应
         // （DirectClose=0，MinimizeToTray=1，Minimize=2，AskEachTime=3），初始化时按当前
@@ -380,7 +424,7 @@ public partial class SettingsPage : UserControl
         // （已经在读取候选时把 AppData 目录也纳入扫描范围，见 JavaService 的改动），
         // 静默合并新探测到的候选，不弹确认框、不因为探测失败而报错打扰用户——
         // 这只是锦上添花的自动填充，失败了大不了跟以前一样，用户还能手动点按钮。
-        _ = AutoDetectJavaOnLoadAsync();
+        // 自动探测由 Loaded 发起，切走时取消；构造过程中不再同步枚举磁盘/注册表。
 
         // "是否可以直接保存，无需点击保存设置"：见 AppConfig.SettingsAutoSaveWithoutConfirm 注释。
         SettingsAutoSaveCheck.IsChecked = cfg.SettingsAutoSaveWithoutConfirm;
@@ -428,7 +472,7 @@ public partial class SettingsPage : UserControl
             LauncherLogService.AppendLine("[设置未保存诊断] 轮询发现界面值跟上一次检查时不一样，走 OnSettingsEdited。");
             OnSettingsEdited();
         };
-        _dirtyPollTimer.Start();
+        Loaded += (_, _) => _dirtyPollTimer?.Start();
         Unloaded += (_, _) => _dirtyPollTimer?.Stop();
     }
 
@@ -627,7 +671,7 @@ public partial class SettingsPage : UserControl
                 ToastService.ShowActionPrompt(
                     "设置已自动保存", "回退", RollbackAutoSave,
                     hint: "点击回退可撤销最近一次自动保存",
-                    key: "settings-autosave");
+                    key: "settings-autosave", dismissible: true);
             }
         }
         else
@@ -738,6 +782,7 @@ public partial class SettingsPage : UserControl
         if (_preAutoSaveSnapshotJson == null) return;
         var snapshot = System.Text.Json.JsonSerializer.Deserialize<AppConfig>(_preAutoSaveSnapshotJson);
         if (snapshot == null) return;
+        EndEditingForReload();
 
         _owner.ConfigService.ReplaceConfigFieldsFrom(snapshot);
         _owner.ConfigService.Save();
@@ -764,8 +809,7 @@ public partial class SettingsPage : UserControl
     /// 不需要额外维护一份"逐控件原始值"的映射。</summary>
     private void DiscardChanges()
     {
-        _hasUnsavedChanges = false;
-        ToastService.DismissActionPrompt("settings-dirty");
+        EndEditingForReload();
         ApplyAllVisualEffectsFromConfig();
         _owner.NavigateToSettings();
     }
@@ -775,10 +819,19 @@ public partial class SettingsPage : UserControl
     /// 就会把主内容区切换成用户真正想去的那个页面，这里没必要多跳一次设置页。</summary>
     public void DiscardUnsavedChangesWithoutNavigating()
     {
-        _hasUnsavedChanges = false;
-        ToastService.DismissActionPrompt("settings-dirty");
+        EndEditingForReload();
         // 设置页支持若干“只预览、不落盘”的视觉项；选择放弃后切走页面时要恢复已保存状态。
         ApplyAllVisualEffectsFromConfig();
+    }
+
+    private void EndEditingForReload()
+    {
+        // 恢复/撤销后旧控件即将被替换；离页结算不能再把旧值保存回刚恢复的配置。
+        _suppressDirtyTracking = true;
+        _hasUnsavedChanges = false;
+        _editDebounceTimer?.Stop();
+        _dirtyPollTimer?.Stop();
+        ToastService.DismissActionPrompt("settings-dirty");
     }
 
     /// <summary>回退自动保存之后，跟 Save_Click 结尾同样需要重新应用一遍视觉相关的效果
@@ -787,6 +840,9 @@ public partial class SettingsPage : UserControl
     private void ApplyAllVisualEffectsFromConfig()
     {
         var cfg = _owner.ConfigService.Config;
+        _owner.ApplyFeatureSearchVisibility();
+        AnimationSettingsService.ClearPreview();
+        AnimationSettingsService.NotifyChanged();
         ThemeService.ApplyForCurrentState(cfg.GuestModeEnabled, cfg.UiSkin, cfg.IsDarkMode, cfg.CustomAccentColor);
         ThemeService.ApplyWindowTransparency(cfg.EnableWindowTransparency, cfg.WindowOpacityPercent);
         ThemeService.ApplyGlobalWindowTransparency(cfg.EnableGlobalWindowTransparency, cfg.GlobalWindowOpacityPercent);
@@ -813,12 +869,14 @@ public partial class SettingsPage : UserControl
     /// 唯一区别是这里不改按钮文字、不强制要求用户点击，页面一打开就在后台跑一次。
     /// 找到新 Java 会自动登记进列表并刷新界面；探测失败/没有新发现都完全静默，不弹窗。
     /// </summary>
-    private async Task AutoDetectJavaOnLoadAsync()
+    private async Task AutoDetectJavaOnLoadAsync(CancellationToken cancellationToken)
     {
         try
         {
             var javaService = new JavaService();
-            var candidates = await javaService.QuickDetectJavaAsync();
+            // QuickDetectJavaAsync 首次 await 前包含目录/注册表枚举，必须整个方法在工作线程启动。
+            var candidates = await Task.Run(() => javaService.QuickDetectJavaAsync(cancellationToken), cancellationToken);
+            if (!IsLoaded || cancellationToken.IsCancellationRequested) return;
 
             var cfg = _owner.ConfigService.Config;
             var existingPaths = new HashSet<string>(
@@ -935,16 +993,42 @@ public partial class SettingsPage : UserControl
     {
         combo.Items.Clear();
         combo.Items.Add(new ComboBoxItem { Content = "跟随全局", Tag = null });
-        foreach (var fontName in FontService.GetInstalledFontFamilyNames())
-        {
-            combo.Items.Add(new ComboBoxItem { Content = fontName, Tag = fontName });
-        }
-
         if (!string.IsNullOrWhiteSpace(currentValue))
+            combo.Items.Add(new ComboBoxItem { Content = currentValue, Tag = currentValue });
+        combo.SelectedIndex = combo.Items.Count - 1;
+
+        // 系统字体只在第一次展开时读取一次。进入设置页不再枚举三遍字体并创建数百个控件。
+        var populated = false;
+        var populating = false;
+        combo.DropDownOpened += async (_, _) =>
         {
-            SelectComboByTag(combo, currentValue!);
-        }
-        if (combo.SelectedItem == null) combo.SelectedIndex = 0;
+            if (populated || populating) return;
+            populating = true;
+            var token = _pageLoadCancellation?.Token ?? CancellationToken.None;
+            var loading = new ComboBoxItem { Content = "正在加载字体…", IsEnabled = false };
+            RunWithoutDirtyTracking(() => combo.Items.Add(loading));
+            try
+            {
+                _installedFontNames ??= Task.Run(FontService.GetInstalledFontFamilyNames);
+                var names = await _installedFontNames;
+                if (!IsLoaded || token.IsCancellationRequested) return;
+                RunWithoutDirtyTracking(() =>
+                {
+                    var selected = (combo.SelectedItem as ComboBoxItem)?.Tag as string;
+                    var existing = combo.Items.OfType<ComboBoxItem>().Select(i => i.Tag as string).ToHashSet(StringComparer.OrdinalIgnoreCase);
+                    foreach (var name in names)
+                        if (!existing.Contains(name)) combo.Items.Add(new ComboBoxItem { Content = name, Tag = name });
+                    if (!string.IsNullOrWhiteSpace(selected)) SelectComboByTag(combo, selected);
+                });
+                populated = true;
+            }
+            catch { /* 字体枚举失败时保留跟随全局和用户已保存的字体。 */ }
+            finally
+            {
+                RunWithoutDirtyTracking(() => combo.Items.Remove(loading));
+                populating = false;
+            }
+        };
     }
 
     /// <summary>
@@ -1032,6 +1116,7 @@ public partial class SettingsPage : UserControl
         // 2) F10 临时显示生效期间，到这里就结束——什么都不藏。
         if (SettingsVisibilityService.TemporaryRevealActive)
         {
+            UpdateAnimationControlsEnabled();
             RefreshSettingsHideRevealHint(revealing: true);
             return;
         }
@@ -1054,6 +1139,7 @@ public partial class SettingsPage : UserControl
             }
         }
 
+        UpdateAnimationControlsEnabled();
         RefreshSettingsHideRevealHint(revealing: false);
     }
 
@@ -1224,6 +1310,16 @@ public partial class SettingsPage : UserControl
     /// Checked/Unchecked 事件，只有用户手动点击才应该写配置。</summary>
     private bool _simplifiedCheckInitializing;
 
+    private bool _featureSearchStyleInitializing;
+    private void FeatureSearchStyleCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_featureSearchStyleInitializing) return;
+        if (FeatureSearchStyleCombo.SelectedItem is not ComboBoxItem { Tag: string tag }) return;
+        _owner.ConfigService.Config.FeatureSearchStyle = tag;
+        _owner.ConfigService.Save();
+        _owner.ApplyFeatureSearchVisibility();
+    }
+
     /// <summary>
     /// 简洁模式：跟首页右上角的同款开关是同一个配置项的另一个入口，点击立即写回 + 保存，
     /// 统一走公开的 _owner.ApplySimplifiedModeChanged() 刷新侧边栏，不直接调用 MainWindow
@@ -1346,7 +1442,7 @@ public partial class SettingsPage : UserControl
                     ? sv
                     : 21;
                 var simpleArch = simpleVersion == 8 ? "x86" : (Environment.Is64BitOperatingSystem ? "x64" : "x86");
-                path = await javaService.DownloadJavaAsync(
+                path = await JavaDownloadQueueService.DownloadAsync(javaService, 
                     new JavaDownloadRequest(simpleVersion.Value, simpleArch, JavaInstallMode.Portable),
                     progressWin.Progress);
             }
@@ -1357,7 +1453,7 @@ public partial class SettingsPage : UserControl
                 var modeTag = (JavaInstallModeCombo.SelectedItem as ComboBoxItem)?.Tag as string ?? "Portable";
                 var mode = modeTag == "System" ? JavaInstallMode.System : JavaInstallMode.Portable;
 
-                path = await javaService.DownloadJavaAsync(new JavaDownloadRequest(version, arch, mode), progressWin.Progress);
+                path = await JavaDownloadQueueService.DownloadAsync(javaService, new JavaDownloadRequest(version, arch, mode), progressWin.Progress);
             }
 
             // 下载完成的 Java 自动登记进 Java 列表，省得用户下载完还要再手动点一次"添加"。
@@ -1367,6 +1463,11 @@ public partial class SettingsPage : UserControl
             RefreshJavaList();
 
             StatusText.Text = $"Java 下载完成，已自动加入 Java 列表（{entry.Name}）！";
+        }
+        catch (OperationCanceledException)
+        {
+            StatusText.Text = "Java 下载或安装已取消。";
+            ToastService.ShowInfo(StatusText.Text);
         }
         catch (Exception ex)
         {
@@ -1396,7 +1497,7 @@ public partial class SettingsPage : UserControl
         try
         {
             var javaService = new JavaService();
-            var candidates = await javaService.QuickDetectJavaAsync();
+            var candidates = await Task.Run(() => javaService.QuickDetectJavaAsync());
 
             var cfg = _owner.ConfigService.Config;
             var existingPaths = new HashSet<string>(
@@ -1628,6 +1729,7 @@ public partial class SettingsPage : UserControl
     /// <summary>一键恢复到默认设置：重置所有可配置项回出厂默认值，并保存配置文件。</summary>
     private void ResetToDefaults_Click(object sender, RoutedEventArgs e)
     {
+        EndEditingForReload();
         // 重置为出厂默认值
         var cfg = _owner.ConfigService.Config;
         
@@ -1648,9 +1750,16 @@ public partial class SettingsPage : UserControl
         cfg.GameLanguage = "zh_cn";
         cfg.GameVersionTypeLabel = "XCL2";
         cfg.EnablePageAnimations = true;
+        cfg.EnableUiAnimations = true;
+        cfg.AnimationSpeedPercent = 75;
+        cfg.CompletelyDisableAnimations = false;
+        cfg.NoAnimationOptimization = NoAnimationOptimization.Balanced;
+        cfg.EnableHighPerformanceMode = false;
+        cfg.AnimationSettings = new Dictionary<string, AnimationOption>();
         cfg.LowPerformanceMode = false;
         cfg.AlwaysOnTop = false;
         cfg.EnableWinUi3Design = false;
+        cfg.ShowFeatureSearch = true;
         cfg.EnableWin11VisualEffects = false;
         cfg.EnableWindowTransparency = false;
         cfg.EnableGlobalWindowTransparency = false;
@@ -1674,6 +1783,8 @@ public partial class SettingsPage : UserControl
         
         // 保存配置
         _owner.ConfigService.Save();
+        ApplyAllVisualEffectsFromConfig();
+        FrameRateMonitorService.SetEnabled(cfg.EnableHighPerformanceMode);
         
         // 刷新界面反映默认值
         _owner.NavigateToSettings();
@@ -1932,6 +2043,12 @@ public partial class SettingsPage : UserControl
         cfg.EnablePageAnimations = PageAnimationsCheck.IsChecked == true;
         cfg.EnableUiAnimations = WindowAnimationsCheck.IsChecked == true;
         cfg.LowPerformanceMode = LowPerformanceModeCheck.IsChecked == true;
+        cfg.AnimationSpeedPercent = AnimationSpeedSlider.Value;
+        cfg.CompletelyDisableAnimations = CompletelyDisableAnimationsCheck.IsChecked == true;
+        cfg.NoAnimationOptimization = ReadNoAnimationOptimization();
+        cfg.AnimationSettings = ReadAnimationOptions();
+        AnimationSettingsService.ClearPreview();
+        AnimationSettingsService.NotifyChanged();
         cfg.AlwaysOnTop = AlwaysOnTopCheck.IsChecked == true;
         cfg.ScheduledInstanceBackupEnabled = ScheduledBackupCheck.IsChecked == true;
         cfg.ScheduledInstanceBackupVersionId = cfg.SelectedVersionId;
@@ -1966,6 +2083,8 @@ public partial class SettingsPage : UserControl
 
         cfg.EnableWin11VisualEffects = Win11EffectsCheck.IsChecked == true;
         cfg.EnableWinUi3Design = WinUi3DesignCheck.IsChecked == true;
+        cfg.ShowFeatureSearch = ShowFeatureSearchCheck.IsChecked == true;
+        _owner.ApplyFeatureSearchVisibility();
         cfg.AppFontFamily = (AppFontCombo.SelectedItem as ComboBoxItem)?.Tag as string ?? "";
         cfg.AppFontFamily_TitleBar = (TitleBarFontCombo.SelectedItem as ComboBoxItem)?.Tag as string;
         cfg.AppFontFamily_Sidebar = (SidebarFontCombo.SelectedItem as ComboBoxItem)?.Tag as string;
@@ -2483,6 +2602,7 @@ public partial class SettingsPage : UserControl
             ? parsed : Win11EffectsService.BackdropMaterial.Mica;
         Win11EffectsService.SetEnabled(Win11EffectsCheck.IsChecked == true, material);
         ThemeService.ApplyWindowTransparency(WindowTransparencyCheck.IsChecked == true, (int)WindowOpacitySlider.Value);
+        ThemeService.ApplyGlobalWindowTransparency(GlobalWindowTransparencyCheck.IsChecked == true, (int)GlobalWindowOpacitySlider.Value);
         // ApplyWindowTransparency 会触发一次全局背景刷新；设置页若有尚未保存的磨砂度预览，
         // 这里必须用滑块当前值再覆盖回来，避免切换 Mica/Acrylic/透明开关时磨砂度瞬间跳回旧配置。
         _owner.PreviewCustomBackgroundFrost((int)CustomBackgroundFrostSlider.Value);
@@ -2518,11 +2638,13 @@ public partial class SettingsPage : UserControl
         ThemeService.ApplyBrightness((int)e.NewValue);
     }
 
-    /// <summary>整窗全局透明度滑块拖动时只更新旁边的百分比文字，同样要等"保存设置"才生效。</summary>
+    /// <summary>整窗全局透明度实时预览；保存/自动保存时落盘，撤销时恢复已保存状态。</summary>
     private void GlobalWindowOpacitySlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
     {
         if (GlobalWindowOpacityValueText == null) return;
         GlobalWindowOpacityValueText.Text = $"{(int)e.NewValue}%";
+        if (_suppressDirtyTracking) return;
+        ThemeService.ApplyGlobalWindowTransparency(GlobalWindowTransparencyCheck.IsChecked == true, (int)e.NewValue);
     }
 
     /// <summary>弹窗"独立外观"开关：勾选/取消时联动滑块可用状态，并立即预览一次
@@ -3409,32 +3531,175 @@ public partial class SettingsPage : UserControl
         UiZoomPercentText.Text = $"{UiZoomService.CurrentPercent}%";
     }
 
+    private void InitializeAnimationSettings(AppConfig config)
+    {
+        StopAnimationPreviews();
+        _animationPreviewControls.Clear();
+        // 即使以后改为在同一页重新载入配置，也不重复注册名字或累加页面强度滑块。
+        foreach (var kind in _animationControls.Keys)
+        {
+            UnregisterName($"Animation_{kind}_Intensity");
+            if (kind == AnimationKind.Page) continue;
+            UnregisterName($"Animation_{kind}_Enabled");
+            UnregisterName($"Animation_{kind}_Row");
+        }
+        _animationControls.Clear();
+        for (var index = PageAnimationRow.Children.Count - 1; index >= 0; index--)
+            if (!ReferenceEquals(PageAnimationRow.Children[index], PageAnimationsCheck))
+                PageAnimationRow.Children.RemoveAt(index);
+        // 页面切换只保留一个开关，并兼容旧 EnablePageAnimations 配置。
+        AnimationOptionsPanel.Children.Clear();
+        foreach (var (kind, label) in AnimationSettingsService.Options)
+        {
+            var option = AnimationSettingsService.GetOption(config, kind);
+            Grid row;
+            CheckBox enabled;
+            if (kind == AnimationKind.Page)
+            {
+                row = PageAnimationRow;
+                enabled = PageAnimationsCheck;
+                enabled.IsChecked = config.EnablePageAnimations && option.Enabled;
+            }
+            else
+            {
+                row = new Grid { Name = $"Animation_{kind}_Row", Margin = new Thickness(0, 0, 0, 6) };
+                row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(240) });
+                row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(220) });
+                row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(52) });
+                RegisterName(row.Name, row);
+                enabled = new CheckBox
+                {
+                    Name = $"Animation_{kind}_Enabled", Content = label,
+                    VerticalAlignment = VerticalAlignment.Center, IsChecked = option.Enabled
+                };
+                enabled.Checked += AnimationSettingsCheck_Changed;
+                enabled.Unchecked += AnimationSettingsCheck_Changed;
+                RegisterName(enabled.Name, enabled);
+                row.Children.Add(enabled);
+            }
+
+            var intensity = new Slider
+            {
+                Name = $"Animation_{kind}_Intensity", Width = 220, Minimum = 0, Maximum = 100,
+                TickFrequency = 5, IsSnapToTickEnabled = true, IsMoveToPointEnabled = true,
+                Value = option.IntensityPercent, Tag = kind, ToolTip = $"{label}强度（0% 等同关闭）"
+            };
+            var value = new TextBlock
+            {
+                Text = $"{(int)Math.Round(intensity.Value)}%", Margin = new Thickness(8, 0, 0, 0),
+                VerticalAlignment = VerticalAlignment.Center
+            };
+            intensity.ValueChanged += (_, e) =>
+            {
+                value.Text = $"{(int)Math.Round(e.NewValue)}%";
+                if (_suppressDirtyTracking) return;
+                PreviewAnimationSettings();
+                OnSettingsEdited();
+                QueueAnimationPreview(kind);
+            };
+            Grid.SetColumn(intensity, 1);
+            Grid.SetColumn(value, 2);
+            RegisterName(intensity.Name, intensity);
+            row.Children.Add(intensity);
+            row.Children.Add(value);
+            AddAnimationPreview(row, kind, label);
+            AnimationOptionsPanel.Children.Add(row);
+            _animationControls[kind] = (enabled, intensity, value);
+        }
+        UpdateAnimationControlsEnabled();
+    }
+
+    private Dictionary<string, AnimationOption> ReadAnimationOptions()
+    {
+        // 保留尚未识别的分类，以便升级/降级时不会丢失其它版本保存的偏好。
+        var options = new Dictionary<string, AnimationOption>(_owner.ConfigService.Config.AnimationSettings,
+            StringComparer.OrdinalIgnoreCase);
+        foreach (var (kind, controls) in _animationControls)
+            options[kind.ToString()] = new AnimationOption
+            {
+                Enabled = controls.Enabled.IsChecked == true,
+                IntensityPercent = controls.Intensity.Value
+            };
+        return options;
+    }
+
+    private void UpdateAnimationControlsEnabled()
+    {
+        var noAnimations = CompletelyDisableAnimationsCheck.IsChecked == true;
+        var running = WindowAnimationsCheck.IsChecked == true && LowPerformanceModeCheck.IsChecked != true && !noAnimations;
+        AnimationSpeedSlider.IsEnabled = running;
+        var config = _owner.ConfigService.Config;
+        NoAnimationOptimizationPanel.Visibility = noAnimations
+            && SettingsVisibilityService.IsVisible(config, "SetGroup.Performance")
+            && SettingsVisibilityService.IsVisible(config, "Set.Perf.NoAnimationOptimization")
+            ? Visibility.Visible : Visibility.Collapsed;
+        foreach (var controls in _animationControls.Values)
+            controls.Intensity.IsEnabled = running && controls.Enabled.IsChecked == true;
+        foreach (var (kind, preview) in _animationPreviewControls)
+            preview.Button.IsEnabled = running && _animationControls[kind].Enabled.IsChecked == true;
+    }
+
+    private void PreviewAnimationSettings()
+    {
+        UpdateAnimationControlsEnabled();
+        AnimationSettingsService.SetPreview(new AppConfig
+        {
+            EnableUiAnimations = WindowAnimationsCheck.IsChecked == true,
+            EnablePageAnimations = PageAnimationsCheck.IsChecked == true,
+            LowPerformanceMode = LowPerformanceModeCheck.IsChecked == true,
+            AnimationSpeedPercent = AnimationSpeedSlider.Value,
+            CompletelyDisableAnimations = CompletelyDisableAnimationsCheck.IsChecked == true,
+            NoAnimationOptimization = ReadNoAnimationOptimization(),
+            AnimationSettings = ReadAnimationOptions()
+        });
+    }
+
+    private void AnimationSettingsCheck_Changed(object sender, RoutedEventArgs e)
+    {
+        if (_suppressDirtyTracking) return;
+        PreviewAnimationSettings();
+        OnSettingsEdited();
+    }
+
+    private NoAnimationOptimization ReadNoAnimationOptimization()
+        => Enum.TryParse<NoAnimationOptimization>(TagOf(NoAnimationOptimizationCombo), out var preference)
+            && Enum.IsDefined(preference) ? preference : NoAnimationOptimization.Balanced;
+
+    private void AnimationSpeedSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+    {
+        if (AnimationSpeedValueText == null) return;
+        AnimationSpeedValueText.Text = $"{(int)Math.Round(e.NewValue)}%";
+        if (_suppressDirtyTracking) return;
+        PreviewAnimationSettings();
+        OnSettingsEdited();
+        QueueAnimationPreview(AnimationKind.Page);
+    }
+
+    private void CompletelyDisableAnimationsCheck_Changed(object sender, RoutedEventArgs e)
+    {
+        if (_suppressDirtyTracking) return;
+        var enabled = CompletelyDisableAnimationsCheck.IsChecked == true;
+        var showTip = enabled && !_noAnimationModeWasEnabled;
+        _noAnimationModeWasEnabled = enabled;
+        PreviewAnimationSettings();
+        OnSettingsEdited();
+        if (showTip)
+            ToastService.ShowInfo("这会降低 CPU 以及内存的占用，但是可能会变得有视觉污染");
+    }
+
+    private void NoAnimationOptimizationCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_suppressDirtyTracking) return;
+        PreviewAnimationSettings();
+        OnSettingsEdited();
+    }
+
     private void LowPerformanceModeCheck_Changed(object sender, RoutedEventArgs e)
     {
         if (_suppressDirtyTracking) return;
-        if (LowPerformanceModeCheck.IsChecked == true)
-        {
-            // 只关闭页面切换动画——这是低性能模式名副其实的核心行为，其它开关（Win11 特效、
-            // 窗口透明度、全局透明度、高性能模式动效）是否要一起关，交给用户自己决定。
-            if (PageAnimationsCheck != null)
-                PageAnimationsCheck.IsChecked = false;
-            // 窗口过渡动画(打开/最小化/最大化/关闭)本质上也是"动画"，低性能模式一起带上关掉，
-            // 跟 PageAnimationsCheck 同一个处理逻辑，理由一致。
-            if (WindowAnimationsCheck != null)
-                WindowAnimationsCheck.IsChecked = false;
-            ToastService.ShowInfo("已启用低性能模式：页面切换动画、窗口过渡动画已关闭。云母/亚克力特效、"
-                + "透明度、高性能模式动效等其它开关不受影响，仍按你自己的勾选生效");
-        }
-        else
-        {
-            ToastService.ShowInfo("已关闭低性能模式：页面切换动画、窗口过渡动画已恢复默认开启");
-            if (PageAnimationsCheck != null)
-                PageAnimationsCheck.IsChecked = true;
-            if (WindowAnimationsCheck != null)
-                WindowAnimationsCheck.IsChecked = true;
-        }
-        // 不在这里写 cfg；否则即使用户还没点保存，内存配置也已经被改掉，随后任何其它
-        // ConfigService.Save() 都可能把这次未确认修改带到磁盘。统一由 PerformSave 处理。
+        // 暂停动画但保留各类偏好；退出低性能模式时恢复用户原本的选择。
+        PreviewAnimationSettings();
+        OnSettingsEdited();
     }
 
     /// <summary>触屏模式开关刚被勾上时提个醒：这套虚拟按键悬浮层依赖低级鼠标钩子、

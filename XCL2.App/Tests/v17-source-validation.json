@@ -1,0 +1,39 @@
+{
+  "version": 17,
+  "changed_csharp_syntax_passed": [
+    "Views/CrashReportDialog.xaml.cs",
+    "Views/MainWindow.xaml.cs",
+    "Views/MainWindow.WinUiPreview.cs",
+    "Views/AiAssistantPanel.xaml.cs",
+    "Views/MainWindow.AiCrashOverlay.cs",
+    "Views/SkinModelViewerDialog.xaml.cs",
+    "Views/HomePage.xaml.cs",
+    "Views/AiCrashAnalysisDialog.cs",
+    "Views/HomePage.Preview.cs",
+    "Services/PreviewFluentTheme.cs",
+    "Services/OfflineDefaultSkin.cs",
+    "Services/ThemeService.cs",
+    "Services/AccountAvatarConverter.cs",
+    "Services/AccountAvatarCacheService.cs",
+    "Services/AiAssistantService.cs",
+    "Services/CrashAiLogService.cs",
+    "Tests/CrashAiRegression/Program.cs"
+  ],
+  "changed_xml_passed": [
+    "App.xaml",
+    "Views/ModDetailPage.xaml",
+    "Views/HomePage.xaml",
+    "Views/DriverDownloadLinks.xaml",
+    "Views/AboutHelpPage.xaml",
+    "Views/MainWindow.xaml",
+    "Views/CrashReportDialog.xaml",
+    "Resources/Themes/PreviewFluent.xaml",
+    "Tests/CrashAiRegression/CrashAiRegression.csproj"
+  ],
+  "all_project_local_source_references_exist": true,
+  "default_skin_identical_to_attachment": true,
+  "native_pri_fix_preserved": true,
+  "prior_v16_files_preserved": true,
+  "windows_compile": "NOT_RUN: CoreCLR initialization failed (0x8007000E)",
+  "windows_rendering": "NOT_RUN"
+}

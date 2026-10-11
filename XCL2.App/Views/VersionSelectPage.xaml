@@ -121,6 +121,8 @@
 
                     <!-- ListBox 撑满剩余空间，内容比这一行还高时用自己的 ScrollViewer（ListBox 默认自带）单独滚动。 -->
                     <ListBox x:Name="InstalledListBox" BorderThickness="0,0,0,1" BorderBrush="{DynamicResource DividerBrush}"
+                             ScrollViewer.CanContentScroll="True" VirtualizingPanel.IsVirtualizing="True"
+                             VirtualizingPanel.VirtualizationMode="Recycling"
                              SelectionChanged="InstalledListBox_SelectionChanged">
                         <ListBox.ItemTemplate>
                             <DataTemplate>
@@ -196,6 +198,9 @@
                         </ListBox.ItemTemplate>
                     </ListBox>
                 </DockPanel>
+                <ContentControl x:Name="VersionLoadingHost" Visibility="Collapsed"
+                                Background="{DynamicResource PanelBrush}"
+                                HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch"/>
             </Grid>
         </Border>
     </Grid>

@@ -85,7 +85,7 @@ public sealed class ExamplePlugin : IPlugin
 
 `Initialize` 和 `Shutdown` 在同一轮扫描中最多各调用一次；点「重新扫描」会先关停上一轮，再重新启动符合设置的插件。`Shutdown` 不保证插件程序集立刻从内存卸载；不要长期把插件类型挂在宿主静态事件上。仅导入运行一次模式下，后续启动不会调用该 DLL 的构造函数或 `Initialize`。
 
-### `PluginContext` 完整公开成员
+### `PluginContext` 常用公开成员
 
 | 成员 | 类型 | 用法 |
 | --- | --- | --- |
@@ -94,10 +94,21 @@ public sealed class ExamplePlugin : IPlugin
 | `Config` | `PluginConfigService` | 当前插件的 JSON 设置入口。 |
 | `DataDirectory` | `string` | 已创建的专属可写目录：`%APPDATA%\XCL2\Plugins\data\<Id>`。缓存和下载文件存这里。 |
 | `Log` | `Action<string>` | 调用 `ctx.Log("消息")` 将带插件 ID 前缀的文字写入启动器日志。 |
-| `ApiVersion` | `Version` | 当前宿主插件 API 为 1.9；1.1–1.9 保持逐步兼容。 |
+| `ApiVersion` | `Version` | 当前宿主插件 API 为 2.2；已有接口继续保留。 |
 | `Ui` | `PluginUiService` | 原有弹窗、按钮、选项与面板入口。 |
 | `Components` | `PluginComponentService` | 组件定位、增删、移动、替换和布局。 |
 | `Runtime` | `PluginRuntimeService` | 游戏启动内核、头像渲染及实时模型渲染后端。 |
+| `Permissions` | `PluginPermissionService` | 查询当前授权与能力快照。 |
+| `Launcher` | `PluginLauncherService` | 账户、实例、Mod、下载、设置、环境的只读快照。 |
+| `Control` | `PluginControlService` | 导航、窗口、外观、启动控制与设置补丁。 |
+| `Management` | `PluginManagementService` | 实例、Mod、Java 和下载管理（API 2.2）。 |
+| `Resources` | `PluginResourceService` | 游戏版本及社区资源查询与安装（API 2.2）。 |
+| `Events` | `PluginEventService` | 业务事件订阅和受权限控制的干预。 |
+| `Providers` | `PluginProviderService` | 注册下载、Mod、Loader 与登录来源。 |
+| `Network` | `PluginNetworkService` | 受限网络 GET。 |
+| `Messages` | `PluginMessageService` | 已声明依赖插件间的消息。 |
+| `Preview` | `PluginPreviewService` | 原生 WinUI 预览卡片和外观。 |
+| `Worlds` | `PluginWorldService` | 存档查询、修改和复制。 |
 | `Stopping` | `CancellationToken` | 停止前取消，供后台任务响应。 |
 
 ### `PluginConfigService` 完整公开方法
@@ -364,10 +375,40 @@ ctx.Runtime.RegisterSkinModelRenderer("custom-engine", request => new MyRenderer
 
 ### API 1.4–1.9 能力索引
 
-当前宿主 API 版本为 1.9。1.4–1.9 继续保留前述 UI/组件/渲染接口，并新增：清单、依赖与逐项授权；只读业务快照和生命周期/账户/实例/下载/Mod 事件；启动、下载与实例创建拦截；下载/Mod/Loader/登录提供者；受限网络与安装工作区；导航页、实例右键动作、设置项、背景和插件消息；EXE 双向命名管道协议及结构化命令行结果。阶段设计和逐阶段补丁保存在 `Docs/PluginApiStages/1.md` 至 `7.md`。
+这些能力在 1.4–1.9 阶段引入；当前宿主 API 为 2.2。1.4–1.9 继续保留前述 UI/组件/渲染接口，并新增：清单、依赖与逐项授权；只读业务快照和生命周期/账户/实例/下载/Mod 事件；启动、下载与实例创建拦截；下载/Mod/Loader/登录提供者；受限网络与安装工作区；导航页、实例右键动作、设置项、背景和插件消息；EXE 双向命名管道协议及结构化命令行结果。
 
 其中宿主侧实际接线包括：`RegisterLaunchMiddleware` → `LauncherService.Launch`、`RegisterAvatarRenderer` → `SkinAvatarRenderService.RenderFaceAvatar`、`RegisterSkinModelRenderer` → `PluginSkinModelHost`；所有 Overlay 弹窗统一经过插件扩展宿主并发布 `SubscribeDialogs` 打开/关闭事件；导航、设置、背景、实例动作和四类 Provider 均有真实消费入口。
 
 ### 本次交付状态
 
 已做源码级并集、注册链、XAML/XML 与事件处理器静态检查。当前交付环境没有 .NET SDK，因此未执行 Windows/net8.0-windows 实际编译或运行测试。
+
+## 升级到 API 2.0 与签名包
+
+插件管理新增“升级 / 新签名”：支持复制旧二进制迁移清单，或从 .csproj / 源码 ZIP 在临时副本中尝试编译。编译参数提供 `Xcl2HostPath` 指向当前宿主管理程序集；项目应使用 `<HintPath>$(Xcl2HostPath)</HintPath>`。它不会自动改写任意旧接口调用。
+
+用户会先看到安全哨兵风险说明、备份范围与本地编译行为。全部插件文件、配置、数据和启用状态先备份并校验，再生成待审查升级包；安装需另行确认，安装后默认禁用。源码不会发送给远程 AI，依赖恢复可能联网，MSBuild 自定义目标可能执行代码。
+
+新版包使用 schemaVersion 2 与 ECDSA 完整性签名；迁移签名来自本机临时密钥，不代表原作者身份。请保留迁移报告并重新核对权限和运行兼容性。备份管理与恢复入口位于插件管理页。
+
+WinUI 3 预览与存档 API、DLL 用法、EXE 管道方法详见 API_REFERENCE 与 PLUGIN_EXE_PROTOCOL 的 API 2.0 章节。
+
+
+## API 2.1 开发中心与控制接口
+
+“设置 → 第三方插件 → API 开发中心 / 样例”提供七个内置专题，支持离线阅读与单独导出；插件管理中的 API 按钮也进入同一页面。生成模板现在包含 Examples.cs 及全部专题文档。
+
+模板默认声明 ui.basic、ui.components、ui.navigation，并示范打开 API 开发中心。想使用窗口控制、启动控制、设置写入时，再分别声明 ui.window、launcher.control、settings.write，并请用户在插件管理授权。只使用控制接口可声明 minApiVersion 为 2.1；使用本次业务操作接口时声明 2.2。
+
+`ctx.Control` 可控制已有页面、启动请求、账户和实例选择、窗口标题与布局、主题和透明度等。它与已有 Components、Ui、Preview、Providers、Events 接口组合，实现更完整的启动器定制。API 参数和权限详见 API_LAUNCHER_CONTROL.md。
+
+耗时回调可将等待延长至 3600 秒；默认三秒。不要在 UI 上同步等待长任务，取消令牌应一路传递。撤销权限只影响后续调用，已保存的设置不会自动回退。
+
+
+## API 2.2：自己的启动台与资源工作流
+
+模板的 `minApiVersion` 为 2.2，默认仍只声明 ui.basic、ui.components、ui.navigation。`Examples.cs` 包含 `LauncherExamples.RegisterDashboard(ctx)`：在插件 Initialize 中调用前，添加并授权注释要求的 instances.read、downloads.read、launcher.control，即可注册能刷新实例和下载数量、使用当前账户启动所选实例的 WPF 页面。额外业务调用不会自动执行。
+
+补全调用 `ctx.Management.RepairInstanceAsync`；社区资源通过 `ctx.Resources.GetSourcesAsync → SearchAsync → GetFilesAsync → InstallAsync`。把文件和实例选择交给自己的界面，然后用返回的 DownloadId 跟踪统一下载任务。原版安装与补全都保留独立的实例写入和资源安装授权；只有搜索权限不能安装文件。
+
+能力矩阵、所有新方法的 DLL / EXE 对照、字段、权限及错误边界见 `API_LAUNCHER_COMPOSITION.md`。插件 Mod 来源已放入社区资源“来源”下拉列表的插件分组，来源可用性仍取决于插件是否运行及授权是否保留。

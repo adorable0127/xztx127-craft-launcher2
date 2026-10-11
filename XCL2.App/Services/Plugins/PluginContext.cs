@@ -55,10 +55,22 @@ public sealed class PluginContext : IDisposable
     public PluginRuntimeService Runtime { get; }
     public PluginPermissionService Permissions { get; }
     public PluginLauncherService Launcher { get; }
+    /// <summary>页面导航、窗口布局、启动控制与经过校验的设置写入。</summary>
+    public PluginControlService Control { get; }
     public PluginEventService Events { get; }
     public PluginProviderService Providers { get; }
     public PluginNetworkService Network { get; }
     public PluginMessageService Messages { get; }
+    public PluginPreviewService Preview { get; }
+    public PluginWorldService Worlds { get; }
+    /// <summary>API 2.2：实例、模组、Java 与下载队列管理。</summary>
+    public PluginManagementService Management { get; }
+    /// <summary>API 2.2：宿主资源查询、文件安装及原版版本安装。</summary>
+    public PluginResourceService Resources { get; }
+    public PluginProjectService Projects { get; }
+    public PluginTaskService Tasks { get; }
+    public PluginChangeService Changes { get; }
+    public PluginQueryService Queries { get; }
     private PluginHostBridge? _host;
     private PluginCallbackRunner? _callbacks;
     private readonly object _lifetimeGate = new();
@@ -128,10 +140,19 @@ public sealed class PluginContext : IDisposable
         Runtime = new PluginRuntimeService(this);
         Permissions = new PluginPermissionService(this);
         Launcher = new PluginLauncherService(this);
+        Control = new PluginControlService(this);
         Events = new PluginEventService(this);
         Providers = new PluginProviderService(this);
         Network = new PluginNetworkService(this);
         Messages = new PluginMessageService(this);
+        Preview = new PluginPreviewService(this);
+        Worlds = new PluginWorldService(this);
+        Management = new PluginManagementService(this);
+        Resources = new PluginResourceService(this);
+        Projects = new PluginProjectService(this);
+        Tasks = new PluginTaskService(this);
+        Changes = new PluginChangeService(this);
+        Queries = new PluginQueryService(this);
     }
 
     /// <summary>原安装等于 IPlugin.Id，副本含独立实例后缀。使用此 Id 隔离注册项，方便插件代码里不用额外持有 IPlugin 引用

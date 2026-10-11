@@ -129,6 +129,7 @@ public class CurseForgeFile
     [JsonPropertyName("fileDate")] public string FileDate { get; set; } = "";
     [JsonPropertyName("fileLength")] public long FileLength { get; set; }
     [JsonPropertyName("downloadUrl")] public string? DownloadUrl { get; set; }
+    [JsonPropertyName("hashes")] public List<CurseForgeFileHash> Hashes { get; set; } = new();
     [JsonPropertyName("gameVersions")] public List<string> GameVersions { get; set; } = new();
     /// <summary>CurseForge 官方 v1 文档定义：1=Release 2=Beta 3=Alpha。用于版本列表默认过滤掉
     /// 非正式版（见 InlineVersionEntry.IsPreview），用户可以点"显示预览版"按钮重新看到。</summary>
@@ -138,4 +139,11 @@ public class CurseForgeFile
 public class CurseForgeFileListResult
 {
     [JsonPropertyName("data")] public List<CurseForgeFile> Data { get; set; } = new();
+}
+
+/// <summary>CurseForge 官方 HashAlgo：1=SHA1，2=MD5。</summary>
+public sealed class CurseForgeFileHash
+{
+    [JsonPropertyName("value")] public string Value { get; set; } = "";
+    [JsonPropertyName("algo")] public int Algo { get; set; }
 }

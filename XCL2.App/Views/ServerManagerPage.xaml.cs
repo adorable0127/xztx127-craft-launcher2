@@ -1,11 +1,13 @@
 using System.Collections.ObjectModel;
 using System.IO;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
+using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 using Microsoft.Win32;
 using XCL2.App.Models;
@@ -53,6 +55,11 @@ public partial class ServerManagerPage : UserControl
     private Action? _pendingServerResourceDebouncedAction;
     private int _serverResourceSearchSeq;
     private bool _serverResourcePanelLoaded;
+    private int _instanceRefreshGeneration;
+    private CancellationTokenSource? _instanceRefreshCancellation;
+    private bool _instanceRefreshNeeded = true;
+    private int _mcVersionRequest;
+    private int _buildVersionRequest;
 
     /// <summary>
     /// 是否已经跑完构造函数里的 InitializeComponent()。
@@ -86,8 +93,23 @@ public partial class ServerManagerPage : UserControl
         };
 
         // 后台下载任务（创建服务器/核心下载）完成后会登记新实例，列表需要自动刷新。
-        Loaded += (_, _) => _owner.ServerInstanceService.InstanceAdded += OnInstanceAddedByBackgroundTask;
-        Unloaded += (_, _) => _owner.ServerInstanceService.InstanceAdded -= OnInstanceAddedByBackgroundTask;
+        Loaded += (_, _) =>
+        {
+            _owner.ServerInstanceService.InstanceAdded += OnInstanceAddedByBackgroundTask;
+            ResumeInstanceRefresh();
+        };
+        InstancesPanel.IsVisibleChanged += (_, e) =>
+        {
+            if ((bool)e.NewValue) ResumeInstanceRefresh();
+            else CancelInstanceRefresh();
+        };
+        Unloaded += (_, _) =>
+        {
+            _owner.ServerInstanceService.InstanceAdded -= OnInstanceAddedByBackgroundTask;
+            CancelInstanceRefresh();
+            _instanceRefreshNeeded = true;
+            _serverResourceDebounceTimer?.Stop();
+        };
 
         _initialized = true;
         Category_Checked(CatHome, new RoutedEventArgs()); // 补上初始化阶段被跳过的那次面板显隐
@@ -102,6 +124,8 @@ public partial class ServerManagerPage : UserControl
         if (!_initialized) return; // InitializeComponent() 过程中触发的事件：控件树还没解析完，直接跳过
         if (sender is not RadioButton rb) return;
         var tag = rb.Tag as string;
+        if (tag == "instances") _instanceRefreshNeeded = true;
+        else CancelInstanceRefresh();
 
         HomePanel.Visibility = tag == "home" ? Visibility.Visible : Visibility.Collapsed;
         CorePanel.Visibility = tag == "core" ? Visibility.Visible : Visibility.Collapsed;
@@ -111,7 +135,7 @@ public partial class ServerManagerPage : UserControl
         // 也同步切到"插件"，点"资源包"时切到"资源包"，避免出现"点插件却看到材质包"的错觉。
         ServerResourcePanel.Visibility = tag is "plugins" or "resourcepack" ? Visibility.Visible : Visibility.Collapsed;
 
-        if (tag == "instances") RefreshInstanceList();
+        if (tag == "instances") ResumeInstanceRefresh();
         if (tag == "plugins")
         {
             InitServerResourcePanel();
@@ -132,7 +156,6 @@ public partial class ServerManagerPage : UserControl
         if (sender is not RadioButton rb || rb.Tag is not string tag) return;
         if (!Enum.TryParse<ServerCoreType>(tag, out var coreType)) return;
         _selectedCoreType = coreType;
-        UiAnimationHelper.Entrance(CorePanel);
 
         // Vanilla 没有单独的"构建版本"概念，隐藏该栏；Spigot 走 BuildTools 本地编译同样没有
         // build 号概念（只需要选 MC 版本），也隐藏；其余类型显示对应标签
@@ -156,6 +179,9 @@ public partial class ServerManagerPage : UserControl
 
     private async Task LoadMcVersionsAsync()
     {
+        var request = ++_mcVersionRequest;
+        ++_buildVersionRequest;
+        var coreType = _selectedCoreType;
         _mcVersions.Clear();
         _buildVersions.Clear();
         McVersionCombo.IsEnabled = false;
@@ -163,7 +189,7 @@ public partial class ServerManagerPage : UserControl
 
         try
         {
-            List<string> versions = _selectedCoreType switch
+            List<string> versions = coreType switch
             {
                 ServerCoreType.Vanilla => await _coreService.GetVanillaVersionsAsync(includeSnapshots: false),
                 ServerCoreType.Paper => await _coreService.GetPaperVersionsAsync(),
@@ -178,19 +204,24 @@ public partial class ServerManagerPage : UserControl
                 _ => new List<string>()
             };
 
-            // 版本号排序：尝试按语义化版本从新到旧排列，排不了的（NeoForge 独立编号体系等）保留原始顺序
+            if (request != _mcVersionRequest || coreType != _selectedCoreType) return;
+            // 快速切换核心时只接收最后一次请求，避免旧列表返回导致第二次布局和闪动。
             foreach (var v in versions) _mcVersions.Add(v);
 
             if (_mcVersions.Count > 0) McVersionCombo.SelectedIndex = 0;
         }
         catch (Exception ex)
         {
+            if (request != _mcVersionRequest) return;
             ErrorPresenter.ShowFriendlyError(Loc.T("Str_Cs_Couldn_T_Fetch_The_Version_List_This_Is_", "获取版本列表失败，可能是网络连接问题或下载源暂时不可用，请检查网络后重试。"), $"[获取版本列表失败] {ex}", "获取版本列表失败");
         }
         finally
         {
-            McVersionCombo.IsEnabled = true;
-            DownloadCoreBtn.IsEnabled = true;
+            if (request == _mcVersionRequest)
+            {
+                McVersionCombo.IsEnabled = true;
+                DownloadCoreBtn.IsEnabled = true;
+            }
         }
     }
 
@@ -206,6 +237,8 @@ public partial class ServerManagerPage : UserControl
 
     private async void McVersionCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
+        var request = ++_buildVersionRequest;
+        var coreType = _selectedCoreType;
         _buildVersions.Clear();
         if (McVersionCombo.SelectedItem is not string mcVersion) return;
         if (_selectedCoreType == ServerCoreType.Vanilla) return;
@@ -214,7 +247,7 @@ public partial class ServerManagerPage : UserControl
 
         try
         {
-            List<ServerCoreBuild> builds = _selectedCoreType switch
+            List<ServerCoreBuild> builds = coreType switch
             {
                 ServerCoreType.Paper => await _coreService.GetPaperBuildsAsync(mcVersion),
                 ServerCoreType.Fabric => await _coreService.GetFabricLoaderVersionsAsync(),
@@ -226,6 +259,8 @@ public partial class ServerManagerPage : UserControl
                 _ => new List<ServerCoreBuild>()
             };
 
+            if (request != _buildVersionRequest || coreType != _selectedCoreType ||
+                !string.Equals(McVersionCombo.SelectedItem as string, mcVersion, StringComparison.Ordinal)) return;
             foreach (var b in builds) _buildVersions.Add(b);
 
             var recommended = builds.FirstOrDefault(b => b.IsRecommended);
@@ -233,6 +268,7 @@ public partial class ServerManagerPage : UserControl
         }
         catch (Exception ex)
         {
+            if (request != _buildVersionRequest) return;
             ErrorPresenter.ShowFriendlyError(Loc.T("Str_Cs_Couldn_T_Fetch_The_Build_List_This_Is_Us", "获取构建版本列表失败，可能是网络连接问题或下载源暂时不可用，请检查网络后重试。"), $"[获取构建版本列表失败] {ex}", "获取构建版本列表失败");
         }
     }
@@ -659,12 +695,39 @@ public partial class ServerManagerPage : UserControl
         OpenServerProperties(instance);
     }
 
-    private void RefreshInstanceList()
-    {
-        InstanceListPanel.Children.Clear();
-        var instances = _owner.ServerInstanceService.Instances;
+    private sealed record InstanceCardData(ServerInstance Instance, int Port, string ConnectionText, ImageSource? Icon);
 
-        if (instances.Count == 0)
+    private void CancelInstanceRefresh()
+    {
+        ++_instanceRefreshGeneration;
+        _instanceRefreshCancellation?.Cancel();
+        _instanceRefreshCancellation = null;
+    }
+
+    private void ResumeInstanceRefresh()
+    {
+        // 托盘隐藏或卸载会取消未完成的读取；重新可见时只恢复那次待加载任务。
+        // IsVisibleChanged 与 Category_Checked/Loaded 可能在同一次调用栈触发，
+        // 已有 CTS 时不再重复启动，完成后的列表也无需因窗口显示而重新读取。
+        if (_initialized && IsLoaded && InstancesPanel.IsVisible && _instanceRefreshNeeded &&
+            _instanceRefreshCancellation == null)
+            RefreshInstanceList();
+    }
+
+    private async void RefreshInstanceList()
+    {
+        _instanceRefreshNeeded = true;
+        if (!IsLoaded || !InstancesPanel.IsVisible) return;
+        CancelInstanceRefresh();
+        var generation = _instanceRefreshGeneration;
+        var cancellation = new CancellationTokenSource();
+        _instanceRefreshCancellation = cancellation;
+        var token = cancellation.Token;
+        var instances = _owner.ServerInstanceService.Instances.ToArray();
+        UiAnimationHelper.Reset(InstanceListPanel);
+        InstanceListPanel.Children.Clear();
+
+        if (instances.Length == 0)
         {
             InstanceListPanel.Children.Add(new TextBlock
             {
@@ -673,15 +736,103 @@ public partial class ServerManagerPage : UserControl
                 Margin = new Thickness(0, 20, 0, 0),
                 HorizontalAlignment = HorizontalAlignment.Center
             });
+            _instanceRefreshNeeded = false;
+            _instanceRefreshCancellation = null;
+            cancellation.Dispose();
             return;
         }
 
-        foreach (var instance in instances)
-            InstanceListPanel.Children.Add(BuildInstanceCard(instance));
+        InstanceListPanel.Children.Add(LoadingPlaceholderFactory.Create("正在读取服务器信息"));
+
+        // 文件读取、DNS 和图片解码原来在每张卡片的 UI 构造中同步执行。
+        // 后台只读取快照/生成冻结的图像，WPF 控件始终留在 UI 线程创建。
+        var requests = instances.Select(instance => (
+            Instance: instance,
+            Snapshot: new ServerInstance
+            {
+                Directory = instance.Directory,
+                CoreType = instance.CoreType,
+                ServerPort = instance.ServerPort
+            },
+            IconPath: instance.IconPath,
+            RunningPort: _owner.ServerProcessManager.GetRunning(instance.Id)?.ServerPort)).ToArray();
+        try
+        {
+            var data = await Task.Run(() =>
+            {
+                token.ThrowIfCancellationRequested();
+                var ip = ServerConnectionInfoService.GetLocalLanIPv4();
+                return requests.Select(request =>
+                {
+                    token.ThrowIfCancellationRequested();
+                    int port;
+                    try { port = request.RunningPort ?? ServerPortService.ReadPort(request.Snapshot); }
+                    catch { port = request.Snapshot.ServerPort ?? ServerPortService.DefaultPort; }
+                    BitmapImage? icon = null;
+                    if (!string.IsNullOrWhiteSpace(request.IconPath))
+                    {
+                        try
+                        {
+                            using var stream = File.OpenRead(request.IconPath);
+                            var bitmap = new BitmapImage();
+                            bitmap.BeginInit();
+                            bitmap.CacheOption = BitmapCacheOption.OnLoad;
+                            bitmap.DecodePixelWidth = 80;
+                            bitmap.StreamSource = stream;
+                            bitmap.EndInit();
+                            bitmap.Freeze();
+                            icon = bitmap;
+                        }
+                        catch { /* 图标损坏或已移除时使用原占位图标。 */ }
+                    }
+                    var address = ip != null ? $"{ip}:{port}" : $"本机(localhost):{port}";
+                    return new InstanceCardData(request.Instance, port, address, icon);
+                }).ToArray();
+            }, token);
+
+            if (generation != _instanceRefreshGeneration || !IsLoaded || !InstancesPanel.IsVisible) return;
+            var cards = new List<Border>(data.Length);
+            foreach (var entry in data)
+            {
+                token.ThrowIfCancellationRequested();
+                entry.Instance.ServerPort = entry.Port;
+                cards.Add(BuildInstanceCard(entry));
+                // 大列表分批生成，给加载图标与用户输入留下调度机会。
+                if (cards.Count % 4 == 0)
+                    await System.Windows.Threading.Dispatcher.Yield(DispatcherPriority.Background);
+                if (generation != _instanceRefreshGeneration || !IsLoaded || !InstancesPanel.IsVisible) return;
+            }
+            var animate = !UiAnimationHelper.HasActivePageAncestor(InstanceListPanel);
+            if (animate) UiAnimationHelper.PrepareEntrance(InstanceListPanel);
+            InstanceListPanel.Children.Clear();
+            foreach (var card in cards) InstanceListPanel.Children.Add(card);
+            _instanceRefreshNeeded = false;
+            if (animate) UiAnimationHelper.StartPreparedEntrance(InstanceListPanel);
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception ex)
+        {
+            if (generation != _instanceRefreshGeneration) return;
+            InstanceListPanel.Children.Clear();
+            InstanceListPanel.Children.Add(new TextBlock
+            {
+                Text = "服务器信息加载失败，请重新打开服务器列表。",
+                TextWrapping = TextWrapping.Wrap,
+                Margin = new Thickness(12)
+            });
+            _instanceRefreshNeeded = false;
+            System.Diagnostics.Debug.WriteLine($"[服务器列表加载失败] {ex}");
+        }
+        finally
+        {
+            if (ReferenceEquals(_instanceRefreshCancellation, cancellation)) _instanceRefreshCancellation = null;
+            cancellation.Dispose();
+        }
     }
 
-    private Border BuildInstanceCard(ServerInstance instance)
+    private Border BuildInstanceCard(InstanceCardData data)
     {
+        var instance = data.Instance;
         var isRunning = _owner.ServerProcessManager.IsRunning(instance.Id);
 
         var card = new Border
@@ -704,22 +855,9 @@ public partial class ServerManagerPage : UserControl
             Background = (System.Windows.Media.Brush)FindResource("GlowSoftBrush"),
             Margin = new Thickness(0, 0, 12, 0), ClipToBounds = true
         };
-        if (!string.IsNullOrEmpty(instance.IconPath) && File.Exists(instance.IconPath))
+        if (data.Icon != null)
         {
-            try
-            {
-                var bmp = new System.Windows.Media.Imaging.BitmapImage();
-                bmp.BeginInit();
-                bmp.UriSource = new Uri(instance.IconPath, UriKind.Absolute);
-                bmp.CacheOption = System.Windows.Media.Imaging.BitmapCacheOption.OnLoad; // 立即读完文件，避免占用文件句柄导致后续换图标时删不掉旧文件
-                bmp.EndInit();
-                iconHost.Child = new Image { Source = bmp, Stretch = Stretch.UniformToFill };
-            }
-            catch
-            {
-                // 图标文件损坏/格式不支持：静默回退到占位符，不阻断整个列表的渲染
-                iconHost.Child = BuildIconPlaceholder(instance.DisplayName);
-            }
+            iconHost.Child = new Image { Source = data.Icon, Stretch = Stretch.UniformToFill };
         }
         else
         {
@@ -769,8 +907,7 @@ public partial class ServerManagerPage : UserControl
         // 连接地址：修复"新增出来的服务器没有 IP 地址"——之前卡片完全不展示怎么连进这个服务器，
         // 这里读取 server.properties 的 server-port + 本机局域网 IP 拼出连接地址；
         // 未运行时也照样展示（server.properties 在核心下载完成后就已经存在，不需要等服务器启动）。
-        var connectionText = ServerConnectionInfoService.Resolve(instance,
-            _owner.ServerProcessManager.GetRunning(instance.Id)?.ServerPort);
+        var connectionText = data.ConnectionText;
         var addressLine = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 4, 0, 0) };
         addressLine.Children.Add(new TextBlock
         {

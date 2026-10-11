@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Linq;
@@ -24,16 +24,28 @@ public partial class AiAssistantPanel : UserControl
     private AiChatSession _session = new();
     private readonly ObservableCollection<BubbleVm> _bubbles = new();
     private CancellationTokenSource? _sendCts;
+    private long _sendGeneration;
     private bool _sending;
+    private TaskCompletionSource<bool>? _sendCompletion;
+    private bool _overlayClosed;
+    internal bool RequireCrashLogPermission { get; set; }
+    internal bool SuppressPrewarm { get; set; }
+    internal bool AnalysisOnly { get; set; }
     private bool _suppressRoutingSelection;
     private bool _suppressModelSelection;
+    private bool _suppressReasoningSelection;
+    private bool _suppressWorkModeSelection;
     private bool _suppressHistorySelection;
+    private bool _confirmingWebSearch;
     private MainWindow? _owner;
+    private readonly System.Windows.Threading.DispatcherTimer _waitTimer = new() { Interval = TimeSpan.FromSeconds(1) };
+    private DateTime _sendStartedUtc;
 
     public AiAssistantPanel()
     {
         InitializeComponent();
         MessagesItemsControl.ItemsSource = _bubbles;
+        _waitTimer.Tick += (_, _) => UpdateWaitHint();
     }
 
     private void UserControl_Loaded(object sender, RoutedEventArgs e)
@@ -41,10 +53,12 @@ public partial class AiAssistantPanel : UserControl
         _owner = Window.GetWindow(this) as MainWindow;
         _owner?.UpdateAiFloatingButtonVisibility(false);
         RememberCurrentSession();
+        RefreshActivityVisibility();
 
         // 打开 AI 助手页面时预拉一次内置公共密钥并落盘缓存（已有缓存时内部会直接跳过），
         // 避免后续每次发消息都现拉一次。失败不影响页面正常打开，发消息时会自动兜底重拉。
-        _ = BuiltInAiDefaults.PrefetchAsync();
+        if (AiModelIds.GetCatalog(_config).Any(model => model.ProviderId == "builtin"))
+            _ = BuiltInAiDefaults.PrefetchAsync();
     }
 
     private void UserControl_Unloaded(object sender, RoutedEventArgs e)
@@ -60,6 +74,7 @@ public partial class AiAssistantPanel : UserControl
     {
         _service = service;
         _service.ConfirmAccessRequest = (title, msg) => MessageBoxDialog.ShowConfirm(msg, title);
+        _service.ReviewFileChange = (change, diff) => AiWorkbenchDialogs.Review(Window.GetWindow(this), change, diff);
         // 模型发起 XCL2_ASK 时，在输入框位置弹出提问卡片，等用户作答后再继续。
         _service.AskQuestionAsync = ShowQuestionAsync;
         ApplyConfig(config);
@@ -76,7 +91,7 @@ public partial class AiAssistantPanel : UserControl
         // 页面被导航/创建时调用一次，不含设置保存后的 ApplyConfig 热更新）就在后台悄悄发
         // 一次预热请求，不等待、不展示、不影响页面其它初始化。fire-and-forget 用 _ = 忽略
         // 返回的 Task——WarmUpAsync 内部已经吞掉了所有异常，这里不需要再 catch 一次。
-        if (_config.PrewarmSystemPromptOnOpen)
+        if (!SuppressPrewarm && _config.PrewarmSystemPromptOnOpen)
             _ = _service.WarmUpAsync();
     }
 
@@ -110,24 +125,43 @@ public partial class AiAssistantPanel : UserControl
         NormalizeConfigModels();
         _service?.UpdateConfig(_config);
 
-        DeepThinkingCheck.IsChecked = _config.EnableDeepThinking;
         WebSearchCheck.IsChecked = _config.EnableWebSearch;
         RefreshRoutingUi();
         RefreshModelCatalog();
+        RefreshReasoningUi();
+        RefreshWorkModeUi();
         UpdateRoutingText();
         UpdateConfigHint();
         UpdateTokenBadge();
+        RefreshActivityVisibility();
     }
 
     public async Task SubmitExternalPromptAsync(string text, string sessionTitle = "日志分析", bool isCrashLogContext = false)
     {
-        if (_service == null || string.IsNullOrWhiteSpace(text)) return;
+        if (_service == null || _sending || string.IsNullOrWhiteSpace(text)) return;
         _session = _service.CreateNewSession(string.IsNullOrWhiteSpace(sessionTitle) ? "日志分析" : sessionTitle);
         RememberCurrentSession();
         RebuildBubbles();
         RefreshHistory();
         InputTextBox.Text = text;
         await SendCurrentInputAsync(isCrashLogContext);
+    }
+
+    /// <summary>独立分析浮层真正关闭时取消它自己的请求；普通页面切换仍保持原有后台生成行为。</summary>
+    internal async Task StopForOverlayCloseAsync()
+    {
+        _overlayClosed = true;
+        _waitTimer.Stop();
+        var completion = _sendCompletion;
+        _sendCts?.Cancel();
+        if (completion != null) await completion.Task;
+    }
+
+    private string ModelDisplayName(string? modelKey)
+    {
+        var model = AiModelIds.FindInCatalog(_config, modelKey);
+        return model == null ? AiModelIds.GetDisplayName(_config, modelKey)
+            : string.IsNullOrWhiteSpace(model.ProviderName) ? model.DisplayName : model.ProviderName + " · " + model.DisplayName;
     }
 
     private void NormalizeConfigModels()
@@ -138,14 +172,10 @@ public partial class AiAssistantPanel : UserControl
 
         string Pick(string? value, string builtInFallback)
         {
-            var match = catalog.FirstOrDefault(m => string.Equals(m.Id, value, StringComparison.OrdinalIgnoreCase));
-            if (match != null) return match.Id;
-            if (!_config.UseCustomApiKey)
-            {
-                var fallback = catalog.FirstOrDefault(m => string.Equals(m.Id, builtInFallback, StringComparison.OrdinalIgnoreCase));
-                if (fallback != null) return fallback.Id;
-            }
-            return catalog[0].Id;
+            var match = AiModelIds.FindInCatalog(_config, value);
+            if (match != null) return match.ModelKey;
+            var fallback = catalog.FirstOrDefault(m => m.ProviderId == "builtin" && string.Equals(m.Id, builtInFallback, StringComparison.OrdinalIgnoreCase));
+            return fallback?.ModelKey ?? catalog[0].ModelKey;
         }
 
         _config.NormalModelId = Pick(_config.NormalModelId, AiModelIds.Nemotron35Lightning);
@@ -179,9 +209,9 @@ public partial class AiAssistantPanel : UserControl
         try
         {
             ModelCombo.ItemsSource = catalog;
-            ModelCombo.SelectedValue = catalog.Any(m => string.Equals(m.Id, _config.SelectedModel, StringComparison.OrdinalIgnoreCase))
+            ModelCombo.SelectedValue = catalog.Any(m => string.Equals(m.ModelKey, _config.SelectedModel, StringComparison.OrdinalIgnoreCase))
                 ? _config.SelectedModel
-                : catalog.FirstOrDefault()?.Id;
+                : catalog.FirstOrDefault()?.ModelKey;
         }
         finally { _suppressModelSelection = false; }
         UpdateModelSelectionState();
@@ -195,8 +225,8 @@ public partial class AiAssistantPanel : UserControl
         ResolvedModelBorder.Visibility = manual ? Visibility.Collapsed : Visibility.Visible;
         ModelCombo.IsEnabled = manual && !_sending;
 
-        var normal = AiModelIds.GetDisplayName(_config, _config.NormalModelId);
-        var expert = AiModelIds.GetDisplayName(_config, _config.ExpertModelId);
+        var normal = ModelDisplayName(_config.NormalModelId);
+        var expert = ModelDisplayName(_config.ExpertModelId);
         ResolvedModelText.Text = _config.RoutingMode switch
         {
             AiRoutingMode.Normal => $"由设置决定：{normal}",
@@ -223,17 +253,82 @@ public partial class AiAssistantPanel : UserControl
 
     private void RebuildBubbles()
     {
+        RefreshTaskUi();
         _bubbles.Clear();
         foreach (var m in _session.Messages.Where(m => m.Role != AiMessageRole.System))
-            _bubbles.Add(BubbleVm.From(m));
+            _bubbles.Add(BubbleVm.From(m, _config));
         UpdateTokenBadge();
         ScrollToBottom();
     }
 
     private void UpdateTokenBadge()
     {
-        int total = _session.Messages.Sum(m => m.EstimatedTokens);
-        TokenUsageText.Text = $"{total} / {_config.CompressionTokenThreshold} tok";
+        AiRequestUsage[] requests;
+        _session.UsageRequests ??= new();
+        lock (_session.UsageRequests) requests = _session.UsageRequests.Select(x => x.Clone()).ToArray();
+        long total = requests.Sum(x => x.TotalTokens);
+        bool estimated = requests.Any(x => x.IsEstimated);
+        var current = requests.LastOrDefault(x => x.AffectsContext && x.TotalTokens > 0);
+        TokenUsageText.Text = requests.Length == 0 ? "本对话 · 暂无 API 用量" : $"本对话 · {(estimated ? "约 " : "")}{total:N0} token";
+        CacheUsageText.Text = current?.CachedInputTokens is long cached
+            ? current.HasReportedInput && current.InputTokens > 0
+                ? $"当前缓存命中率：{(double)cached / current.InputTokens:P1}（{cached:N0} / {current.InputTokens:N0} 输入 token）"
+                : $"缓存命中 {cached:N0} token（等待接口返回有效输入总量后计算命中率）"
+            : "当前缓存命中率：供应商未返回缓存数据";
+        var priced = requests.Where(x => x.EstimatedCostUsd.HasValue).ToArray();
+        string cost = requests.Length == 0 ? "暂无 API 请求" : priced.Length == 0 ? "未配置模型单价"
+            : $"${priced.Sum(x => x.EstimatedCostUsd!.Value):0.######} USD" + (priced.Length < requests.Length ? " + 未知部分" : "");
+        CostUsageText.Text = "本对话估计成本：" + cost;
+        TotalUsageText.Text = $"累计输入 {requests.Sum(x => x.InputTokens):N0} · 输出 {requests.Sum(x => x.OutputTokens):N0} · 合计 {total:N0} token";
+        var currentModelKey = current == null ? "" : string.IsNullOrWhiteSpace(current.ModelKey) ? current.Model : current.ModelKey;
+        var configuredLimit = current == null ? 0 : AiUsageAccounting.Settings(_config, currentModelKey).ContextWindowTokens;
+        var contextLimit = Math.Clamp(configuredLimit > 0 ? configuredLimit : current?.ContextWindowTokens ?? 0, 0, 10_000_000);
+        long occupied = current == null ? 0 : current.InputTokens + Math.Max(current.OutputTokens, current.InProgress ? current.ReservedOutputTokens : 0);
+        double remaining = contextLimit > 0 ? Math.Clamp(1.0 - (double)occupied / contextLimit, 0, 1) : -1;
+        DrawUsageRing(remaining);
+        ContextUsageText.Text = current == null ? "当前上下文：发送请求后显示"
+            : contextLimit <= 0 ? $"当前上下文约 {occupied:N0} token；请为该模型设置上限以显示剩余比例。"
+            : $"当前上下文{(current.IsEstimated ? "约 " : "")}{occupied:N0} / {contextLimit:N0}，剩余 {Math.Max(0, contextLimit - occupied):N0} token"
+                + (current.InProgress && current.ReservedOutputTokens > 0 ? "（含预留输出）" : "");
+        UsageSummaryText.Text = current == null ? "点击查看用量；可在设置中填写模型上限与单价"
+            : (remaining >= 0 ? $"上下文剩余 {remaining:P0} · " : "上下文上限未设置 · ") + cost;
+        UsageSourceText.Text = (current == null ? "" : "当前模型："
+            + (string.IsNullOrWhiteSpace(current.ProviderName) ? ModelDisplayName(currentModelKey) : current.ProviderName + " · " + current.Model) + "\n")
+            + (estimated ? "包含本地估算；供应商未返回完整 usage 或请求中断时，token 与费用可能有偏差。" : "token 采用供应商返回的 usage。")
+            + " 费用按你设置的 USD 单价估算；未返回缓存字段或未设置缓存价时按普通输入价计。"
+            + (requests.Any(x => x.IsIncomplete) ? " 包含失败或中断请求，可能无法获得完整 usage。" : "")
+            + " 累计包含本对话的工具续答、压缩、子任务；不含预热、连接测试及此功能启用前的历史请求。圆环只计算当前主请求。";
+    }
+
+    private void DrawUsageRing(double remaining)
+    {
+        UsageRingLabel.Text = remaining < 0 ? "—" : $"{remaining:P0}";
+        UsageRemainingRing.SetResourceReference(System.Windows.Shapes.Shape.StrokeProperty,
+            remaining >= 0 && remaining <= 0.1 ? "DangerBrush" : "AccentBrush");
+        if (remaining <= 0) { UsageRemainingRing.Data = Geometry.Empty; return; }
+        if (remaining >= 0.9999) { UsageRemainingRing.Data = new EllipseGeometry(new Point(20, 20), 17, 17); return; }
+        double angle = remaining * Math.PI * 2;
+        var geometry = new StreamGeometry();
+        using (var ctx = geometry.Open())
+        {
+            ctx.BeginFigure(new Point(20, 3), false, false);
+            ctx.ArcTo(new Point(20 + Math.Sin(angle) * 17, 20 - Math.Cos(angle) * 17),
+                new Size(17, 17), 0, remaining > 0.5, SweepDirection.Clockwise, true, false);
+        }
+        geometry.Freeze();
+        UsageRemainingRing.Data = geometry;
+    }
+
+    private void UpdateWaitHint()
+    {
+        var elapsed = (int)(DateTime.UtcNow - _sendStartedUtc).TotalSeconds;
+        bool show = _sending && elapsed >= Math.Max(0, _config.LongWaitHintSeconds);
+        LongWaitHintText.Visibility = show ? Visibility.Visible : Visibility.Collapsed;
+        if (show)
+        {
+            string duration = $"{elapsed / 3600:00}:{elapsed / 60 % 60:00}:{elapsed % 60:00}";
+            LongWaitHintText.Text = $"本轮已运行 {duration} · {_config.LongWaitDescription}";
+        }
     }
 
     private void ScrollToBottom() => MessagesScroll.ScrollToEnd();
@@ -265,6 +360,7 @@ public partial class AiAssistantPanel : UserControl
 
         _config.RoutingMode = mode;
         _config.AutoModelRouting = mode == AiRoutingMode.Auto;
+        RefreshReasoningUi();
         UpdateModelSelectionState();
         UpdateRoutingText();
         PersistQuickConfig();
@@ -277,14 +373,120 @@ public partial class AiAssistantPanel : UserControl
 
         _config.SelectedModel = modelId;
         _config.AutoModelRouting = false;
+        RefreshReasoningUi();
         UpdateRoutingText();
         PersistQuickConfig();
     }
 
     private void QuickOption_Click(object sender, RoutedEventArgs e)
     {
-        _config.EnableDeepThinking = DeepThinkingCheck.IsChecked == true;
-        _config.EnableWebSearch = WebSearchCheck.IsChecked == true;
+        var enableWebSearch = WebSearchCheck.IsChecked == true;
+        if (_confirmingWebSearch)
+        {
+            WebSearchCheck.IsChecked = _config.EnableWebSearch;
+            return;
+        }
+
+        // Click 只来自主动操作；ApplyConfig 设置 IsChecked 不会触发此事件。
+        if (enableWebSearch && !_config.EnableWebSearch)
+        {
+            _confirmingWebSearch = true;
+            try
+            {
+                if (!AiWebSearchConfirmation.ConfirmEnable())
+                {
+                    WebSearchCheck.IsChecked = false;
+                    return;
+                }
+            }
+            finally { _confirmingWebSearch = false; }
+        }
+
+        WebSearchCheck.IsChecked = enableWebSearch;
+        _config.EnableWebSearch = enableWebSearch;
+        PersistQuickConfig();
+    }
+
+    private void RefreshWorkModeUi()
+    {
+        if (!Enum.IsDefined(typeof(AiWorkMode), _config.WorkMode)) _config.WorkMode = AiWorkMode.Plan;
+        _suppressWorkModeSelection = true;
+        try
+        {
+            var displayedMode = AnalysisOnly ? AiWorkMode.Plan : _config.WorkMode;
+            WorkModeCombo.SelectedItem = WorkModeCombo.Items.OfType<ComboBoxItem>()
+                .FirstOrDefault(item => string.Equals(item.Tag as string, displayedMode.ToString(), StringComparison.Ordinal))
+                ?? WorkModeCombo.Items[0];
+            WorkModeCombo.IsEnabled = !AnalysisOnly && !_sending;
+            WorkModeHintText.Text = AnalysisOnly ? "崩溃分析：只读调查并提供修复建议，不自动修改文件或运行命令。"
+                : _config.WorkMode == AiWorkMode.Plan
+                ? "Plan：只读调查与规划，不修改文件、不运行命令。切换 Build 后发送消息才开始执行。"
+                : "Build：按已有权限执行任务。已有计划可发送“按计划继续”开始执行。";
+        }
+        finally { _suppressWorkModeSelection = false; }
+    }
+
+    private void WorkModeCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_suppressWorkModeSelection || AnalysisOnly) return;
+        if (_sending)
+        {
+            RefreshWorkModeUi();
+            return;
+        }
+        if (WorkModeCombo.SelectedItem is not ComboBoxItem { Tag: string tag }
+            || !Enum.TryParse<AiWorkMode>(tag, out var mode)) return;
+
+        _config.WorkMode = mode;
+        _service?.UpdateConfig(_config);
+        RefreshWorkModeUi();
+        PersistQuickConfig();
+    }
+
+    private AiReasoningLevel SelectedReasoningLevel => _config.ReasoningLevel
+        ?? (_config.EnableDeepThinking ? AiReasoningLevel.High : AiReasoningLevel.Off);
+
+    private IEnumerable<string> ActiveModelKeys() => _config.RoutingMode switch
+    {
+        AiRoutingMode.Normal => new[] { _config.NormalModelId },
+        AiRoutingMode.Expert => new[] { _config.ExpertModelId },
+        AiRoutingMode.SpecificModel => new[] { _config.SelectedModel },
+        _ => new[] { _config.NormalModelId, _config.ExpertModelId }
+    };
+
+    private bool ActiveModelsSupportFastMode() => ActiveModelKeys()
+        .All(key => AiModelIds.FindInCatalog(_config, key)?.SupportsFastMode == true);
+
+    private void RefreshReasoningUi()
+    {
+        var level = SelectedReasoningLevel;
+        bool supportsFast = ActiveModelsSupportFastMode();
+        if (level == AiReasoningLevel.Fast && !supportsFast)
+        {
+            level = AiReasoningLevel.Off;
+            _config.ReasoningLevel = level;
+            _config.EnableDeepThinking = false;
+            ToastService.ShowWarning("当前模型未确认支持极速模式，推理已切换为 off。自动路由时需普通、专家模型均支持极速。");
+            PersistQuickConfig();
+        }
+        _suppressReasoningSelection = true;
+        try
+        {
+            FastReasoningOption.Visibility = supportsFast ? Visibility.Visible : Visibility.Collapsed;
+            FastReasoningOption.IsEnabled = supportsFast;
+            ReasoningLevelCombo.SelectedItem = ReasoningLevelCombo.Items.OfType<ComboBoxItem>()
+                .FirstOrDefault(item => string.Equals(item.Tag as string, level.ToString(), StringComparison.Ordinal));
+        }
+        finally { _suppressReasoningSelection = false; }
+    }
+
+    private void ReasoningLevelCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_suppressReasoningSelection || ReasoningLevelCombo.SelectedItem is not ComboBoxItem { Tag: string tag }
+            || !Enum.TryParse<AiReasoningLevel>(tag, out var level)) return;
+        _config.ReasoningLevel = level;
+        _config.EnableDeepThinking = level is not (AiReasoningLevel.Off or AiReasoningLevel.Fast);
+        RefreshReasoningUi();
         PersistQuickConfig();
     }
 
@@ -304,9 +506,9 @@ public partial class AiAssistantPanel : UserControl
 
     private void UpdateRoutingText()
     {
-        var normal = AiModelIds.GetDisplayName(_config, _config.NormalModelId);
-        var expert = AiModelIds.GetDisplayName(_config, _config.ExpertModelId);
-        var selected = AiModelIds.GetDisplayName(_config, _config.SelectedModel);
+        var normal = ModelDisplayName(_config.NormalModelId);
+        var expert = ModelDisplayName(_config.ExpertModelId);
+        var selected = ModelDisplayName(_config.SelectedModel);
 
         switch (_config.RoutingMode)
         {
@@ -335,16 +537,9 @@ public partial class AiAssistantPanel : UserControl
     /// 里，只要有一个带独立使用条款，就在聊天页顶部提示一下，避免用户没注意到设置页里的提示。</summary>
     private void UpdateSpecialTermsNotice()
     {
-        var activeIds = _config.RoutingMode switch
-        {
-            AiRoutingMode.Normal => new[] { _config.NormalModelId },
-            AiRoutingMode.Expert => new[] { _config.ExpertModelId },
-            AiRoutingMode.SpecificModel => new[] { _config.SelectedModel },
-            _ => new[] { _config.NormalModelId, _config.ExpertModelId }
-        };
-
-        var notices = activeIds
+        var notices = ActiveModelKeys()
             .Where(id => !string.IsNullOrWhiteSpace(id))
+            .Select(key => AiModelIds.FindInCatalog(_config, key)?.Id ?? key)
             .SelectMany(id => new[] { AiModelIds.GetSpecialTermsNotice(id), AiModelIds.GetKnownIssueNotice(id) })
             .Where(n => !string.IsNullOrWhiteSpace(n))
             .Distinct()
@@ -363,22 +558,34 @@ public partial class AiAssistantPanel : UserControl
 
     private void UpdateConfigHint()
     {
-        bool customMissing = _config.UseCustomApiKey &&
-            (string.IsNullOrWhiteSpace(_config.ApiKey) || AiModelIds.GetCatalog(_config).Count == 0);
-        NoKeyHint.Visibility = customMissing ? Visibility.Visible : Visibility.Collapsed;
+        NoKeyHint.Visibility = AiModelIds.GetCatalog(_config).Count == 0 ? Visibility.Visible : Visibility.Collapsed;
     }
 
     private async Task SendCurrentInputAsync(bool isCrashLogContext = false)
     {
-        if (_sending || _service == null) return;
+        if (_overlayClosed || _sending || _service == null) return;
         var text = InputTextBox.Text.Trim();
         if (text.Length == 0) return;
 
-        if (_config.UseCustomApiKey &&
-            (string.IsNullOrWhiteSpace(_config.ApiKey) || AiModelIds.GetCatalog(_config).Count == 0))
+        isCrashLogContext |= RequireCrashLogPermission;
+        if (isCrashLogContext && !_config.AllowCrashLogReading)
+        {
+            RouteStatusText.Text = "崩溃日志已带入 · 请先在 AI 设置中允许发送日志，再点击发送";
+            return; // 保留输入，不在权限关闭时发送、清空或丢弃本次日志。
+        }
+
+        // Credentials belong to each source; an empty legacy ApiKey cannot block another
+        // configured endpoint or the built-in source in mixed mode.
+        if (AiModelIds.GetCatalog(_config).Count == 0)
         {
             NoKeyHint.Visibility = Visibility.Visible;
             return;
+        }
+
+        if (AnalysisOnly && _service.GetConfigurationIssue(text, isCrashLogContext) is string configurationIssue)
+        {
+            RouteStatusText.Text = configurationIssue;
+            return; // 初次配置未完成时日志仍留在输入框，设置完成后可以直接发送。
         }
 
         // 当前模式下会实际用到的模型（普通/专家/指定模型三种是确定的；自动模式要按问题内容
@@ -392,10 +599,10 @@ public partial class AiAssistantPanel : UserControl
             AiRoutingMode.SpecificModel => _config.SelectedModel,
             _ => null
         };
-        var knownIssue = AiModelIds.GetKnownIssueNotice(activeModelId);
+        var knownIssue = AiModelIds.GetKnownIssueNotice(AiModelIds.FindInCatalog(_config, activeModelId)?.Id ?? activeModelId);
         if (!string.IsNullOrWhiteSpace(knownIssue))
         {
-            var displayName = AiModelIds.GetDisplayName(_config, activeModelId);
+            var displayName = ModelDisplayName(activeModelId);
             var proceed = MessageBoxDialog.ShowConfirm(
                 $"当前选择的模型“{displayName}”目前已知有问题：\n\n{knownIssue}\n\n大概率会请求失败，仍要继续发送吗？建议先去 AI 设置换一个模型。",
                 "模型暂不可用");
@@ -420,26 +627,64 @@ public partial class AiAssistantPanel : UserControl
 
     private async Task GenerateAsync(string text, bool isCrashLogContext)
     {
-        if (_service == null || _sending) return;
+        if (_overlayClosed || _service == null || _sending) return;
+        isCrashLogContext |= RequireCrashLogPermission;
+        if (isCrashLogContext && !_config.AllowCrashLogReading)
+        {
+            RouteStatusText.Text = "请先在 AI 设置中允许发送日志，再继续分析";
+            return;
+        }
 
+        var service = _service;
+        var session = _session;
+        var previousAssistant = session.Messages.LastOrDefault(message => message.Role == AiMessageRole.Assistant);
+        long generation = ++_sendGeneration;
         _bubbles.Add(BubbleVm.UserBubble(text));
-        _bubbles.Add(BubbleVm.AssistantBubble("正在生成回答…", null));
+        var pending = BubbleVm.AssistantBubble("", null);
+        pending.IsGenerating = true;
+        pending.RefreshActivities(_config);
+        _bubbles.Add(pending);
         ScrollToBottom();
 
         _sendCts?.Dispose();
-        _sendCts = new CancellationTokenSource();
+        var sendCts = new CancellationTokenSource();
+        _sendCts = sendCts;
+        var sendCompletion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        _sendCompletion = sendCompletion;
+        var sendToken = sendCts.Token;
         SetSendingState(true);
+        // Progress 在 UI 上下文接收快照；生成结束后排队到达的旧通知不能污染下一轮回复。
+        var progress = new Progress<AiAssistantActivity>(activity =>
+        {
+            if (generation != _sendGeneration || !_sending || sendToken.IsCancellationRequested ||
+                !ReferenceEquals(session, _session) || !_bubbles.Contains(pending)) return;
+            // 离开页面仍允许请求完成，但不再触发隐藏页面的布局；返回时统一刷新快照。
+            pending.UpdateActivity(activity, _config, refresh: IsLoaded);
+            if (activity.Status == AiActivityStatus.Completed) RefreshTaskUi();
+        });
 
         try
         {
-            var reply = await _service.SendMessageAsync(
-                _session, text,
+            var reply = await service.SendMessageAsync(
+                session, text,
                 isCrashLogContext: isCrashLogContext,
                 forcedModel: null,
-                deepThinking: DeepThinkingCheck.IsChecked == true,
+                deepThinking: SelectedReasoningLevel is not (AiReasoningLevel.Off or AiReasoningLevel.Fast),
                 webSearch: WebSearchCheck.IsChecked == true,
-                ct: _sendCts.Token);
+                ct: sendToken,
+                progress: progress,
+                textProgress: new Progress<string>(value =>
+                {
+                    if (generation != _sendGeneration || !_sending || sendToken.IsCancellationRequested || !ReferenceEquals(session, _session)) return;
+                    pending.DisplayContent = value;
+                }),
+                usageProgress: new Progress<AiRequestUsage>(_ =>
+                {
+                    if (generation == _sendGeneration && ReferenceEquals(session, _session)) UpdateTokenBadge();
+                }),
+                reasoningLevel: SelectedReasoningLevel);
 
+            if (generation != _sendGeneration || !ReferenceEquals(session, _session)) return;
             RememberCurrentSession();
             RebuildBubbles();
             RefreshHistory();
@@ -447,42 +692,72 @@ public partial class AiAssistantPanel : UserControl
         }
         catch (OperationCanceledException)
         {
-            _service.SaveSession(_session);
+            if (generation != _sendGeneration || !ReferenceEquals(session, _session)) return;
+            service.SaveSession(session);
             RememberCurrentSession();
             RebuildBubbles();
             RefreshHistory();
-            _bubbles.Add(BubbleVm.AssistantBubble("已停止生成。", null));
+            AddFailureBubbleIfMissing(pending, "已停止生成。", previousAssistant);
             RouteStatusText.Text = "生成已停止";
         }
         catch (Exception ex)
         {
-            _service.SaveSession(_session);
+            if (generation != _sendGeneration || !ReferenceEquals(session, _session)) return;
+            service.SaveSession(session);
             RememberCurrentSession();
             RebuildBubbles();
             RefreshHistory();
             var friendly = FriendlyAiError(ex.Message);
-            _bubbles.Add(BubbleVm.AssistantBubble("出错了：" + friendly, null));
+            AddFailureBubbleIfMissing(pending, "出错了：" + friendly, previousAssistant);
             RouteStatusText.Text = ex.Message.Contains("模型 ID", StringComparison.OrdinalIgnoreCase)
                 ? "模型配置错误 · 请检查 model ID"
                 : "请求失败";
         }
         finally
         {
-            SetSendingState(false);
-            UpdateTokenBadge();
-            ScrollToBottom();
-            _sendCts?.Dispose();
-            _sendCts = null;
+            sendCompletion.TrySetResult(true);
+            if (ReferenceEquals(_sendCompletion, sendCompletion)) _sendCompletion = null;
+            if (generation == _sendGeneration)
+            {
+                ++_sendGeneration;
+                pending.IsGenerating = false;
+                SetSendingState(false);
+                UpdateTokenBadge();
+                ScrollToBottom();
+                if (ReferenceEquals(_sendCts, sendCts)) _sendCts = null;
+            }
+            sendCts.Dispose();
         }
+    }
+
+    private void RefreshActivityVisibility()
+    {
+        foreach (var bubble in _bubbles) bubble.RefreshActivities(_config);
+    }
+
+    private void AddFailureBubbleIfMissing(BubbleVm pending, string text, AiChatMessage? previousAssistant)
+    {
+        // 服务会保存带执行记录的中止/错误回复。只为尚未建立该回复的早期失败补显示，避免重复。
+        var last = _session.Messages.LastOrDefault();
+        if (last?.Role == AiMessageRole.Assistant && !ReferenceEquals(last, previousAssistant)) return;
+        pending.DisplayContent = text;
+        pending.RefreshActivities(_config);
+        _bubbles.Add(pending);
     }
 
     private void SetSendingState(bool sending)
     {
         _sending = sending;
+        RefreshTaskUi();
+        if (sending) { _sendStartedUtc = DateTime.UtcNow; _waitTimer.Start(); }
+        else _waitTimer.Stop();
+        UpdateWaitHint();
         SendButton.IsEnabled = !sending;
         StopButton.Visibility = sending ? Visibility.Visible : Visibility.Collapsed;
         StopButton.IsEnabled = sending;
         RoutingModeCombo.IsEnabled = !sending;
+        ReasoningLevelCombo.IsEnabled = !sending;
+        WorkModeCombo.IsEnabled = !sending;
         NewChatButton.IsEnabled = !sending;
         HistoryListBox.IsEnabled = !sending;
         UpdateModelSelectionState();
@@ -516,6 +791,16 @@ public partial class AiAssistantPanel : UserControl
     private void NewChatButton_Click(object sender, RoutedEventArgs e)
     {
         if (_service == null || _sending) return;
+
+        // 当前已经是一个还没有任何对话内容的新会话（只有系统提示词那条 System 消息）时，
+        // 再点"新对话"没有意义，只会在历史列表里堆出一堆空会话——直接提示并返回。
+        if (IsCurrentSessionEmpty())
+        {
+            ToastService.ShowInfo("已经处在新会话当中了");
+            InputTextBox.Focus();
+            return;
+        }
+
         _session = _service.CreateNewSession();
         RememberCurrentSession();
         RebuildBubbles();
@@ -523,6 +808,10 @@ public partial class AiAssistantPanel : UserControl
         UpdateRoutingText();
         InputTextBox.Focus();
     }
+
+    /// <summary>当前会话里没有任何用户/助手消息（只剩系统提示词）就算"新会话"。</summary>
+    private bool IsCurrentSessionEmpty()
+        => _session.Messages == null || _session.Messages.All(m => m.Role == AiMessageRole.System);
 
     private void HistoryListBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
@@ -679,7 +968,8 @@ public partial class AiAssistantPanel : UserControl
         ModelDisplayName = m.ModelDisplayName,
         RouteUsed = m.RouteUsed,
         WasAutoRouted = m.WasAutoRouted,
-        EstimatedTokens = m.EstimatedTokens
+        EstimatedTokens = m.EstimatedTokens,
+        Activities = (m.Activities ?? new List<AiAssistantActivity>()).Select(activity => activity.Clone()).ToList()
     };
 
     /// <summary>分支会话标题：延续原标题并加“（分支）”后缀；如果原标题已经带这个后缀
@@ -720,12 +1010,15 @@ public sealed class AiSessionListItemVm
 /// <summary>聊天气泡显示模型。实现 INotifyPropertyChanged 是因为“修复”需要在气泡原地
 /// 切换编辑态（IsEditing）——ObservableCollection 只在增删条目时通知界面，单条目内部属性
 /// 变化必须自己发通知，否则点“修复”后气泡不会变成输入框。</summary>
-public class BubbleVm : System.ComponentModel.INotifyPropertyChanged
+public partial class BubbleVm : System.ComponentModel.INotifyPropertyChanged
 {
     public event System.ComponentModel.PropertyChangedEventHandler? PropertyChanged;
     private void Raise(string name) => PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(name));
 
-    public string DisplayContent { get; set; } = "";
+    private string _displayContent = "";
+    public string DisplayContent { get => _displayContent; set { _displayContent = value; Raise(nameof(DisplayContent)); } }
+    private bool _isGenerating;
+    public bool IsGenerating { get => _isGenerating; set { _isGenerating = value; Raise(nameof(IsGenerating)); Raise(nameof(ReasoningVisibility)); } }
     public string SubLabel { get; set; } = "";
     public Visibility SubLabelVisibility { get; set; } = Visibility.Collapsed;
     public HorizontalAlignment BubbleAlignment { get; set; }
@@ -767,10 +1060,10 @@ public class BubbleVm : System.ComponentModel.INotifyPropertyChanged
         }
     }
 
-    public static BubbleVm From(AiChatMessage m)
+    public static BubbleVm From(AiChatMessage m, AiAssistantConfig? config = null)
     {
         bool isUser = m.Role == AiMessageRole.User;
-        return new BubbleVm
+        var bubble = new BubbleVm
         {
             DisplayContent = m.Content,
             BubbleAlignment = isUser ? HorizontalAlignment.Right : HorizontalAlignment.Left,
@@ -781,6 +1074,8 @@ public class BubbleVm : System.ComponentModel.INotifyPropertyChanged
             SubLabelVisibility = !isUser && !string.IsNullOrWhiteSpace(m.ModelUsed) ? Visibility.Visible : Visibility.Collapsed,
             OriginalMessage = m
         };
+        bubble.LoadActivities(m.Activities, config ?? new AiAssistantConfig());
+        return bubble;
     }
 
     public static BubbleVm UserBubble(string text) => new()

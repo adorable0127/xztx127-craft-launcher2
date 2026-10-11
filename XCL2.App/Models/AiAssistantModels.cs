@@ -1,6 +1,9 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json.Serialization;
 
 namespace XCL2.App.Models;
 
@@ -13,6 +16,12 @@ public class AiModelDefinition
 {
     public string Id { get; set; } = "";
     public string DisplayName { get; set; } = "";
+    public string ProviderId { get; set; } = "";
+    public string ProviderName { get; set; } = "";
+    public bool SupportsFastMode { get; set; }
+    /// <summary>配置、选择与计费使用接口 + 模型身份；请求体仍发送 Id。</summary>
+    [JsonIgnore]
+    public string ModelKey => AiModelIds.BuildModelKey(AiModelIds.GetProviderId(this), Id);
     public string? ProviderBaseUrl { get; set; }
     public string? ProviderApiKey { get; set; }
 
@@ -30,12 +39,18 @@ public class AiModelDefinition
     /// <summary>Tier 的中文展示文本，供界面直接绑定，避免枚举 ToString() 显示英文。</summary>
     public string TierLabel => Tier == AiModelTier.Expert ? "专家" : "普通";
 
+    /// <summary>"切换分组"按钮上的文字：当前是专家就显示"改为普通"，反之亦然。</summary>
+    public string TierSwitchLabel => Tier == AiModelTier.Expert ? "改为普通" : "改为专家";
+
     public override string ToString() => string.IsNullOrWhiteSpace(DisplayName) ? Id : DisplayName;
 
     public AiModelDefinition Clone() => new()
     {
         Id = Id,
         DisplayName = DisplayName,
+        ProviderId = ProviderId,
+        ProviderName = ProviderName,
+        SupportsFastMode = SupportsFastMode,
         ProviderBaseUrl = ProviderBaseUrl,
         ProviderApiKey = ProviderApiKey,
         Tier = Tier
@@ -105,22 +120,22 @@ public static class AiModelIds
 
     public static readonly IReadOnlyList<AiModelDefinition> BuiltIn = new List<AiModelDefinition>
     {
-        new() { Id = NemotronLightning, DisplayName = "Nemotron 3.5 Lightning（普通·免费）", Tier = AiModelTier.Normal },
-        new() { Id = Lfm25, DisplayName = "LFM2.5-2.6B（普通·免费）", Tier = AiModelTier.Normal },
-        new() { Id = Gemma4_26B, DisplayName = "Gemma 4 26B A4B（普通·免费·常限流）", Tier = AiModelTier.Normal },
-        new() { Id = NexN25Mini, DisplayName = "Nex-N2.5-Mini（普通·免费）", Tier = AiModelTier.Normal },
-        new() { Id = LingFlashSante, DisplayName = "Ling 3.0 Flash Sante（普通·医疗领域·免费）", Tier = AiModelTier.Normal },
-        new() { Id = LingFlashFin, DisplayName = "Ling 3.0 Flash Fin（普通·金融领域·免费）", Tier = AiModelTier.Normal },
+        new() { ProviderId = BuiltInProviderId, ProviderName = "内置 API", Id = NemotronLightning, DisplayName = "Nemotron 3.5 Lightning（普通·免费）", Tier = AiModelTier.Normal },
+        new() { ProviderId = BuiltInProviderId, ProviderName = "内置 API", Id = Lfm25, DisplayName = "LFM2.5-2.6B（普通·免费）", Tier = AiModelTier.Normal },
+        new() { ProviderId = BuiltInProviderId, ProviderName = "内置 API", Id = Gemma4_26B, DisplayName = "Gemma 4 26B A4B（普通·免费·常限流）", Tier = AiModelTier.Normal },
+        new() { ProviderId = BuiltInProviderId, ProviderName = "内置 API", Id = NexN25Mini, DisplayName = "Nex-N2.5-Mini（普通·免费）", Tier = AiModelTier.Normal },
+        new() { ProviderId = BuiltInProviderId, ProviderName = "内置 API", Id = LingFlashSante, DisplayName = "Ling 3.0 Flash Sante（普通·医疗领域·免费）", Tier = AiModelTier.Normal },
+        new() { ProviderId = BuiltInProviderId, ProviderName = "内置 API", Id = LingFlashFin, DisplayName = "Ling 3.0 Flash Fin（普通·金融领域·免费）", Tier = AiModelTier.Normal },
 
-        new() { Id = Nemotron3Ultra, DisplayName = "Nemotron 3 Ultra（专家·免费）", Tier = AiModelTier.Expert },
-        new() { Id = Nemotron3Super, DisplayName = "Nemotron 3 Super（专家·免费）", Tier = AiModelTier.Expert },
-        new() { Id = NemotronNanoOmni, DisplayName = "Nemotron 3 Nano Omni（专家·多模态推理·免费）", Tier = AiModelTier.Expert },
-        new() { Id = Gemma4_31B, DisplayName = "Gemma 4 31B（专家·免费）", Tier = AiModelTier.Expert },
-        new() { Id = InklingSmall, DisplayName = "Inkling Small（专家·免费·暂不可用）", Tier = AiModelTier.Expert },
-        new() { Id = Inkling, DisplayName = "Inkling（专家·免费·暂不可用）", Tier = AiModelTier.Expert },
-        new() { Id = LagunaS21, DisplayName = "Laguna S 2.1（专家·免费）", Tier = AiModelTier.Expert },
-        new() { Id = NexN25Pro, DisplayName = "Nex-N2.5-Pro（专家·免费）", Tier = AiModelTier.Expert },
-        new() { Id = NorthMiniCode, DisplayName = "North Mini Code（专家·免费）", Tier = AiModelTier.Expert }
+        new() { ProviderId = BuiltInProviderId, ProviderName = "内置 API", Id = Nemotron3Ultra, DisplayName = "Nemotron 3 Ultra（专家·免费）", Tier = AiModelTier.Expert },
+        new() { ProviderId = BuiltInProviderId, ProviderName = "内置 API", Id = Nemotron3Super, DisplayName = "Nemotron 3 Super（专家·免费）", Tier = AiModelTier.Expert },
+        new() { ProviderId = BuiltInProviderId, ProviderName = "内置 API", Id = NemotronNanoOmni, DisplayName = "Nemotron 3 Nano Omni（专家·多模态推理·免费）", Tier = AiModelTier.Expert },
+        new() { ProviderId = BuiltInProviderId, ProviderName = "内置 API", Id = Gemma4_31B, DisplayName = "Gemma 4 31B（专家·免费）", Tier = AiModelTier.Expert },
+        new() { ProviderId = BuiltInProviderId, ProviderName = "内置 API", Id = InklingSmall, DisplayName = "Inkling Small（专家·免费·暂不可用）", Tier = AiModelTier.Expert },
+        new() { ProviderId = BuiltInProviderId, ProviderName = "内置 API", Id = Inkling, DisplayName = "Inkling（专家·免费·暂不可用）", Tier = AiModelTier.Expert },
+        new() { ProviderId = BuiltInProviderId, ProviderName = "内置 API", Id = LagunaS21, DisplayName = "Laguna S 2.1（专家·免费）", Tier = AiModelTier.Expert },
+        new() { ProviderId = BuiltInProviderId, ProviderName = "内置 API", Id = NexN25Pro, DisplayName = "Nex-N2.5-Pro（专家·免费）", Tier = AiModelTier.Expert },
+        new() { ProviderId = BuiltInProviderId, ProviderName = "内置 API", Id = NorthMiniCode, DisplayName = "North Mini Code（专家·免费）", Tier = AiModelTier.Expert }
     };
 
     /// <summary>实测发现某些内置模型目前有问题（供应商侧限制/限流），不是配置错误，用户没必要
@@ -199,60 +214,168 @@ public static class AiModelIds
         !string.IsNullOrWhiteSpace(modelId) &&
         BuiltIn.Any(m => string.Equals(m.Id, modelId.Trim(), StringComparison.OrdinalIgnoreCase));
 
+    public const string BuiltInProviderId = "builtin";
+    public const string CustomProviderId = "custom";
+
+    public static string BuildModelKey(string providerId, string modelId) =>
+        Uri.EscapeDataString((providerId ?? "").Trim()) + "::" + Uri.EscapeDataString((modelId ?? "").Trim());
+
+    public static bool TrySplitModelKey(string? modelKey, out string providerId, out string modelId)
+    {
+        providerId = modelId = "";
+        var separator = modelKey?.IndexOf("::", StringComparison.Ordinal) ?? -1;
+        if (separator < 1) return false;
+        try
+        {
+            providerId = Uri.UnescapeDataString(modelKey![..separator]);
+            modelId = Uri.UnescapeDataString(modelKey[(separator + 2)..]);
+            return modelId.Length > 0;
+        }
+        catch (UriFormatException) { return false; }
+    }
+
+    /// <summary>旧版模型的独立接口也有稳定身份；密钥、查询参数及 URL 用户信息不参与身份。</summary>
+    public static string LegacyProviderId(string baseUrl)
+    {
+        var identity = (baseUrl ?? "").Trim().TrimEnd('/');
+        if (Uri.TryCreate(identity, UriKind.Absolute, out var uri))
+            identity = uri.GetComponents(UriComponents.SchemeAndServer | UriComponents.Path, UriFormat.Unescaped).TrimEnd('/');
+        else
+            identity = identity.Split('?', '#')[0];
+        return "legacy-" + Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(identity))).ToLowerInvariant()[..16];
+    }
+
+    public static string GetProviderId(AiModelDefinition model)
+    {
+        var id = model.ProviderId?.Trim();
+        if (string.Equals(id, BuiltInProviderId, StringComparison.OrdinalIgnoreCase)) return BuiltInProviderId;
+        if (string.Equals(id, CustomProviderId, StringComparison.OrdinalIgnoreCase)) return CustomProviderId;
+        return !string.IsNullOrWhiteSpace(id) ? id
+            : !string.IsNullOrWhiteSpace(model.ProviderBaseUrl) ? LegacyProviderId(model.ProviderBaseUrl) : CustomProviderId;
+    }
+
     public static List<AiModelDefinition> GetCatalog(AiAssistantConfig config)
     {
-        if (!config.UseCustomApiKey)
-            return BuiltIn.Select(m => m.Clone()).ToList();
-
-        return (config.CustomModels ?? new List<AiModelDefinition>())
-            .Where(m => m != null && !string.IsNullOrWhiteSpace(m.Id))
-            .GroupBy(m => m.Id.Trim(), StringComparer.OrdinalIgnoreCase)
-            .Select(g =>
+        var result = new List<AiModelDefinition>();
+        if (!config.UseCustomApiKey || config.MixBuiltInApi)
+            foreach (var model in BuiltIn)
             {
-                var item = g.First();
-                var id = item.Id.Trim();
-                return new AiModelDefinition
+                var clone = model.Clone();
+                clone.ProviderId = BuiltInProviderId;
+                clone.ProviderName = "内置 API";
+                clone.Tier = ResolveBuiltInTier(config, clone.Id, clone.Tier);
+                clone.DisplayName = AdjustDisplayNameForTier(clone.DisplayName, clone.Tier);
+                result.Add(clone);
+            }
+
+        if (config.UseCustomApiKey || config.MixBuiltInApi)
+            foreach (var item in config.CustomModels ?? new List<AiModelDefinition>())
+            {
+                if (item == null || string.IsNullOrWhiteSpace(item.Id)) continue;
+                var clone = item.Clone();
+                clone.Id = item.Id.Trim();
+                clone.ProviderId = GetProviderId(item);
+                // 命名接口必须仍然存在且启用；不把失效配置回落到另一个接口的密钥。
+                if (clone.ProviderId != CustomProviderId && clone.ProviderId != BuiltInProviderId
+                    && !clone.ProviderId.StartsWith("legacy-", StringComparison.Ordinal))
                 {
-                    Id = id,
-                    DisplayName = string.IsNullOrWhiteSpace(item.DisplayName) ? id : item.DisplayName.Trim(),
-                    ProviderBaseUrl = string.IsNullOrWhiteSpace(item.ProviderBaseUrl) ? null : item.ProviderBaseUrl.Trim(),
-                    ProviderApiKey = item.ProviderApiKey,
-                    Tier = item.Tier
-                };
-            })
-            .ToList();
+                    var endpoint = config.ApiEndpoints?.FirstOrDefault(e => e != null
+                        && string.Equals(e.Id, clone.ProviderId, StringComparison.OrdinalIgnoreCase));
+                    if (endpoint == null || !endpoint.Enabled) continue;
+                    clone.ProviderName = string.IsNullOrWhiteSpace(endpoint.Name) ? "自定义接口" : endpoint.Name;
+                }
+                else if (clone.ProviderId == BuiltInProviderId)
+                {
+                    // 自定义模型表不能通过填写保留身份混入内置凭据。
+                    continue;
+                }
+                else if (string.IsNullOrWhiteSpace(clone.ProviderName))
+                    clone.ProviderName = clone.ProviderId == CustomProviderId ? "自定义主接口" : "独立接口";
+                clone.DisplayName = string.IsNullOrWhiteSpace(item.DisplayName) ? clone.Id : item.DisplayName.Trim();
+                result.Add(clone);
+            }
+
+        return result.GroupBy(m => m.ModelKey, StringComparer.OrdinalIgnoreCase).Select(g => g.First()).ToList();
+    }
+
+    /// <summary>内置模型的显示名里写死了"（普通·…）/（专家·…）"这样的分组字样；用户把它调到另一组之后，
+    /// 同步把括号里的分组字样换掉，避免出现"分组是专家、名字却写着普通"的矛盾。</summary>
+    public static string AdjustDisplayNameForTier(string displayName, AiModelTier tier)
+    {
+        if (string.IsNullOrEmpty(displayName)) return displayName;
+        return tier == AiModelTier.Expert
+            ? displayName.Replace("（普通·", "（专家·")
+            : displayName.Replace("（专家·", "（普通·");
+    }
+
+    /// <summary>内置模型的实际分组：用户在设置页里手动调整过（ModelTierOverrides）就用用户的，
+    /// 否则沿用代码里写死的默认分组。</summary>
+    public static AiModelTier ResolveBuiltInTier(AiAssistantConfig config, string? modelId, AiModelTier fallback)
+    {
+        if (string.IsNullOrWhiteSpace(modelId) || config.ModelTierOverrides == null) return fallback;
+        foreach (var pair in config.ModelTierOverrides)
+        {
+            if (string.Equals(pair.Key, modelId.Trim(), StringComparison.OrdinalIgnoreCase))
+                return pair.Value;
+        }
+        return fallback;
     }
 
     public static string GetDisplayName(AiAssistantConfig config, string? modelId)
     {
         if (string.IsNullOrWhiteSpace(modelId)) return "未知模型";
-        var match = GetCatalog(config).FirstOrDefault(m =>
-            string.Equals(m.Id, modelId, StringComparison.OrdinalIgnoreCase));
+        var match = FindInCatalog(config, modelId);
         if (match != null) return match.DisplayName;
-
-        var builtIn = BuiltIn.FirstOrDefault(m =>
-            string.Equals(m.Id, modelId, StringComparison.OrdinalIgnoreCase));
-        return builtIn?.DisplayName ?? modelId;
+        var rawId = TrySplitModelKey(modelId, out _, out var id) ? id : modelId;
+        return BuiltIn.FirstOrDefault(m => string.Equals(m.Id, rawId, StringComparison.OrdinalIgnoreCase))?.DisplayName ?? rawId;
     }
 
-    /// <summary>在当前生效的模型表（内置或自定义）里查找一个模型的定义，主要用于拿它的
-    /// ProviderBaseUrl/ProviderApiKey 覆盖值（多供应商）。找不到时返回 null，调用方应回退到
-    /// config 的公共 BaseUrl/ApiKey（或内置默认接口）。</summary>
+    /// <summary>新配置按接口 + 模型查找；旧配置的真实模型 ID 仍可读取。</summary>
     public static AiModelDefinition? FindInCatalog(AiAssistantConfig config, string? modelId)
     {
         if (string.IsNullOrWhiteSpace(modelId)) return null;
-        return GetCatalog(config).FirstOrDefault(m =>
-            string.Equals(m.Id, modelId.Trim(), StringComparison.OrdinalIgnoreCase));
+        var catalog = GetCatalog(config);
+        var value = modelId.Trim();
+        var exact = catalog.FirstOrDefault(m => string.Equals(m.ModelKey, value, StringComparison.OrdinalIgnoreCase));
+        if (exact != null || TrySplitModelKey(value, out _, out _)) return exact;
+        // 旧自定义配置优先保留自定义模型，不因开启混合而换成同名内置模型。
+        return catalog.Where(m => string.Equals(m.Id, value, StringComparison.OrdinalIgnoreCase))
+            .OrderBy(m => config.UseCustomApiKey ? m.ProviderId == BuiltInProviderId : m.ProviderId != BuiltInProviderId)
+            .FirstOrDefault();
     }
 }
 
 /// <summary>AI 助手全局配置，持久化在 AppConfig.AiAssistant。</summary>
+public enum AiReasoningLevel { Off, Low, Medium, High, VeryHigh, Max, Fast }
+
+/// <summary>Build 保持已有授权执行行为；Plan 只分析规划及使用已授权的只读工具。</summary>
+public enum AiWorkMode { Build = 0, Plan = 1 }
+
+public sealed class AiApiEndpoint
+{
+    public string Id { get; set; } = Guid.NewGuid().ToString("N");
+    public string Name { get; set; } = "自定义接口";
+    public string BaseUrl { get; set; } = "";
+    public List<string> ApiKeys { get; set; } = new();
+    public bool Enabled { get; set; } = true;
+    public AiApiEndpoint Clone() => new() { Id = Id, Name = Name, BaseUrl = BaseUrl,
+        ApiKeys = ApiKeys?.ToList() ?? new(), Enabled = Enabled };
+    public override string ToString() => Name;
+}
+
 public class AiAssistantConfig
 {
     public bool Enabled { get; set; } = true;
+    public AiWorkMode WorkMode { get; set; } = AiWorkMode.Build;
     public string BaseUrl { get; set; } = "https://openrouter.ai/api/v1";
     public string ApiKey { get; set; } = "";
     public bool UseCustomApiKey { get; set; } = false;
+    public List<string> ApiKeys { get; set; } = new();
+    public List<AiApiEndpoint> ApiEndpoints { get; set; } = new();
+    public bool MixBuiltInApi { get; set; }
+    public bool EnableApiKeyFailover { get; set; } = true;
+    public bool EnableEndpointFailover { get; set; }
+    public AiReasoningLevel? ReasoningLevel { get; set; }
 
     /// <summary>默认路由模式：自动 / 普通 / 专家 / 指定模型。默认 Auto——普通问题走轻量模型、
     /// 复杂/排障问题走专家模型，不需要用户手动选。</summary>
@@ -281,8 +404,47 @@ public class AiAssistantConfig
     /// </summary>
     public List<AiModelDefinition> CustomModels { get; set; } = new();
 
+    /// <summary>用户对"内置模型"分组（普通/专家）的手动调整：Key 是模型 ID，Value 是调整后的分组。
+    /// 内置模型的默认分组写死在 AiModelIds.BuiltIn 里，改不了代码，所以单独记一份覆盖表；
+    /// 没出现在这里的内置模型沿用默认分组。自定义模型的分组直接存在各自的 Tier 字段里，不走这张表。</summary>
+    public Dictionary<string, AiModelTier> ModelTierOverrides { get; set; } = new();
+
+    public bool StreamResponses { get; set; } = true;
+    public bool RequestUsageMetadata { get; set; } = true;
+    /// <summary>单次请求（含重试）的最长等待秒数，0 表示不限时；最长可设 24 小时。</summary>
+    public int RequestTimeoutSeconds { get; set; } = 180;
+    public int LongWaitHintSeconds { get; set; } = 45;
+    public string LongWaitDescription { get; set; } = "模型仍在处理，请稍候；你可以随时停止生成。";
+    /// <summary>按实际模型 ID 保存上下文容量与每百万 token 单价。留空表示未知，不猜测模型价格。</summary>
+    public Dictionary<string, AiModelAccountingConfig> ModelAccounting { get; set; } = new();
+    public bool SendTemperature { get; set; } = true;
+    public double Temperature { get; set; } = 0.6;
+    public int MaxOutputTokens { get; set; } = 0;
+    /// <summary>每轮工具/命令操作上限，0 表示不限次数；仍遵守工作模式、既有授权和取消/超时。</summary>
+    public int MaxToolActionsPerTurn { get; set; } = 0;
+    /// <summary>次数策略迁移版本；旧版默认 4 次在首次加载时升级为不限次数。</summary>
+    public int ToolActionLimitVersion { get; set; }
+
+    internal void NormalizeToolActionLimit()
+    {
+        if (ToolActionLimitVersion < 1 && MaxToolActionsPerTurn == 4)
+            MaxToolActionsPerTurn = 0;
+        MaxToolActionsPerTurn = Math.Max(0, MaxToolActionsPerTurn);
+        ToolActionLimitVersion = 1;
+    }
+    public int MaxSubAgentsPerTurn { get; set; } = 2;
+    /// <summary>允许 Shell；普通模式逐次确认，完全绝对访问生效后免确认。最高权限开启后默认启用。</summary>
+    public bool AllowShellCommands { get; set; } = false;
     public bool EnableDeepThinking { get; set; } = false;
     public bool EnableWebSearch { get; set; } = false;
+
+    // 仅控制过程记录的显示，不授予工具权限，也不改变深度思考模式。
+    public bool ShowSubAgents { get; set; } = true;
+    public bool ShowCodeChanges { get; set; } = true;
+    public bool ShowEditingFiles { get; set; } = true;
+    public bool ShowCommands { get; set; } = true;
+    public bool ShowReasoningSummary { get; set; } = true;
+    public bool ShowReasoning { get; set; } = true;
     public int CompressionTokenThreshold { get; set; } = 18000;
 
     /// <summary>"省 Token 模式"。只在"用自己的 API key"或"自动路由"下能打开——自定义 key 是因为
@@ -332,7 +494,7 @@ public class AiAssistantConfig
 
     /// <summary>完全绝对访问（仅在 FullDiskAccess 与 AbsoluteAccess 同时开启时生效）：取消所有路径保护——
     /// 应用安装目录、Windows 系统目录、ProgramData 以及启动器自己的配置/账户目录都可以被 AI 静默读写。
-    /// 开启时设置页会连续弹出两次红色警告，两次都确认才生效。</summary>
+    /// 已开启的 Shell 能力也免逐次确认。开启时设置页会连续弹出两次红色警告，两次都确认才生效。</summary>
     public bool UnrestrictedAccess { get; set; } = false;
 
     /// <summary>彻底完全访问（仅在完全访问、绝对访问、完全绝对访问都开启时生效）：AI 还可以修改注册表、
@@ -379,16 +541,67 @@ public class AiChatMessage
     public AiRoutingMode RouteUsed { get; set; } = AiRoutingMode.Normal;
     public bool WasAutoRouted { get; set; }
     public int EstimatedTokens { get; set; }
+    public List<AiAssistantActivity> Activities { get; set; } = new();
 }
 
 public class AiChatSession
 {
+    public string? TaskId { get; set; }
     public string Id { get; set; } = Guid.NewGuid().ToString("N");
     public string Title { get; set; } = "新对话";
     public bool IsGuestSession { get; set; }
     public DateTime CreatedUtc { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedUtc { get; set; } = DateTime.UtcNow;
     public List<AiChatMessage> Messages { get; set; } = new();
+    /// <summary>该会话实际触发的 API 请求；包含压缩与子任务，撤回消息也不抹去已发生的消耗。</summary>
+    public List<AiRequestUsage> UsageRequests { get; set; } = new();
     public string? SummaryOfOlderMessages { get; set; }
     public int SummarizedUpToIndex { get; set; } = -1;
+}
+
+/// <summary>金额统一为 USD / 百万 token。未知与免费（0）严格区分。</summary>
+public class AiModelAccountingConfig
+{
+    public int ContextWindowTokens { get; set; }
+    public int MaxOutputTokens { get; set; }
+    public long? TokenQuota { get; set; }
+    public decimal? BudgetUsd { get; set; }
+    public long UsedTokens { get; set; }
+    public decimal SpentUsd { get; set; }
+    public long UsedRequests { get; set; }
+    /// <summary>本地累计是否包含未由服务商返回的估算值。</summary>
+    public bool UsageIncludesEstimates { get; set; }
+    public decimal? InputPricePerMillion { get; set; }
+    public decimal? CachedInputPricePerMillion { get; set; }
+    public decimal? OutputPricePerMillion { get; set; }
+    public AiModelAccountingConfig Clone() => (AiModelAccountingConfig)MemberwiseClone();
+}
+
+public class AiRequestUsage
+{
+    public string Id { get; set; } = Guid.NewGuid().ToString("N");
+    public string Model { get; set; } = "";
+    public string ModelKey { get; set; } = "";
+    public string ProviderId { get; set; } = "";
+    public string ProviderName { get; set; } = "";
+    /// <summary>明确的 API 拒绝且没有 usage 或生成内容时不扣本地配额。</summary>
+    public bool WasRejected { get; set; }
+    public bool QuotaRecorded { get; set; }
+    public string Purpose { get; set; } = "对话";
+    public DateTime StartedUtc { get; set; } = DateTime.UtcNow;
+    public long InputTokens { get; set; }
+    public long OutputTokens { get; set; }
+    public long TotalTokens { get; set; }
+    public long? CachedInputTokens { get; set; }
+    public bool IsEstimated { get; set; } = true;
+    public bool HasReportedInput { get; set; }
+    public bool HasReportedOutput { get; set; }
+    public bool HasReportedTotal { get; set; }
+    public bool InProgress { get; set; } = true;
+    public bool IsIncomplete { get; set; }
+    public bool AffectsContext { get; set; } = true;
+    public int ContextWindowTokens { get; set; }
+    public int ReservedOutputTokens { get; set; }
+    public decimal? EstimatedCostUsd { get; set; }
+    public AiRequestUsage Clone() => (AiRequestUsage)MemberwiseClone();
 }

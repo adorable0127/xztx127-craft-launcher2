@@ -55,18 +55,21 @@
                                 <Run Text="{DynamicResource Str_Ui_Natfrp_Open_Source_Frp_Panel_Widely_Used}"/>
                             </Hyperlink>
                         </TextBlock>
+<Button Content="一键打开链接 ↗" Tag="https://www.natfrp.com/" Click="OpenExternalPage_Click" HorizontalAlignment="Left" Padding="10,5" Margin="0,4,0,6"/>
                         <TextBlock FontSize="12" Margin="0,0,0,2" TextWrapping="Wrap">
                             <Run Text="• "/>
                             <Hyperlink NavigateUri="https://www.oray.com/" RequestNavigate="Hyperlink_RequestNavigate">
                                 <Run Text="{DynamicResource Str_Ui_Oray_Same_Vendor_As_Sunlogin_Graphical_U}"/>
                             </Hyperlink>
                         </TextBlock>
+<Button Content="一键打开链接 ↗" Tag="https://www.oray.com/" Click="OpenExternalPage_Click" HorizontalAlignment="Left" Padding="10,5" Margin="0,4,0,6"/>
                         <TextBlock FontSize="12" TextWrapping="Wrap">
                             <Run Text="• "/>
                             <Hyperlink NavigateUri="https://ngrok.com/" RequestNavigate="Hyperlink_RequestNavigate">
                                 <Run Text="{DynamicResource Str_Ui_Ngrok_Works_Worldwide_Good_For_Overseas_}"/>
                             </Hyperlink>
                         </TextBlock>
+<Button Content="一键打开链接 ↗" Tag="https://ngrok.com/" Click="OpenExternalPage_Click" HorizontalAlignment="Left" Padding="10,5" Margin="0,4,0,6"/>
                     </StackPanel>
                 </Border>
 
@@ -88,6 +91,7 @@
                                 <Run Text="{DynamicResource Str_Ui_Dynv6_Free_Ddns_Good_For_A_Changing_Publ}"/>
                             </Hyperlink>
                         </TextBlock>
+<Button Content="一键打开链接 ↗" Tag="https://www.dynv6.com/" Click="OpenExternalPage_Click" HorizontalAlignment="Left" Padding="10,5" Margin="0,4,0,6"/>
                     </StackPanel>
                 </Border>
 

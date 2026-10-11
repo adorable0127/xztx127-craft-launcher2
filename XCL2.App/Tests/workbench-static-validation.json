@@ -1,0 +1,400 @@
+{
+  "checks": [
+    {
+      "name": "Project files are directly in the package root",
+      "passed": true
+    },
+    {
+      "name": "No nested copy of the application project",
+      "passed": true
+    },
+    {
+      "name": "Root build resolves to one project",
+      "passed": true
+    },
+    {
+      "name": "Main project excludes auxiliary sources: WinUI.Preview",
+      "passed": true
+    },
+    {
+      "name": "Main project excludes auxiliary sources: Tests",
+      "passed": true
+    },
+    {
+      "name": "Main project excludes auxiliary sources: tools",
+      "passed": true
+    },
+    {
+      "name": "Main project excludes auxiliary sources: artifacts",
+      "passed": true
+    },
+    {
+      "name": "Main project excludes auxiliary sources: dist",
+      "passed": true
+    },
+    {
+      "name": "C# syntax: Services/Workbench/TaskStore.cs",
+      "passed": true
+    },
+    {
+      "name": "C# syntax: Services/Workbench/ChangeJournal.cs",
+      "passed": true
+    },
+    {
+      "name": "C# syntax: Services/Workbench/ProjectFiles.cs",
+      "passed": true
+    },
+    {
+      "name": "C# syntax: Services/AiAssistantService.Workbench.cs",
+      "passed": true
+    },
+    {
+      "name": "C# syntax: Views/AiWorkbenchDialogs.cs",
+      "passed": true
+    },
+    {
+      "name": "C# syntax: Views/AiAssistantPanel.Workbench.cs",
+      "passed": true
+    },
+    {
+      "name": "C# syntax: WinUI.Preview/MainWindow.cs",
+      "passed": true
+    },
+    {
+      "name": "C# syntax: Services/AiAssistantService.cs",
+      "passed": true
+    },
+    {
+      "name": "C# syntax: Services/AiFileAccessService.cs",
+      "passed": true
+    },
+    {
+      "name": "C# syntax: Services/AiFileAccessService.Activities.cs",
+      "passed": true
+    },
+    {
+      "name": "C# syntax: Services/AiWorkModePolicy.cs",
+      "passed": true
+    },
+    {
+      "name": "C# syntax: Services/TouchVersionPolicy.cs",
+      "passed": true
+    },
+    {
+      "name": "C# syntax: Services/TouchModeVersionPolicy.cs",
+      "passed": true
+    },
+    {
+      "name": "C# syntax: Services/TouchInputInjector.cs",
+      "passed": true
+    },
+    {
+      "name": "C# syntax: Services/LegacyTouchInputBridge.cs",
+      "passed": true
+    },
+    {
+      "name": "C# syntax: Services/LegacyTouchOptions.cs",
+      "passed": true
+    },
+    {
+      "name": "C# syntax: Services/LauncherService.cs",
+      "passed": true
+    },
+    {
+      "name": "C# syntax: Views/TouchOverlayWindow.xaml.cs",
+      "passed": true
+    },
+    {
+      "name": "C# syntax: Views/AiAssistantPanel.xaml.cs",
+      "passed": true
+    },
+    {
+      "name": "C# syntax: Views/AiAssistantSettingsPanel.MultiApi.cs",
+      "passed": true
+    },
+    {
+      "name": "C# syntax: Views/AiAssistantSettingsPanel.xaml.cs",
+      "passed": true
+    },
+    {
+      "name": "C# syntax: Services/PreviewFluentTheme.cs",
+      "passed": true
+    },
+    {
+      "name": "C# syntax: Views/MainWindow.WinUiPreview.cs",
+      "passed": true
+    },
+    {
+      "name": "C# syntax: Views/HomePage.Preview.cs",
+      "passed": true
+    },
+    {
+      "name": "C# syntax: Views/HomePage.xaml.cs",
+      "passed": true
+    },
+    {
+      "name": "C# syntax: Services/AiControlProtocol.cs",
+      "passed": true
+    },
+    {
+      "name": "C# syntax: Services/AiProviderJson.cs",
+      "passed": true
+    },
+    {
+      "name": "C# syntax: Services/AiStreamingCompletion.cs",
+      "passed": true
+    },
+    {
+      "name": "C# syntax: Services/AiToolActionBudget.cs",
+      "passed": true
+    },
+    {
+      "name": "C# syntax: Services/AiQuestionProtocol.cs",
+      "passed": true
+    },
+    {
+      "name": "C# syntax: Services/AiSubAgentProtocol.cs",
+      "passed": true
+    },
+    {
+      "name": "C# syntax: Services/AiShellPolicy.cs",
+      "passed": true
+    },
+    {
+      "name": "C# syntax: Services/ConfigService.cs",
+      "passed": true
+    },
+    {
+      "name": "C# syntax: Services/SettingsVisibilityService.cs",
+      "passed": true
+    },
+    {
+      "name": "C# syntax: Models/AppConfig.cs",
+      "passed": true
+    },
+    {
+      "name": "C# syntax: Models/AiAssistantModels.cs",
+      "passed": true
+    },
+    {
+      "name": "C# syntax: Views/FeatureSearchBox.xaml.cs",
+      "passed": true
+    },
+    {
+      "name": "C# syntax: Views/MainWindow.FeatureSearch.cs",
+      "passed": true
+    },
+    {
+      "name": "C# syntax: Views/SettingsPage.FeatureSearch.cs",
+      "passed": true
+    },
+    {
+      "name": "C# syntax: Views/SettingsPage.xaml.cs",
+      "passed": true
+    },
+    {
+      "name": "C# syntax: Views/AiWebSearchConfirmation.cs",
+      "passed": true
+    },
+    {
+      "name": "C# syntax: Views/AiAssistantSettingsPanel.WebSearch.cs",
+      "passed": true
+    },
+    {
+      "name": "C# syntax: Tests/AiHttpRegression/Program.cs",
+      "passed": true
+    },
+    {
+      "name": "C# syntax: Tests/AiCommandRegression/Program.cs",
+      "passed": true
+    },
+    {
+      "name": "C# syntax: Services/Plugins/PluginWorkbenchEndpoints.cs",
+      "passed": true
+    },
+    {
+      "name": "C# syntax: Services/Plugins/PluginProjectService.cs",
+      "passed": true
+    },
+    {
+      "name": "C# syntax: Services/Plugins/PluginChangeService.cs",
+      "passed": true
+    },
+    {
+      "name": "C# syntax: Services/Plugins/PluginTaskService.cs",
+      "passed": true
+    },
+    {
+      "name": "C# syntax: Services/Plugins/PluginQueryService.cs",
+      "passed": true
+    },
+    {
+      "name": "C# syntax: Services/Plugins/PluginContext.cs",
+      "passed": true
+    },
+    {
+      "name": "C# syntax: Services/Plugins/PluginMetadata.cs",
+      "passed": true
+    },
+    {
+      "name": "C# syntax: Services/Plugins/PluginPermissionService.cs",
+      "passed": true
+    },
+    {
+      "name": "C# syntax: Services/Plugins/PluginPipeSession.cs",
+      "passed": true
+    },
+    {
+      "name": "XML: Views/AiAssistantPanel.xaml",
+      "passed": true
+    },
+    {
+      "name": "XML: Views/MainWindow.xaml",
+      "passed": true
+    },
+    {
+      "name": "XML: Views/HomePage.xaml",
+      "passed": true
+    },
+    {
+      "name": "XML: Views/FeatureSearchBox.xaml",
+      "passed": true
+    },
+    {
+      "name": "XML: Views/SettingsPage.xaml",
+      "passed": true
+    },
+    {
+      "name": "XML: Views/AiAssistantSettingsPanel.xaml",
+      "passed": true
+    },
+    {
+      "name": "XML: Resources/Themes/PreviewFluent.xaml",
+      "passed": true
+    },
+    {
+      "name": "XML: WinUI.Preview/XCL2.WinUI.Preview.csproj",
+      "passed": true
+    },
+    {
+      "name": "XML: Tests/WorkbenchRegression/WorkbenchRegression.csproj",
+      "passed": true
+    },
+    {
+      "name": "XML: Tests/AiHttpRegression/AiHttpRegression.csproj",
+      "passed": true
+    },
+    {
+      "name": "XML: Tests/AiCommandRegression/AiCommandRegression.csproj",
+      "passed": true
+    },
+    {
+      "name": "109 distinct implemented API endpoints",
+      "passed": true
+    },
+    {
+      "name": "All new API routes documented",
+      "passed": true
+    },
+    {
+      "name": "Embedded docs match deliverable",
+      "passed": true
+    },
+    {
+      "name": "Context exposes Projects",
+      "passed": true
+    },
+    {
+      "name": "Context exposes Tasks",
+      "passed": true
+    },
+    {
+      "name": "Context exposes Changes",
+      "passed": true
+    },
+    {
+      "name": "Context exposes Queries",
+      "passed": true
+    },
+    {
+      "name": "EXE dispatch bound",
+      "passed": true
+    },
+    {
+      "name": "Permission registered: ProjectsRead",
+      "passed": true
+    },
+    {
+      "name": "Permission registered: ProjectsWrite",
+      "passed": true
+    },
+    {
+      "name": "Permission registered: TasksManage",
+      "passed": true
+    },
+    {
+      "name": "Plan allows read/metadata: update_task",
+      "passed": true
+    },
+    {
+      "name": "Plan allows read/metadata: search_project",
+      "passed": true
+    },
+    {
+      "name": "Plan allows read/metadata: read_file_range",
+      "passed": true
+    },
+    {
+      "name": "Plan allows read/metadata: list_project_files",
+      "passed": true
+    },
+    {
+      "name": "Plan does not allow patch",
+      "passed": true
+    },
+    {
+      "name": "Preview precedes apply",
+      "passed": true
+    },
+    {
+      "name": "Full byte backup and conflict check",
+      "passed": true
+    },
+    {
+      "name": "Recursive reads keep private-path guard",
+      "passed": true
+    },
+    {
+      "name": "Task marker parser and durable checkpoint",
+      "passed": true
+    },
+    {
+      "name": "Native preview: _navigation",
+      "passed": true
+    },
+    {
+      "name": "Native preview: _search",
+      "passed": true
+    },
+    {
+      "name": "Native preview: _loaderFilter",
+      "passed": true
+    },
+    {
+      "name": "Native preview: _sort",
+      "passed": true
+    },
+    {
+      "name": "Native preview: LayoutInstanceCards",
+      "passed": true
+    },
+    {
+      "name": "Native preview: RenderInstances",
+      "passed": true
+    }
+  ],
+  "passed": 98,
+  "windows_build": "NOT_RUN: CoreCLR initialization failed in this environment (0x8007000E); Windows SDK/UI unavailable",
+  "runtime_regression": "NOT_RUN: run Tests/WorkbenchRegression with .NET 8",
+  "touch_hardware": "NOT_RUN: requires Windows touch hardware and actual Minecraft clients"
+}

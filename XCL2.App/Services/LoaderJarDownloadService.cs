@@ -145,18 +145,9 @@ public class LoaderJarDownloadService : IDisposable
         // 这里如实按各家生态的真实产物类型下载并保存，不假装 Fabric/Quilt 也有一个单体 jar。
         progress?.Report(new ProgressInfo(Loc.T("Str_Cs_Downloading_Loader_Files", "下载加载器文件"), 0, 1, fileName));
 
-        using var resp = await _http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, ct);
-        if (!resp.IsSuccessStatusCode)
-            throw new InvalidOperationException($"下载失败：HTTP {(int)resp.StatusCode} {resp.ReasonPhrase}\n地址：{url}");
-
         var destPath = Path.Combine(saveDir, fileName);
-        var tempPath = destPath + ".tmp";
-        await using (var fs = File.Create(tempPath))
-        await using (var stream = await resp.Content.ReadAsStreamAsync(ct))
-        {
-            await stream.CopyToAsync(fs, ct);
-        }
-        File.Move(tempPath, destPath, overwrite: true);
+        await DownloadEndpoints.DownloadFileWithFallbackAsync(_http, url, DownloadEndpoints.PreferMirror,
+            destPath, "下载加载器文件失败", progress, ct);
 
         progress?.Report(new ProgressInfo(Loc.T("Str_Cs_Downloading_Loader_Files", "下载加载器文件"), 1, 1, fileName));
         return destPath;

@@ -272,9 +272,13 @@ public partial class ModDetailPage : UserControl
     private void ApplyVersionFilter(string? tag)
     {
         var filtered = tag == null ? _allGroups : _allGroups.Where(g => ExtractVersionTag(g) == tag).ToList();
+        // ItemsSource 的替换和首次模板生成要发生在时钟启动前，避免第一帧已推进、
+        // 第二帧才忙于生成版本卡片；宿主本身正在入场时只使用宿主的那一次动画。
+        var animate = GroupsList.IsLoaded && !UiAnimationHelper.HasActivePageAncestor(GroupsList);
+        if (animate) UiAnimationHelper.PrepareEntrance(GroupsList);
         GroupsList.ItemsSource = filtered;
-        UiAnimationHelper.Entrance(GroupsList);
         NoResultText.Visibility = filtered.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+        if (animate) UiAnimationHelper.StartPreparedEntrance(GroupsList);
     }
 
     /// <summary>跟 ShowGroups 配套：额外传入这批版本对应的扁平列表。调用方（DownloadCenterPage）
@@ -287,6 +291,7 @@ public partial class ModDetailPage : UserControl
 
     public void ShowLoading()
     {
+        UiAnimationHelper.Reset(GroupsList);
         LoadingText.Visibility = Visibility.Visible;
         NoResultText.Visibility = Visibility.Collapsed;
         GroupsList.ItemsSource = null;

@@ -9,7 +9,7 @@ namespace XCL2.App.Services;
 /// <summary>26.3 第 4 快照为分界；优先读取客户端实际 ID，避免 release_target 抹掉快照序号。</summary>
 internal static class TouchVersionPolicy
 {
-    private const string VersionPattern = @"(?<major>1|2[6-9]|[3-9]\d)\.(?<minor>\d+)(?:\.\d+)?(?:(?:[-_\s]*)(?:(?:snapshot|snap|t|快照)[-_\s]*(?<snapshot>\d+)|第(?<snapshot>\d+|[一二三四五六七八九十]+)个?快照|(?:pre-release|pre|rc|release[-_\s]*candidate)[-_\s]*\d+))?";
+    private const string VersionPattern = @"(?<major>1|2[6-9]|[3-9]\d)\.(?<minor>\d+)(?:\.(?<patch>\d+))?(?:(?:[-_\s]*)(?:(?:snapshot|snap|t|快照)[-_\s]*(?<snapshot>\d+)|第(?<snapshot>\d+|[一二三四五六七八九十]+)个?快照|(?:pre-release|pre|rc|release[-_\s]*candidate)[-_\s]*\d+))?";
 
     private static bool? ParseExact(string? value)
     {
@@ -20,6 +20,7 @@ internal static class TouchVersionPolicy
         {
             if (major != 26 || minor != 3) return major > 26 || major == 26 && minor > 3;
             var snapshot = match.Groups["snapshot"];
+            if (!snapshot.Success && match.Groups["patch"].Success) return int.TryParse(match.Groups["patch"].Value, out var shorthand) && shorthand >= 4;
             if (!snapshot.Success) return true; // 26.3 正式版、预发布和候选版本。
             if (int.TryParse(snapshot.Value, out var number)) return number >= 4;
             return snapshot.Value is not ("一" or "二" or "三");

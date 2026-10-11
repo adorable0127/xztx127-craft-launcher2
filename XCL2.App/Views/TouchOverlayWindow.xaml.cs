@@ -63,6 +63,7 @@ public partial class TouchOverlayWindow : Window, IGlobalWindowTreatmentExempt, 
     private bool _cursorProbePending;
     private long _nextCursorProbeAt;
     private int _inputGeneration;
+    private LegacyTouchInputBridge _legacyInput;
     private bool? _candidateMenuMode;
     private long _candidateModeSince;
     private long _modeChangeAllowedAfter;
@@ -88,8 +89,6 @@ public partial class TouchOverlayWindow : Window, IGlobalWindowTreatmentExempt, 
     private bool _hidden;
     private bool _closingDown;
     private double _sensitivity;
-    private double _lookRemainderX;
-    private double _lookRemainderY;
 
     private bool HasActiveContact => _viewTouch != null || _padTouch != null || _touchKeys.Count != 0 || _mouseKey != null;
 
@@ -100,6 +99,7 @@ public partial class TouchOverlayWindow : Window, IGlobalWindowTreatmentExempt, 
     {
         InitializeComponent();
         _gameHwnd = gameHwnd;
+        _legacyInput = new LegacyTouchInputBridge(gameHwnd);
         _gamePid = gamePid;
         _canTakeOver = canTakeOver;
         _sensitivity = sensitivity <= 0 ? 1.4 : sensitivity;
@@ -203,6 +203,7 @@ public partial class TouchOverlayWindow : Window, IGlobalWindowTreatmentExempt, 
                 ReleaseHeld();
                 TouchMousePromotionFilter.Disable(_overlayHwnd);
                 _gameHwnd = current;
+                _legacyInput = new LegacyTouchInputBridge(current);
                 _lastClientBounds = null;
                 _menuMode = true;
                 _hasObservedMenu = false;
@@ -602,7 +603,7 @@ public partial class TouchOverlayWindow : Window, IGlobalWindowTreatmentExempt, 
         _viewDragMoved = false;
         _viewDragIsMenu = _menuMode;
         _menuCarryDrag = false;
-        _lookRemainderX = _lookRemainderY = 0;
+        _legacyInput.Reset();
         if (!ViewPad.CaptureTouch(e.TouchDevice)) { _viewTouch = null; return; }
         if (_viewDragIsMenu)
         {
@@ -706,7 +707,7 @@ public partial class TouchOverlayWindow : Window, IGlobalWindowTreatmentExempt, 
     private bool MoveMenuPointer(Point point)
     {
         var screen = ViewPad.PointToScreen(point);
-        if (!TouchInputInjector.MenuPointerMove(_gameHwnd, (int)Math.Round(screen.X),
+        if (!_legacyInput.MoveMenu( (int)Math.Round(screen.X),
                 (int)Math.Round(screen.Y), _menuPointerDown)) return false;
         _menuPointerScreen = screen;
         return true;
@@ -715,7 +716,7 @@ public partial class TouchOverlayWindow : Window, IGlobalWindowTreatmentExempt, 
     private bool PressMenuPointer()
     {
         if (_menuPointerDown) return true;
-        _menuPointerDown = TouchInputInjector.MenuLeftButton(_gameHwnd,
+        _menuPointerDown = _legacyInput.MenuButton(
             (int)Math.Round(_menuPointerScreen.X), (int)Math.Round(_menuPointerScreen.Y), true);
         return _menuPointerDown;
     }
@@ -724,7 +725,7 @@ public partial class TouchOverlayWindow : Window, IGlobalWindowTreatmentExempt, 
     {
         if (!_menuPointerDown) return;
         _menuPointerDown = false;
-        TouchInputInjector.MenuLeftButton(_gameHwnd,
+        _legacyInput.MenuButton(
             (int)Math.Round(_menuPointerScreen.X), (int)Math.Round(_menuPointerScreen.Y), false);
     }
 
@@ -833,14 +834,8 @@ public partial class TouchOverlayWindow : Window, IGlobalWindowTreatmentExempt, 
 
     private void ApplyLook(Vector screenDelta)
     {
-        // PointToScreen 已包含窗口 DPI 与按钮缩放，不能再乘一次 DPI。
-        var fx = screenDelta.X * _sensitivity + _lookRemainderX;
-        var fy = screenDelta.Y * _sensitivity + _lookRemainderY;
-        var dx = (int)Math.Truncate(fx);
-        var dy = (int)Math.Truncate(fy);
-        _lookRemainderX = fx - dx;
-        _lookRemainderY = fy - dy;
-        TouchInputInjector.MouseMoveRelative(Math.Clamp(dx, -250, 250), Math.Clamp(dy, -250, 250), noCoalesce: true);
+        // Accumulate subpixel motion only in the dedicated legacy backend.
+        _legacyInput.MoveLook(screenDelta.X * _sensitivity, screenDelta.Y * _sensitivity);
     }
 
     private void CancelViewGesture()
@@ -850,7 +845,7 @@ public partial class TouchOverlayWindow : Window, IGlobalWindowTreatmentExempt, 
         if (touch != null) ResetModeCandidate();
         ReleaseMenuPointer();
         _menuCarryDrag = false;
-        _lookRemainderX = _lookRemainderY = 0;
+        _legacyInput.Reset();
         if (touch != null && ReferenceEquals(touch.Captured, ViewPad)) ViewPad.ReleaseTouchCapture(touch);
     }
 
@@ -858,6 +853,7 @@ public partial class TouchOverlayWindow : Window, IGlobalWindowTreatmentExempt, 
 
     private void ReleaseHeld()
     {
+        _legacyInput.Reset();
         if (_releasingHeld) return;
         _releasingHeld = true;
         try

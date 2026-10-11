@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 using XCL2.App.Models;
 
 namespace XCL2.App.Services;
@@ -155,6 +156,7 @@ public static class SettingsVisibilityService
             Items = new[]
             {
                 new SettingItem { Key = "Set.Appearance.Win11", Label = "Win11 视觉效果", Names = new[] { "Win11EffectsCheck" } },
+                new SettingItem { Key = "Set.Appearance.FeatureSearch", Label = "顶部功能搜索框", Names = new[] { "ShowFeatureSearchCheck" } },
                 new SettingItem { Key = "Set.Appearance.WinUi3", Label = "WinUI 3 设计语言", Names = new[] { "WinUi3DesignCheck" } },
                 new SettingItem { Key = "Set.Appearance.Backdrop", Label = "背景材质", Names = new[] { "BackdropMaterialPanel" } },
                 new SettingItem { Key = "Set.Appearance.Font", Label = "界面字体", Names = new[] { "AppFontCombo" } },
@@ -164,7 +166,7 @@ public static class SettingsVisibilityService
                 new SettingItem { Key = "Set.Appearance.WindowOpacity", Label = "窗口不透明度", Names = new[] { "WindowOpacitySlider" }, HideParentRow = true },
                 new SettingItem { Key = "Set.Appearance.Background", Label = "自定义背景图片", Names = new[] { "CustomBackgroundPanel" }, HideParentRow = true },
                 new SettingItem { Key = "Set.Appearance.Frost", Label = "背景磨砂程度", Names = new[] { "CustomBackgroundFrostSlider" }, HideParentRow = true },
-                new SettingItem { Key = "Set.Appearance.GlobalTransparency", Label = "全局窗口透明度", Names = new[] { "GlobalWindowTransparencyCheck" } },
+                new SettingItem { Key = "Set.Appearance.GlobalTransparency", Label = "全局窗口透明度", Names = new[] { "GlobalWindowTransparencyCheck", "GlobalWindowOpacitySlider", "GlobalWindowTransparencyHint" }, HideParentRow = true },
                 new SettingItem { Key = "Set.Appearance.TextOpacity", Label = "文字不透明度", Names = new[] { "TextOpacitySlider" }, HideParentRow = true },
                 new SettingItem { Key = "Set.Appearance.PopupDrawer", Label = "弹窗与抽屉外观", Names = new[] { "PopupCustomAppearanceCheck" }, WholeSection = true },
                 new SettingItem { Key = "Set.Appearance.Skin", Label = "配色主题", Names = new[] { "UiSkinCombo" }, WholeSection = true },
@@ -175,17 +177,26 @@ public static class SettingsVisibilityService
         {
             Key = "SetGroup.Performance",
             GroupLabel = "性能与交互",
-            SectionAnchors = new[] { "MouseWheelSensitivitySlider", "UiZoomEnabledCheck" },
+            SectionAnchors = new[] { "WindowAnimationsCheck", "MouseWheelSensitivitySlider", "UiZoomEnabledCheck" },
             Items = new[]
             {
                 new SettingItem { Key = "Set.Perf.LowPerformance", Label = "低性能模式", Names = new[] { "LowPerformanceModeCheck" } },
-                new SettingItem { Key = "Set.Perf.HighPerformance", Label = "高性能模式", Names = new[] { "HighPerformanceModeCheck" } },
+                new SettingItem { Key = "Set.Perf.HighPerformance", Label = "显示界面帧率", Names = new[] { "HighPerformanceModeCheck" } },
                 new SettingItem { Key = "Set.Perf.AlwaysOnTop", Label = "窗口置顶", Names = new[] { "AlwaysOnTopCheck" } },
-                new SettingItem { Key = "Set.Perf.WindowAnimations", Label = "窗口过渡动画", Names = new[] { "WindowAnimationsCheck" } },
-                new SettingItem { Key = "Set.Perf.PageAnimations", Label = "页面切换动画", Names = new[] { "PageAnimationsCheck" } },
+                new SettingItem { Key = "Set.Perf.WindowAnimations", Label = "动画总开关", Names = new[] { "WindowAnimationsCheck" } },
+                new SettingItem { Key = "Set.Perf.CompletelyDisableAnimations", Label = "完全没有动画模式", Names = new[] { "CompletelyDisableAnimationsCheck" } },
+                new SettingItem { Key = "Set.Perf.NoAnimationOptimization", Label = "无动画资源优化方式", Names = new[] { "NoAnimationOptimizationPanel" } },
+                new SettingItem { Key = "Set.Perf.AnimationSpeed", Label = "总动画速度", Names = new[] { "AnimationSpeedPanel", "AnimationSpeedHintText" } },
+                new SettingItem { Key = "Set.Perf.PageAnimations", Label = "页面切换动画与强度", Names = new[] { "PageAnimationRow" } },
                 new SettingItem { Key = "Set.Perf.MouseWheel", Label = "鼠标滚轮灵敏度", Names = new[] { "MouseWheelSensitivitySlider" }, WholeSection = true },
                 new SettingItem { Key = "Set.Perf.UiZoom", Label = "界面缩放快捷键", Names = new[] { "UiZoomEnabledCheck" }, WholeSection = true },
-            }
+            }.Concat(AnimationSettingsService.Options.Where(option => option.Kind != AnimationKind.Page)
+                .Select(option => new SettingItem
+                {
+                    Key = $"Set.Perf.Animation.{option.Kind}",
+                    Label = $"{option.Label}动画与强度",
+                    Names = new[] { $"Animation_{option.Kind}_Row" }
+                })).ToArray()
         },
         new SettingGroup
         {

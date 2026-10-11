@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+ <PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net8.0</TargetFramework><Nullable>enable</Nullable><ImplicitUsings>enable</ImplicitUsings></PropertyGroup>
+ <ItemGroup>
+  <Compile Include="../../Services/AiCompletionContentParser.cs" Link="AiCompletionContentParser.cs"/>
+  <Compile Include="../../Services/AiStreamingCompletion.cs" Link="AiStreamingCompletion.cs"/>
+  <Compile Include="../../Services/AiUsageAccounting.cs" Link="AiUsageAccounting.cs"/>
+  <Compile Include="../../Models/AiAssistantModels.cs" Link="AiAssistantModels.cs"/>
+  <Compile Include="../../Models/AiAssistantActivity.cs" Link="AiAssistantActivity.cs"/>
+  <Compile Include="../../Models/AiFileDiff.cs" Link="AiFileDiff.cs"/>
+  <Compile Include="../../Services/Worlds/NbtDocument.cs" Link="NbtDocument.cs"/>
+  <Compile Include="../../Services/Worlds/WorldArchiveService.cs" Link="WorldArchiveService.cs"/>
+  <Compile Include="../../Services/Worlds/StructureInspector.cs" Link="StructureInspector.cs"/>
+  <Compile Include="../../Services/Plugins/PluginPackageSignature.cs" Link="PluginPackageSignature.cs"/>
+  <Compile Include="../../Services/Plugins/PluginUpgradeBackup.cs" Link="PluginUpgradeBackup.cs"/>
+    <Compile Include="../../Services/AiProviderJson.cs" Link="AiProviderJson.cs" />
+ </ItemGroup>
+</Project>

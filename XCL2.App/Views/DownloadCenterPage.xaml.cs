@@ -165,6 +165,8 @@ public partial class DownloadCenterPage : UserControl
     private int _modSearchSeq;
     private int _resourceSearchSeq;
     private int _mapSearchSeq;
+    private int _manifestRequestGeneration;
+    private CancellationTokenSource? _manifestCancellation;
 
     /// <summary>
     /// 四个面板（Mod / 资源包 / 地图 / 游戏版本）各自独立的当前页码，从 0 开始，页大小固定 20。
@@ -221,6 +223,28 @@ public partial class DownloadCenterPage : UserControl
         _initialized = true;
         InitializePluginSources();
         Category_Checked(CatVersion, new RoutedEventArgs()); // 补上初始化阶段被跳过的那次面板显隐
+        Loaded += (_, _) =>
+        {
+            if (_manifestCache == null && _manifestCancellation == null && CatVersion.IsChecked == true)
+                _ = FetchOnlineAsync();
+        };
+        Unloaded += (_, _) =>
+        {
+            ++_manifestRequestGeneration;
+            _manifestCancellation?.Cancel();
+            if (_manifestCache == null)
+            {
+                // 同一实例很快重新 Loaded 时必须能够重取；旧请求由自己的 using 释放。
+                _manifestCancellation = null;
+                _autoLoadedCategories.Remove("version");
+            }
+            VersionLoadingHost.Visibility = Visibility.Collapsed;
+            ++_modSearchSeq;
+            ++_resourceSearchSeq;
+            ++_mapSearchSeq;
+            _debounceTimer.Stop();
+            _pendingDebouncedAction = null;
+        };
     }
 
     /// <summary>
@@ -578,15 +602,43 @@ public partial class DownloadCenterPage : UserControl
     /// </summary>
     private async Task FetchOnlineAsync()
     {
+        if (!IsLoaded)
+        {
+            _autoLoadedCategories.Remove("version");
+            return;
+        }
+        _autoLoadedCategories.Add("version");
+        var generation = ++_manifestRequestGeneration;
+        _manifestCancellation?.Cancel();
+        using var cancellation = new CancellationTokenSource();
+        _manifestCancellation = cancellation;
+        VersionLoadingHost.Content ??= LoadingPlaceholderFactory.Create("正在获取游戏版本列表");
+        VersionLoadingHost.Visibility = Visibility.Visible;
         try
         {
-            var svc = new DownloadService(_owner.ConfigService.Config.Source);
-            _manifestCache = await svc.GetVersionManifestAsync();
-            ApplyVersionFilter();
+            using var svc = new DownloadService(_owner.ConfigService.Config.Source);
+            var manifest = await svc.GetVersionManifestAsync(cancellation.Token);
+            await Dispatcher.InvokeAsync(() =>
+            {
+                if (!IsLoaded || generation != _manifestRequestGeneration || cancellation.IsCancellationRequested) return;
+                _manifestCache = manifest;
+                ApplyVersionFilter();
+            }, DispatcherPriority.Background);
         }
+        catch (OperationCanceledException) when (cancellation.IsCancellationRequested) { }
         catch (Exception ex)
         {
-            ErrorPresenter.ShowFriendlyError(Loc.T("Str_Cs_Couldn_T_Fetch_The_Version_List_This_Is_", "获取版本列表失败，可能是网络连接问题或下载源暂时不可用，请检查网络后重试。"), $"[获取版本列表失败] {ex}", "获取版本列表失败");
+            if (IsLoaded && generation == _manifestRequestGeneration)
+                ErrorPresenter.ShowFriendlyError(Loc.T("Str_Cs_Couldn_T_Fetch_The_Version_List_This_Is_", "获取版本列表失败，可能是网络连接问题或下载源暂时不可用，请检查网络后重试。"), $"[获取版本列表失败] {ex}", "获取版本列表失败");
+        }
+        finally
+        {
+            if (ReferenceEquals(_manifestCancellation, cancellation))
+            {
+                _manifestCancellation = null;
+                if (IsLoaded && generation == _manifestRequestGeneration)
+                    VersionLoadingHost.Visibility = Visibility.Collapsed;
+            }
         }
     }
 
@@ -1459,7 +1511,9 @@ public partial class DownloadCenterPage : UserControl
             ?? _owner.ConfigService.Config.Folders.FirstOrDefault();
         if (folder == null) return; // 展开阶段已经校验过，这里理论上不会触发
 
-        var existingVersions = _folderService.ScanVersions(folder.Path);
+        var folderPath = folder.Path;
+        var existingVersions = await Task.Run(() => _folderService.ScanVersions(folderPath));
+        if (!IsLoaded) return;
 
         var targetDialog = new ModpackTargetVersionDialog(item.Title, existingVersions);
         if (OverlayDialogService.ShowModal(targetDialog) != true) return; // 用户取消
@@ -1561,7 +1615,12 @@ public partial class DownloadCenterPage : UserControl
 
     private void ModSourceCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        if (!_initialized) return;
+        if (!_initialized || _modSourceSelectionUpdating) return;
+        if ((ModSourceCombo.SelectedItem as ComboBoxItem)?.Tag as string == "plugin-mod")
+        {
+            _ = OpenPluginModSourcesAsync();
+            return;
+        }
         _currentModSource = ((ModSourceCombo.SelectedItem as ComboBoxItem)?.Tag as string) switch
         {
             "modrinth" => ModSource.Modrinth,

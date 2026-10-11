@@ -20,13 +20,35 @@
 
             <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="0,0,0,10">
                 <StackPanel x:Name="PinnedToolboxButtons" Orientation="Horizontal"/>
-                <Button x:Name="ToolboxMoreButton" Content="⋯" FontSize="19" Padding="12,2" Click="ToolboxMore_Click"
-                        ToolTip="全部工具"/>
+                <Button x:Name="ToolboxMoreButton" Content="⌕ 全部工具" Padding="12,5" Click="ToolboxMore_Click"
+                        ToolTip="搜索百宝箱全部功能，包括未固定的工具" AutomationProperties.Name="搜索百宝箱全部功能"/>
                 <Popup x:Name="ToolboxMorePopup" PlacementTarget="{Binding ElementName=ToolboxMoreButton}"
-                       Placement="Bottom" StaysOpen="False" AllowsTransparency="True">
-                    <Border CornerRadius="8" Padding="6" BorderThickness="1" BorderBrush="{DynamicResource DividerBrush}"
-                            Background="{DynamicResource PanelBrush}">
-                        <ListBox x:Name="AllToolboxItems" Width="290" MaxHeight="360" MouseLeftButtonUp="AllToolboxItems_MouseLeftButtonUp"/>
+                       Placement="Bottom" StaysOpen="False" AllowsTransparency="True" Opened="ToolboxMorePopup_Opened">
+                    <Border CornerRadius="8" Padding="12" Width="360" BorderThickness="1" BorderBrush="{DynamicResource DividerBrush}"
+                            Background="{DynamicResource PanelBrush}" PreviewKeyDown="ToolboxSearch_PreviewKeyDown">
+                        <StackPanel>
+                            <TextBlock Text="搜索百宝箱功能" FontWeight="SemiBold" Margin="0,0,0,8"/>
+                            <Grid Margin="0,0,0,8">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBox x:Name="ToolboxSearchBox" Padding="8,6" TextChanged="ToolboxSearchBox_TextChanged"
+                                         ToolTip="输入功能名称或关键词，搜索全部工具" AutomationProperties.Name="搜索百宝箱功能"/>
+                                <Button x:Name="ToolboxSearchPreviousButton" Grid.Column="1" Content="↑" Margin="6,0,0,0" Padding="9,4"
+                                        Focusable="False" Click="ToolboxSearchPrevious_Click" ToolTip="跳转上一个结果" AutomationProperties.Name="跳转上一个搜索结果"/>
+                                <Button x:Name="ToolboxSearchNextButton" Grid.Column="2" Content="↓" Margin="4,0,0,0" Padding="9,4"
+                                        Focusable="False" Click="ToolboxSearchNext_Click" ToolTip="跳转下一个结果" AutomationProperties.Name="跳转下一个搜索结果"/>
+                            </Grid>
+                            <TextBlock x:Name="ToolboxSearchCountText" FontSize="11" Margin="0,0,0,6" Foreground="{DynamicResource TextSecondaryBrush}"/>
+                            <ListBox x:Name="AllToolboxItems" MaxHeight="300" MouseLeftButtonUp="AllToolboxItems_MouseLeftButtonUp"
+                                     SelectionChanged="AllToolboxItems_SelectionChanged" AutomationProperties.Name="百宝箱搜索结果"/>
+                            <TextBlock x:Name="ToolboxSearchEmptyText" Text="没有找到匹配的工具，请尝试其他关键词。" Visibility="Collapsed"
+                                       TextWrapping="Wrap" Margin="6,12" Foreground="{DynamicResource TextSecondaryBrush}"/>
+                            <TextBlock Text="按钮直接跳转 · 方向键选择 · Enter 打开 · Esc 关闭" FontSize="11" Margin="0,8,0,0"
+                                       Foreground="{DynamicResource TextSecondaryBrush}"/>
+                        </StackPanel>
                     </Border>
                 </Popup>
             </StackPanel>
@@ -401,7 +423,7 @@
                 </TabItem>
 
                 <!-- ===== Tab 12：系统内存监视 / 一键释放 ===== -->
-                <TabItem Header="系统内存监视">
+                <TabItem x:Name="MemoryMonitorTab" Header="系统内存监视">
                     <ScrollViewer VerticalScrollBarVisibility="Auto" services:ScrollWheelBehavior.EnableFastWheel="True">
                         <StackPanel Margin="4,12,4,4" MaxWidth="640" HorizontalAlignment="Left">
                             <TextBlock Text="系统内存监视 / 一键释放" FontWeight="Bold" Margin="0,0,0,8"/>

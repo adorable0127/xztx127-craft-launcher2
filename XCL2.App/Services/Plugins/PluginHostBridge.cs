@@ -15,7 +15,7 @@ using XCL2.App.Views;
 namespace XCL2.App.Services.Plugins;
 
 /// <summary>宿主内部桥接；不向插件交出 Config、Account、窗口、进程等可变对象。</summary>
-internal sealed class PluginHostBridge : IDisposable
+internal sealed partial class PluginHostBridge : IDisposable
 {
     internal static PluginHostBridge? Current { get; private set; }
     private readonly MainWindow _owner;
@@ -39,7 +39,7 @@ internal sealed class PluginHostBridge : IDisposable
     private bool _announcedStopping;
     internal sealed record IndexedInstance(string Root, string VersionId, PluginInstanceDetails Details);
     internal TimeSpan CallbackTimeout => TimeSpan.FromSeconds(double.IsFinite(_config.Config.PluginCallbackTimeoutSeconds)
-        ? Math.Clamp(_config.Config.PluginCallbackTimeoutSeconds, 0.1, 30) : 3);
+        ? Math.Clamp(_config.Config.PluginCallbackTimeoutSeconds, 0.1, 3600) : 3);
     internal MainWindow Owner => _owner;
     internal ConfigService Config => _config;
 
@@ -109,7 +109,12 @@ internal sealed class PluginHostBridge : IDisposable
     private void CopySecrets()
     {
         _secrets = _secrets.Concat(_config.Accounts.SelectMany(a => new[] { a.MsRefreshToken, a.MinecraftAccessToken, a.AuthServerClientToken }))
-            .Concat(new[] { _config.Config.AiAssistant?.ApiKey }).Concat(_config.Config.AiAssistant?.CustomModels.Select(m => m.ProviderApiKey) ?? Enumerable.Empty<string?>())
+            .Concat(new[] { _config.Config.AiAssistant?.ApiKey })
+            .Concat(_config.Config.AiAssistant?.ApiKeys ?? Enumerable.Empty<string>())
+            .Concat(_config.Config.AiAssistant?.ApiEndpoints?.Where(e => e != null)
+                .SelectMany(e => e.ApiKeys ?? new List<string>()) ?? Enumerable.Empty<string>())
+            .Concat(_config.Config.AiAssistant?.CustomModels?.Where(m => m != null)
+                .Select(m => m.ProviderApiKey) ?? Enumerable.Empty<string?>())
             .Where(s => !string.IsNullOrEmpty(s)).Select(s => s!).Distinct(StringComparer.Ordinal)
             .OrderByDescending(s => s.Length).ToImmutableArray();
     }

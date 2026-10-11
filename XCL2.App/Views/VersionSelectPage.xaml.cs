@@ -15,7 +15,7 @@ public partial class VersionSelectPage : UserControl
     private readonly MainWindow _owner;
     private readonly FolderService _folderService = new();
     private readonly ObservableCollection<GameFolder> _folders = new();
-    private readonly ObservableCollection<GameVersion> _installed = new();
+    private List<GameVersion> _installed = new();
 
     /// <summary>不完整实例仍保留在列表中，单独记录以显示修复提示。</summary>
     private List<GameVersion> _incompleteVersions = new();
@@ -23,9 +23,15 @@ public partial class VersionSelectPage : UserControl
     private readonly DispatcherTimer _rescanTimer;
     private FileSystemWatcher? _versionsWatcher;
     private string? _watchedFolderPath;
+    private string? _pendingWatchFolderPath;
+    private long _watchGeneration;
     private bool _refreshingItems;
     private bool _automaticRefreshRunning;
     private long _refreshGeneration;
+    private CancellationTokenSource? _scanCancellation;
+    private string? _scanningFolderPath;
+    private string? _displayedFolderPath;
+    private bool _loadingFolders;
 
     public VersionSelectPage(MainWindow owner)
     {
@@ -49,11 +55,12 @@ public partial class VersionSelectPage : UserControl
         {
             WatchSelectedFolder();
             _rescanTimer.Start();
-            QueueAutomaticRefresh();
+            RefreshInstalledVersions();
         };
         Unloaded += (_, _) =>
         {
             ++_refreshGeneration;
+            _scanCancellation?.Cancel();
             _watchDebounce.Stop();
             _rescanTimer.Stop();
             StopWatchingVersions();
@@ -63,39 +70,95 @@ public partial class VersionSelectPage : UserControl
         InstalledListBox.ItemsSource = _installed;
 
         LoadFolders();
-        RefreshInstalledVersions(); // 修复：进入页面时选中框已有默认值，但 SelectionChanged 未必触发，这里主动刷新一次
+        // 首次扫描由 Loaded 发起。构造期间只创建控件，不能重复同步扫描版本目录。
     }
 
     private void LoadFolders()
     {
-        _folders.Clear();
-        foreach (var f in _owner.ConfigService.Config.Folders ?? new List<GameFolder>()) _folders.Add(f);
-
-        var selected = _folders.FirstOrDefault(f => f.Path == _owner.ConfigService.Config.SelectedFolderPath) ?? _folders.FirstOrDefault();
-        if (selected != null) FolderListBox.SelectedItem = selected;
+        _loadingFolders = true;
+        try
+        {
+            _folders.Clear();
+            foreach (var f in _owner.ConfigService.Config.Folders ?? new List<GameFolder>()) _folders.Add(f);
+            var selected = _folders.FirstOrDefault(f => f.Path == _owner.ConfigService.Config.SelectedFolderPath) ?? _folders.FirstOrDefault();
+            FolderListBox.SelectedItem = selected;
+            // 初始化抑制 SelectionChanged 时仍须同步逻辑选择；选择实例后再随配置一起保存。
+            _owner.ConfigService.Config.SelectedFolderPath = selected?.Path;
+        }
+        finally { _loadingFolders = false; }
     }
 
-    private void RefreshInstalledVersions()
+    private void RefreshInstalledVersions() => _ = RefreshInstalledVersionsAsync();
+
+    private async Task RefreshInstalledVersionsAsync(bool automatic = false)
     {
-        ++_refreshGeneration;
+        if (!IsLoaded) return;
         var folder = FolderListBox.SelectedItem as GameFolder;
+        if (automatic && _automaticRefreshRunning &&
+            string.Equals(_scanningFolderPath, folder?.Path, StringComparison.OrdinalIgnoreCase)) return;
+        var generation = ++_refreshGeneration;
+        _scanCancellation?.Cancel();
         if (folder == null || string.IsNullOrEmpty(folder.Path))
         {
-            _installed.Clear();
+            _installed = new List<GameVersion>();
+            InstalledListBox.ItemsSource = _installed;
             _incompleteVersions.Clear();
+            _displayedFolderPath = null;
+            VersionLoadingHost.Visibility = Visibility.Collapsed;
+            InstalledListBox.IsEnabled = true;
             ShowHiddenInstancesBtn.Visibility = Visibility.Collapsed;
             RefreshIncompleteVersionsButtonVisibility();
             return;
         }
+        using var cancellation = new CancellationTokenSource();
+        _scanCancellation = cancellation;
+        _automaticRefreshRunning = true;
+        var folderPath = folder.Path;
+        _scanningFolderPath = folderPath;
+        // 后台自动复查保留现有列表；切换文件夹时不能让旧实例继续响应操作。
+        if (!string.Equals(_displayedFolderPath, folderPath, StringComparison.OrdinalIgnoreCase))
+        {
+            _installed = new List<GameVersion>();
+            InstalledListBox.ItemsSource = _installed;
+            _incompleteVersions.Clear();
+            RefreshIncompleteVersionsButtonVisibility();
+            ShowHiddenInstancesBtn.Visibility = Visibility.Collapsed;
+            VersionLoadingHost.Content ??= LoadingPlaceholderFactory.Create();
+            VersionLoadingHost.Visibility = Visibility.Visible;
+            InstalledListBox.IsEnabled = false;
+        }
         try
         {
-            ApplyScannedVersions(folder.Path, _folderService.ScanVersions(folder.Path));
+            var versions = await Task.Run(() => _folderService.ScanVersions(folderPath, cancellation.Token), cancellation.Token);
+            // 应用列表结果排在输入/渲染之后；旧目录/已经卸载的页面绝不能刷回新页面。
+            await Dispatcher.InvokeAsync(() =>
+            {
+                if (!IsLoaded || generation != _refreshGeneration || cancellation.IsCancellationRequested) return;
+                if (FolderListBox.SelectedItem is not GameFolder current ||
+                    !string.Equals(current.Path, folderPath, StringComparison.OrdinalIgnoreCase)) return;
+                ApplyScannedVersions(folderPath, versions);
+                _displayedFolderPath = folderPath;
+            }, DispatcherPriority.Background);
         }
+        catch (OperationCanceledException) { }
         catch (Exception ex)
         {
-            MessageBoxDialog.ShowWarning("扫描已安装版本失败：\n" + ex.Message, Loc.T("Str_Cs_Error", "错误"));
+            if (!automatic && IsLoaded && generation == _refreshGeneration)
+                MessageBoxDialog.ShowWarning("扫描已安装版本失败：\n" + ex.Message, Loc.T("Str_Cs_Error", "错误"));
         }
-
+        finally
+        {
+            if (ReferenceEquals(_scanCancellation, cancellation))
+            {
+                _scanCancellation = null;
+                _automaticRefreshRunning = false;
+                if (generation == _refreshGeneration)
+                {
+                    VersionLoadingHost.Visibility = Visibility.Collapsed;
+                    InstalledListBox.IsEnabled = true;
+                }
+            }
+        }
     }
 
     private void ApplyScannedVersions(string folderPath, List<GameVersion> versions)
@@ -114,8 +177,8 @@ public partial class VersionSelectPage : UserControl
         {
             if (!unchanged)
             {
-                _installed.Clear();
-                foreach (var version in visible) _installed.Add(version);
+                _installed = visible;
+                InstalledListBox.ItemsSource = _installed;
             }
             InstalledListBox.SelectedItem = _installed.FirstOrDefault(v =>
                 string.Equals(v.Id, selectedId, StringComparison.OrdinalIgnoreCase));
@@ -149,40 +212,38 @@ public partial class VersionSelectPage : UserControl
         _watchDebounce.Start();
     }
 
-    private async Task RefreshVersionsAutomaticallyAsync()
-    {
-        if (!IsLoaded || _automaticRefreshRunning || FolderListBox.SelectedItem is not GameFolder folder) return;
-        _automaticRefreshRunning = true;
-        var generation = ++_refreshGeneration;
-        var folderPath = folder.Path;
-        try
-        {
-            var versions = await Task.Run(() => _folderService.ScanVersions(folderPath));
-            if (IsLoaded && generation == _refreshGeneration && FolderListBox.SelectedItem is GameFolder current &&
-                string.Equals(current.Path, folderPath, StringComparison.OrdinalIgnoreCase))
-                ApplyScannedVersions(folderPath, versions);
-        }
-        catch { /* 复制中的文件/临时目录访问失败不弹窗，后续通知及定时扫描会重试。 */ }
-        finally { _automaticRefreshRunning = false; }
-    }
+    private Task RefreshVersionsAutomaticallyAsync() => RefreshInstalledVersionsAsync(automatic: true);
 
-    private void WatchSelectedFolder()
+    private async void WatchSelectedFolder()
     {
         var folderPath = (FolderListBox.SelectedItem as GameFolder)?.Path;
-        if (_versionsWatcher != null && Directory.Exists(folderPath) &&
+        if (_versionsWatcher != null &&
             string.Equals(folderPath, _watchedFolderPath, StringComparison.OrdinalIgnoreCase)) return;
+        if (_pendingWatchFolderPath != null &&
+            string.Equals(folderPath, _pendingWatchFolderPath, StringComparison.OrdinalIgnoreCase)) return;
         StopWatchingVersions();
-        if (!IsLoaded || string.IsNullOrEmpty(folderPath) || !Directory.Exists(folderPath)) return;
+        if (!IsLoaded || string.IsNullOrEmpty(folderPath)) return;
+        var generation = _watchGeneration;
+        _pendingWatchFolderPath = folderPath;
 
         FileSystemWatcher? watcher = null;
         try
         {
             // 监视根目录，使尚不存在的 versions 目录被创建后也能自动发现。
-            watcher = new FileSystemWatcher(folderPath)
+            // 网络盘上的 Exists/路径验证也可能阻塞；在工作线程创建，回到 UI 后才接入生命周期。
+            watcher = await Task.Run(() => Directory.Exists(folderPath)
+                ? new FileSystemWatcher(folderPath)
+                {
+                    IncludeSubdirectories = true,
+                    NotifyFilter = NotifyFilters.DirectoryName | NotifyFilters.FileName | NotifyFilters.LastWrite | NotifyFilters.Size
+                }
+                : null);
+            if (!IsLoaded || generation != _watchGeneration)
             {
-                IncludeSubdirectories = true,
-                NotifyFilter = NotifyFilters.DirectoryName | NotifyFilters.FileName | NotifyFilters.LastWrite | NotifyFilters.Size
-            };
+                watcher?.Dispose();
+                return;
+            }
+            if (watcher == null) return;
             void OnChanged(string path)
             {
                 var parts = Path.GetRelativePath(folderPath, path).Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
@@ -217,14 +278,19 @@ public partial class VersionSelectPage : UserControl
         catch
         {
             watcher?.Dispose();
-            _versionsWatcher = null;
-            _watchedFolderPath = null;
+            if (generation == _watchGeneration) StopWatchingVersions();
             // 监视不可用时仍由后台定时扫描自动刷新。
+        }
+        finally
+        {
+            if (generation == _watchGeneration) _pendingWatchFolderPath = null;
         }
     }
 
     private void StopWatchingVersions()
     {
+        ++_watchGeneration;
+        _pendingWatchFolderPath = null;
         _versionsWatcher?.Dispose();
         _versionsWatcher = null;
         _watchedFolderPath = null;
@@ -269,6 +335,7 @@ public partial class VersionSelectPage : UserControl
 
     private void FolderListBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
+        if (_loadingFolders) return;
         if (FolderListBox.SelectedItem is GameFolder folder)
         {
             _owner.ConfigService.Config.SelectedFolderPath = folder.Path;
@@ -399,20 +466,22 @@ public partial class VersionSelectPage : UserControl
     /// FolderService.ScanVersions 是直接扫描 versions/ 目录的，这里只需要重新扫一次
     /// (RefreshInstalledVersions)，新装好的版本文件夹自然就会出现在列表里。
     /// </summary>
-    private void InstallNewVersion_Click(object sender, RoutedEventArgs e)
+    private async void InstallNewVersion_Click(object sender, RoutedEventArgs e)
     {
-        if (FolderListBox.SelectedItem is not GameFolder)
+        if (FolderListBox.SelectedItem is not GameFolder folder)
         {
             MessageBoxDialog.ShowInfo("请先在左侧选择/添加一个 .minecraft 文件夹，再安装新版本。",
                 "提示");
             return;
         }
 
+        var folderPath = folder.Path;
         var window = new InstallClientLoaderWindow(_owner);
         if (window.ShowDialog() == true)
         {
-            RefreshInstalledVersions();
-            if (window.InstalledVersionId != null)
+            await RefreshInstalledVersionsAsync();
+            if (IsLoaded && window.InstalledVersionId != null &&
+                string.Equals(GetSelectedFolderPath(), folderPath, StringComparison.OrdinalIgnoreCase))
             {
                 var installed = _installed.FirstOrDefault(v => v.Id == window.InstalledVersionId);
                 if (installed != null) InstalledListBox.SelectedItem = installed;
@@ -482,7 +551,7 @@ public partial class VersionSelectPage : UserControl
         RenameInstance(v);
     }
 
-    private void RenameInstance(GameVersion v)
+    private async void RenameInstance(GameVersion v)
     {
         var folderPath = GetSelectedFolderPath();
         if (string.IsNullOrEmpty(folderPath)) return;
@@ -499,7 +568,8 @@ public partial class VersionSelectPage : UserControl
         {
             InstanceDeletionService.Rename(_owner.ConfigService.Config, folderPath, v.Id, dlg.NewName);
             _owner.ConfigService.Save();
-            RefreshInstalledVersions();
+            await RefreshInstalledVersionsAsync();
+            if (!IsLoaded || !string.Equals(GetSelectedFolderPath(), folderPath, StringComparison.OrdinalIgnoreCase)) return;
             var renamed = _installed.FirstOrDefault(i => string.Equals(i.Id, dlg.NewName, StringComparison.OrdinalIgnoreCase));
             if (renamed != null) InstalledListBox.SelectedItem = renamed;
         }

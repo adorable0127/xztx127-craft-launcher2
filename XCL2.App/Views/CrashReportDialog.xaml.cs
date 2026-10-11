@@ -19,12 +19,20 @@ public partial class CrashReportDialog : OverlayDialogControl
 {
     private readonly MainWindow _owner;
     private readonly GameProcessInfo? _processInfo;
+    private readonly DateTime _incidentObservedAt = DateTime.Now;
+    private CancellationTokenSource? _aiLogReadCts;
+    private bool _closed;
 
     private CrashReportDialog(MainWindow owner, string message, GameProcessInfo? processInfo, bool suppressAutomaticAnalysis = false, string? title = null)
     {
         InitializeComponent();
         _owner = owner;
         _processInfo = processInfo;
+        RequestClose += (_, _) =>
+        {
+            _closed = true;
+            _aiLogReadCts?.Cancel();
+        };
         MessageText.Text = message;
         if (!string.IsNullOrWhiteSpace(title)) TitleText.Text = title;
         if (!suppressAutomaticAnalysis && processInfo != null)
@@ -56,12 +64,12 @@ public partial class CrashReportDialog : OverlayDialogControl
         try
         {
             var analyzer = new CrashAnalyzerService();
-            var files = analyzer.ListCrashFiles(_processInfo.GameDir);
+            var files = CrashAiLogService.GetCurrentIncidentFiles(_processInfo, _incidentObservedAt);
             if (files.Count == 0) return;
 
-            // ListCrashFiles 已经按修改时间倒序，第一个就是离这次崩溃最近的一份。
+            // 只分析本次启动期间写入的文件；优先崩溃报告/JVM 报告，再使用 latest.log。
             var latest = files[0];
-            var result = analyzer.Analyze(latest.path);
+            var result = analyzer.Analyze(latest);
             if (result.RankedFindings.Count == 0 && result.Findings.Count == 0) return;
 
             var lines = result.RankedFindings.Count > 0
@@ -78,7 +86,7 @@ public partial class CrashReportDialog : OverlayDialogControl
                 : result.Findings.Select((f, i) => $"{i + 1}. {f}");
 
             AnalysisText.Text = string.Join("\n\n", lines);
-            AnalysisSourceText.Text = $"分析依据：{Path.GetFileName(latest.path)}（{latest.modifiedAt:yyyy-MM-dd HH:mm}）。" +
+            AnalysisSourceText.Text = $"分析依据：{Path.GetFileName(latest)}（{result.ModifiedAt:yyyy-MM-dd HH:mm}）。" +
                 "这是启发式自动分析，仅供定位问题参考，不保证 100% 准确；完整原文可点下方「在记事本中查看日志」或「导出完整日志」。";
             AnalysisSection.Visibility = Visibility.Visible;
         }
@@ -125,6 +133,7 @@ public partial class CrashReportDialog : OverlayDialogControl
     {
         var dlg = new CrashReportDialog(owner, "可能是用户手动关闭了游戏", processInfo,
             suppressAutomaticAnalysis: true, title: "游戏已退出");
+        dlg.AnalyzeCrashWithAiButton.Visibility = Visibility.Collapsed;
         OverlayDialogService.ShowNonModal(dlg);
     }
 
@@ -132,8 +141,40 @@ public partial class CrashReportDialog : OverlayDialogControl
     private void InstallDirectX_Click(object sender, RoutedEventArgs e)
         => DirectXRuntimeInstallService.StartWithConfirmation();
 
+    private void OpenDirectXPage_Click(object sender, RoutedEventArgs e)
+        => ExternalLinkService.Open(DirectXRuntimeInstallService.OfficialPage);
+
     private void InstallOpenGlDriver_Click(object sender, RoutedEventArgs e)
         => WindowsDisplayDriverInstallService.StartWithConfirmation();
+
+    private async void AnalyzeCrashWithAi_Click(object sender, RoutedEventArgs e)
+    {
+        if (_closed || _aiLogReadCts != null) return;
+        var readCts = new CancellationTokenSource();
+        _aiLogReadCts = readCts;
+        AnalyzeCrashWithAiButton.IsEnabled = false;
+        try
+        {
+            var prompt = await _owner.PrepareCrashAiPromptAsync(_processInfo, _incidentObservedAt, MessageText.Text, readCts.Token);
+            if (_closed || readCts.IsCancellationRequested) return;
+            // 先收起崩溃提示，再显示覆盖在原页面上的助手；关闭助手不会重新弹出崩溃提示。
+            Close();
+            var title = _processInfo == null ? "当前崩溃日志分析" : _processInfo.VersionId + " · 崩溃日志分析";
+            await _owner.ShowCrashAnalysisOverlayAsync(prompt, title);
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception ex)
+        {
+            ErrorPresenter.LogFallback("准备崩溃 AI 分析失败", ex);
+            MessageBoxDialog.ShowError("打开崩溃日志分析失败：" + ex.Message, "崩溃日志分析");
+        }
+        finally
+        {
+            if (ReferenceEquals(_aiLogReadCts, readCts)) _aiLogReadCts = null;
+            readCts.Dispose();
+            if (!_closed) AnalyzeCrashWithAiButton.IsEnabled = true;
+        }
+    }
 
     /// <summary>"在记事本中查看日志"：跟"查看完整日志"（其实是跳转到启动器内部的日志页）
     /// 分开——那个按钮名字容易让人以为点了会拉起系统记事本，其实只是启动器自己的一个页面，

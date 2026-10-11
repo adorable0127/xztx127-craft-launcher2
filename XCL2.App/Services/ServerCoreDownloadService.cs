@@ -429,9 +429,8 @@ public class ServerCoreDownloadService
                 progress?.Report(new ProgressInfo(
                     i == 0 ? "下载服务端主程序" : $"该构建已不可用，改用 build {build} 重试",
                     2, 2, fileName));
-                // Paper 用 sha256 而不是 sha1，DownloadFileAsync 目前只支持 sha1 校验；
-                // 这里改用不做哈希强校验的下载路径，只做基本的文件大小/完整性检查（HttpClient 层面）。
-                await DownloadFileNoHashCheckAsync(url, destPath, ct);
+                // 在临时文件提交前校验 Paper 的 SHA256；错误镜像不会覆盖现有核心。
+                await DownloadFileNoHashCheckAsync(url, destPath, ct, sha256);
                 if (sha256 != null)
                 {
                     var actualSha256 = ComputeSha256(destPath);
@@ -863,115 +862,21 @@ public class ServerCoreDownloadService
     // 下载/校验 辅助方法
     // ============================================================
 
-    /// <summary>单次下载尝试超时，理由同 DownloadService.SingleAttemptTimeout（该问题在多个下载
-    /// 服务里独立实现了同一套"重试但依赖整体 HttpClient.Timeout"的逻辑，属于同一类卡住 bug，一并修）。</summary>
-    private static readonly TimeSpan SingleAttemptTimeout = TimeSpan.FromSeconds(45);
-
     private async Task DownloadFileAsync(string url, string destPath, string expectedSha1, CancellationToken ct)
     {
         if (File.Exists(destPath) && !string.IsNullOrEmpty(expectedSha1) && VerifySha1(destPath, expectedSha1)) return;
-
-        Directory.CreateDirectory(Path.GetDirectoryName(destPath)!);
-        const int maxAttempts = 3;
-        Exception? lastError = null;
-
-        for (var attempt = 1; attempt <= maxAttempts; attempt++)
-        {
-            var tmp = destPath + $".tmp{attempt}";
-            using var attemptCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            attemptCts.CancelAfter(SingleAttemptTimeout);
-            try
-            {
-                using (var resp = await _http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, attemptCts.Token))
-                {
-                    resp.EnsureSuccessStatusCode();
-                    await using var fs = File.Create(tmp);
-                    await resp.Content.CopyToAsync(fs, attemptCts.Token);
-                }
-
-                if (!string.IsNullOrEmpty(expectedSha1) && !VerifySha1(tmp, expectedSha1))
-                {
-                    lastError = new IOException($"文件校验失败(SHA1 不匹配)，可能是网络中途中断: {url}");
-                    TryDelete(tmp);
-                    continue;
-                }
-
-                if (File.Exists(destPath)) File.Delete(destPath);
-                File.Move(tmp, destPath);
-                return;
-            }
-            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
-            {
-                lastError = new TimeoutException(
-                    $"下载单次尝试超时（{SingleAttemptTimeout.TotalSeconds:0}秒内无响应）: {url}");
-                TryDelete(tmp);
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException)
-            {
-                lastError = ex;
-                TryDelete(tmp);
-            }
-        }
-        var is404 = lastError is HttpRequestException hre &&
-            (hre.StatusCode == System.Net.HttpStatusCode.NotFound || hre.Message.Contains("404"));
-        var hint = is404
-            ? "\n这通常是因为该版本的安装器/核心文件已从官方仓库下架，建议换一个相近的版本重试。"
-            : "";
-        throw new IOException($"下载失败（已重试 {maxAttempts} 次）: {url}{hint}", lastError);
+        await DownloadEndpoints.DownloadFileWithFallbackAsync(_http, url, DownloadEndpoints.PreferMirror,
+            destPath, "服务端核心下载失败", ct: ct, expectedSha1: expectedSha1);
     }
 
-    /// <summary>用于 Paper(sha256,单独校验)/Fabric/Forge/NeoForge 等 DownloadFileAsync 不直接支持 sha1 的场景。</summary>
-    private async Task DownloadFileNoHashCheckAsync(string url, string destPath, CancellationToken ct)
+    private async Task DownloadFileNoHashCheckAsync(string url, string destPath, CancellationToken ct, string? expectedSha256 = null)
     {
-        Directory.CreateDirectory(Path.GetDirectoryName(destPath)!);
-        const int maxAttempts = 3;
-        Exception? lastError = null;
-
-        for (var attempt = 1; attempt <= maxAttempts; attempt++)
-        {
-            var tmp = destPath + $".tmp{attempt}";
-            using var attemptCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            attemptCts.CancelAfter(SingleAttemptTimeout);
-            try
-            {
-                using (var resp = await _http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, attemptCts.Token))
-                {
-                    resp.EnsureSuccessStatusCode();
-                    await using var fs = File.Create(tmp);
-                    await resp.Content.CopyToAsync(fs, attemptCts.Token);
-                }
-                if (new FileInfo(tmp).Length == 0)
-                {
-                    lastError = new IOException($"下载得到空文件: {url}");
-                    TryDelete(tmp);
-                    continue;
-                }
-                if (File.Exists(destPath)) File.Delete(destPath);
-                File.Move(tmp, destPath);
-                return;
-            }
-            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
-            {
-                lastError = new TimeoutException(
-                    $"下载单次尝试超时（{SingleAttemptTimeout.TotalSeconds:0}秒内无响应）: {url}");
-                TryDelete(tmp);
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException)
-            {
-                lastError = ex;
-                TryDelete(tmp);
-            }
-        }
-        var is404b = lastError is HttpRequestException hre2 &&
-            (hre2.StatusCode == System.Net.HttpStatusCode.NotFound || hre2.Message.Contains("404"));
-        var hintb = is404b
-            ? "\n这通常是因为该版本的安装器/核心文件已从官方仓库下架，建议换一个相近的版本重试。"
-            : "";
-        throw new IOException($"下载失败（已重试 {maxAttempts} 次）: {url}{hintb}", lastError);
+        await DownloadEndpoints.DownloadFileWithFallbackAsync(_http, url, DownloadEndpoints.PreferMirror,
+            destPath, "服务端文件下载失败", ct: ct, expectedSha256: expectedSha256);
     }
 
     /// <summary>判断一次下载失败是否是"目标 build 已经 404"（值得换下一个候选 build 重试），
-    /// 而不是网络抖动等其他原因。DownloadFileNoHashCheckAsync 内部已经重试过 3 次，最终抛出的是
+    /// 而不是网络抖动等其他原因。DownloadFileNoHashCheckAsync 内部已经尝试所有候选源，最终抛出的是
     /// 包了一层的 IOException，真正的 HttpRequestException 在 InnerException 里，这里要往里挖一层。
     /// buildDetailJson 那次查询（GetStringAsync）如果 build 本身不存在，也是直接抛 HttpRequestException，
     /// 不经过 DownloadFileNoHashCheckAsync 包装，所以两种形态都要判断。</summary>

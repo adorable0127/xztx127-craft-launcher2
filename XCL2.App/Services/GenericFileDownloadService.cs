@@ -4,15 +4,9 @@ using System.Net.Http;
 namespace XCL2.App.Services;
 
 /// <summary>
-/// 「百宝箱」-「下载自定义文件」：对应截图里"用高速多线程下载引擎下载任意文件"的需求。
-/// 这里不接入项目里 DownloadService 那套面向"游戏核心文件批量下载"设计的并发/限速/
-/// 智能限速体系（那一套是为 libraries/assets 这种成千上万个小文件的场景设计的，
-/// 对"下载单个用户指定的任意文件"这种场景反而过重），改用一个简单直接的单文件
-/// HttpClient 下载 + 进度回调，职责更单一、代码量也更小。
-///
-/// 关于截图里提到的"部分网站（例如百度网盘）可能会报错 403 已禁止"：这是网盘一类服务
-/// 对外部程序发起的下载请求做的反爬虫/防盗链校验，不是这里的下载逻辑本身有问题，
-/// 如实保留这条提示，让用户对"某些链接下不了"有心理预期，而不是误以为是启动器坏了。
+/// 百宝箱任意文件下载。公开文件接入统一镜像回退、限速与原子提交；
+/// 用户指定的签名链接保持直连，自定义 User-Agent 保留在每次请求中。
+/// 无来源哈希的文件只能验证传输完整性，不能据此证明内容真实。
 /// </summary>
 public class GenericFileDownloadService : IDisposable
 {
@@ -46,39 +40,10 @@ public class GenericFileDownloadService : IDisposable
                 fileName = $"download_{DateTime.Now:yyyyMMdd_HHmmss}";
         }
 
-        url = await Plugins.PluginInterceptionRegistry.PrepareDownloadAsync(url, fileName, null, ct);
-        using var request = new HttpRequestMessage(HttpMethod.Get, url);
-        if (!string.IsNullOrWhiteSpace(userAgent))
-            request.Headers.TryAddWithoutValidation("User-Agent", userAgent);
-
-        using var resp = await _http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
-        if (!resp.IsSuccessStatusCode)
-            throw new InvalidOperationException(
-                $"下载失败：HTTP {(int)resp.StatusCode} {resp.ReasonPhrase}\n" +
-                "如果是网盘类地址（如百度网盘），可能是对方站点拒绝了外部程序的直接下载请求，" +
-                "并非启动器本身的问题，可以尝试改用官方客户端下载或先转存到其它直链服务。");
-
-        var totalBytes = resp.Content.Headers.ContentLength ?? -1;
+        if (fileName != Path.GetFileName(fileName) || fileName.IndexOfAny(new[] { '/', '\\', ':' }) >= 0)
+            throw new ArgumentException("文件名不能包含目录或驱动器路径。", nameof(fileName));
         var destPath = Path.Combine(saveDir, fileName);
-        var tempPath = destPath + ".tmp";
-
-        await using (var fs = File.Create(tempPath))
-        await using (var stream = await resp.Content.ReadAsStreamAsync(ct))
-        {
-            var buffer = new byte[81920];
-            long totalRead = 0;
-            int read;
-            while ((read = await stream.ReadAsync(buffer, ct)) > 0)
-            {
-                await fs.WriteAsync(buffer.AsMemory(0, read), ct);
-                totalRead += read;
-                if (totalBytes > 0)
-                {
-                    progress?.Report(new ProgressInfo("下载文件", (int)(totalRead / 1024), (int)(totalBytes / 1024), fileName));
-                }
-            }
-        }
-        File.Move(tempPath, destPath, overwrite: true);
-        return destPath;
+        return await DownloadEndpoints.DownloadFileWithFallbackAsync(_http, url, DownloadEndpoints.PreferMirror,
+            destPath, "下载失败：请检查网络及链接的直接下载权限", progress, ct, userAgent: userAgent);
     }
 }

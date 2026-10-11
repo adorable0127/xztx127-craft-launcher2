@@ -1,6 +1,7 @@
 using System.IO;
 using System.IO.Compression;
 using System.Text.Json;
+using System.Threading;
 
 namespace XCL2.App.Services;
 
@@ -17,14 +18,16 @@ public class LocalModService
     private const string DisabledSuffix = ".disabled";
 
     /// <summary>扫描 mods 文件夹，返回每个 mod 文件的基本信息（含是否已禁用）。文件夹不存在时返回空列表，不抛异常。</summary>
-    public List<LocalModInfo> ScanMods(string minecraftDir)
+    public List<LocalModInfo> ScanMods(string minecraftDir, CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         var result = new List<LocalModInfo>();
         var modsDir = Path.Combine(minecraftDir, "mods");
         if (!Directory.Exists(modsDir)) return result;
 
-        foreach (var file in Directory.GetFiles(modsDir))
+        foreach (var file in Directory.EnumerateFiles(modsDir))
         {
+            cancellationToken.ThrowIfCancellationRequested();
             var fileName = Path.GetFileName(file);
             var isDisabled = fileName.EndsWith(DisabledSuffix, StringComparison.OrdinalIgnoreCase);
             var effectiveName = isDisabled
@@ -48,6 +51,7 @@ public class LocalModService
             });
         }
 
+        cancellationToken.ThrowIfCancellationRequested();
         return result.OrderBy(m => m.DisplayName, StringComparer.OrdinalIgnoreCase).ToList();
     }
 

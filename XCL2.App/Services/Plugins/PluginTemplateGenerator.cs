@@ -21,12 +21,20 @@ public static class PluginTemplateGenerator
         var idLiteral = JsonSerializer.Serialize(pluginId);
         var displayNameLiteral = JsonSerializer.Serialize(displayName);
 
+        File.WriteAllText(Path.Combine(targetDir, "plugin.json"), JsonSerializer.Serialize(new
+        {
+            schemaVersion = 1, id = pluginId, name = displayName, version = "0.1.0",
+            entry = projectName + ".dll", kind = "dll", minApiVersion = "2.2",
+            permissions = new[] { "ui.basic", "ui.components", "ui.navigation" }, dependencies = Array.Empty<object>(), conflicts = Array.Empty<string>()
+        }, new JsonSerializerOptions { WriteIndented = true }));
+
         File.WriteAllText(Path.Combine(targetDir, projectName + ".csproj"), $"""
             <Project Sdk="Microsoft.NET.Sdk">
 
               <PropertyGroup>
                 <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
                 <Nullable>enable</Nullable>
+                <Xcl2HostPath Condition="'$(Xcl2HostPath)' == ''">C:\path\to\your\XCL2\XCL2.dll</Xcl2HostPath>
                 <UseWPF>true</UseWPF>
                 <ImplicitUsings>enable</ImplicitUsings>
                 <!-- 插件运行在 XCL2 主程序进程里，不需要（也不应该）把 XCL2.App.dll 打进插件
@@ -37,8 +45,9 @@ public static class PluginTemplateGenerator
               </PropertyGroup>
 
               <ItemGroup>
+                <None Update="plugin.json" CopyToOutputDirectory="PreserveNewest" />
                 <Reference Include="XCL2">
-                  <HintPath>C:\path\to\your\XCL2\XCL2.dll</HintPath>
+                  <HintPath>$(Xcl2HostPath)</HintPath>
                   <Private>false</Private>
                 </Reference>
               </ItemGroup>
@@ -69,6 +78,17 @@ public static class PluginTemplateGenerator
                 {
                     _ctx = ctx;
                     ctx.Log("插件已加载。");
+                    // API 2.2：模板默认允许导航；窗口和设置写入需另声明并由用户授权。
+                    ctx.Ui.RegisterButton(new PluginButtonDefinition
+                    {
+                        Id = "api-center", Text = "API 开发中心与样例",
+                        OnClick = async ui => { await ui.Plugin.Control.NavigateAsync("api", ui.Stopping); }
+                    });
+                    // API 2.0：先在 plugin.json 声明 ui.preview，再由用户在 API 设置开启并授权。
+                    // ctx.Preview.RegisterCard("hello", "你好，世界", "原生 WinUI 3 卡片", "worlds");
+                    // ctx.Preview.SetAppearance("我的 XCL2", "#1BD96A", compact: false);
+                    // await ctx.Worlds.GetSnapshotAsync(); // 需要 worlds.read
+
 
                     // 任意坐标：Parent = "$overlay" 自动覆盖整个视图，不受原 Grid 行列限制。
                     // 可用 Action = Move / Remove / Replace 操作 Inspect 返回的现有组件。
@@ -138,7 +158,116 @@ public static class PluginTemplateGenerator
             "3. 将 bin/Release/net8.0-windows10.0.19041.0/" + projectName + ".dll 拖入启动器并审查来源提醒。\r\n" +
             "4. 确认后自动安装并运行；需要的依赖 DLL 请放进 installed/" + projectName + "/。\r\n" +
             "5. 插件配置页可编辑问候语、打开示例弹窗；加载器选择弹窗显示扩展按钮。\r\n" +
+            "6. Examples.cs 含可选启动台页面与 API 2.2 调用。按注释声明并授权所需权限后再调用。\r\n" +
             "更完整的 UI 注册接口见 API_REFERENCE.md，开发流程见 PLUGIN_GUIDE.md。\r\n");
+
+        File.WriteAllText(Path.Combine(targetDir, "Examples.cs"), """
+            using XCL2.App.Services.Plugins;
+
+            // 这些示例不会自动执行。调用前在 plugin.json 声明相应权限，并由用户授权。
+            public static class LauncherExamples
+            {
+                // 需要 ui.navigation、settings.write、ui.window。
+                public static async Task CustomizeAsync(PluginContext ctx)
+                {
+                    if (!await ctx.Control.NavigateAsync("home", ctx.Stopping)) return;
+                    await ctx.Control.UpdateSettingsAsync(new PluginSettingsPatch
+                    {
+                        UiSkin = "Custom", CustomAccentColor = "#27AE60", IsDarkMode = true,
+                        UiZoomPercent = 110, CallbackTimeoutSeconds = 300
+                    }, ctx.Stopping);
+                    await ctx.Control.UpdateWindowAsync(new PluginWindowPatch
+                    {
+                        Title = "我的 XCL2 工作台", Width = 1200, Height = 780,
+                        SidebarCollapsed = false
+                    }, ctx.Stopping);
+                }
+
+                // 需要 instances.read、accounts.read、launcher.control；保留宿主启动确认。
+                public static async Task<PluginLaunchAcceptance> LaunchFirstAsync(PluginContext ctx)
+                {
+                    var accounts = await ctx.Launcher.Accounts.GetSnapshotAsync(ctx.Stopping);
+                    var instances = await ctx.Launcher.Instances.GetSnapshotAsync(ct: ctx.Stopping);
+                    var account = accounts.Items.FirstOrDefault(a => a.IsSelected) ?? accounts.Items.FirstOrDefault();
+                    var instance = instances.Items.FirstOrDefault(i => i.IsSelected && i.IsInstalled)
+                        ?? instances.Items.FirstOrDefault(i => i.IsInstalled);
+                    if (account == null) return new(false, "AccountNotFound");
+                    if (instance == null) return new(false, "InstanceNotFound");
+                    await ctx.Control.SelectAccountAsync(account.Id, ctx.Stopping);
+                    await ctx.Control.SelectInstanceAsync(instance.Id, ctx.Stopping);
+                    return await ctx.Control.LaunchSelectedAsync(ctx.Stopping);
+                }
+
+                // 需要 ui.navigation、instances.read、downloads.read、launcher.control。
+                // 用户授权这些权限后，在 Initialize 中调用 RegisterDashboard(ctx)。
+                public static IDisposable RegisterDashboard(PluginContext ctx)
+                {
+                    return ctx.Ui.RegisterNavigationPage(new PluginNavigationPageDefinition(
+                        "launcher-dashboard", "我的启动台", ui =>
+                        {
+                            var panel = new System.Windows.Controls.StackPanel();
+                            var status = new System.Windows.Controls.TextBlock
+                            { Text = "点击刷新读取实例与下载任务。", TextWrapping = System.Windows.TextWrapping.Wrap };
+                            var instances = new System.Windows.Controls.ComboBox
+                            { DisplayMemberPath = "Name", Margin = new System.Windows.Thickness(0, 8, 0, 8) };
+                            var refresh = new System.Windows.Controls.Button { Content = "刷新实例与下载" };
+                            var launch = new System.Windows.Controls.Button { Content = "启动所选实例" };
+                            panel.Children.Add(status); panel.Children.Add(instances);
+                            panel.Children.Add(refresh); panel.Children.Add(launch);
+                            async Task RunAsync(Func<Task> operation)
+                            {
+                                refresh.IsEnabled = launch.IsEnabled = false;
+                                try { await operation(); }
+                                catch (OperationCanceledException) { status.Text = "操作已取消。"; }
+                                catch (PluginOperationException ex) { status.Text = ex.Code + ": " + ex.SafeMessage; }
+                                catch (Exception ex) { status.Text = "操作失败：" + ex.GetType().Name; }
+                                finally { refresh.IsEnabled = launch.IsEnabled = true; }
+                            }
+                            refresh.Click += async (_, _) => await RunAsync(async () =>
+                            {
+                                var snapshot = await ui.Plugin.Launcher.Instances.GetSnapshotAsync(ct: ui.Stopping);
+                                instances.ItemsSource = snapshot.Items.Where(i => i.IsInstalled).ToArray();
+                                instances.SelectedItem = snapshot.Items.FirstOrDefault(i => i.IsSelected && i.IsInstalled);
+                                var downloads = await ui.Plugin.Launcher.Downloads.GetSnapshotAsync(ui.Stopping);
+                                status.Text = $"已安装 {instances.Items.Count} 个实例；下载列表 {downloads.Items.Length} 项。";
+                            });
+                            launch.Click += async (_, _) => await RunAsync(async () =>
+                            {
+                                if (instances.SelectedItem is not PluginInstance selected)
+                                { status.Text = "请先选择一个实例。"; return; }
+                                await ui.Plugin.Control.SelectInstanceAsync(selected.Id, ui.Stopping);
+                                var accepted = await ui.Plugin.Control.LaunchSelectedAsync(ui.Stopping);
+                                status.Text = "启动请求：" + accepted.Code;
+                            });
+                            return panel;
+                        }, ShowInSimplifiedMode: true));
+                }
+
+                // API 2.2；需要 instances.write、resources.install。
+                // 仅在用户点击补全按钮后调用，返回排队结果；后续用 downloads.read 查询进度。
+                public static Task<PluginDownloadAcceptance> RepairAsync(PluginContext ctx, string instanceId) =>
+                    ctx.Management.RepairInstanceAsync(instanceId, ctx.Stopping);
+
+                // API 2.2；需要 resources.read。先让用户从来源和项目列表选择，再查询文件。
+                public static async Task<IReadOnlyList<PluginResourceFile>> ListResourceFilesAsync(
+                    PluginContext ctx, string sourceId, PluginResourceKind kind, string projectId,
+                    string? gameVersion = null, string? loader = null) =>
+                    await ctx.Resources.GetFilesAsync(new PluginResourceFileQuery(
+                        sourceId, kind, projectId, gameVersion, loader), ctx.Stopping);
+
+                // 需要 resources.install；默认不替换同名文件，也不自动安装依赖。
+                public static Task<PluginDownloadAcceptance> InstallResourceAsync(
+                    PluginContext ctx, PluginResourceFile selectedFile, string instanceId) =>
+                    ctx.Resources.InstallAsync(new PluginResourceInstallRequest(
+                        selectedFile.Token, instanceId), ctx.Stopping);
+            }
+            """);
+        foreach (var file in new[] { EmbeddedDocumentationService.ApiFileName,
+            EmbeddedDocumentationService.LauncherControlFileName, EmbeddedDocumentationService.CompositionApiFileName,
+            EmbeddedDocumentationService.ApiExamplesFileName,
+            EmbeddedDocumentationService.WorldsApiFileName, EmbeddedDocumentationService.PluginExeProtocolFileName,
+            EmbeddedDocumentationService.PluginGuideFileName })
+            EmbeddedDocumentationService.Export(file, Path.Combine(targetDir, file));
     }
 
     private static string ToPascalCase(string id)

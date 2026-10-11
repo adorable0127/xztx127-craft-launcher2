@@ -1,0 +1,35 @@
+<local:OverlayDialogControl x:Class="XCL2.App.Views.MirrorSettingsDialog"
+ xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+ xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+ xmlns:local="clr-namespace:XCL2.App.Views" MinWidth="560" MaxWidth="960">
+ <ScrollViewer VerticalScrollBarVisibility="Auto" MaxHeight="680">
+  <StackPanel Margin="24">
+   <TextBlock Text="下载镜像管理" FontSize="20" FontWeight="Bold" Margin="0,0,0,12"/>
+   <TextBlock Text="按下载源偏好排序；失败自动换源，并暂时降低故障主机的优先级。" TextWrapping="Wrap" Margin="0,0,0,12"/>
+   <TextBlock Text="游戏与加载器：BMCLAPI（bangbang93.com）与官方源相互回退。" TextWrapping="Wrap" Margin="0,0,0,8"/>
+   <CheckBox x:Name="CommunityCheck" Content="启用社区资源镜像 MCIM（Modrinth / CurseForge 文件）" Margin="0,0,0,8"/>
+   <CheckBox x:Name="GithubCheck" Content="启用 GitHub 公开文件镜像 GH-Proxy（.org / .com，同一运营方）" Margin="0,0,0,12"/>
+   <TextBlock Text="第三方镜像可能延迟同步。下载保留官方清单提供的哈希和大小校验；支持作者可选择官网直接下载。CurseForge 未提供第三方下载链接的文件仍需从官网获取。" TextWrapping="Wrap" Opacity="0.75" Margin="0,0,0,16"/>
+   <TextBlock Text="自定义镜像映射" FontWeight="SemiBold" Margin="0,0,0,6"/>
+   <TextBlock Text="填写原始 HTTPS 前缀与对应镜像前缀，保持其余路径不变。只添加你信任且规则明确的镜像。带账号、签名或未知查询参数的链接保持直连，不会交给镜像。" TextWrapping="Wrap" Margin="0,0,0,10"/>
+   <DataGrid x:Name="RulesGrid" AutoGenerateColumns="False" CanUserAddRows="False" CanUserDeleteRows="False" MinHeight="170" MaxHeight="300" SelectionMode="Single" HeadersVisibility="Column">
+    <DataGrid.Columns>
+     <DataGridCheckBoxColumn Header="启用" Binding="{Binding Enabled}" Width="55"/>
+     <DataGridTextColumn Header="名称" Binding="{Binding Name}" Width="110"/>
+     <DataGridTextColumn Header="原始前缀" Binding="{Binding SourcePrefix}" Width="*"/>
+     <DataGridTextColumn Header="镜像前缀" Binding="{Binding MirrorPrefix}" Width="*"/>
+    </DataGrid.Columns>
+   </DataGrid>
+   <StackPanel Orientation="Horizontal" Margin="0,10,0,12">
+    <Button Content="添加" Click="Add_Click" Padding="14,7"/>
+    <Button Content="删除选中" Click="Remove_Click" Padding="14,7" Margin="8,0,0,0"/>
+    <Button Content="重置源健康记录" Click="ResetHealth_Click" Padding="14,7" Margin="8,0,0,0"/>
+   </StackPanel>
+   <TextBlock x:Name="ValidationText" TextWrapping="Wrap" Foreground="DarkOrange" Margin="0,0,0,8"/>
+   <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+    <Button Content="取消" Click="Cancel_Click" Padding="18,8"/>
+    <Button Content="保存" Click="Save_Click" Padding="18,8" Margin="8,0,0,0"/>
+   </StackPanel>
+  </StackPanel>
+ </ScrollViewer>
+</local:OverlayDialogControl>

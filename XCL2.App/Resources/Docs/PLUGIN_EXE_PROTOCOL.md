@@ -105,3 +105,72 @@ EXE 对启动修改应使用 `events.interceptLaunch`；UI 应使用声明式 Pa
 重新扫描、禁用、卸载或启动器退出时，宿主会撤销注册、关闭会话并结束仍由宿主管理的 EXE 进程树。EXE 自己退出或管道断开后，插件管理页会显示断开状态；重新加载可重新建立会话。
 
 错误 response 使用结构化 `error.code` / `error.message`。权限撤销、回调超时、无效资源、未知方法等都不应通过猜测宿主内部文件来绕过；插件应回退到自身可用功能或提示用户重新授权。
+
+## API 2.0 新方法（传输协议仍为 protocol = 1）
+
+下列方法沿用现有请求 / 响应和注册句柄生命周期。
+
+| method | params | result |
+| --- | --- | --- |
+| `preview.registerCard` | `{ "id":"hello", "title":"欢迎", "description":"扩展内容", "destination":"worlds", "accent":"#1BD96A" }` | `{ "registrationId":"..." }` |
+| `preview.updateCard` | `{ "id":"hello", "title":"新标题", "description":"新内容", "accent":"#1BD96A" }` | true |
+| `preview.setAppearance` | `{ "title":"我的 XCL2", "accent":"#1BD96A", "compact":false }` | `{ "registrationId":"..." }` |
+| `worlds.list` | `{}` | WorldArchive 数组 |
+| `worlds.update` | `{ "path":"列表返回的存档路径", "edit":{ "name":"新世界", "gameMode":0, "difficulty":2, "allowCommands":false, "hardcore":false } }` | level.dat 备份路径 |
+
+preview 方法需要 `ui.preview`；worlds 方法分别需要 `worlds.read` / `worlds.write`。对应总开关和每插件授权同时生效；存档修改还需要用户逐次确认。预览接口只提交经过校验的文字、颜色与导航目标，不执行任意 XAML 或脚本。
+
+
+## API 2.1 新方法（protocol 仍为 1）
+
+| method | params | 权限 | 返回 |
+| --- | --- | --- | --- |
+| launcher.pages | {} | ui.navigation | 页面数组 |
+| launcher.navigate | {pageId} | ui.navigation | 导航是否开始 |
+| launcher.snapshot | {} | launcher.control | 控制状态快照 |
+| launcher.selectAccount | {accountId} | launcher.control | true |
+| launcher.selectInstance | {instanceId} | launcher.control | true |
+| launcher.launch | {} | launcher.control | {accepted,code} |
+| launcher.cancelLaunch | {} | launcher.control | 是否取消了启动准备 |
+| window.snapshot | {} | ui.window | 窗口快照 |
+| window.update | {patch} | ui.window | 更新后的窗口快照 |
+| window.setState | {action} | ui.window | 更新后的窗口快照 |
+| appearance.snapshot | {} | settings.read | 外观和可选皮肤 |
+| settings.update | {patch} | settings.write | 更新后的外观快照 |
+| worlds.get | {path} | worlds.read | WorldArchive |
+| worlds.schema | {} | worlds.read | 可编辑字段数组 |
+| worlds.copy | {path,destinationPath,edit} | worlds.write | 新副本路径 |
+
+JSON 字段为 camelCase。window.setState 的 action 为 Activate、Minimize、Maximize、Restore。patch 中 null / 缺省字段保留原值，范围和枚举按 API_LAUNCHER_CONTROL.md 校验。worlds.update 自动支持 WorldEdit 新增的可选属性，见 API_WORLDS.md。
+
+用户取消业务确认会返回 `error.code = "Canceled"`，不会让请求永久挂起。已停止的会话会关闭管道。可把宿主回调等待设到最多 3600 秒，但仍必须并行读取宿主消息并响应取消；连接握手仍限制 30 秒。
+
+
+## API 2.2 新方法（protocol 仍为 1）
+
+| method | params | 权限 | 返回 |
+| --- | --- | --- | --- |
+| folders.list | {} | instances.read | PluginGameFolder 数组 |
+| instances.directories | {instanceId} | instances.read | PluginInstanceDirectories |
+| instances.setHidden | {instanceId,hidden} | instances.write | bool：隐藏状态 |
+| instances.rename | {instanceId,newName} | instances.write | 改名后的新实例 Id |
+| instances.setIsolation | {instanceId,isolated} | instances.write | bool：生效的隔离状态；isolated 可为 null |
+| mods.setEnabled | {instanceId,fileName,enabled} | mods.write | PluginMod |
+| java.list | {} | java.read | PluginJavaRuntime 数组 |
+| java.select | {javaId,instanceId} | java.select | bool；两个 Id 均可为 null |
+| downloads.get | {downloadId} | downloads.read | PluginDownloadDetails |
+| downloads.pause | {downloadId} | downloads.control | PluginDownloadDetails |
+| downloads.resume | {downloadId} | downloads.control | PluginDownloadDetails |
+| downloads.cancel | {downloadId} | downloads.control | bool |
+| downloads.clearFinished | {} | downloads.control | 已清理条目数 |
+| instances.repair | {instanceId} | instances.write + resources.install | PluginDownloadAcceptance |
+| resources.sources | {} | resources.read | PluginResourceSource 数组 |
+| resources.search | {query} | resources.read | PluginResourceSearchResult |
+| resources.files | {query} | resources.read | PluginResourceFile 数组 |
+| resources.install | {request} | resources.install | PluginDownloadAcceptance |
+| gameVersions.list | {} | resources.read | PluginGameVersion 数组 |
+| gameVersions.install | {folderId,versionId} | instances.write + resources.install | PluginDownloadAcceptance |
+
+DTO 字段和完整帧示例见 `API_LAUNCHER_COMPOSITION.md`。下载 ID 是 Guid 字符串。query.kind 使用 `Mod`、`ResourcePack` 或 `Shader`；搜索带 sourceId、query、可选 gameVersion/loader、offset 和 limit，文件查询带 sourceId、kind、projectId、可选 gameVersion/loader。install 的 request 为 token、instanceId、replaceExisting（默认 false）。
+
+不要提交自造路径、下载 URL 或跨会话文件令牌。查询得到的文件 token 仅在当前插件上下文中限时使用。接受排队结果不表示安装完成；沿用 downloads.list/get 与下载通知跟踪任务。取消、撤权和插件停止会中止进行中的资源操作。

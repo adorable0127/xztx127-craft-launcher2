@@ -1,0 +1,231 @@
+{
+  "date": "2026-10-11",
+  "scope": "new and changed files compared with uploaded source ZIP",
+  "csharp_syntax": {
+    "files": 48,
+    "issues": 0
+  },
+  "xml_xaml_projects": {
+    "files": 17,
+    "issues": 0
+  },
+  "static_integration": {
+    "verification_kind": "static integration (not compilation or runtime testing)",
+    "test_projects": [
+      {
+        "project": "Tests/AiActivityRegression/AiActivityRegression.csproj",
+        "source_files": 6,
+        "missing_links": [],
+        "unresolved_project_type_tokens": []
+      },
+      {
+        "project": "Tests/AiFileDiffRegression/AiFileDiffRegression.csproj",
+        "source_files": 3,
+        "missing_links": [],
+        "unresolved_project_type_tokens": []
+      },
+      {
+        "project": "Tests/AiUsageRegression/AiUsageRegression.csproj",
+        "source_files": 7,
+        "missing_links": [],
+        "unresolved_project_type_tokens": []
+      },
+      {
+        "project": "Tests/FeatureRegression/FeatureRegression.csproj",
+        "source_files": 12,
+        "missing_links": [],
+        "unresolved_project_type_tokens": []
+      }
+    ],
+    "changed_xaml": [
+      {
+        "file": "XCL2.App/Views/AboutHelpPage.xaml",
+        "handlers": 24
+      },
+      {
+        "file": "XCL2.App/Views/AiAssistantPanel.xaml",
+        "handlers": 22
+      },
+      {
+        "file": "XCL2.App/Views/AiAssistantSettingsPanel.xaml",
+        "handlers": 36
+      },
+      {
+        "file": "XCL2.App/Views/AiFileDiffView.xaml",
+        "handlers": 0
+      },
+      {
+        "file": "XCL2.App/Views/CrashReportDialog.xaml",
+        "handlers": 6
+      },
+      {
+        "file": "XCL2.App/Views/DriverDownloadLinks.xaml",
+        "handlers": 13
+      },
+      {
+        "file": "XCL2.App/Views/ModDetailPage.xaml",
+        "handlers": 9
+      },
+      {
+        "file": "XCL2.App/Views/ServerNetworkGuideWindow.xaml",
+        "handlers": 9
+      },
+      {
+        "file": "XCL2.App/Views/SettingsPage.xaml",
+        "handlers": 131
+      },
+      {
+        "file": "XCL2.App/Views/Tools/Web2BrowserTool.xaml",
+        "handlers": 3
+      }
+    ],
+    "embedded_resources": [
+      {
+        "name": "XCL2.App.Resources.Terracotta.terracotta-0.4.2-windows-x86_64.exe",
+        "exists": false,
+        "conditional": true
+      },
+      {
+        "name": "XCL2.App.Resources.Data.WikiEntries.txt",
+        "exists": true,
+        "conditional": false
+      },
+      {
+        "name": "XCL2.App.Resources.Skins.steve.png",
+        "exists": true,
+        "conditional": false
+      },
+      {
+        "name": "XCL2.App.Resources.Avatars.steve-default.png",
+        "exists": true,
+        "conditional": false
+      },
+      {
+        "name": "XCL2.App.Resources.Avatars.alex-default.png",
+        "exists": true,
+        "conditional": false
+      },
+      {
+        "name": "XCL2.App.PLUGIN_GUIDE.md",
+        "exists": true,
+        "conditional": false
+      },
+      {
+        "name": "XCL2.App.Docs.API_REFERENCE.md",
+        "exists": true,
+        "conditional": false
+      },
+      {
+        "name": "XCL2.App.Docs.PLUGIN_EXE_PROTOCOL.md",
+        "exists": true,
+        "conditional": false
+      },
+      {
+        "name": "XCL2.App.Docs.API_LAUNCHER_CONTROL.md",
+        "exists": true,
+        "conditional": false
+      },
+      {
+        "name": "XCL2.App.Docs.API_EXAMPLES.md",
+        "exists": true,
+        "conditional": false
+      },
+      {
+        "name": "XCL2.App.Docs.API_WORLDS.md",
+        "exists": true,
+        "conditional": false
+      }
+    ],
+    "issue_count": 0,
+    "issues": []
+  },
+  "api_json_examples_parsed": 11,
+  "not_executed": [
+    "C# compilation",
+    "four .NET regression programs",
+    "Windows WPF/WinUI UI runtime",
+    "real API integration",
+    "native window transparency visual verification"
+  ],
+  "runtime_block": "Local .NET 8.0.413 CoreCLR startup failed HRESULT 0x8007000E in this Linux sandbox; no Windows GUI session.",
+  "changed_files": [
+    "AI_USAGE_NOTES.md",
+    "API_NOTES.md",
+    "FILE_DIFF_NOTES.md",
+    "README_本次更新.md",
+    "Tests/AiActivityRegression/AiActivityRegression.csproj",
+    "Tests/AiFileDiffRegression/AiFileDiffRegression.csproj",
+    "Tests/AiFileDiffRegression/Program.cs",
+    "Tests/AiUsageRegression/AiUsageRegression.csproj",
+    "Tests/AiUsageRegression/Program.cs",
+    "Tests/FeatureRegression/FeatureRegression.csproj",
+    "Tests/FeatureRegression/Program.cs",
+    "WINDOW_NOTES.md",
+    "WORLD_NOTES.md",
+    "XCL2.App/Models/AiAssistantActivity.cs",
+    "XCL2.App/Models/AiAssistantModels.cs",
+    "XCL2.App/Models/AiFileDiff.cs",
+    "XCL2.App/Models/AppConfig.cs",
+    "XCL2.App/Resources/Docs/API_EXAMPLES.md",
+    "XCL2.App/Resources/Docs/API_LAUNCHER_CONTROL.md",
+    "XCL2.App/Resources/Docs/API_REFERENCE.md",
+    "XCL2.App/Resources/Docs/API_WORLDS.md",
+    "XCL2.App/Resources/Docs/PLUGIN_EXE_PROTOCOL.md",
+    "XCL2.App/Resources/Docs/PLUGIN_GUIDE.md",
+    "XCL2.App/Services/AiAssistantService.cs",
+    "XCL2.App/Services/AiFileAccessService.Activities.cs",
+    "XCL2.App/Services/AiFileAccessService.cs",
+    "XCL2.App/Services/AiFileDiffBuilder.cs",
+    "XCL2.App/Services/AiStreamingCompletion.cs",
+    "XCL2.App/Services/AiUsageAccounting.cs",
+    "XCL2.App/Services/DefaultSystemPrompt.cs",
+    "XCL2.App/Services/EmbeddedDocumentationService.cs",
+    "XCL2.App/Services/ExternalLinkService.cs",
+    "XCL2.App/Services/OverlayDialogService.cs",
+    "XCL2.App/Services/Plugins/PluginContext.cs",
+    "XCL2.App/Services/Plugins/PluginControlContracts.cs",
+    "XCL2.App/Services/Plugins/PluginControlService.cs",
+    "XCL2.App/Services/Plugins/PluginHostBridge.Control.cs",
+    "XCL2.App/Services/Plugins/PluginHostBridge.cs",
+    "XCL2.App/Services/Plugins/PluginMetadata.cs",
+    "XCL2.App/Services/Plugins/PluginPermissionService.cs",
+    "XCL2.App/Services/Plugins/PluginPipeSession.cs",
+    "XCL2.App/Services/Plugins/PluginTemplateGenerator.cs",
+    "XCL2.App/Services/Plugins/PluginWorldService.cs",
+    "XCL2.App/Services/Preview/WinUiPreviewHost.cs",
+    "XCL2.App/Services/ThemeService.cs",
+    "XCL2.App/Services/ToastService.cs",
+    "XCL2.App/Services/Worlds/WorldArchiveService.cs",
+    "XCL2.App/Views/AboutHelpPage.xaml",
+    "XCL2.App/Views/AiAssistantActivityVm.cs",
+    "XCL2.App/Views/AiAssistantPanel.xaml",
+    "XCL2.App/Views/AiAssistantPanel.xaml.cs",
+    "XCL2.App/Views/AiAssistantSettingsPanel.xaml",
+    "XCL2.App/Views/AiAssistantSettingsPanel.xaml.cs",
+    "XCL2.App/Views/AiFileDiffView.xaml",
+    "XCL2.App/Views/AiFileDiffView.xaml.cs",
+    "XCL2.App/Views/CrashReportDialog.xaml",
+    "XCL2.App/Views/CrashReportDialog.xaml.cs",
+    "XCL2.App/Views/DriverDownloadLinks.xaml",
+    "XCL2.App/Views/DriverDownloadLinks.xaml.cs",
+    "XCL2.App/Views/MainWindow.PluginControl.cs",
+    "XCL2.App/Views/ModDetailPage.xaml",
+    "XCL2.App/Views/PluginApiDocumentationPage.cs",
+    "XCL2.App/Views/PluginApiSettingsDialog.cs",
+    "XCL2.App/Views/PluginManagerDialog.xaml.cs",
+    "XCL2.App/Views/PluginPermissionsDialog.cs",
+    "XCL2.App/Views/ServerNetworkGuideWindow.xaml",
+    "XCL2.App/Views/ServerNetworkGuideWindow.xaml.cs",
+    "XCL2.App/Views/SettingsPage.Plugins.cs",
+    "XCL2.App/Views/SettingsPage.xaml",
+    "XCL2.App/Views/SettingsPage.xaml.cs",
+    "XCL2.App/Views/Tools/Web2BrowserTool.xaml",
+    "XCL2.App/Views/WorldArchivePage.cs",
+    "XCL2.App/XCL2.App.csproj",
+    "XCL2.WinUI.Preview/MainWindow.cs",
+    "XCL2.WinUI.Preview/WorldAdvancedEditor.cs",
+    "XCL2.proj",
+    "build-windows.ps1",
+    "build.cmd"
+  ]
+}

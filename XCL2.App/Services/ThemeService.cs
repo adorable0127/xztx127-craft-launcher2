@@ -187,7 +187,7 @@ public static class ThemeService
 
     /// <summary>全局（整窗级）透明度相关状态，见 AppConfig.EnableGlobalWindowTransparency 注释。
     /// 跟 _transparencyEnabled/_transparencyPercent（面板透明）是两套独立状态：这套通过
-    /// Window.Opacity 让整个窗口（含标题栏、边框）一起变透明，而不是只调面板画刷的 alpha。
+    /// 原生 layered alpha 让整个窗口（含标题栏、边框）一起变透明，而不是只调面板画刷的 alpha。
     /// 默认关闭 / 80%，跟 AppConfig 默认值保持一致。</summary>
     public static bool CurrentGlobalTransparencyEnabled { get; private set; }
     public static int CurrentGlobalOpacityPercent { get; private set; } = 80;
@@ -232,7 +232,7 @@ public static class ThemeService
     public static void ApplyFontFamily(string? appFontFamily, bool winUi3Enabled)
     {
         _currentAppFontFamily = appFontFamily ?? "";
-        _currentWinUi3FontEnabled = winUi3Enabled;
+        _currentWinUi3FontEnabled = winUi3Enabled || PreviewFluentTheme.IsEnabled;
         ApplyComposedFontFamily();
     }
 
@@ -1119,222 +1119,307 @@ public static class ThemeService
         CurrentGlobalTransparencyEnabled = enabled;
         CurrentGlobalOpacityPercent = Math.Clamp(percent, 50, 100);
 
+        if (Application.Current == null) return;
         foreach (Window window in Application.Current.Windows)
         {
             ApplyGlobalOpacityToWindow(window);
         }
     }
 
-    [System.Runtime.InteropServices.DllImport("user32.dll", SetLastError = true)]
+    [System.Runtime.InteropServices.DllImport("user32.dll", EntryPoint = "GetWindowLongW", SetLastError = true)]
     private static extern int GetWindowLong(IntPtr hWnd, int nIndex);
 
-    [System.Runtime.InteropServices.DllImport("user32.dll", SetLastError = true)]
+    [System.Runtime.InteropServices.DllImport("user32.dll", EntryPoint = "SetWindowLongW", SetLastError = true)]
     private static extern int SetWindowLong(IntPtr hWnd, int nIndex, int dwNewLong);
 
-    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    [System.Runtime.InteropServices.DllImport("user32.dll", SetLastError = true)]
+    [return: System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.Bool)]
     private static extern bool SetLayeredWindowAttributes(IntPtr hWnd, uint crKey, byte bAlpha, uint dwFlags);
 
-    [System.Runtime.InteropServices.DllImport("user32.dll")]
-    private static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int X, int Y, int cx, int cy, uint uFlags);
+    [System.Runtime.InteropServices.DllImport("user32.dll", SetLastError = true)]
+    [return: System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.Bool)]
+    private static extern bool GetLayeredWindowAttributes(IntPtr hWnd, out uint crKey, out byte bAlpha, out uint dwFlags);
 
     [System.Runtime.InteropServices.DllImport("user32.dll")]
-    private static extern bool GetWindowRect(IntPtr hWnd, out RECT lpRect);
-
-    [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
-    private struct RECT
-    {
-        public int Left, Top, Right, Bottom;
-    }
-
-    private const uint SWP_NOMOVE = 0x0002;
-    private const uint SWP_NOZORDER = 0x0004;
-    private const uint SWP_NOACTIVATE = 0x0010;
-    private const uint SWP_FRAMECHANGED = 0x0020;
+    [return: System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.Bool)]
+    private static extern bool RedrawWindow(IntPtr hWnd, IntPtr updateRect, IntPtr updateRegion, uint flags);
 
     private const int GWL_EXSTYLE = -20;
     private const int WS_EX_LAYERED = 0x80000;
     private const uint LWA_ALPHA = 0x2;
+    private const uint RDW_INVALIDATE = 0x0001;
+    private const uint RDW_FRAME = 0x0400;
+    private const uint RDW_ALLCHILDREN = 0x0080;
 
+    [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
+    private struct WindowStyleChange
+    {
+        // Win32 STYLESTRUCT 的两个 DWORD 在 x86/x64 上均为 32 位。
+        public int OldStyle;
+        public int NewStyle;
+    }
 
     private sealed class GlobalOpacityHookState
     {
         public System.Windows.Interop.HwndSource? Source;
         public System.Windows.Interop.HwndSourceHook? Hook;
-        // 修复"窗口一直抽搐抖动"：以前这个钩子每次收到 WM_STYLECHANGED / WM_DWMCOMPOSITIONCHANGED
-        // 都会无条件排队一次 BeginInvoke -> ApplyNativeGlobalOpacity -> (首次分层时)
-        // ForceLayeredResurface -> SetWindowPos。而 SetWindowPos(SWP_FRAMECHANGED) 本身、以及
-        // Win11EffectsService 那边的 ForceDwmResurface，在开启了 Win11 视觉效果(Mica/Acrylic)
-        // 又同时开启了整窗全局透明时，都会让系统再发一轮 WM_STYLECHANGED/WM_DWMCOMPOSITIONCHANGED
-        // 回来——没有任何节流/合并的话，两套"人为触发 WM_SIZE"的手法会互相反复打断对方触发的
-        // 消息，形成消息->回调->再发消息->再回调的连续循环，表现成窗口持续小幅度抽搐抖动。
-        // 用 PendingApply 合并同一时刻的多次消息（已经排了一次就不用再排)，用 LastAppliedTicks
-        // 做一个很短的冷却时间，避免同一个窗口在极短时间内被反复"原地缩放1像素"。
-        public bool PendingApply;
-        public long LastAppliedTicks;
-    }
-
-    // Win11EffectsService.ForceDwmResurface 和这里的 ForceLayeredResurface 都会对同一个 hwnd
-    // 做"原地改尺寸再改回去"的操作；如果两边几乎同时触发，SetWindowPos 调用交错执行，视觉上
-    // 就是窗口反复抖动。用这个全局忙碌集合让同一个 hwnd 在同一时刻只有一边在做重合成操作。
-    internal static readonly HashSet<IntPtr> ResurfaceBusyHandles = new();
-    private static readonly object ResurfaceBusyLock = new();
-    internal static bool TryEnterResurface(IntPtr hwnd)
-    {
-        lock (ResurfaceBusyLock)
-        {
-            if (!ResurfaceBusyHandles.Add(hwnd)) return false;
-            return true;
-        }
-    }
-    internal static void ExitResurface(IntPtr hwnd)
-    {
-        lock (ResurfaceBusyLock) { ResurfaceBusyHandles.Remove(hwnd); }
+        public System.Windows.Threading.DispatcherOperation? PendingApply;
+        public bool Applying;
+        public bool Closed;
+        public bool WaitingForSource;
+        public int LastRequestedOpacityPercent = -1;
+        public bool PreserveLayeredStyle;
+        // 仅撤销本服务加上的样式；不能把其它代码已有的 layered 窗口一并破坏。
+        public bool OwnsLayeredStyle;
+        public bool HasOriginalAlpha;
+        public uint OriginalColorKey;
+        public byte OriginalAlpha;
+        public uint OriginalFlags;
     }
 
     private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<Window, GlobalOpacityHookState> GlobalOpacityHooks = new();
     private const int WM_STYLECHANGED = 0x007D;
+    private const int WM_STYLECHANGING = 0x007C;
     private const int WM_SHOWWINDOW = 0x0018;
+    private const int WM_SIZE = 0x0005;
+    private const int WM_ACTIVATE = 0x0006;
     private const int WM_DPICHANGED = 0x02E0;
     private const int WM_DWMCOMPOSITIONCHANGED = 0x031E;
+    private const int WM_WINDOWPOSCHANGED = 0x0047;
+    private const int WM_DISPLAYCHANGE = 0x007E;
 
-    private static void EnsureGlobalOpacityHook(Window window, IntPtr hwnd)
+    private static GlobalOpacityHookState? EnsureGlobalOpacityHook(Window window, IntPtr hwnd)
     {
         var state = GlobalOpacityHooks.GetValue(window, _ => new GlobalOpacityHookState());
-        if (state.Source != null) return;
+        if (state.Closed) return null;
+        if (state.Source != null) return state;
         var source = System.Windows.Interop.HwndSource.FromHwnd(hwnd);
-        if (source == null) return;
+        if (source == null) return null;
 
         System.Windows.Interop.HwndSourceHook hook = (IntPtr h, int msg, IntPtr wParam, IntPtr lParam, ref bool handled) =>
         {
-            if (msg == WM_STYLECHANGED || msg == WM_SHOWWINDOW || msg == WM_DPICHANGED || msg == WM_DWMCOMPOSITIONCHANGED)
+            // WPF 的 HwndTarget 在 AllowsTransparency=false 时会在 WM_STYLECHANGING
+            // 同步清掉 WS_EX_LAYERED。只监听事后的 WM_STYLECHANGED 再 SetWindowLong
+            // 永远无法保住该位；API 甚至可以返回“成功”，但实际已经变回不透明。
+            // 仅当本窗口正在使用整窗常量 alpha 时，接管这一条扩展样式准备消息。
+            // 必须早于 Applying 防重入判断：我们自己的 SetWindowLong 也需要保护。
+            if (!state.Closed && state.PreserveLayeredStyle && msg == WM_STYLECHANGING
+                && unchecked((int)wParam.ToInt64()) == GWL_EXSTYLE && lParam != IntPtr.Zero)
             {
-                // 已经有一次回调排队等着执行，就不再重复排队——避免消息风暴时堆积一堆
-                // 几乎同时执行的 ApplyNativeGlobalOpacity 调用互相打断。
-                if (state.PendingApply) return IntPtr.Zero;
-                // 刚刚（200ms 内）已经应用过一次，这次大概率就是上一次操作自己引发的
-                // 连锁反应消息，直接忽略，从根上掐断"消息->操作->再发消息"的循环。
-                var nowTicks = Environment.TickCount64;
-                if (nowTicks - state.LastAppliedTicks < 200) return IntPtr.Zero;
-
-                state.PendingApply = true;
-                _ = window.Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Background,
-                    new Action(() =>
-                    {
-                        state.PendingApply = false;
-                        state.LastAppliedTicks = Environment.TickCount64;
-                        var current = new System.Windows.Interop.WindowInteropHelper(window).Handle;
-                        if (current != IntPtr.Zero) ApplyNativeGlobalOpacity(current);
-                    }));
+                var change = System.Runtime.InteropServices.Marshal.PtrToStructure<WindowStyleChange>(lParam);
+                change.NewStyle |= WS_EX_LAYERED;
+                System.Runtime.InteropServices.Marshal.StructureToPtr(change, lParam, false);
+                // 即使调用方已经带 layered 位也要阻止 HwndTarget 接着把它抹掉。
+                // 其余 NewStyle 位完全保留；WM_STYLECHANGED / WindowPos 等后续通知照常传递。
+                handled = true;
+                return IntPtr.Zero;
+            }
+            // SetWindowLong 会同步发 WM_STYLECHANGED；屏蔽自己的消息即可防重入，不用 200ms
+            // 冷却把真正的样式重置/恢复事件也丢掉。Deferred callback 只保留一份。
+            if (state.Applying || state.Closed) return IntPtr.Zero;
+            var needsApply = (msg == WM_STYLECHANGED && unchecked((int)wParam.ToInt64()) == GWL_EXSTYLE)
+                || (msg == WM_SHOWWINDOW && wParam != IntPtr.Zero)
+                || (msg == WM_SIZE && wParam.ToInt64() != 1) // SIZE_MINIMIZED 不必刷新
+                || (msg == WM_ACTIVATE && (wParam.ToInt64() & 0xffff) != 0)
+                || msg == WM_WINDOWPOSCHANGED
+                || msg == WM_DPICHANGED || msg == WM_DWMCOMPOSITIONCHANGED || msg == WM_DISPLAYCHANGE;
+            if (needsApply)
+            {
+                if (msg == WM_DWMCOMPOSITIONCHANGED || msg == WM_DISPLAYCHANGE)
+                    Win11EffectsService.InvalidateWindowState(window);
+                QueueGlobalOpacityApply(window, state);
             }
             return IntPtr.Zero;
         };
         source.AddHook(hook);
         state.Source = source;
         state.Hook = hook;
+        // 首帧/托盘恢复后检查原生 alpha；真正防止 layered 位被 WPF 清理的是上面的
+        // WM_STYLECHANGING 分支，不能用重复重绘或重复追加样式代替它。
+        void OnContentRendered(object? sender, EventArgs args) => QueueGlobalOpacityApply(window, state);
+        window.ContentRendered += OnContentRendered;
+        window.Closed += (_, _) =>
+        {
+            window.ContentRendered -= OnContentRendered;
+            state.Closed = true;
+            state.PendingApply?.Abort();
+            state.PendingApply = null;
+            try
+            {
+                if (state.Source != null && state.Hook != null)
+                    state.Source.RemoveHook(state.Hook);
+            }
+            catch (ObjectDisposedException) { }
+            catch (InvalidOperationException) { }
+            state.Hook = null;
+            state.Source = null;
+            GlobalOpacityHooks.Remove(window);
+        };
+        return state;
     }
 
-    private static void ApplyNativeGlobalOpacity(IntPtr hwnd)
+    private static void QueueGlobalOpacityApply(Window window, GlobalOpacityHookState state)
     {
-        var exStyle = GetWindowLong(hwnd, GWL_EXSTYLE);
-        if (CurrentGlobalTransparencyEnabled)
-        {
-            var wasLayered = (exStyle & WS_EX_LAYERED) != 0;
-            if (!wasLayered)
+        if (state.PendingApply != null || state.Closed || window.Dispatcher.HasShutdownStarted) return;
+        state.PendingApply = window.Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.ContextIdle,
+            new Action(() =>
             {
-                var setResult = SetWindowLong(hwnd, GWL_EXSTYLE, exStyle | WS_EX_LAYERED);
-                var lastError = System.Runtime.InteropServices.Marshal.GetLastWin32Error();
-                // 诊断日志：如果"完全没变化"这个问题在你机器上复现，把 xcl2/logs 目录下
-                // 最新那份日志里带 [GlobalOpacity] 前缀的行发给我——setResult==0 且
-                // lastError!=0 通常代表 SetWindowLong 本身被系统拒绝（比如权限/句柄已失效），
-                // 而不是后面 alpha 混合没生效，两种情况的修法完全不同，不看这行日志的话
-                // 我只能继续盲猜。
-                try { LauncherLogService.AppendLine($"[GlobalOpacity] SetWindowLong(add layered) result={setResult} lastError={lastError} hwnd={hwnd}"); } catch { }
-                exStyle |= WS_EX_LAYERED;
-            }
-            var alpha = (byte)Math.Round(CurrentGlobalOpacityPercent / 100.0 * 255.0);
-            var alphaOk = SetLayeredWindowAttributes(hwnd, 0, alpha, LWA_ALPHA);
-            if (!alphaOk)
-            {
-                var lastError = System.Runtime.InteropServices.Marshal.GetLastWin32Error();
-                try { LauncherLogService.AppendLine($"[GlobalOpacity] SetLayeredWindowAttributes FAILED alpha={alpha} lastError={lastError} hwnd={hwnd}"); } catch { }
-            }
-
-            // 修复"设置页保存后整窗透明看起来完全没生效，得手动拖一下窗口大小才会更新"：
-            // 窗口第一次从"非分层"切到 WS_EX_LAYERED 时，DWM 需要先把这块窗口原本按不透明
-            // 方式合成的重定向表面，重新按分层窗口的规则接管一遍；这一步在部分系统/显卡驱动
-            // 上不会立刻触发重绘，必须等窗口产生一次真正的尺寸变化（WM_SIZE）才会重新合成，
-            // 跟 Win11EffectsService.ForceDwmResurface 注释里说的"Mica/Acrylic 立刻白屏"是完全
-            // 同一类问题、同一套成因，这里用同样的手法解决：原地把窗口尺寸改一次再改回去，
-            // 人为触发一次 WM_SIZE，逼 DWM 把新的分层表面跟当前画面重新合成。只在"由不透明
-            // 切换成分层"的这一刻做一次即可，之后单纯调节 alpha（拖滑块）不需要这一步。
-            if (!wasLayered)
-            {
-                ForceLayeredResurface(hwnd);
-                // 部分机器上 DWM 在重合成表面的过程中会连带把刚设置的 layered alpha 冲掉
-                // （表现正是"完全没变化"而不是"要拖一下才生效"）——resurface 结束后
-                // 立刻重发一次 SetLayeredWindowAttributes 兜底，成本极低，不生效也无副作用。
-                SetLayeredWindowAttributes(hwnd, 0, alpha, LWA_ALPHA);
-            }
-        }
-        else if ((exStyle & WS_EX_LAYERED) != 0)
-        {
-            // 先恢复 alpha，再摘 layered，避免部分显卡驱动在直接摘样式时留下上一帧缓存。
-            SetLayeredWindowAttributes(hwnd, 0, 255, LWA_ALPHA);
-            SetWindowLong(hwnd, GWL_EXSTYLE, exStyle & ~WS_EX_LAYERED);
-        }
+                state.PendingApply = null;
+                if (!state.Closed) ApplyGlobalOpacityToWindow(window);
+            }));
     }
 
-    /// <summary>见 ApplyNativeGlobalOpacity 里的调用点注释：人为制造一次 1 像素的尺寸抖动，
-    /// 触发真正的 WM_SIZE，逼 DWM 重新合成刚切换成分层窗口的重定向表面。用户完全看不出这
-    /// 1 像素的变化，但足够让画面从"卡在切换前那一帧"变成实时更新。</summary>
-    private static void ForceLayeredResurface(IntPtr hwnd)
+    private static bool SetExtendedStyle(IntPtr hwnd, int style)
     {
-        // 见 ResurfaceBusyHandles 注释：跟 Win11EffectsService.ForceDwmResurface 共用这道闸门，
-        // 防止同一个窗口在同一时刻被两套"原地缩放1像素"逻辑同时操作，那才是真正表现为
-        // "窗口一直抽搐抖动"的原因——不是缩放本身有问题，是两边交错执行导致的。
-        if (!TryEnterResurface(hwnd)) return;
-        try
+        // GWL_EXSTYLE 是 32 位 LONG（x64 也一样），无需把窗口样式当成指针。
+        // 返回 0 也可能成功，因此调用前必须清除 last-error。
+        System.Runtime.InteropServices.Marshal.SetLastPInvokeError(0);
+        var previous = SetWindowLong(hwnd, GWL_EXSTYLE, style);
+        var error = System.Runtime.InteropServices.Marshal.GetLastPInvokeError();
+        if (previous != 0 || error == 0)
         {
-            if (!GetWindowRect(hwnd, out var rect)) return;
-            var width = rect.Right - rect.Left;
-            var height = rect.Bottom - rect.Top;
-            if (width <= 0 || height <= 0) return;
-
-            const uint flags = SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED;
-            SetWindowPos(hwnd, IntPtr.Zero, 0, 0, width, height + 1, flags);
-            SetWindowPos(hwnd, IntPtr.Zero, 0, 0, width, height, flags);
+            // 返回成功不代表 STYLESTRUCT 没被窗口过程改写；必须读回实际 layered 位。
+            var actualStyle = GetWindowLong(hwnd, GWL_EXSTYLE);
+            if ((actualStyle & WS_EX_LAYERED) == (style & WS_EX_LAYERED)) return true;
+            LogGlobalOpacityFailure($"WS_EX_LAYERED rejected requested=0x{style:X8} actual=0x{actualStyle:X8}", hwnd);
+            return false;
         }
-        finally { ExitResurface(hwnd); }
+        LogGlobalOpacityFailure($"SetWindowLong error={error}", hwnd);
+        return false;
+    }
+
+    private static void LogGlobalOpacityFailure(string detail, IntPtr hwnd)
+    {
+        try { LauncherLogService.AppendLine($"[GlobalOpacity] {detail} hwnd={hwnd}"); } catch { }
+    }
+
+    private static void ApplyNativeGlobalOpacity(IntPtr hwnd, GlobalOpacityHookState state)
+    {
+        var style = GetWindowLong(hwnd, GWL_EXSTYLE);
+        var enabled = CurrentGlobalTransparencyEnabled && CurrentGlobalOpacityPercent < 100;
+        state.PreserveLayeredStyle = enabled;
+        var changed = false;
+        if (enabled)
+        {
+            if ((style & WS_EX_LAYERED) == 0)
+            {
+                if (!SetExtendedStyle(hwnd, style | WS_EX_LAYERED))
+                {
+                    state.PreserveLayeredStyle = false;
+                    return;
+                }
+                state.OwnsLayeredStyle = true;
+                changed = true;
+            }
+            else if (!state.OwnsLayeredStyle && !state.HasOriginalAlpha
+                && GetLayeredWindowAttributes(hwnd, out var key, out var originalAlpha, out var originalFlags))
+            {
+                state.OriginalColorKey = key;
+                state.OriginalAlpha = originalAlpha;
+                state.OriginalFlags = originalFlags;
+                state.HasOriginalAlpha = true;
+            }
+
+            var alpha = (byte)Math.Round(CurrentGlobalOpacityPercent * 255.0 / 100.0);
+            // 原生读回当前 alpha，而不是认为“上次设置过就还在”。恢复/激活时 WPF 或系统
+            // 可以重置扩展样式；读回匹配则完全不写，避免每次 WM_SIZE 都引发重绘。
+            if (!GetLayeredWindowAttributes(hwnd, out _, out var actualAlpha, out var flags)
+                || actualAlpha != alpha || flags != LWA_ALPHA)
+            {
+                if (!SetLayeredWindowAttributes(hwnd, 0, alpha, LWA_ALPHA))
+                {
+                    LogGlobalOpacityFailure($"SetLayeredWindowAttributes error={System.Runtime.InteropServices.Marshal.GetLastPInvokeError()} alpha={alpha}", hwnd);
+                    // 失败时撤销刚加上的 layered 样式，不留下半配置状态。
+                    if (changed)
+                    {
+                        state.PreserveLayeredStyle = false;
+                        if (SetExtendedStyle(hwnd, style)) state.OwnsLayeredStyle = false;
+                    }
+                    return;
+                }
+                changed = true;
+            }
+            if ((GetWindowLong(hwnd, GWL_EXSTYLE) & WS_EX_LAYERED) == 0
+                || !GetLayeredWindowAttributes(hwnd, out _, out var verifiedAlpha, out var verifiedFlags)
+                || verifiedAlpha != alpha || verifiedFlags != LWA_ALPHA)
+                LogGlobalOpacityFailure($"Native opacity verification failed requestedAlpha={alpha}", hwnd);
+        }
+        else
+        {
+            if (state.OwnsLayeredStyle)
+            {
+                if ((style & WS_EX_LAYERED) != 0)
+                {
+                    _ = SetLayeredWindowAttributes(hwnd, 0, 255, LWA_ALPHA);
+                    if (!SetExtendedStyle(hwnd, style & ~WS_EX_LAYERED)) return;
+                    changed = true;
+                }
+                state.OwnsLayeredStyle = false;
+            }
+            else if (state.HasOriginalAlpha && (style & WS_EX_LAYERED) != 0)
+            {
+                if (!SetLayeredWindowAttributes(hwnd, state.OriginalColorKey, state.OriginalAlpha, state.OriginalFlags))
+                {
+                    LogGlobalOpacityFailure($"restore alpha error={System.Runtime.InteropServices.Marshal.GetLastPInvokeError()}", hwnd);
+                    return;
+                }
+                changed = true;
+            }
+            state.HasOriginalAlpha = false;
+        }
+        // 请求正常重绘，绝不 +1/-1 改窗口尺寸；那会制造两次 WM_SIZE/布局并打断系统窗口动画。
+        if (changed) _ = RedrawWindow(hwnd, IntPtr.Zero, IntPtr.Zero, RDW_INVALIDATE | RDW_FRAME | RDW_ALLCHILDREN);
     }
 
     /// <summary>
-    /// 把当前全局透明度状态应用到单个窗口——新开窗口在 Loaded 时（见 App.xaml.cs 里
-    /// 对应的类处理器，跟 Win11EffectsService.Apply 同一套接线方式）、以及
-    /// ApplyGlobalWindowTransparency 遍历已打开窗口时都会调用这个方法。
-    ///
-    /// 之前直接设 Window.Opacity：WPF 的 Window.Opacity 只有在 AllowsTransparency="True"
-    /// （逐像素透明的分层窗口）时才真正生效，而项目里所有窗口都是 AllowsTransparency="False"
-    /// （保留硬件加速渲染 + 兼容下面 Win11EffectsService 的 Mica/Acrylic 背景材质，两者跟
-    /// AllowsTransparency="True" 都不兼容）。AllowsTransparency="False" 时 Window.Opacity
-    /// 被 WPF 直接忽略，实际看到的"变透明"其实是别的画刷 alpha 调整在软件渲染层跟未定义
-    /// 背景（近似黑色）做混合的副作用——表现出来就是"只是变暗，没有真的透出桌面"。
-    ///
-    /// 现在改成不依赖 AllowsTransparency 的原生做法：给窗口句柄追加 WS_EX_LAYERED 扩展样式，
-    /// 再用 SetLayeredWindowAttributes + LWA_ALPHA 让 DWM 把整个窗口（连同它硬件加速渲染出的
-    /// 全部内容）当成一张位图统一做 alpha 混合——这是 Windows 自带的"整窗透明"机制，
-    /// 不需要放弃硬件加速，也不影响同时开启的 Mica/Acrylic 背景材质。
+    /// 应用原生整窗 alpha，并协调 Win11 背景材质。整窗透明时先收回 DWM 背景，关闭时先
+    /// 撤销本服务的 layered 样式再恢复用户选定的材质。逐像素透明窗口始终由 WPF 自己管理。
     /// </summary>
     public static void ApplyGlobalOpacityToWindow(Window window)
     {
-        // 逐像素透明窗口（触屏悬浮层）必须跳过：它本身就是靠 WS_EX_LAYERED 做透明的，
-        // 下面那套"加/摘 WS_EX_LAYERED + SetLayeredWindowAttributes"会把它的透明机制
-        // 直接破坏掉，表现为整层变成一块不透明灰色方块。详见 WindowTreatmentPolicy 类注释。
+        if (!window.Dispatcher.CheckAccess())
+        {
+            if (!window.Dispatcher.HasShutdownStarted)
+                window.Dispatcher.BeginInvoke(new Action(() => ApplyGlobalOpacityToWindow(window)));
+            return;
+        }
         if (WindowTreatmentPolicy.IsExempt(window)) return;
-
         var hwnd = new System.Windows.Interop.WindowInteropHelper(window).Handle;
-        if (hwnd == IntPtr.Zero) return;
-        EnsureGlobalOpacityHook(window, hwnd);
-        ApplyNativeGlobalOpacity(hwnd);
+        if (hwnd == IntPtr.Zero)
+        {
+            // 启动时加载配置早于 HWND 创建，不能直接丢弃第一次透明度设置。
+            var pending = GlobalOpacityHooks.GetValue(window, _ => new GlobalOpacityHookState());
+            if (!pending.WaitingForSource)
+            {
+                pending.WaitingForSource = true;
+                EventHandler? onSourceReady = null;
+                onSourceReady = (_, _) =>
+                {
+                    window.SourceInitialized -= onSourceReady;
+                    pending.WaitingForSource = false;
+                    ApplyGlobalOpacityToWindow(window);
+                    QueueGlobalOpacityApply(window, pending);
+                };
+                window.SourceInitialized += onSourceReady;
+            }
+            return;
+        }
+        var state = EnsureGlobalOpacityHook(window, hwnd);
+        if (state == null || state.Applying || state.Closed) return;
+        var requestedOpacity = CurrentGlobalTransparencyEnabled ? CurrentGlobalOpacityPercent : 100;
+        var requestChanged = state.LastRequestedOpacityPercent != requestedOpacity;
+        state.LastRequestedOpacityPercent = requestedOpacity;
+        state.Applying = true;
+        try
+        {
+            var transparent = CurrentGlobalTransparencyEnabled && CurrentGlobalOpacityPercent < 100;
+            if (transparent) Win11EffectsService.Apply(window, Win11EffectsService.CurrentEnabled);
+            ApplyNativeGlobalOpacity(hwnd, state);
+            if (!transparent) Win11EffectsService.Apply(window, Win11EffectsService.CurrentEnabled);
+        }
+        finally { state.Applying = false; }
+        // 材质/主题的渲染提交可能晚于上面的同步调用；每个新设置只排一次最终校准。
+        if (requestChanged) QueueGlobalOpacityApply(window, state);
     }
 
     /// <summary>
@@ -1445,6 +1530,8 @@ public static class ThemeService
             // 不在 WPF 资源系统管辖范围内，普通的画刷刷新逻辑碰不到它，这里单独调一次
             // DWM API 让已打开窗口的标题栏立即跟着当前深浅色切换，不需要关闭重开窗口。
             WindowChromeService.ApplyTitleBarTheme(window, CurrentIsDarkMode);
+            // 主题画刷变更时同步 HwndTarget 底色，避免关闭 DWM 材质后保留上一个主题的底板。
+            Win11EffectsService.Apply(window, Win11EffectsService.CurrentEnabled);
 
             // 窗口图标（标题栏左上角 / 任务栏 / Alt-Tab）同样不归 WPF 资源系统管，
             // 跟标题栏一样需要在这里主动重设，才能在切换深浅色时立即跟着换。

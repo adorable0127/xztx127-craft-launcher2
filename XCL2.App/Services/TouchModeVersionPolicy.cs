@@ -31,52 +31,17 @@ public static class TouchModeVersionPolicy
     /// <summary>读取实例 json 与目录名，判断该实例是否属于"不支持触屏"的版本；无法判断时返回 false（不打扰）。</summary>
     public static bool IsBelowSupported(string versionDir, string versionId)
     {
-        try
-        {
-            var candidates = new List<string?> { versionId };
-            var jsonPath = FolderService.ResolveVersionJson(versionDir, versionId);
-            if (jsonPath != null)
-            {
-                var detail = JsonSerializer.Deserialize<VersionDetail>(File.ReadAllText(jsonPath));
-                if (detail != null)
-                {
-                    candidates.Add(detail.Id);
-                    candidates.Add(detail.InheritsFrom);
-                    candidates.Add(detail.ClientVersion);
-                }
-            }
-            var mc = VersionInfoResolver.ResolveMcVersion(versionDir, versionId);
-            return IsBelowSupported(mc, candidates);
-        }
-        catch { return false; }
+        var root = Directory.GetParent(versionDir)?.Parent?.FullName;
+        return root != null ? TouchVersionPolicy.Resolve(root, versionId) == false : TouchVersionPolicy.FromVersion(versionId) == false;
     }
 
     /// <summary>mcVersion 为解析出的原版号；candidates 为目录名/json 里可能带 "-snapshot-N" 的原始字符串。</summary>
     public static bool IsBelowSupported(string? mcVersion, IEnumerable<string?> candidates)
     {
-        // 1. 新命名快照：26.3-snapshot-4 起才支持。
-        foreach (var s in candidates.Prepend(mcVersion))
-        {
-            if (string.IsNullOrEmpty(s)) continue;
-            var m = NewSnapshot.Match(s);
-            if (!m.Success) continue;
-            var major = int.Parse(m.Groups[1].Value);
-            var minor = int.Parse(m.Groups[2].Value);
-            var snap = int.Parse(m.Groups[3].Value);
-            if (major != SupportedMajor || minor != SupportedMinor)
-                return (major, minor).CompareTo((SupportedMajor, SupportedMinor)) < 0;
-            return snap < SupportedSnapshot;
-        }
-
-        if (string.IsNullOrWhiteSpace(mcVersion)) return false;
-
-        // 2. 旧式周快照（24w14a、26w14a 愚人节等）均早于 26.3。
-        if (WeeklySnapshot.IsMatch(mcVersion)) return true;
-
-        // 3. 正式版 / pre / rc：按 主.次 版本号比较。
-        var n = Numeric.Match(mcVersion);
-        if (!n.Success) return false;
-        var ver = (int.Parse(n.Groups[1].Value), int.Parse(n.Groups[2].Value));
-        return ver.CompareTo((SupportedMajor, SupportedMinor)) < 0;
+        var explicitVersions = candidates.Where(x => x != null &&
+            (x.Contains("snapshot", StringComparison.OrdinalIgnoreCase) || x.Contains("快照") || x.Contains("T", StringComparison.OrdinalIgnoreCase)))
+            .Select(TouchVersionPolicy.FromVersion).Where(x => x.HasValue).Distinct().ToArray();
+        if (explicitVersions.Length == 1) return explicitVersions[0] == false;
+        return TouchVersionPolicy.FromVersion(mcVersion) == false;
     }
 }

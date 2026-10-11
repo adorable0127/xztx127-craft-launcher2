@@ -112,9 +112,6 @@
                                     <Setter TargetName="ToggleBorder" Property="BorderBrush" Value="{DynamicResource AccentBrush}"/>
                                     <Setter Property="Foreground" Value="White"/>
                                 </Trigger>
-                                <Trigger Property="IsMouseOver" Value="True">
-                                    <Setter TargetName="ToggleBorder" Property="Effect" Value="{StaticResource GlowEffect}"/>
-                                </Trigger>
                             </ControlTemplate.Triggers>
                         </ControlTemplate>
                     </Setter.Value>
@@ -342,9 +339,8 @@
                 </Style.Triggers>
             </Style>
 
-            <!-- PCL 风格圆形标题栏按钮：只在"新界面预览"会话里换用，不是全局默认样式
-                 （不影响正常模式下的 MainWindow / 其它窗口，见 MainWindow.xaml.cs 里
-                 ApplyPreviewSessionTitleBarStyle 对这三个按钮 Style 的按需切换）。
+            <!-- 旧版预览圆形标题栏资源保留兼容。完整新界面预览由 PreviewFluentTheme
+                 替换标题栏与页面资源；退出时恢复本字典的原样式。
                  平时完全透明看不出轮廓，只有悬停/按下时整块填充成一个实心圆，关闭按钮
                  悬停变红——这才是 PCL 标题栏按钮的观感，而不是常驻画一圈描边空心圆。 -->
             <Style TargetType="Button" x:Key="PreviewRoundCaptionButton">
@@ -366,9 +362,6 @@
                                 <Trigger Property="IsMouseOver" Value="True">
                                     <Setter TargetName="bd" Property="Background" Value="{DynamicResource GlowSoftBrush}"/>
                                 </Trigger>
-                                <Trigger Property="IsPressed" Value="True">
-                                    <Setter TargetName="bd" Property="Opacity" Value="0.7"/>
-                                </Trigger>
                             </ControlTemplate.Triggers>
                         </ControlTemplate>
                     </Setter.Value>
@@ -384,9 +377,6 @@
                             <ControlTemplate.Triggers>
                                 <Trigger Property="IsMouseOver" Value="True">
                                     <Setter TargetName="bd" Property="Background" Value="#E81123"/>
-                                </Trigger>
-                                <Trigger Property="IsPressed" Value="True">
-                                    <Setter TargetName="bd" Property="Opacity" Value="0.7"/>
                                 </Trigger>
                             </ControlTemplate.Triggers>
                         </ControlTemplate>
@@ -429,9 +419,6 @@
                                 <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
                             </Border>
                             <ControlTemplate.Triggers>
-                                <Trigger Property="IsMouseOver" Value="True">
-                                    <Setter TargetName="bd" Property="Effect" Value="{StaticResource GlowEffect}"/>
-                                </Trigger>
                             </ControlTemplate.Triggers>
                         </ControlTemplate>
                     </Setter.Value>
@@ -469,9 +456,6 @@
                                 <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
                             </Border>
                             <ControlTemplate.Triggers>
-                                <Trigger Property="IsMouseOver" Value="True">
-                                    <Setter TargetName="bd" Property="Effect" Value="{StaticResource GlowEffect}"/>
-                                </Trigger>
                             </ControlTemplate.Triggers>
                         </ControlTemplate>
                     </Setter.Value>
@@ -508,7 +492,6 @@
                             <ControlTemplate.Triggers>
                                 <Trigger Property="IsMouseOver" Value="True">
                                     <Setter TargetName="bd" Property="BorderBrush" Value="{DynamicResource GlowBrush}"/>
-                                    <Setter TargetName="bd" Property="Effect" Value="{StaticResource GlowEffect}"/>
                                 </Trigger>
                             </ControlTemplate.Triggers>
                         </ControlTemplate>
@@ -569,7 +552,6 @@
                             <ControlTemplate.Triggers>
                                 <Trigger Property="IsMouseOver" Value="True">
                                     <Setter TargetName="bd" Property="Background" Value="{DynamicResource GlowSoftBrush}"/>
-                                    <Setter TargetName="bd" Property="Effect" Value="{StaticResource GlowEffect}"/>
                                 </Trigger>
                                 <Trigger Property="IsEnabled" Value="False">
                                     <Setter Property="Opacity" Value="0.4"/>
@@ -822,9 +804,10 @@
                                                    ContentTemplateSelector="{TemplateBinding ItemTemplateSelector}"
                                                    ContentStringFormat="{TemplateBinding SelectionBoxItemStringFormat}"/>
                                 <Popup x:Name="PART_Popup" IsOpen="{TemplateBinding IsDropDownOpen}" Placement="Bottom"
-                                       AllowsTransparency="True" Focusable="False" PopupAnimation="Fade">
+                                       AllowsTransparency="True" Focusable="False" PopupAnimation="None">
                                     <Border Background="{DynamicResource PanelBrush}" BorderBrush="{DynamicResource BorderBrush2}" BorderThickness="1"
-                                            CornerRadius="4" MinWidth="{TemplateBinding ActualWidth}" MaxHeight="260">
+                                            CornerRadius="4" MinWidth="{TemplateBinding ActualWidth}" MaxHeight="260"
+                                            services:PageTransitionBehavior.PopupFadeOnVisible="True">
                                         <ScrollViewer>
                                             <ItemsPresenter/>
                                         </ScrollViewer>
@@ -837,7 +820,6 @@
                                 </Trigger>
                                 <Trigger Property="IsDropDownOpen" Value="True">
                                     <Setter TargetName="toggle" Property="BorderBrush" Value="{DynamicResource GlowBrush}"/>
-                                    <Setter TargetName="toggle" Property="Effect" Value="{StaticResource GlowEffect}"/>
                                 </Trigger>
                             </ControlTemplate.Triggers>
                         </ControlTemplate>
@@ -895,12 +877,13 @@
                                 <!-- 同上面默认 ComboBox 样式：这个 Popup 必须叫 "PART_Popup"，
                                      ComboBox 才能在 OnApplyTemplate 里找到它并挂上 DropDownClosed 等事件。 -->
                                 <Popup x:Name="PART_Popup" IsOpen="{TemplateBinding IsDropDownOpen}" Placement="Bottom"
-                                       AllowsTransparency="True" Focusable="False" PopupAnimation="Fade">
+                                       AllowsTransparency="True" Focusable="False" PopupAnimation="None">
                                     <!-- 关键改动：MaxHeight 从固定的 260 换成屏幕高度的 0.55 倍，
                                          其余（背景/圆角/滚动条）跟默认 ComboBox 模板保持一致。 -->
                                     <Border Background="{DynamicResource PanelBrush}" BorderBrush="{DynamicResource BorderBrush2}" BorderThickness="1"
                                             CornerRadius="4" MinWidth="{TemplateBinding ActualWidth}"
-                                            MaxHeight="{Binding Source={x:Static SystemParameters.PrimaryScreenHeight}, Converter={StaticResource ScreenHeightFractionConverter}, ConverterParameter=0.55}">
+                                            MaxHeight="{Binding Source={x:Static SystemParameters.PrimaryScreenHeight}, Converter={StaticResource ScreenHeightFractionConverter}, ConverterParameter=0.55}"
+                                            services:PageTransitionBehavior.PopupFadeOnVisible="True">
                                         <ScrollViewer>
                                             <ItemsPresenter/>
                                         </ScrollViewer>
@@ -913,7 +896,6 @@
                                 </Trigger>
                                 <Trigger Property="IsDropDownOpen" Value="True">
                                     <Setter TargetName="toggle" Property="BorderBrush" Value="{DynamicResource GlowBrush}"/>
-                                    <Setter TargetName="toggle" Property="Effect" Value="{StaticResource GlowEffect}"/>
                                 </Trigger>
                             </ControlTemplate.Triggers>
                         </ControlTemplate>
@@ -990,6 +972,10 @@
                  隐形滚动条(ScrollViewer 内嵌 PART_ScrollBar 会自动套用上面 ScrollBar 的全局样式，
                  不需要在这里重复写)。不加 x:Key，作为全应用默认样式自动套用到所有 ListBox。 -->
             <Style TargetType="ListBox">
+                <Setter Property="ScrollViewer.CanContentScroll" Value="True"/>
+                <Setter Property="VirtualizingPanel.IsVirtualizing" Value="True"/>
+                <Setter Property="VirtualizingPanel.VirtualizationMode" Value="Recycling"/>
+                <Setter Property="VirtualizingPanel.ScrollUnit" Value="Pixel"/>
                 <Setter Property="Background" Value="{DynamicResource SideBrush}"/>
                 <Setter Property="BorderBrush" Value="{DynamicResource DividerBrush}"/>
                 <Setter Property="BorderThickness" Value="1"/>
@@ -1003,7 +989,10 @@
                             <Border x:Name="bd" Background="{TemplateBinding Background}"
                                     BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}"
                                     CornerRadius="6" Padding="{TemplateBinding Padding}">
-                                <ScrollViewer Focusable="False" Padding="{TemplateBinding Padding}">
+                                <ScrollViewer Focusable="False" Padding="{TemplateBinding Padding}"
+                                              CanContentScroll="{TemplateBinding ScrollViewer.CanContentScroll}"
+                                              HorizontalScrollBarVisibility="{TemplateBinding ScrollViewer.HorizontalScrollBarVisibility}"
+                                              VerticalScrollBarVisibility="{TemplateBinding ScrollViewer.VerticalScrollBarVisibility}">
                                     <ItemsPresenter/>
                                 </ScrollViewer>
                             </Border>
@@ -1223,7 +1212,7 @@
                                     <TabPanel IsItemsHost="True" HorizontalAlignment="Left"/>
                                 </Border>
                                 <Border Grid.Row="1" Background="{DynamicResource PanelBrush}">
-                                    <ContentPresenter ContentSource="SelectedContent" Margin="0,10,0,0"/>
+                                    <ContentPresenter x:Name="PART_SelectedContentHost" ContentSource="SelectedContent" Margin="0,10,0,0"/>
                                 </Border>
                             </Grid>
                         </ControlTemplate>
@@ -1538,7 +1527,7 @@
                             </Border>
                                 <Popup x:Name="PART_Popup" IsOpen="{Binding IsSubmenuOpen, RelativeSource={RelativeSource TemplatedParent}}"
                                        Placement="Right" PlacementTarget="{Binding RelativeSource={RelativeSource TemplatedParent}}"
-                                       AllowsTransparency="True" Focusable="False" PopupAnimation="Fade">
+                                       AllowsTransparency="True" Focusable="False" PopupAnimation="None">
                                     <Border Background="{DynamicResource PanelBrush}" BorderBrush="{DynamicResource BorderBrush2}"
                                             BorderThickness="1" CornerRadius="10" Padding="5" MinWidth="150"
                                             services:PageTransitionBehavior.PopupFadeOnVisible="True">

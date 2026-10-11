@@ -43,4 +43,6 @@ public partial class ServerNetworkGuideWindow : OverlayDialogControl
         DontShowAgain = DontShowAgainCheck.IsChecked == true;
         CloseWith(null);
     }
+    private void OpenExternalPage_Click(object sender, RoutedEventArgs e)
+        => XCL2.App.Services.ExternalLinkService.Open((sender as System.Windows.Controls.Button)?.Tag as string);
 }

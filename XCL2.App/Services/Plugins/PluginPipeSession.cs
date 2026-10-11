@@ -122,7 +122,15 @@ internal sealed class PluginPipeSession : IDisposable
             var result = await DispatchAsync(method, arguments, _stop.Token).ConfigureAwait(false);
             await WriteAsync(new { protocol = 1, kind = "response", id, result }, _stop.Token).ConfigureAwait(false);
         }
-        catch (OperationCanceledException) { }
+        catch (OperationCanceledException)
+        {
+            // 用户取消一个业务确认不应让 EXE 永久等待该请求的响应。
+            if (!_stop.IsCancellationRequested)
+            {
+                try { await ErrorAsync(id, "Canceled", "操作已取消。").ConfigureAwait(false); }
+                catch (Exception ex) { _context.Log("PipeWriteFailed: " + ex.GetType().Name); }
+            }
+        }
         catch (Exception ex)
         {
             try { await ErrorAsync(id, ex is PluginOperationException operation ? operation.Code : "RequestFailed", ex is PluginOperationException safe ? safe.SafeMessage : "插件请求失败。").ConfigureAwait(false); }
@@ -135,8 +143,50 @@ internal sealed class PluginPipeSession : IDisposable
     { var id = Guid.NewGuid().ToString("N"); _registrations[id] = registration; return id; }
     private async Task<object?> DispatchAsync(string method, JsonElement args, CancellationToken ct)
     {
+        if (method.StartsWith("workbench.", StringComparison.Ordinal))
+            return await PluginWorkbenchEndpoints.InvokeAsync(_context, method, args, ct).ConfigureAwait(false);
         switch (method)
         {
+            case "folders.list": return await _context.Management.GetFoldersAsync(ct).ConfigureAwait(false);
+            case "instances.directories": return await _context.Management.GetInstanceDirectoriesAsync(String(args, "instanceId"), ct).ConfigureAwait(false);
+            case "instances.setHidden": return await _context.Management.SetInstanceHiddenAsync(String(args, "instanceId"), args.GetProperty("hidden").GetBoolean(), ct).ConfigureAwait(false);
+            case "instances.rename": return await _context.Management.RenameInstanceAsync(String(args, "instanceId"), String(args, "newName"), ct).ConfigureAwait(false);
+            case "instances.setIsolation": return await _context.Management.SetInstanceIsolationAsync(String(args, "instanceId"), args.TryGetProperty("isolated", out var isolated) && isolated.ValueKind != JsonValueKind.Null ? isolated.GetBoolean() : null, ct).ConfigureAwait(false);
+            case "instances.repair": return await _context.Management.RepairInstanceAsync(String(args, "instanceId"), ct).ConfigureAwait(false);
+            case "mods.setEnabled": return await _context.Management.SetModEnabledAsync(String(args, "instanceId"), String(args, "fileName"), args.GetProperty("enabled").GetBoolean(), ct).ConfigureAwait(false);
+            case "java.list": return await _context.Management.GetJavaRuntimesAsync(ct).ConfigureAwait(false);
+            case "java.select": return await _context.Management.SelectJavaAsync(args.TryGetProperty("javaId", out var javaId) ? javaId.GetString() : null, args.TryGetProperty("instanceId", out var javaInstance) ? javaInstance.GetString() : null, ct).ConfigureAwait(false);
+            case "downloads.get": return await _context.Management.GetDownloadAsync(args.GetProperty("downloadId").GetGuid(), ct).ConfigureAwait(false);
+            case "downloads.pause": return await _context.Management.PauseDownloadAsync(args.GetProperty("downloadId").GetGuid(), ct).ConfigureAwait(false);
+            case "downloads.resume": return await _context.Management.ResumeDownloadAsync(args.GetProperty("downloadId").GetGuid(), ct).ConfigureAwait(false);
+            case "downloads.cancel": return await _context.Management.CancelDownloadAsync(args.GetProperty("downloadId").GetGuid(), ct).ConfigureAwait(false);
+            case "downloads.clearFinished": return await _context.Management.ClearFinishedDownloadsAsync(ct).ConfigureAwait(false);
+            case "resources.sources": return await _context.Resources.GetSourcesAsync(ct).ConfigureAwait(false);
+            case "resources.search": return await _context.Resources.SearchAsync(args.GetProperty("query").Deserialize<PluginResourceQuery>(Json) ?? throw new ArgumentException("query"), ct).ConfigureAwait(false);
+            case "resources.files": return await _context.Resources.GetFilesAsync(args.GetProperty("query").Deserialize<PluginResourceFileQuery>(Json) ?? throw new ArgumentException("query"), ct).ConfigureAwait(false);
+            case "resources.install": return await _context.Resources.InstallAsync(args.GetProperty("request").Deserialize<PluginResourceInstallRequest>(Json) ?? throw new ArgumentException("request"), ct).ConfigureAwait(false);
+            case "gameVersions.list": return await _context.Resources.GetGameVersionsAsync(ct).ConfigureAwait(false);
+            case "gameVersions.install": return await _context.Resources.InstallGameVersionAsync(String(args, "folderId"), String(args, "versionId"), ct).ConfigureAwait(false);
+            case "launcher.pages": return await _context.Control.GetPagesAsync(ct).ConfigureAwait(false);
+            case "launcher.navigate": return await _context.Control.NavigateAsync(String(args, "pageId"), ct).ConfigureAwait(false);
+            case "launcher.snapshot": return await _context.Control.GetSnapshotAsync(ct).ConfigureAwait(false);
+            case "launcher.selectAccount": return await _context.Control.SelectAccountAsync(String(args, "accountId"), ct).ConfigureAwait(false);
+            case "launcher.selectInstance": return await _context.Control.SelectInstanceAsync(String(args, "instanceId"), ct).ConfigureAwait(false);
+            case "launcher.launch": return await _context.Control.LaunchSelectedAsync(ct).ConfigureAwait(false);
+            case "launcher.cancelLaunch": return await _context.Control.CancelLaunchAsync(ct).ConfigureAwait(false);
+            case "window.snapshot": return await _context.Control.GetWindowAsync(ct).ConfigureAwait(false);
+            case "window.update": return await _context.Control.UpdateWindowAsync(args.GetProperty("patch").Deserialize<PluginWindowPatch>(Json) ?? throw new ArgumentException("patch"), ct).ConfigureAwait(false);
+            case "window.setState": return await _context.Control.SetWindowStateAsync(args.GetProperty("action").Deserialize<PluginWindowAction>(Json), ct).ConfigureAwait(false);
+            case "appearance.snapshot": return await _context.Control.GetAppearanceAsync(ct).ConfigureAwait(false);
+            case "settings.update": return await _context.Control.UpdateSettingsAsync(args.GetProperty("patch").Deserialize<PluginSettingsPatch>(Json) ?? throw new ArgumentException("patch"), ct).ConfigureAwait(false);
+            case "worlds.list": return await _context.Worlds.GetSnapshotAsync(ct).ConfigureAwait(false);
+            case "worlds.get": return await _context.Worlds.GetAsync(String(args, "path"), ct).ConfigureAwait(false);
+            case "worlds.schema": return _context.Worlds.GetEditSchema();
+            case "worlds.copy": return await _context.Worlds.GenerateCopyAsync(String(args, "path"), String(args, "destinationPath"), args.GetProperty("edit").Deserialize<XCL2.App.Services.Worlds.WorldEdit>(Json) ?? throw new ArgumentException("edit"), ct).ConfigureAwait(false);
+            case "worlds.update": return await _context.Worlds.UpdateAsync(String(args, "path"), args.GetProperty("edit").Deserialize<XCL2.App.Services.Worlds.WorldEdit>(Json) ?? throw new ArgumentException("edit"), ct).ConfigureAwait(false);
+            case "preview.registerCard": return new { registrationId = Keep(_context.Preview.RegisterCard(String(args, "id"), String(args, "title"), String(args, "description"), String(args, "destination"), String(args, "accent"))) };
+            case "preview.updateCard": _context.Preview.UpdateCard(String(args, "id"), String(args, "title"), String(args, "description"), String(args, "accent")); return true;
+            case "preview.setAppearance": return new { registrationId = Keep(_context.Preview.SetAppearance(String(args, "title"), String(args, "accent"), args.TryGetProperty("compact", out var compact) && compact.GetBoolean())) };
             case "permissions.snapshot": return _context.Permissions.GetSnapshot();
             case "accounts.list": return await _context.Launcher.Accounts.GetSnapshotAsync(ct).ConfigureAwait(false);
             case "accounts.selected": return await _context.Launcher.Accounts.GetSelectedAsync(ct).ConfigureAwait(false);

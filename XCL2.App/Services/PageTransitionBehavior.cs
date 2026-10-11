@@ -1,6 +1,5 @@
 using System.Windows;
 using System.Windows.Controls;
-using System.Windows.Threading;
 
 namespace XCL2.App.Services;
 
@@ -19,8 +18,21 @@ public static class PageTransitionBehavior
     private static void OnPopupFadeChanged(DependencyObject target, DependencyPropertyChangedEventArgs e)
     {
         if (target is not FrameworkElement element) return;
-        if ((bool)e.NewValue) element.IsVisibleChanged += PopupFade_IsVisibleChanged;
-        else element.IsVisibleChanged -= PopupFade_IsVisibleChanged;
+        if ((bool)e.NewValue)
+        {
+            element.IsVisibleChanged += PopupFade_IsVisibleChanged;
+            element.Unloaded += Popup_Unloaded;
+        }
+        else
+        {
+            element.IsVisibleChanged -= PopupFade_IsVisibleChanged;
+            element.Unloaded -= Popup_Unloaded;
+            UiAnimationHelper.Reset(element);
+        }
+    }
+    private static void Popup_Unloaded(object sender, RoutedEventArgs e)
+    {
+        if (sender is FrameworkElement element) UiAnimationHelper.Reset(element);
     }
     private static void PopupFade_IsVisibleChanged(object sender, DependencyPropertyChangedEventArgs e)
     {
@@ -36,8 +48,8 @@ public static class PageTransitionBehavior
         "IsExpanded", typeof(bool), typeof(PageTransitionBehavior), new PropertyMetadata(false, OnExpandedChanged));
     public static bool GetIsExpanded(DependencyObject target) => (bool)target.GetValue(IsExpandedProperty);
     public static void SetIsExpanded(DependencyObject target, bool value) => target.SetValue(IsExpandedProperty, value);
-    private static readonly DependencyProperty RequestProperty = DependencyProperty.RegisterAttached(
-        "Request", typeof(int), typeof(PageTransitionBehavior), new PropertyMetadata(0));
+    private static readonly DependencyProperty VisibleCyclePreparedProperty = DependencyProperty.RegisterAttached(
+        "VisibleCyclePrepared", typeof(bool), typeof(PageTransitionBehavior), new PropertyMetadata(false));
 
     private static void OnVisibleBehaviorChanged(DependencyObject target, DependencyPropertyChangedEventArgs e)
     {
@@ -47,6 +59,7 @@ public static class PageTransitionBehavior
             element.Loaded += Element_Loaded;
             element.IsVisibleChanged += Element_IsVisibleChanged;
             element.Unloaded += Element_Unloaded;
+            if (element.IsVisible) PrepareVisibleEntrance(element);
         }
         else
         {
@@ -58,12 +71,21 @@ public static class PageTransitionBehavior
     }
     private static void Element_Loaded(object sender, RoutedEventArgs e)
     {
-        if (sender is FrameworkElement { IsVisible: true } element) QueueEntrance(element);
+        if (sender is not FrameworkElement { IsVisible: true } element) return;
+        // Loaded 与 IsVisibleChanged 属于同一次入树过程，不能重新启动第二个淡入。
+        // 初次挂载时若主页面已经准备了过渡，由父级统一带动，避免透明度/位移叠加。
+        if (UiAnimationHelper.HasActivePageAncestor(element))
+        {
+            UiAnimationHelper.Reset(element);
+            element.SetValue(VisibleCyclePreparedProperty, true);
+            return;
+        }
+        PrepareVisibleEntrance(element);
     }
     private static void Element_IsVisibleChanged(object sender, DependencyPropertyChangedEventArgs e)
     {
         if (sender is not FrameworkElement element) return;
-        if ((bool)e.NewValue) QueueEntrance(element); else Cancel(element);
+        if ((bool)e.NewValue) PrepareVisibleEntrance(element); else Cancel(element);
     }
     private static void Element_Unloaded(object sender, RoutedEventArgs e)
     {
@@ -71,35 +93,67 @@ public static class PageTransitionBehavior
     }
     private static void Cancel(FrameworkElement element)
     {
-        element.SetValue(RequestProperty, (int)element.GetValue(RequestProperty) + 1);
+        element.SetValue(VisibleCyclePreparedProperty, false);
         UiAnimationHelper.Reset(element);
     }
-    private static void QueueEntrance(FrameworkElement element)
+    private static void PrepareVisibleEntrance(FrameworkElement element)
     {
-        var request = (int)element.GetValue(RequestProperty) + 1;
-        element.SetValue(RequestProperty, request);
-        _ = element.Dispatcher.BeginInvoke(new Action(() =>
+        if ((bool)element.GetValue(VisibleCyclePreparedProperty)) return;
+        element.SetValue(VisibleCyclePreparedProperty, true);
+        PrepareEntrance(element);
+    }
+    private static void PrepareEntrance(FrameworkElement element)
+    {
+        if (UiAnimationHelper.HasActivePageAncestor(element))
         {
-            if (element.IsLoaded && element.IsVisible && (int)element.GetValue(RequestProperty) == request)
-                UiAnimationHelper.Entrance(element);
-        }), DispatcherPriority.Loaded);
+            UiAnimationHelper.Reset(element);
+            return;
+        }
+        // 在可见事件内先设置起点；调度等待只负责开播，不再延后把已显示的内容拉回起点。
+        UiAnimationHelper.PrepareEntrance(element);
+        UiAnimationHelper.StartPreparedEntrance(element);
     }
     private static void OnSelectionBehaviorChanged(DependencyObject target, DependencyPropertyChangedEventArgs e)
     {
         if (target is not TabControl tabs) return;
-        if ((bool)e.NewValue) tabs.SelectionChanged += Tabs_SelectionChanged;
-        else tabs.SelectionChanged -= Tabs_SelectionChanged;
+        if ((bool)e.NewValue)
+        {
+            tabs.SelectionChanged += Tabs_SelectionChanged;
+            tabs.Loaded += Tabs_Loaded;
+            tabs.Unloaded += Tabs_Unloaded;
+        }
+        else
+        {
+            tabs.SelectionChanged -= Tabs_SelectionChanged;
+            tabs.Loaded -= Tabs_Loaded;
+            tabs.Unloaded -= Tabs_Unloaded;
+            CancelSelection(tabs);
+        }
+    }
+    private static void Tabs_Unloaded(object sender, RoutedEventArgs e)
+    {
+        if (sender is TabControl tabs) CancelSelection(tabs);
+    }
+    private static void Tabs_Loaded(object sender, RoutedEventArgs e)
+    {
+        if (sender is TabControl tabs) PrepareSelectedContent(tabs);
+    }
+    private static void CancelSelection(TabControl tabs)
+    {
+        if (tabs.Template?.FindName("PART_SelectedContentHost", tabs) is FrameworkElement content)
+            Cancel(content);
     }
     private static void Tabs_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (sender is not TabControl tabs || !ReferenceEquals(e.OriginalSource, tabs)) return;
-        _ = tabs.Dispatcher.BeginInvoke(new Action(() =>
-        {
-            if (!tabs.IsLoaded || !tabs.IsVisible) return;
-            tabs.ApplyTemplate();
-            if (tabs.Template.FindName("PART_SelectedContentHost", tabs) is FrameworkElement content)
-                QueueEntrance(content);
-        }), DispatcherPriority.Loaded);
+        PrepareSelectedContent(tabs);
+    }
+    private static void PrepareSelectedContent(TabControl tabs)
+    {
+        if (!tabs.IsLoaded || !tabs.IsVisible) return;
+        tabs.ApplyTemplate();
+        if (tabs.Template?.FindName("PART_SelectedContentHost", tabs) is FrameworkElement content)
+            PrepareEntrance(content);
     }
     private static void OnExpandedChanged(DependencyObject target, DependencyPropertyChangedEventArgs e)
     {
@@ -108,7 +162,8 @@ public static class PageTransitionBehavior
         if ((bool)e.NewValue)
         {
             element.Visibility = Visibility.Visible;
-            QueueEntrance(element);
+            // 首次生成分组时由整份列表入场；逐个子组再淡入会叠加大量时钟。
+            if (element.IsLoaded) PrepareEntrance(element);
         }
         else if (!element.IsLoaded || !element.IsVisible)
             element.Visibility = Visibility.Collapsed;
@@ -116,6 +171,6 @@ public static class PageTransitionBehavior
             UiAnimationHelper.FadeOut(element, () =>
             {
                 if (!GetIsExpanded(element)) element.Visibility = Visibility.Collapsed;
-            }, element.Opacity);
+            }, element.Opacity, kind: AnimationKind.Page);
     }
 }

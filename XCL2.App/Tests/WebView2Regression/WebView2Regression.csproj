@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <!-- 回归宿主需要控制台输出；WPF SDK 默认会把 Exe 改成 WinExe。 -->
+    <DisableWinExeOutputInference>true</DisableWinExeOutputInference>
+    <UseAppHost>true</UseAppHost>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.2792.45" />
+    <Compile Include="../../Services/EmbeddedWebView.cs" Link="Services/EmbeddedWebView.cs" />
+    <Compile Include="../../Services/WebView2RuntimeDetector.cs" Link="Services/WebView2RuntimeDetector.cs" />
+    <Compile Include="../../Views/Tools/SeedStructureQueryTool.xaml.cs" Link="Views/Tools/SeedStructureQueryTool.xaml.cs" />
+    <Compile Include="../../Views/Tools/Web2BrowserTool.xaml.cs" Link="Views/Tools/Web2BrowserTool.xaml.cs" />
+    <Page Include="../../Views/Tools/SeedStructureQueryTool.xaml" Link="Views/Tools/SeedStructureQueryTool.xaml" />
+    <Page Include="../../Views/Tools/Web2BrowserTool.xaml" Link="Views/Tools/Web2BrowserTool.xaml" />
+  </ItemGroup>
+</Project>

@@ -891,4 +891,7 @@
 
     <system:String x:Key="Str_Ui_Full_Launcher_Log">Full launcher log</system:String>
     <system:String x:Key="Str_Ui_Open_In_Independent_Window">Open in independent window</system:String>
+    <system:String x:Key="Str_Plugin_ModSourceMenu">Plugin Mod sources…</system:String>
+    <system:String x:Key="Str_Plugin_BackToBuiltInSources">Back to built-in sources</system:String>
+    <system:String x:Key="Str_Plugin_OpenModSourcesFailed">Cannot open plugin Mod sources: </system:String>
 </ResourceDictionary>

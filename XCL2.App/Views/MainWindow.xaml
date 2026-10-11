@@ -1,7 +1,8 @@
-<Window x:Class="XCL2.App.Views.MainWindow"
+﻿<Window x:Class="XCL2.App.Views.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:services="clr-namespace:XCL2.App.Services"
+        xmlns:local="clr-namespace:XCL2.App.Views"
         xmlns:shell="clr-namespace:System.Windows.Shell;assembly=PresentationFramework"
         Title="{DynamicResource Str_Main_WindowTitlePrefix}" Height="640" Width="1000"
         MinHeight="480" MinWidth="854"
@@ -189,7 +190,7 @@
                                                                            TextTrimming="CharacterEllipsis"/>
                                                                 <ProgressBar Height="4" Margin="0,4,0,4"
                                                                              Value="{Binding ProgressPercent, Mode=OneWay}"
-                                                                             Minimum="0" Maximum="100"/>
+                                                                             IsIndeterminate="{Binding IsIndeterminate}" Minimum="0" Maximum="100"/>
                                                                 <!-- 详情行：剩余时间/当前速度/大小，见 AppConfig.DownloadPopupShowDetailStats
                                                                      与 DownloadQueueItem.DetailText。默认隐藏，跟随
                                                                      DownloadQueueDetailVisibility 资源统一显隐。 -->
@@ -208,8 +209,9 @@
                                                                                VerticalAlignment="Center"/>
                                                                     <Button Grid.Column="1" Content="暂停/继续" FontSize="11" Padding="6,2"
                                                                             Margin="0,0,4,0" Click="DownloadItemPauseResume_Click"
-                                                                            Tag="{Binding}"/>
-                                                                    <Button Grid.Column="2" Content="取消" FontSize="11" Padding="6,2"
+                                                                            IsEnabled="{Binding CanPauseOrResume}" Tag="{Binding}"/>
+                                                                    <Button Grid.Column="2" Content="{Binding CancelLabel}" FontSize="11" Padding="6,2"
+                                                                            IsEnabled="{Binding CanCancel}"
                                                                             Click="DownloadItemCancel_Click" Tag="{Binding}"/>
                                                                 </Grid>
                                                             </StackPanel>
@@ -437,6 +439,12 @@
                                            VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
                             </StackPanel>
                         </Button>
+                        <Button x:Name="NavWorldsButton" Style="{StaticResource SideNavButton}" Click="NavWorlds_Click" Margin="0,4,0,0" ToolTip="存档">
+                            <StackPanel Orientation="Horizontal">
+                                <Border x:Name="NavWorldsIcon" Style="{StaticResource NavIconBox}"><TextBlock Text="▣" FontSize="20" HorizontalAlignment="Center"/></Border>
+                                <TextBlock x:Name="NavWorldsLabel" Text="存档" Margin="8,0,0,0" VerticalAlignment="Center"/>
+                            </StackPanel>
+                        </Button>
                         <Button x:Name="NavModManagerButton" Style="{StaticResource SideNavButton}" Click="NavModManager_Click" Margin="0,4,0,0" ToolTip="{DynamicResource Str_Nav_ModManager}">
                             <StackPanel x:Name="NavModManagerIconRow" Orientation="Horizontal">
                                 <Border x:Name="NavModManagerIcon" Style="{StaticResource NavIconBox}">
@@ -553,6 +561,12 @@
                                            VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
                             </StackPanel>
                         </Button>
+                        <Button x:Name="NavPluginsButton" Style="{StaticResource SideNavButton}" Click="NavPlugins_Click" Margin="0,4,0,0" ToolTip="插件管理">
+                            <StackPanel Orientation="Horizontal">
+                                <Border x:Name="NavPluginsIcon" Style="{StaticResource NavIconBox}"><Path Style="{StaticResource NavIconPath}" Data="{StaticResource IconToolbox}"/></Border>
+                                <TextBlock x:Name="NavPluginsLabel" Text="插件管理" Margin="8,0,0,0" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
+                            </StackPanel>
+                        </Button>
                     </StackPanel>
                 </ScrollViewer>
             </DockPanel>
@@ -562,18 +576,22 @@
              见上面 SidebarAreaBorder 的注释，原理相同，只影响右侧内容区（各个 Page）。 -->
         <Border x:Name="ContentAreaBorder" Grid.Column="1" Margin="16">
             <Grid>
-                <ContentControl x:Name="MainContent" RenderTransformOrigin="0.5,0.5">
+                <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+                <local:FeatureSearchBox x:Name="LauncherFeatureSearch" Grid.Row="0" Width="300" Panel.ZIndex="50" VerticalAlignment="Top"
+                                        HorizontalAlignment="Right" Margin="0,0,0,10"/>
+                <ContentControl Grid.Row="1" x:Name="MainContent" RenderTransformOrigin="0.5,0.5">
                     <ContentControl.RenderTransform>
-                        <!-- TransformGroup 顺序：先缩放再位移，配合 MainWindow.SetMainContent
-                             里的"高性能模式"过渡（缩放0.96->1 + 位移回弹），RenderTransformOrigin
-                             居中保证缩放观感是"从中心轻微放大归位"而不是从左上角长出来。
-                             低性能/普通模式下 Scale 恒为 1，等价于以前只有位移的写法。 -->
+                        <!-- 保留原变换字段供窗口状态清理；页面入场由统一准备/开播流程管理。 -->
                         <TransformGroup>
                             <ScaleTransform x:Name="MainContentScaleTransform" ScaleX="1" ScaleY="1"/>
                             <TranslateTransform x:Name="MainContentTransform" Y="0"/>
                         </TransformGroup>
                     </ContentControl.RenderTransform>
                 </ContentControl>
+
+                <!-- 加载提示独立于页面动画：目标控件首次布局时仍显示，开播时一次撤去。 -->
+                <ContentControl Grid.Row="1" x:Name="PageLoadingOverlay" Visibility="Collapsed"
+                                HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch"/>
 
                 <!-- 「重新阅读协议并同意」：只有基本模式（RestrictedMode=true）下常驻显示。
                      点击后重新走一遍完整协议四步流程，同意即退出基本模式、恢复全部功能；
@@ -583,7 +601,7 @@
                      自动循环/普通模式/访客模式）胶囊按钮共用同一块屏幕区域——两者都是
                      "浮在内容区之上、右上角对齐"，首页显示时会直接叠在一起。现在挪到
                      左上角，跟内容区里任何页面自己的右上角控件都不会有重叠的可能。 -->
-                <Button x:Name="ReReadAgreementsButton" Content="重新阅读协议并同意"
+                <Button Grid.Row="1" x:Name="ReReadAgreementsButton" Content="重新阅读协议并同意"
                         HorizontalAlignment="Left" VerticalAlignment="Top"
                         Style="{StaticResource PrimaryButton}" Padding="14,6"
                         Click="ReReadAgreements_Click" Visibility="Collapsed"/>

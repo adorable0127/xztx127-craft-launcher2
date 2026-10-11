@@ -1,5 +1,6 @@
 using Microsoft.Win32;
 using Microsoft.Web.WebView2.Core;
+using System.Runtime.CompilerServices;
 
 namespace XCL2.App.Services;
 
@@ -40,7 +41,7 @@ public static class WebView2RuntimeDetector
     {
         try
         {
-            var version = CoreWebView2Environment.GetAvailableBrowserVersionString();
+            var version = GetAvailableVersion();
             if (!string.IsNullOrEmpty(version)) return true;
         }
         catch
@@ -50,6 +51,10 @@ public static class WebView2RuntimeDetector
 
         return HasRegistryEvidence();
     }
+
+    // 隔离 SDK 类型加载：Core.dll 缺失时，异常必须发生在 IsAvailable 的 try/catch 内。
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static string GetAvailableVersion() => CoreWebView2Environment.GetAvailableBrowserVersionString();
 
     /// <summary>
     /// 兜底：直接查 WebView2 Runtime 安装时会写入的注册表位置（Evergreen 版安装器的标准落点）。

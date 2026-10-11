@@ -1,0 +1,109 @@
+<UserControl x:Class="XCL2.App.Views.AiFileDiffView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:models="clr-namespace:XCL2.App.Models">
+    <UserControl.Resources>
+        <BooleanToVisibilityConverter x:Key="DiffBoolToVis"/>
+        <Style x:Key="DiffText" TargetType="TextBox">
+            <Setter Property="IsReadOnly" Value="True"/>
+            <Setter Property="IsTabStop" Value="False"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="FontFamily" Value="Consolas"/>
+            <Setter Property="FontSize" Value="11"/>
+            <Setter Property="Padding" Value="3,1"/>
+            <Setter Property="TextWrapping" Value="Wrap"/>
+            <Setter Property="AcceptsReturn" Value="True"/>
+            <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}"/>
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding Kind}" Value="{x:Static models:AiDiffLineKind.Added}">
+                    <Setter Property="Foreground" Value="#2FAD63"/>
+                </DataTrigger>
+                <DataTrigger Binding="{Binding Kind}" Value="{x:Static models:AiDiffLineKind.Deleted}">
+                    <Setter Property="Foreground" Value="#E05656"/>
+                </DataTrigger>
+                <DataTrigger Binding="{Binding Kind}" Value="{x:Static models:AiDiffLineKind.Modified}">
+                    <Setter Property="Foreground" Value="#C89C16"/>
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+    </UserControl.Resources>
+    <Border CornerRadius="7" BorderThickness="1" BorderBrush="{DynamicResource DividerBrush}"
+            Background="{DynamicResource PanelBrush}" Padding="9">
+        <StackPanel>
+            <TextBlock Text="{Binding FileDiffHeader}" FontSize="11" FontWeight="SemiBold" TextWrapping="Wrap"/>
+            <StackPanel Orientation="Horizontal" Margin="0,6,0,7">
+                <TextBlock Text="~ 修改" Foreground="#C89C16" FontSize="10" Margin="0,0,12,0"/>
+                <TextBlock Text="− 删除" Foreground="#E05656" FontSize="10" Margin="0,0,12,0"/>
+                <TextBlock Text="+ 新增" Foreground="#2FAD63" FontSize="10"/>
+            </StackPanel>
+            <TextBlock Text="修改行：上方为修改前，下方为修改后 · 忽略 CRLF/LF 换行差异"
+                       TextWrapping="Wrap" FontSize="10" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,7"/>
+            <ScrollViewer MaxHeight="330" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                <ItemsControl ItemsSource="{Binding FileDiff.Lines}">
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate>
+                            <Grid Margin="0,1">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="30"/>
+                                    <ColumnDefinition Width="30"/>
+                                    <ColumnDefinition Width="18"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="{Binding OldLineNumber}" FontFamily="Consolas" FontSize="10" HorizontalAlignment="Right"
+                                           Margin="0,3,4,0" Foreground="{DynamicResource TextSecondaryBrush}"/>
+                                <TextBlock Grid.Column="1" Text="{Binding NewLineNumber}" FontFamily="Consolas" FontSize="10" HorizontalAlignment="Right"
+                                           Margin="0,3,4,0" Foreground="{DynamicResource TextSecondaryBrush}"/>
+                                <TextBlock Grid.Column="2" Margin="3,2,0,0" FontFamily="Consolas">
+                                    <TextBlock.Style>
+                                        <Style TargetType="TextBlock">
+                                            <Setter Property="Text" Value=" "/>
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding Kind}" Value="{x:Static models:AiDiffLineKind.Modified}">
+                                                    <Setter Property="Text" Value="~"/><Setter Property="Foreground" Value="#C89C16"/>
+                                                </DataTrigger>
+                                                <DataTrigger Binding="{Binding Kind}" Value="{x:Static models:AiDiffLineKind.Added}">
+                                                    <Setter Property="Text" Value="+"/><Setter Property="Foreground" Value="#2FAD63"/>
+                                                </DataTrigger>
+                                                <DataTrigger Binding="{Binding Kind}" Value="{x:Static models:AiDiffLineKind.Deleted}">
+                                                    <Setter Property="Text" Value="−"/><Setter Property="Foreground" Value="#E05656"/>
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </TextBlock.Style>
+                                </TextBlock>
+                                <StackPanel Grid.Column="3">
+                                    <TextBox Text="{Binding BeforeText, Mode=OneWay}">
+                                        <TextBox.Style>
+                                            <Style TargetType="TextBox" BasedOn="{StaticResource DiffText}">
+                                                <Setter Property="Visibility" Value="Collapsed"/>
+                                                <Setter Property="ToolTip" Value="修改前"/>
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding Kind}" Value="{x:Static models:AiDiffLineKind.Modified}"><Setter Property="Visibility" Value="Visible"/></DataTrigger>
+                                                    <DataTrigger Binding="{Binding Kind}" Value="{x:Static models:AiDiffLineKind.Deleted}"><Setter Property="Visibility" Value="Visible"/></DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </TextBox.Style>
+                                    </TextBox>
+                                    <TextBox Text="{Binding AfterText, Mode=OneWay}">
+                                        <TextBox.Style>
+                                            <Style TargetType="TextBox" BasedOn="{StaticResource DiffText}">
+                                                <Setter Property="ToolTip" Value="修改后"/>
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding Kind}" Value="{x:Static models:AiDiffLineKind.Deleted}"><Setter Property="Visibility" Value="Collapsed"/></DataTrigger>
+                                                    <DataTrigger Binding="{Binding Kind}" Value="{x:Static models:AiDiffLineKind.Modified}"><Setter Property="BorderThickness" Value="0,1,0,0"/><Setter Property="BorderBrush" Value="{DynamicResource DividerBrush}"/></DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </TextBox.Style>
+                                    </TextBox>
+                                </StackPanel>
+                            </Grid>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+            </ScrollViewer>
+            <TextBlock Text="{Binding FileDiff.Notice}" Visibility="{Binding HasFileDiffNotice, Converter={StaticResource DiffBoolToVis}}"
+                       TextWrapping="Wrap" FontSize="10" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,7,0,0"/>
+        </StackPanel>
+    </Border>
+</UserControl>

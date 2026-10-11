@@ -5,6 +5,7 @@ using System.Linq;
 using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Text.Json;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace XCL2.App.Services;
@@ -68,33 +69,26 @@ public static class BuiltInAiDefaults
 
     /// <summary>取内置公共密钥：优先内存缓存 → 本地缓存文件（即打开页面时 PrefetchAsync
     /// 写入的那份）→ 都没有（比如 Prefetch 还没跑完/失败了）才现拉一份兜底，避免直接报错。</summary>
-    public static string GetApiKey()
+    public static string GetApiKey() => GetApiKeyAsync(CancellationToken.None).GetAwaiter().GetResult();
+
+    public static async Task<string> GetApiKeyAsync(CancellationToken ct = default)
     {
         lock (CacheLock)
         {
-            if (!string.IsNullOrWhiteSpace(_memoryCache))
-                return _memoryCache!;
+            if (!string.IsNullOrWhiteSpace(_memoryCache)) return _memoryCache!;
         }
-
         var fromDisk = TryReadCacheFile();
         if (!string.IsNullOrWhiteSpace(fromDisk))
         {
             lock (CacheLock) { _memoryCache = fromDisk; }
             return fromDisk!;
         }
-
-        var fetched = HttpClient
-            .GetStringAsync(ApiKeyUrl)
-            .GetAwaiter()
-            .GetResult()
-            .Trim();
-
+        var fetched = (await HttpClient.GetStringAsync(ApiKeyUrl, ct).ConfigureAwait(false)).Trim();
         if (!string.IsNullOrWhiteSpace(fetched))
         {
             lock (CacheLock) { _memoryCache = fetched; }
             TryWriteCacheFile(fetched);
         }
-
         return fetched;
     }
 
@@ -153,30 +147,16 @@ public static class AiCredentialResolver
         Models.AiAssistantConfig config,
         string? modelId = null)
     {
-        var modelDef = Models.AiModelIds.FindInCatalog(config, modelId);
-
-        if (modelDef != null && modelDef.HasOwnProvider)
-        {
-            return (
-                modelDef.ProviderBaseUrl!.Trim(),
-                modelDef.ProviderApiKey!
-            );
-        }
-
-        if (config.UseCustomApiKey)
-        {
-            return (
-                config.BaseUrl,
-                config.ApiKey
-            );
-        }
-
-        var apiKey = BuiltInAiDefaults.GetApiKey();
-
-        return (
-            BuiltInAiDefaults.BaseUrl,
-            apiKey
-        );
+        var selection = string.IsNullOrWhiteSpace(modelId) ? config.SelectedModel : modelId;
+        var target = AiEndpointRouting.GetCandidates(config, selection!).FirstOrDefault();
+        if (target != null)
+            return (target.BaseUrl, AiEndpointRouting.ResolveApiKeys(target).FirstOrDefault() ?? "");
+        if (!string.IsNullOrWhiteSpace(modelId))
+            throw new InvalidOperationException("选中的 AI 模型所属接口不存在或已禁用，请重新选择模型。");
+        // 无模型的旧调用仅返回明确选中的默认接口，不误借用其它供应商的 key。
+        return config.UseCustomApiKey
+            ? (config.BaseUrl, AiEndpointRouting.CleanKeys(new[] { config.ApiKey }.Concat(config.ApiKeys ?? new())).FirstOrDefault() ?? "")
+            : (BuiltInAiDefaults.BaseUrl, BuiltInAiDefaults.GetApiKey());
     }
 }
 
@@ -234,7 +214,7 @@ public static class OpenRouterModelSyncService
                 {
                     Id = id.Trim(),
                     DisplayName = string.IsNullOrWhiteSpace(name) ? id.Trim() : name.Trim(),
-                    Tier = Models.AiModelTier.Normal
+                    Tier = AiModelListFetcher.GuessTier(id)
                 });
             }
         }
@@ -258,10 +238,14 @@ public static class OpenRouterModelSyncService
 
         var byId = existingModels
             .Where(m => m != null && !string.IsNullOrWhiteSpace(m.Id))
-            .ToDictionary(m => m.Id.Trim(), m => m, StringComparer.OrdinalIgnoreCase);
+            .GroupBy(m => m.ModelKey, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
 
+        // 已经在表里的条目一律保留：用户可能改过它的显示名、普通/专家分组或独立供应商，
+        // 每次保存都被 OpenRouter 的默认值覆盖回去，等于"调整分组"形同虚设。只补充表里还没有的新模型。
         foreach (var model in fetched)
-            byId[model.Id] = model;
+            if (!byId.ContainsKey(model.ModelKey))
+                byId[model.ModelKey] = model;
 
         existingModels.Clear();
         foreach (var model in byId.Values)

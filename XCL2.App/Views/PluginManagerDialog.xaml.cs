@@ -143,6 +143,9 @@ public partial class PluginManagerDialog : OverlayDialogControl
             titleLine.Children.Add(authorize);
         }
         titleLine.Children.Add(configButton);
+        var upgrade = new Button { Content = "升级 / 新签名", Padding = new Thickness(10, 3, 10, 3), Margin = new Thickness(8, 0, 0, 0) };
+        upgrade.Click += (_, _) => OverlayDialogService.ShowModal(new PluginUpgradeDialog(_manager, info));
+        titleLine.Children.Add(upgrade);
         var delete = new Button { Content = "删除", Padding = new Thickness(10, 3, 10, 3),
             Margin = new Thickness(8, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center,
             ToolTip = "立即停止并删除插件安装文件，保留配置和数据" };
@@ -150,6 +153,8 @@ public partial class PluginManagerDialog : OverlayDialogControl
         titleLine.Children.Add(delete);
 
         root.Children.Add(titleLine);
+        if (File.Exists(Path.Combine(Path.GetDirectoryName(info.FilePath)!, PluginPackageSignature.FileName)))
+            root.Children.Add(new TextBlock { Text = info.LoadError == null ? "签名完整性校验已通过 · 未验证发布者身份（自签名不等于可信插件）" : "含签名文件 · 请查看下方校验 / 加载诊断", TextWrapping = TextWrapping.Wrap, FontSize = 11, Margin = new Thickness(0, 6, 0, 0) });
         root.Children.Add(new TextBlock { Text = Path.GetRelativePath(_manager.InstalledDirectory, info.FilePath),
             FontSize = 11, TextWrapping = TextWrapping.Wrap, Opacity = 0.7, Margin = new Thickness(0, 4, 0, 0) });
 
@@ -304,8 +309,27 @@ public partial class PluginManagerDialog : OverlayDialogControl
 
     private void OpenApiReference_Click(object sender, RoutedEventArgs e)
     {
-        try { OverlayDialogService.ShowNonModal(new HelpDocumentDialog(Services.EmbeddedDocumentationService.ApiFileName)); }
+        try
+        {
+            CloseWith(null);
+            if (Application.Current.MainWindow is MainWindow owner) owner.NavigateToApiDocumentation();
+        }
         catch (Exception ex) { MessageBoxDialog.ShowWarning($"打开 API 接口说明失败：{ex.Message}", "启动器 API 接入说明"); }
+    }
+
+    private void ApiSettings_Click(object sender, RoutedEventArgs e) => OverlayDialogService.ShowModal(new PluginApiSettingsDialog());
+    private void OpenBackups_Click(object sender, RoutedEventArgs e)
+    {
+        try { Directory.CreateDirectory(_manager.BackupDirectory); Process.Start(new ProcessStartInfo(_manager.BackupDirectory) { UseShellExecute = true }); }
+        catch (Exception ex) { MessageBoxDialog.ShowWarning(ex.Message, "插件备份"); }
+    }
+    private void RestoreBackup_Click(object sender, RoutedEventArgs e)
+    {
+        var picker = new Microsoft.Win32.OpenFileDialog { Filter = "XCL2 插件备份|*.zip", InitialDirectory = _manager.BackupDirectory };
+        if (picker.ShowDialog() != true || !MessageBoxDialog.ShowConfirm("将恢复此备份中的全部插件、配置、数据和启用状态。当前状态会先另存一份备份。恢复后会按原状态加载插件。\n\n" + picker.FileName, "恢复插件备份")) return;
+        try { _manager.RestoreUpgradeBackup(picker.FileName); MessageBoxDialog.ShowInfo("备份已恢复。", "插件备份"); }
+        catch (Exception ex) { MessageBoxDialog.ShowWarning(ex.Message, "恢复失败"); }
+        finally { _pendingEnabled.Clear(); _manager.ScanAndLoad(); Render(); }
     }
 
     private void OpenExeProtocol_Click(object sender, RoutedEventArgs e)

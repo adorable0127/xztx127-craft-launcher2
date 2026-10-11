@@ -165,7 +165,7 @@ public class ModpackService
     /// 导入 Modrinth .mrpack 整合包：跟 .xclpack/.zip 完全不同的格式——.mrpack 本身不含 mod jar 文件，
     /// 只有一份 modrinth.index.json 清单（列出每个 mod 的下载直链 + SHA1），以及一个 overrides/
     /// 文件夹（config、资源包等直接文件）。导入需要：
-    /// 1) 解析 modrinth.index.json，按每个 file 条目的 downloads[0] 直链下载到 targetVersionDir 对应路径
+    /// 1) 解析 modrinth.index.json，按每个 file 条目的 downloads 全部候选（含镜像与清单哈希）下载到 targetVersionDir 对应路径
     ///    （通常是 mods/xxx.jar，但清单里的 path 字段可能指向 config/ 等其它位置，照抄 path 用）。
     /// 2) 解压 overrides/（以及可选的 client-overrides/）目录内容到 targetVersionDir 根下。
     /// 3) 下载失败的单个 mod 不中止整个导入（部分整合包体积很大，某个源暂时挂了不该导致整体失败），
@@ -204,7 +204,7 @@ public class ModpackService
 
             var destPath = Path.Combine(targetVersionDir, relative.Replace('/', Path.DirectorySeparatorChar));
             var destFull = Path.GetFullPath(destPath);
-            if (!destFull.StartsWith(Path.GetFullPath(targetVersionDir), StringComparison.OrdinalIgnoreCase)) continue;
+            if (!destFull.StartsWith(Path.GetFullPath(targetVersionDir).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)) continue;
 
             Directory.CreateDirectory(Path.GetDirectoryName(destFull)!);
             entry.ExtractToFile(destFull, overwrite: true);
@@ -227,7 +227,7 @@ public class ModpackService
             progress?.Report($"下载 {Path.GetFileName(file.Path)} ({i + 1}/{files.Count}) ...");
             var destPath = Path.Combine(targetVersionDir, file.Path.Replace('/', Path.DirectorySeparatorChar));
             var destFull = Path.GetFullPath(destPath);
-            if (!destFull.StartsWith(Path.GetFullPath(targetVersionDir), StringComparison.OrdinalIgnoreCase))
+            if (!destFull.StartsWith(Path.GetFullPath(targetVersionDir).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
             {
                 failed.Add(file.Path);
                 continue;
@@ -236,12 +236,13 @@ public class ModpackService
             try
             {
                 Directory.CreateDirectory(Path.GetDirectoryName(destFull)!);
-                using var resp = await http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, ct);
-                resp.EnsureSuccessStatusCode();
-                await using var fs = File.Create(destFull);
-                await resp.Content.CopyToAsync(fs, ct);
+                await DownloadEndpoints.DownloadFilesWithFallbackAsync(http, file.Downloads, DownloadEndpoints.PreferMirror,
+                    destFull, $"下载整合包文件 {file.Path} 失败", ct: ct,
+                    expectedSha1: file.Hashes?.GetValueOrDefault("sha1"),
+                    expectedSha512: file.Hashes?.GetValueOrDefault("sha512"),
+                    expectedSize: file.FileSize > 0 ? file.FileSize : null);
             }
-            catch
+            catch (Exception ex) when (ex is not OperationCanceledException and not Plugins.PluginFlowCanceledException)
             {
                 // 单个文件下载失败不中止整体导入——大型整合包里某一个 mod 源偶尔失效很常见，
                 // 让用户能先玩上，之后自己去 Mod 管理页补装这一个即可，比整体导入失败友好得多。
@@ -457,14 +458,14 @@ public class ModpackManifest
 /// <summary>Modrinth modrinth.index.json 的结构（只映射导入需要用到的字段）。</summary>
 public class MrpackIndex
 {
-    public string Name { get; set; } = "";
+    [JsonPropertyName("name")] public string Name { get; set; } = "";
     [JsonPropertyName("dependencies")] public MrpackDependencies? Dependencies { get; set; }
-    public List<MrpackFile> Files { get; set; } = new();
+    [JsonPropertyName("files")] public List<MrpackFile> Files { get; set; } = new();
 }
 
 public class MrpackDependencies
 {
-    public string? Minecraft { get; set; }
+    [JsonPropertyName("minecraft")] public string? Minecraft { get; set; }
     [JsonPropertyName("fabric-loader")] public string? FabricLoader { get; set; }
     /// <summary>Quilt 的依赖键，Modrinth 规范里跟 fabric-loader 平级。原来漏了这一项，
     /// 导致 Quilt 实例导出的 mrpack 完全丢失加载器信息（导入方只知道 MC 版本、不知道要装 Quilt）。</summary>
@@ -475,14 +476,16 @@ public class MrpackDependencies
 
 public class MrpackFile
 {
-    public string Path { get; set; } = "";
-    public List<string> Downloads { get; set; } = new();
-    public MrpackFileEnv? Env { get; set; }
+    [JsonPropertyName("path")] public string Path { get; set; } = "";
+    [JsonPropertyName("downloads")] public List<string> Downloads { get; set; } = new();
+    [JsonPropertyName("hashes")] public Dictionary<string, string> Hashes { get; set; } = new();
+    [JsonPropertyName("fileSize")] public long FileSize { get; set; }
+    [JsonPropertyName("env")] public MrpackFileEnv? Env { get; set; }
 }
 
 public class MrpackFileEnv
 {
-    public string? Client { get; set; }
+    [JsonPropertyName("client")] public string? Client { get; set; }
 }
 
 /// <summary>mrpack 导入结果：整合包名字、清单里声明的 MC 版本(可能为空)、下载失败的文件路径列表。</summary>

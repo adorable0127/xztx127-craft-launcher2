@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
+    <TargetPlatformMinVersion>10.0.17763.0</TargetPlatformMinVersion>
+    <SupportedOSPlatformVersion>10.0.17763.0</SupportedOSPlatformVersion>
+    <UseWinUI>true</UseWinUI>
+    <WindowsPackageType>None</WindowsPackageType>
+    <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
+    <SelfContained>true</SelfContained>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <Platforms>x64</Platforms>
+    <PlatformTarget>x64</PlatformTarget>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <!-- dotnet publish 需要此工具链提供兼容 .NET 的 PRI 任务。
+         WindowsPackageType=None 仍保持非 MSIX 部署；不能关闭工具链，
+         否则 MRT Core 会从 dotnet SDK 下不存在的 VisualStudio 目录加载任务。 -->
+    <EnableMsixTooling>true</EnableMsixTooling>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.WindowsAppSDK" Version="1.6.250205002" />
+    <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.22621.756" />
+    <Compile Include="../Services/Preview/PreviewContracts.cs" Link="Shared/PreviewContracts.cs" />
+    <Compile Include="../Services/Worlds/NbtDocument.cs" Link="Shared/NbtDocument.cs" />
+    <Compile Include="../Services/Worlds/WorldArchiveService.cs" Link="Shared/WorldArchiveService.cs" />
+    <Compile Include="../Services/Worlds/StructureInspector.cs" Link="Shared/StructureInspector.cs" />
+  </ItemGroup>
+</Project>

@@ -1,564 +1,2036 @@
-# XCL2 启动器 API 接入说明
+# XCL2 API 2.3
 
-本文只说明当前源码已有的接入接口、参数、返回值和调用方式。
-
-## 1. 选择接入方式
-
-| 接入目的 | 接口 | 调用方向 |
-| --- | --- | --- |
-| 在启动器内运行扩展、保存配置、展示设置面板 | `IPlugin` / `PluginContext` | 启动器加载 DLL 并调用插件 |
-| 随启动器运行独立程序 | EXE 插件进程约定 | 启动器启动 EXE，传入数据目录环境变量 |
-| 从脚本或其他软件打开页面、启动已有实例 | 命令行 | 外部程序启动 XCL2 并传参数 |
-| 接入自建或第三方 AI 服务 | Chat Completions 兼容 HTTP 接口 | 启动器向你配置的服务器发送请求 |
-| 在启动器源码中管理插件 | `PluginManager` | 宿主代码管理插件的安装与生命周期 |
-| 读取或导出内置帮助 MD | `EmbeddedDocumentationService` | 从当前启动器程序集读取资源 |
-
-下文的 C# 接口是进程内方法，不是 HTTP URL。AI 服务器地址是启动器访问的上游服务地址。
-
-## 2. DLL 插件契约：IPlugin
-
-命名空间：`XCL2.App.Services.Plugins`。主插件 DLL 提供一个公开、非抽象、具有公开无参构造函数的 `IPlugin` 实现类。插件使用 .NET 8 / WPF，并引用与所运行启动器匹配的托管程序集。
-
-若从源码构建后引用宿主，使用构建输出中的托管 `XCL2.dll`；单文件发布的 EXE 不是可替代它的接口引用文件。引用项设置 `Private=false`，避免把宿主程序集当作插件依赖再次安装。
-
-```xml
-<Project Sdk="Microsoft.NET.Sdk">
-  <PropertyGroup>
-    <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
-    <UseWPF>true</UseWPF>
-    <Nullable>enable</Nullable>
-    <ImplicitUsings>enable</ImplicitUsings>
-  </PropertyGroup>
-  <ItemGroup>
-    <Reference Include="XCL2">
-      <HintPath>C:\XCL2\managed-build\XCL2.dll</HintPath>
-      <Private>false</Private>
-    </Reference>
-  </ItemGroup>
-</Project>
-```
-
-| 成员 | 类型 / 签名 | 语义 |
-| --- | --- | --- |
-| `Id` | `string`，只读 | 插件唯一标识；发布后保持稳定，供配置和数据目录使用 |
-| `DisplayName` | `string`，只读 | 管理页显示名称 |
-| `Version` | `string`，只读 | 管理页显示的插件版本 |
-| `Description` | `string`，只读 | 插件功能描述 |
-| `Author` | `string`，只读 | 插件作者 |
-| `Initialize(PluginContext ctx)` | `void` | 符合启动策略时由宿主调用，建立上下文、订阅事件、启动任务 |
-| `Shutdown()` | `void` | 本轮成功初始化的插件被停止、重新扫描或宿主退出时调用，释放资源 |
-| `CreateSettingsPanel(PluginContext ctx)` | `UserControl?` | 用户打开插件配置时调用；返回 WPF 面板；默认实现返回 `null` |
-
-`Initialize` 应尽快返回，网络和长时间任务采用异步方式。后台线程更新 WPF 控件时切回 UI Dispatcher。重新扫描会先关停上一轮实例，再按策略加载；`Shutdown` 不保证程序集立即完成垃圾回收。后台任务、定时器和事件订阅应由插件自行取消或解除。
-
-返回 `null` 的设置面板由宿主替换为已有配置的只读 JSON 预览，并在下方展示本插件已注册的选项、按钮和面板。仅本轮已运行的 DLL 能打开配置面板。
-
-### 插件管理界面入口
-
-“插件管理”弹窗（`PluginManagerDialog`）本身不区分入口；宿主统一通过 `OverlayDialogService` / `OverlayDialogControl.ShowDialog()` 打开。当前有两个位置可以打开它：
-
-| 入口 | 位置 | 是否受额外门控限制 |
-| --- | --- | --- |
-| 「设置」页 → 第三方插件 → 插件管理… | `SettingsPage.Plugins.cs` 的 `InitializePluginSettings()` 动态管理区 | 无，任何语言、简洁模式开关状态下都能看到 |
-| 「实验性功能」→ 插件管理 | `ExperimentalFeaturesWindow` 的 `PluginManager_Click` | 受 `LocalizationService.ExperimentalFeaturesLanguageGate`（仅简体中文）和简洁模式开关联动隐藏，且首次打开要先在 `ExperimentalGateWindow` 等待 10 秒确认 |
-
-插件的启用/禁用、扫描状态查看属于基础管理能力，不属于"实验性"功能，因此不应该只挂在有语言/模式门控的「实验性功能」入口下——「设置」页的入口就是为解决"找不到插件管理"这个问题加的，不受任何门控影响。两个入口背后是同一个 `PluginManagerDialog` / 同一个 `MainWindow.Plugins`（`PluginManager` 单例），互不冲突，也不会重复扫描或重复加载。
-
-### Shutdown 阶段的日志落盘顺序
-
-`MainWindow` 在关闭时按固定顺序触发一批 `Closed` 事件处理器，其中两个和插件直接相关，顺序不能颠倒：
-
-1. `Plugins.ShutdownAll()`：对本轮成功初始化的插件逐个调用 `Shutdown()`，插件在这一步里调用的 `ctx.Log(...)`（以及 `PluginManager` 自己捕获到的、插件 `Shutdown()` 抛出异常时记录的日志）会追加进本次会话的日志内存缓冲区。
-2. `LauncherLogService.EndSessionAndFlush()`：把内存缓冲区一次性写入本次会话的日志文件，并把内部标记设为"已写入"（幂等设计，防止重复落盘）；写入之后再往缓冲区追加的任何内容都不会再有第二次落盘机会。
-
-必须先执行第 1 步、再执行第 2 步，否则插件在 `Shutdown()` 里记的日志会因为会话日志已经落盘完毕而彻底丢失——插件作者看不到任何诊断信息，容易误以为"`Shutdown` 根本没被调用"。当前源码已按这个顺序注册。排查"插件在关闭时好像没生效"时，先去查这份会话日志（或直接看 `PluginContext.Log` 写入的启动器日志）里有没有 `[Plugin:你的插件Id]` 开头的行，能确认 `Shutdown()` 是否真的执行到、执行到哪一步、有没有抛异常。
-
-## 3. PluginContext：宿主提供的能力
-
-`Initialize` 和 `CreateSettingsPanel` 的上下文由宿主创建并传入。
-
-| 成员 | 类型 | 用法 |
-| --- | --- | --- |
-| `PluginId` | `string` | 与 `IPlugin.Id` 一致 |
-| `Config` | `PluginConfigService` | 读写本插件配置 |
-| `DataDirectory` | `string` | 已创建的专属可写目录，保存插件缓存、下载内容或其他数据 |
-| `Log` | `Action<string>` | `ctx.Log("消息")`，宿主自动添加插件标识并写入启动器日志 |
-| `ApiVersion` | `Version` | 插件 API 版本，当前宿主为 1.9 |
-| `Ui` | `PluginUiService` | 注册弹窗、选项、按钮、面板；详见第 10 节 |
-| `Stopping` | `CancellationToken` | 插件停止时取消的令牌 |
-
-默认数据目录：`%APPDATA%\XCL2\Plugins\data\<PluginId>\`。配置目录：`%APPDATA%\XCL2\Plugins\config\<PluginId>.json`。使用上下文提供的实际路径，避免在插件中自行拼接固定路径。
-
-### 配置接口
-
-| 方法 | 返回值 | 行为 |
-| --- | --- | --- |
-| `Get<T>(string key, T fallback)` | `T` | 缺少键或反序列化失败时返回 `fallback` |
-| `Set<T>(string key, T value)` | `void` | 序列化值并立即重写配置文件；序列化、写入失败可抛出异常 |
-| `Remove(string key)` | `void` | 删除存在的键并保存；不存在时不写文件 |
-| `Snapshot()` | `IReadOnlyDictionary<string, JsonElement>` | 返回当前配置的只读视图，不是独立拷贝 |
-
-配置服务没有提供并发访问保证；同一插件的多个任务应串行访问配置。插件间的目录区分是数据组织方式，不是进程权限隔离。
-
-### 最小调用示例
+## PluginContext
 
 ```csharp
-using System.IO;
-using System.Windows.Controls;
-using XCL2.App.Services.Plugins;
-
-public sealed class ExamplePlugin : IPlugin
-{
-    public string Id => "example.integration";
-    public string DisplayName => "接口接入示例";
-    public string Version => "1.0.0";
-    public string Description => "演示配置、数据文件、日志和设置面板。";
-    public string Author => "Example";
-    private PluginContext? _context;
-
-    public void Initialize(PluginContext ctx)
-    {
-        _context = ctx;
-        var count = ctx.Config.Get("launchCount", 0);
-        ctx.Config.Set("launchCount", count + 1);
-        File.WriteAllText(Path.Combine(ctx.DataDirectory, "status.txt"), "ready");
-        ctx.Log($"初始化完成，本插件累计运行 {count + 1} 次。");
-    }
-
-    public UserControl? CreateSettingsPanel(PluginContext ctx)
-    {
-        var enabled = new CheckBox
-        {
-            Content = "启用示例功能",
-            IsChecked = ctx.Config.Get("enabled", true)
-        };
-        enabled.Click += (_, _) => ctx.Config.Set("enabled", enabled.IsChecked == true);
-        return new UserControl { Content = enabled };
-    }
-
-    public void Shutdown()
-    {
-        _context?.Log("插件停止。");
-        _context = null;
-    }
-}
+public sealed class PluginContext : IDisposable
 ```
 
-示例的配置写入由 UI 线程顺序执行。实际插件如有后台任务，在 `Shutdown` 中取消任务并释放资源；不要将密钥、令牌或登录凭据写入 `ctx.Log`。
+| API 签名 | EXE method | 权限 / 接口说明 |
+| --- | --- | --- |
+| `PluginConfigService Config { get; }` | — | 该插件独享的配置读写入口，落盘在 %AppData%/XCL2/Plugins/config/{PluginId}.json， 具体用法见 PluginConfigService 自己的注释。 |
+| `string DataDirectory { get; }` | — | 该插件独享的数据目录（%AppData%/XCL2/Plugins/data/{PluginId}/）， 已在 Initialize 调用前确保存在。需要落盘缓存文件、下载文件的插件应该写在这里， 而不是写到 dll 自己所在目录（那个目录可能只读，或者被启动器整体当作只读区对待）。 |
+| `Action<string> Log { get; }` | — | 把一行文字写进启动器日志（会自动带上"[Plugin:该插件Id]"前缀）， 排查问题时能直接在启动器"日志"页里看到，不需要插件自己另外弹窗/写文件。 |
+| `Version ApiVersion { get; }` | — | UI 注册 API 版本；原有 IPlugin 契约保持兼容。 |
+| `PluginMetadata Metadata { get; private set; }` | — | — |
+| `PluginUiService Ui { get; }` | — | 注册弹窗、按钮、选项、面板和弹窗生命周期订阅。 |
+| `PluginComponentService Components { get; }` | — | 任意已加载视图的组件定位、增加、移除、移动、替换与布局。 |
+| `PluginRuntimeService Runtime { get; }` | — | 启动内核、头像和实时 3D 渲染后端扩展。 |
+| `PluginPermissionService Permissions { get; }` | — | — |
+| `PluginLauncherService Launcher { get; }` | — | — |
+| `PluginControlService Control { get; }` | — | 页面导航、窗口布局、启动控制与经过校验的设置写入。 |
+| `PluginEventService Events { get; }` | — | — |
+| `PluginProviderService Providers { get; }` | — | — |
+| `PluginNetworkService Network { get; }` | — | — |
+| `PluginMessageService Messages { get; }` | — | — |
+| `PluginPreviewService Preview { get; }` | — | — |
+| `PluginWorldService Worlds { get; }` | — | — |
+| `PluginManagementService Management { get; }` | — | API 2.2：实例、模组、Java 与下载队列管理。 |
+| `PluginResourceService Resources { get; }` | — | API 2.2：宿主资源查询、文件安装及原版版本安装。 |
+| `PluginProjectService Projects { get; }` | — | — |
+| `PluginTaskService Tasks { get; }` | — | — |
+| `PluginChangeService Changes { get; }` | — | — |
+| `PluginQueryService Queries { get; }` | — | — |
+| `void Dispose()` | — | — |
+| `System.Threading.CancellationToken Stopping { get; }` | — | 插件停止时取消，后台任务应传入此令牌。 |
+| `PluginContext(string pluginId, PluginConfigService config, string dataDirectory, Action<string> log)` | — | — |
+| `string PluginId { get; }` | — | 原安装等于 IPlugin.Id，副本含独立实例后缀。使用此 Id 隔离注册项，方便插件代码里不用额外持有 IPlugin 引用 也能拿到自己的 Id（比如拼日志前缀、拼文件名）。 |
 
-## 4. EXE 插件进程接口
-
-EXE 不实现 `IPlugin`，不接收进程内 `PluginContext` 对象，但 Protocol 1 会把一组受权限控制的宿主能力映射为双向命名管道 RPC。宿主以 `UseShellExecute=false` 启动程序，工作目录为安装后的 EXE 所在目录，不附加插件专用命令行参数。
-
-| 项目 | 约定 |
-| --- | --- |
-| 数据目录 | `XCL2_PLUGIN_DATA_DIR` |
-| 管道 | `XCL2_PLUGIN_PIPE` |
-| 握手令牌 | `XCL2_PLUGIN_SESSION_TOKEN`，每次启动随机生成 |
-| 协议版本 | `XCL2_PLUGIN_PROTOCOL_VERSION=1` |
-| 运行策略 | `EachLaunch` 每次启动/重扫；`OnceOnImport` 成功启动一次后不重复运行 |
-| 身份边界 | 当前 Windows 用户 + 实际客户端 PID 双重校验 |
-| 停止 | 退出/重载/禁用/卸载时撤销注册、关闭会话并结束托管 EXE 进程树 |
-
-Protocol 1 帧为 4 字节 little-endian 长度前缀 + UTF-8 JSON，单帧最大 1 MiB。首个 request 必须调用 `hello` 并提交会话 token；响应返回 `apiVersion` 与实际插件实例 ID。宿主回调 EXE 时使用 `callbacks.invoke` request，EXE 以相同 request id 返回 response。
-
-当前映射包括：权限快照；账户/实例/Mod/下载/设置/环境只读快照；`config.get/set/remove` 与日志；受限网络 GET；事件订阅和三类干预；依赖插件消息；下载/Mod/Loader/登录 Provider；安装工作区；登录 broker；导航页、实例操作、设置项、背景；以及声明式 Dialog/Button/Panel/Option 与弹窗生命周期订阅。注册方法返回独立 `registrationId`，可通过 `registrations.remove` 注销。
-
-EXE 的 Page/Dialog/Panel 内容使用受限声明式节点（当前为 `text` 和 `button`），因此不会把 WPF 对象越过进程边界。需要任意 `FrameworkElement` 组件树修改、头像渲染器、实时 3D 渲染后端或旧同步 `RegisterLaunchMiddleware` 时仍使用 DLL；EXE 修改启动参数使用 `events.interceptLaunch`。完整协议方法和示例见内嵌 `PLUGIN_EXE_PROTOCOL.md`。
-
-## 5. 外部程序与脚本：命令行入口
-
-启动器的参数解析位于 `CommandLineService.Parse(string[] args)`。页面和启动动作由主窗口执行；参数解析结果本身不等于已完成操作。
-
-| 调用 | 用途 |
-| --- | --- |
-| `XCL2.exe -help` | 显示命令行说明 |
-| `XCL2.exe -r --account "账户名" --instance "实例名"` | 使用已有账户启动已有实例 |
-| `XCL2.exe -r --账户名 "账户名" --实例名称 "实例名"` | 上一条的中文参数写法 |
-| `XCL2.exe -gui "设置"` | 打开对应页面，页面名使用启动器导航/搜索支持的名称 |
-| `XCL2.exe --d --version "1.21.1" --loader "Fabric"` | 打开下载入口并传入版本和加载器选择 |
-| `XCL2.exe --d` | 打开下载入口，交由用户选择版本 |
-
-页面简写：
-
-| 参数 | 页面 | 参数 | 页面 |
-| --- | --- | --- | --- |
-| `--home` | 首页 | `--versions` | 版本管理 |
-| `--downloads` | 下载中心 | `--multiplayer` | 联机 |
-| `--mods` | Mod 管理 | `--servers` | 服务端管理 |
-| `--accounts` | 账户 | `--settings` | 设置 |
-| `--logs` | 日志 | `--toolbox` | 百宝箱 |
-| `--bedrock` | 基岩版启动 | `--about` | 鸣谢与帮助 |
-| `--experimental` | 实验性功能 | `--ai` | AI 助手 |
-
-一次指定一个页面。参数名不区分大小写；带值的长选项支持 `--参数 值` 或 `--参数=值`，包含空格的值应作为一个参数传入。C# 调用方使用 `ArgumentList`，无需自己拼接引号：
+## IPlugin
 
 ```csharp
-using System.Diagnostics;
-
-var start = new ProcessStartInfo(@"C:\XCL2\XCL2.exe") { UseShellExecute = false };
-start.ArgumentList.Add("-r");
-start.ArgumentList.Add("--account");
-start.ArgumentList.Add("我的账户");
-start.ArgumentList.Add("--instance");
-start.ArgumentList.Add("我的整合包");
-Process.Start(start);
+public interface IPlugin
 ```
 
-这里只发起启动器操作，不返回游戏启动成功的结构化响应，也不会借参数创建账户。调用方不能将启动器进程成功创建等同于游戏已成功进入主菜单。
+| API 签名 | EXE method | 权限 / 接口说明 |
+| --- | --- | --- |
+| `string Id { get; }` | — | 插件唯一 ID，建议用"作者名.插件名"这种反向域名风格的短字符串， 例如 "someone.better-skin-tools"。这个 ID 同时也是配置文件、日志前缀的 key， 上线之后不要再改，否则等于变成了一个新插件（旧配置对不上）。 |
+| `string DisplayName { get; }` | — | 展示给用户看的插件名称，随时可以改，不影响配置归属。 |
+| `string Version { get; }` | — | 插件版本号，纯展示用，建议跟随语义化版本（1.0.0 这种）。 |
+| `string Description { get; }` | — | 一两句话说明这个插件是干什么的，显示在插件管理列表里。 |
+| `string Author { get; }` | — | 插件作者，展示用，可以留空字符串。 |
+| `void Initialize(PluginContext ctx)` | — | 启动器加载插件时调用一次。ctx 提供了配置读写、日志、以及向"插件"页面 挂一个自定义设置面板的能力——具体每个成员的用法见 PluginContext 自己的注释。 这里面不应该做耗时的同步操作（网络请求、大文件 IO 等），耗时工作请自己开 Task.Run，不要卡住启动器主界面的启动过程。 |
+| `void Shutdown()` | — | 插件被用户关闭，或者启动器正常退出时调用一次，用来释放插件自己占用的资源 （文件句柄、定时器、后台线程等）。如果插件没有需要清理的东西，留空实现即可。 |
+| `UserControl? CreateSettingsPanel(PluginContext ctx)` | — | 可选：返回一个插件自己的配置界面（一个 UserControl），显示在"插件管理"里 该插件条目的"配置"按钮之后。不需要图形配置界面的插件（比如只是后台跑点逻辑的） 可以直接返回 null——这时"配置"按钮会改成显示一个通用的、基于 PluginContext.Config 里已保存键值对的只读 JSON 预览，方便用户至少能看到当前保存了什么。 |
 
-## 6. 自定义 AI HTTP 接口
+## ctx.Projects
 
-用户在 AI 助手设置中开启使用自定义 API Key，填写 Base URL、API Key 和请求用模型 ID。当前客户端实现位于 `AiAssistantService`。
+```csharp
+public sealed class PluginProjectService
+```
 
-| 设置字段 | 含义 |
+| API 签名 | EXE method | 权限 / 接口说明 |
+| --- | --- | --- |
+| `Task<PluginProject?> ChooseFolderAsync(CancellationToken ct = default)` | `workbench.projects.chooseFolder` | projects.read |
+| `PluginProject OpenDataProject(string name)` | `workbench.projects.openDataProject` | projects.read + projects.write |
+| `IReadOnlyList<PluginProject> GetOpenProjects()` | `workbench.projects.list` | projects.read |
+| `PluginProject GetProject(string projectId)` | `workbench.projects.get` | projects.read |
+| `bool CloseProject(string projectId)` | `workbench.projects.close` | projects.read |
+| `IReadOnlyList<ProjectEntry> GetFiles(string projectId, string glob = "*", int limit = 1000)` | `workbench.projects.files` | projects.read |
+| `IReadOnlyList<string> GetDirectories(string projectId, string path = "")` | `workbench.projects.directories` | projects.read |
+| `ProjectSearchResult SearchText(string projectId, string query, string glob = "*", int limit = 200)` | `workbench.projects.searchText` | projects.read |
+| `ProjectSearchResult SearchRegex(string projectId, string pattern, string glob = "*", int limit = 200)` | `workbench.projects.searchRegex` | projects.read |
+| `ProjectTextPage ReadRange(string projectId, string path, int startLine = 1, int lineCount = 200)` | `workbench.projects.readRange` | projects.read |
+| `ProjectTextPage ReadHead(string projectId, string path, int lineCount = 100)` | `workbench.projects.readHead` | projects.read |
+| `string ReadTail(string projectId, string path, int lineCount = 100)` | `workbench.projects.readTail` | projects.read |
+| `string ReadText(string projectId, string path)` | `workbench.projects.readText` | projects.read |
+| `byte[] ReadBytes(string projectId, string path, long offset = 0, int count = 4096)` | `workbench.projects.readBytes` | projects.read |
+| `string GetHash(string projectId, string path)` | `workbench.projects.hash` | projects.read |
+| `ProjectEntry GetFileInfo(string projectId, string path)` | `workbench.projects.fileInfo` | projects.read |
+| `bool FileExists(string projectId, string path)` | `workbench.projects.fileExists` | projects.read |
+| `IReadOnlyDictionary<string, int> GetExtensionStats(string projectId)` | `workbench.projects.extensionStats` | projects.read |
+| `IReadOnlyList<ProjectEntry> GetLargestFiles(string projectId, int count = 20)` | `workbench.projects.largestFiles` | projects.read |
+| `IReadOnlyList<ProjectEntry> FindFiles(string projectId, string name)` | `workbench.projects.findFiles` | projects.read |
+| `int GetFileCount(string projectId)` | `workbench.projects.fileCount` | projects.read |
+| `long GetTotalBytes(string projectId)` | `workbench.projects.totalBytes` | projects.read |
+| `string GetNewlineStyle(string projectId, string path)` | `workbench.projects.newline` | projects.read |
+| `string GetEncoding(string projectId, string path)` | `workbench.projects.encoding` | projects.read |
+| `JsonElement ReadJson(string projectId, string path)` | `workbench.projects.readJson` | projects.read |
+| `IReadOnlyList<string> GetJsonProperties(string projectId, string path)` | `workbench.projects.jsonProperties` | projects.read |
+| `JsonElement ReadJsonPointer(string projectId, string path, string pointer)` | `workbench.projects.jsonPointer` | projects.read |
+
+## ctx.Tasks
+
+```csharp
+public sealed class PluginTaskService(PluginContext context)
+```
+
+| API 签名 | EXE method | 权限 / 接口说明 |
+| --- | --- | --- |
+| `WorkTask Create(string title, string goal, string projectRoot = "")` | `workbench.tasks.create` | tasks.manage |
+| `WorkTask Get(string id)` | `workbench.tasks.get` | tasks.manage |
+| `IReadOnlyList<WorkTask> List()` | `workbench.tasks.list` | tasks.manage |
+| `IReadOnlyList<WorkTask> Find(string query)` | `workbench.tasks.find` | tasks.manage |
+| `IReadOnlyList<WorkTask> GetActive()` | `workbench.tasks.active` | tasks.manage |
+| `IReadOnlyList<WorkTask> GetCompleted()` | `workbench.tasks.completed` | tasks.manage |
+| `IReadOnlyList<WorkTask> GetArchived()` | `workbench.tasks.archived` | tasks.manage |
+| `WorkTask Rename(string id, string title)` | `workbench.tasks.rename` | tasks.manage |
+| `WorkTask SetGoal(string id, string goal)` | `workbench.tasks.goal` | tasks.manage |
+| `WorkTask SetProjectRoot(string id, string projectRoot)` | `workbench.tasks.project` | tasks.manage |
+| `WorkTask SetMode(string id, string mode)` | `workbench.tasks.mode` | tasks.manage |
+| `WorkTask SetNextAction(string id, string nextAction)` | `workbench.tasks.nextAction` | tasks.manage |
+| `WorkTask SetNotes(string id, string notes)` | `workbench.tasks.notes` | tasks.manage |
+| `WorkTask AppendNotes(string id, string notes)` | `workbench.tasks.appendNotes` | tasks.manage |
+| `WorkTask AddStep(string id, string title)` | `workbench.tasks.addStep` | tasks.manage |
+| `WorkTask RemoveStep(string id, string stepId)` | `workbench.tasks.removeStep` | tasks.manage |
+| `WorkTask RenameStep(string id, string stepId, string title)` | `workbench.tasks.renameStep` | tasks.manage |
+| `WorkTask SetStepStatus(string id, string stepId, string status)` | `workbench.tasks.stepStatus` | tasks.manage |
+| `WorkTask SetStepEvidence(string id, string stepId, string evidence)` | `workbench.tasks.stepEvidence` | tasks.manage |
+| `WorkTask ReplaceSteps(string id, List<WorkStep> steps)` | `workbench.tasks.replaceSteps` | tasks.manage |
+| `IReadOnlyList<WorkStep> GetSteps(string id)` | `workbench.tasks.steps` | tasks.manage |
+| `IReadOnlyList<WorkStep> GetPendingSteps(string id)` | `workbench.tasks.pendingSteps` | tasks.manage |
+| `IReadOnlyList<WorkStep> GetCompletedSteps(string id)` | `workbench.tasks.completedSteps` | tasks.manage |
+| `WorkTask Checkpoint(string id, string text)` | `workbench.tasks.checkpoint` | tasks.manage |
+| `IReadOnlyList<string> GetCheckpoints(string id)` | `workbench.tasks.checkpoints` | tasks.manage |
+| `WorkTask Pause(string id)` | `workbench.tasks.pause` | tasks.manage |
+| `WorkTask Resume(string id)` | `workbench.tasks.resume` | tasks.manage |
+| `WorkTask Complete(string id)` | `workbench.tasks.complete` | tasks.manage |
+| `WorkTask Archive(string id)` | `workbench.tasks.archive` | tasks.manage |
+| `WorkTask AddChange(string id, string changeId)` | `workbench.tasks.addChange` | tasks.manage |
+| `IReadOnlyList<string> GetChanges(string id)` | `workbench.tasks.changes` | tasks.manage |
+| `double GetProgress(string id)` | `workbench.tasks.progress` | tasks.manage |
+| `WorkTask Clone(string id, string title)` | `workbench.tasks.clone` | tasks.manage |
+
+## ctx.Changes
+
+```csharp
+public sealed class PluginChangeService(PluginContext context)
+```
+
+| API 签名 | EXE method | 权限 / 接口说明 |
+| --- | --- | --- |
+| `FileChange PrepareWrite(string projectId, string path, string content, string? expectedHash = null)` | `workbench.changes.prepareWrite` | projects.read + projects.write |
+| `FileChange PreparePatch(string projectId, string path, string sha256, string oldText, string newText)` | `workbench.changes.preparePatch` | projects.read + projects.write |
+| `FileChange PrepareDelete(string projectId, string path, string sha256)` | `workbench.changes.prepareDelete` | projects.read + projects.write |
+| `IReadOnlyList<FileChange> List(string projectId)` | `workbench.changes.list` | projects.read + projects.write |
+| `FileChange Get(string projectId, string changeId)` | `workbench.changes.get` | projects.read + projects.write |
+| `byte[]? GetBefore(string projectId, string changeId)` | `workbench.changes.before` | projects.read + projects.write |
+| `byte[]? GetAfter(string projectId, string changeId)` | `workbench.changes.after` | projects.read + projects.write |
+| `AiFileDiff GetDiff(string projectId, string changeId)` | `workbench.changes.diff` | projects.read + projects.write |
+| `Task<FileChange> ApplyAsync(string projectId, string changeId, CancellationToken ct = default)` | `workbench.changes.apply` | projects.read + projects.write |
+| `Task<FileChange> RollbackAsync(string projectId, string changeId, CancellationToken ct = default)` | `workbench.changes.rollback` | projects.read + projects.write |
+
+## ctx.Queries
+
+```csharp
+public sealed class PluginQueryService(PluginContext context)
+```
+
+| API 签名 | EXE method | 权限 / 接口说明 |
+| --- | --- | --- |
+| `Task<IReadOnlyList<PluginInstance>> GetInstalledInstances(CancellationToken ct = default)` | `workbench.query.instances.installed` | instances.read |
+| `Task<IReadOnlyList<PluginInstance>> GetIncompleteInstances(CancellationToken ct = default)` | `workbench.query.instances.incomplete` | instances.read |
+| `Task<IReadOnlyList<PluginInstance>> GetHiddenInstances(CancellationToken ct = default)` | `workbench.query.instances.hidden` | instances.read |
+| `Task<IReadOnlyList<PluginInstance>> GetVisibleInstances(CancellationToken ct = default)` | `workbench.query.instances.visible` | instances.read |
+| `Task<IReadOnlyList<PluginInstance>> GetVanillaInstances(CancellationToken ct = default)` | `workbench.query.instances.vanilla` | instances.read |
+| `Task<IReadOnlyList<PluginInstance>> FindInstancesByName(string name, CancellationToken ct = default)` | `workbench.query.instances.byName` | instances.read |
+| `Task<IReadOnlyList<PluginInstance>> FindInstancesByVersion(string version, CancellationToken ct = default)` | `workbench.query.instances.byVersion` | instances.read |
+| `Task<IReadOnlyList<PluginInstance>> FindInstancesByLoader(string loader, CancellationToken ct = default)` | `workbench.query.instances.byLoader` | instances.read |
+| `Task<PluginInstance?> GetInstance(string id, CancellationToken ct = default)` | `workbench.query.instances.get` | instances.read |
+| `Task<bool> InstanceExists(string id, CancellationToken ct = default)` | `workbench.query.instances.exists` | instances.read |
+| `Task<int> GetInstanceCount(CancellationToken ct = default)` | `workbench.query.instances.count` | instances.read |
+| `Task<IReadOnlyList<string>> GetMinecraftVersions(CancellationToken ct = default)` | `workbench.query.instances.versions` | instances.read |
+| `Task<IReadOnlyList<string>> GetLoaders(CancellationToken ct = default)` | `workbench.query.instances.loaders` | instances.read |
+| `Task<IReadOnlyList<PluginInstance>> GetInstancePage(int offset = 0, int limit = 100, CancellationToken ct = default)` | `workbench.query.instances.page` | instances.read |
+| `Task<IReadOnlyList<PluginMod>> GetEnabledMods(string instanceId, CancellationToken ct = default)` | `workbench.query.mods.enabled` | mods.read |
+| `Task<IReadOnlyList<PluginMod>> GetDisabledMods(string instanceId, CancellationToken ct = default)` | `workbench.query.mods.disabled` | mods.read |
+| `Task<IReadOnlyList<PluginMod>> FindModsById(string instanceId, string modId, CancellationToken ct = default)` | `workbench.query.mods.byId` | mods.read |
+| `Task<IReadOnlyList<PluginMod>> FindModsByName(string instanceId, string name, CancellationToken ct = default)` | `workbench.query.mods.byName` | mods.read |
+| `Task<PluginMod?> GetModByFile(string instanceId, string fileName, CancellationToken ct = default)` | `workbench.query.mods.file` | mods.read |
+| `Task<int> GetModCount(string instanceId, CancellationToken ct = default)` | `workbench.query.mods.count` | mods.read |
+| `Task<long> GetModBytes(string instanceId, CancellationToken ct = default)` | `workbench.query.mods.bytes` | mods.read |
+| `Task<IReadOnlyList<PluginMod>> GetLargestMods(string instanceId, int count = 20, CancellationToken ct = default)` | `workbench.query.mods.largest` | mods.read |
+| `Task<IReadOnlyList<string>> GetDuplicateModIds(string instanceId, CancellationToken ct = default)` | `workbench.query.mods.duplicateIds` | mods.read |
+| `Task<IReadOnlyList<PluginMod>> GetModPage(string instanceId, int offset = 0, int limit = 100, CancellationToken ct = default)` | `workbench.query.mods.page` | mods.read |
+| `Task<IReadOnlyList<PluginDownload>> GetActiveDownloads(CancellationToken ct = default)` | `workbench.query.downloads.active` | downloads.read |
+| `Task<IReadOnlyList<PluginDownload>> GetPausedDownloads(CancellationToken ct = default)` | `workbench.query.downloads.paused` | downloads.read |
+| `Task<IReadOnlyList<PluginDownload>> GetCompletedDownloads(CancellationToken ct = default)` | `workbench.query.downloads.completed` | downloads.read |
+| `Task<IReadOnlyList<PluginDownload>> GetFailedDownloads(CancellationToken ct = default)` | `workbench.query.downloads.failed` | downloads.read |
+| `Task<IReadOnlyList<PluginDownload>> GetCanceledDownloads(CancellationToken ct = default)` | `workbench.query.downloads.canceled` | downloads.read |
+| `Task<IReadOnlyList<PluginDownload>> GetInstanceDownloads(string instanceId, CancellationToken ct = default)` | `workbench.query.downloads.instance` | downloads.read |
+| `Task<PluginDownload?> GetDownload(Guid id, CancellationToken ct = default)` | `workbench.query.downloads.get` | downloads.read |
+| `Task<int> GetDownloadCount(CancellationToken ct = default)` | `workbench.query.downloads.count` | downloads.read |
+| `Task<IReadOnlyList<PluginAccount>> GetOfflineAccounts(CancellationToken ct = default)` | `workbench.query.accounts.offline` | accounts.read |
+| `Task<IReadOnlyList<PluginAccount>> GetMicrosoftAccounts(CancellationToken ct = default)` | `workbench.query.accounts.microsoft` | accounts.read |
+| `Task<IReadOnlyList<PluginAccount>> GetAuthServerAccounts(CancellationToken ct = default)` | `workbench.query.accounts.authserver` | accounts.read |
+| `Task<IReadOnlyList<PluginAccount>> GetGuestAccounts(CancellationToken ct = default)` | `workbench.query.accounts.guest` | accounts.read |
+| `Task<PluginAccount?> GetAccount(string id, CancellationToken ct = default)` | `workbench.query.accounts.get` | accounts.read |
+| `Task<IReadOnlyList<PluginAccount>> FindAccounts(string name, CancellationToken ct = default)` | `workbench.query.accounts.find` | accounts.read |
+| `Task<int> GetAccountCount(CancellationToken ct = default)` | `workbench.query.accounts.count` | accounts.read |
+
+## ChangeJournal
+
+```csharp
+public sealed class ChangeJournal(string directory)
+```
+
+| API 签名 | EXE method | 权限 / 接口说明 |
+| --- | --- | --- |
+| `FileChange Get(string id)` | — | — |
+| `IReadOnlyList<FileChange> List()` | — | — |
+| `byte[]? Before(string id)` | — | — |
+| `byte[]? After(string id)` | — | — |
+| `FileChange Prepare(string path, byte[]? after, string? expectedHash = null)` | — | — |
+| `FileChange Apply(string id, Action<string>? authorize = null)` | — | — |
+| `FileChange Rollback(string id, Action<string>? authorize = null)` | — | — |
+
+## CommandLineService
+
+```csharp
+public static class CommandLineService
+```
+
+| API 签名 | EXE method | 权限 / 接口说明 |
+| --- | --- | --- |
+| `const string HelpText = "XCL2 启动器 命令行参数说明\n" + "\n" + " -help 显示本帮助并退出\n" + " -r --账户名 <账户名> --实例名称 <实例名> 使用指定账户与实例直接启动游戏\n" + " --result-file <路径> 将启动操作的实际进程结果写入 JSON\n" + " --list-instances / --list-accounts 查询实例 / 账户，不输出凭据；可配合 --result-file\n" + " -gui <页面名> 启动后跳转到对应页面，例如：-gui 设置 / -gui 下载中心 / -gui 百宝箱\n" + " --d --版本 <版本号> --加载器 <加载器> 打开下载中心；不填 --版本 时会直接弹出下载页面供手动选择，\n" + " 填写 --版本 后会自动跳转并按该版本号筛选，--加载器 可省略\n" + " -l 以访客模式启动本次会话（会要求重新阅读并同意协议）\n" + "\n" + "进阶/脚本化参数（可选，不填时行为与以前完全一致）：\n" + " --skip-update-check 本次启动跳过自动检查更新\n" + " --check-update-only 只检查一次更新，不进入主界面\n" + " --offline 强制以离线模式启动\n" + " --portable 强制使用便携模式（配置存在启动器目录）\n" + " --no-tray 不创建托盘图标\n" + " --minimized 启动后直接最小化\n" + " --maximized 启动后直接最大化\n" + " --reset-window 重置窗口位置/大小为默认值\n" + " --width <px> --height <px> 指定启动窗口大小\n" + " --lang <代码> 本次强制界面语言，例如 zh-CN / en-US\n" + " --theme <light\|dark> 本次强制主题\n" + " --zoom <百分比> 本次强制界面缩放，例如 125\n" + " --no-animation 关闭界面动效\n" + " --safe-mode 安全模式启动，跳过公告/AI 悬浮球等增强功能\n" + " --debug-console 额外弹出调试控制台窗口\n" + " --debug -yrj 本次会话无视日期开启愚人节彩蛋（仍尊重 noyrj 禁用）\n" + " --verbose 调试控制台输出更详细日志\n" + " --config-path <路径> 使用指定配置文件路径\n" + " --instance-dir <路径> 使用指定实例（.minecraft）根目录\n" + " --java <路径> 启动游戏强制使用指定 Java 路径\n" + " --min-memory <MB> --max-memory <MB> 启动游戏强制使用的 JVM 内存参数\n" + " --jvm-args <参数> 启动游戏额外追加的 JVM 参数\n" + " --game-args <参数> 启动游戏额外追加的游戏参数\n" + " --server <ip:port> 配合 -r 使用，启动后自动直连该服务器\n" + " --fullscreen 配合 -r 使用，游戏以全屏启动\n" + " --clear-cache 启动前先清理下载缓存/临时文件\n" + " --export-logs <路径> 启动后自动打包导出日志/崩溃报告到指定路径\n" + " --no-single-instance 跳过单实例检测，允许多开\n" + " --no-gpu-accel 关闭窗口硬件加速渲染\n" + "\n" + "示例：\n" + " XCL2.App.exe -r --账户名 Steve --实例名称 \"1.20.1-Fabric\"\n" + " XCL2.App.exe -gui 百宝箱\n" + " XCL2.App.exe --d --版本 1.21.1 --加载器 Fabric\n" + " XCL2.App.exe --d\n" + " XCL2.App.exe -l\n" + " XCL2.App.exe -r --账户名 Steve --实例名称 \"1.21.1-Fabric\" --server play.example.com:25565\n" + " XCL2.App.exe --safe-mode --no-animation --minimized\n"` | — | — |
+| `static ParsedArgs Parse(string[] args)` | — | — |
+
+## CommandLineService.ParsedArgs
+
+```csharp
+public sealed class ParsedArgs
+```
+
+| API 签名 | EXE method | 权限 / 接口说明 |
+| --- | --- | --- |
+| `bool ShowHelp` | — | 命中 -help，只需要打印帮助然后退出，不需要往下走任何其它逻辑。 |
+| `bool LaunchGame` | — | 命中 -r，需要用指定账户+实例直接启动游戏。 |
+| `string? AccountName` | — | — |
+| `string? InstanceName` | — | — |
+| `string? ResultFile` | — | — |
+| `bool ListInstances` | — | — |
+| `bool ListAccounts` | — | — |
+| `string? GuiPage` | — | 命中 -gui &lt;page&gt;，需要跳转到的页面名（原样传入，交给 MainWindow 的页面关键字表去匹配）。 |
+| `bool OpenDownload` | — | 命中 --d，需要打开下载中心；Version 为空时弹出下载页面让用户手动选。 |
+| `string? DownloadVersion` | — | — |
+| `string? DownloadLoader` | — | — |
+| `bool GuestModeRelaunchRequested` | — | 用户显式输入 -l；先重启一次，再转换成隐藏的 --guest-session。 |
+| `bool EnterGuestMode` | — | 隐藏参数：当前这个进程就是一次性访客会话，不再二次重启。 |
+| `bool EnterPreviewMode` | — | 隐藏参数 --preview-session：仅由 MainWindow.RequestPreviewModeRestart 生成的重启 进程带上，标记"这次启动只用来展示新界面预览"。跟 --guest-session 同一套模式：磁盘配置 永远不记录这个状态，只影响当次进程——正常双击启动、或者用户在预览里点"关闭预览"触发的 下一次重启都不会再带这个参数，从而回到原有默认界面，不会重新进入/停留在预览里。 |
+| `bool StartedByAutoStart` | — | 隐藏参数：开机 Run 项启动，用来应用“弹出/最小化/托盘”行为。 |
+| `int WaitForPid` | — | 隐藏参数：重启接力时等待旧进程 PID 退出，避免误撞多开检测。 |
+| `bool SkipUpdateCheck` | — | --skip-update-check：本次启动跳过自动检查更新。 |
+| `bool CheckUpdateOnly` | — | --check-update-only：只检查一次更新（弹提示或打印结果），不进入主界面。 |
+| `bool ForceOffline` | — | --offline：本次强制以离线模式启动（不请求微软账户相关网络接口）。 |
+| `bool ForcePortable` | — | --portable：强制使用便携模式（配置读写启动器目录而非 AppData）。 |
+| `bool DisableTray` | — | --no-tray：本次启动不创建托盘图标。 |
+| `bool StartMinimized` | — | --minimized：启动后直接最小化到任务栏/托盘。 |
+| `bool StartMaximized` | — | --maximized：启动后直接最大化窗口。 |
+| `bool ResetWindowLayout` | — | --reset-window：忽略上次记住的窗口位置/大小，使用默认值。 |
+| `int? WindowWidth` | — | --width &lt;px&gt;：启动窗口宽度。 |
+| `int? WindowHeight` | — | --height &lt;px&gt;：启动窗口高度。 |
+| `string? LanguageOverride` | — | --lang &lt;code&gt;：本次启动强制使用的界面语言（如 zh-CN / en-US），不写回配置。 |
+| `string? ThemeOverride` | — | --theme &lt;light\\|dark&gt;：本次启动强制使用的主题，不写回配置。 |
+| `int? UiZoomPercent` | — | --zoom &lt;percent&gt;：本次启动强制使用的界面缩放百分比（如 125）。 |
+| `bool DisableAnimations` | — | --no-animation：关闭界面动效（磁贴轮播/过渡动画等），低性能设备/远程桌面场景用。 |
+| `bool SafeMode` | — | --safe-mode：安全模式启动——跳过公告/AI 悬浮球/自定义主题等非核心增强功能，便于排障。 |
+| `bool ShowDebugConsole` | — | --debug-console：额外弹出一个调试控制台窗口，显示启动器内部日志输出。 |
+| `bool DebugAprilFools` | — | — |
+| `string? ConfigPathOverride` | — | --config-path &lt;path&gt;：使用指定路径的配置文件而非默认 AppData 路径（多实例/测试用）。 |
+| `string? InstanceDirOverride` | — | --instance-dir &lt;path&gt;：使用指定目录作为实例（.minecraft）根目录。 |
+| `string? JavaPathOverride` | — | --java &lt;path&gt;：本次启动游戏强制使用指定 Java 可执行文件路径，跳过自动探测。 |
+| `int? MinMemoryMb` | — | --min-memory &lt;MB&gt; / --max-memory &lt;MB&gt;：本次启动游戏强制使用的 JVM 内存参数。 |
+| `int? MaxMemoryMb` | — | — |
+| `string? ExtraJvmArgs` | — | --jvm-args &lt;args&gt;：本次启动游戏额外追加的 JVM 参数（原样拼接在自动生成参数之后）。 |
+| `string? ExtraGameArgs` | — | --game-args &lt;args&gt;：本次启动游戏额外追加的游戏参数。 |
+| `string? AutoJoinServer` | — | --server &lt;ip:port&gt;：随 -r 一起使用时，游戏启动后自动尝试直连该服务器。 |
+| `bool LaunchFullscreen` | — | --fullscreen：随 -r 一起使用时，游戏以全屏模式启动。 |
+| `bool ClearCacheOnStart` | — | --clear-cache：启动前先清理下载缓存/临时文件，再继续后续动作。 |
+| `string? ExportLogsPath` | — | --export-logs &lt;path&gt;：启动后立即把日志/崩溃报告打包导出到指定路径，用于自动化收集。 |
+| `bool DisableSingleInstance` | — | --no-single-instance：本次跳过单实例检测，允许多开（调试多账户场景用）。 |
+| `bool DisableGpuAcceleration` | — | --no-gpu-accel：关闭窗口硬件加速渲染（部分老旧显卡驱动兼容性问题时用）。 |
+| `bool VerboseLogging` | — | --verbose：本次启动打印更详细的启动器日志（不影响写盘日志级别，只影响调试控制台）。 |
+| `bool JustUpdated` | — | 隐藏参数 --just-updated：只由 UpdateCheckService 生成的重启脚本自动带上， 标记\"这次启动是自动更新流程重启回来的那一次\"，不写进帮助文本、也不建议用户手动使用。 MainWindow 首帧后据此决定是否弹出「这次更新了什么」的内嵌变更日志弹窗，见 MainWindow.ApplyStartupArgs 和 AppConfig.ShowUpdateChangelogPopup。 |
+| `bool HasAnyAction { get; }` | — | 是否解析出了任何一个需要 MainWindow 首帧后处理的有效动作。 |
+
+## EmbeddedDocumentationService
+
+```csharp
+public static class EmbeddedDocumentationService
+```
+
+| API 签名 | EXE method | 权限 / 接口说明 |
+| --- | --- | --- |
+| `const string SolutionsFileName = "PAPERDOLL_FIX.md"` | — | — |
+| `const string ApiFileName = "API_REFERENCE.md"` | — | — |
+| `const string PluginExeProtocolFileName = "PLUGIN_EXE_PROTOCOL.md"` | — | — |
+| `const string PluginGuideFileName = "PLUGIN_GUIDE.md"` | — | — |
+| `const string LauncherControlFileName = "API_LAUNCHER_CONTROL.md"` | — | — |
+| `const string ApiExamplesFileName = "API_EXAMPLES.md"` | — | — |
+| `const string WorldsApiFileName = "API_WORLDS.md"` | — | — |
+| `const string CompositionApiFileName = "API_LAUNCHER_COMPOSITION.md"` | — | — |
+| `static string GetTitle(string fileName)` | — | — |
+| `static string Read(string fileName)` | — | — |
+| `static void Export(string fileName, string destination)` | — | — |
+
+## FileChange
+
+```csharp
+public sealed class FileChange
+```
+
+| API 签名 | EXE method | 权限 / 接口说明 |
+| --- | --- | --- |
+| `string Id { get; set; }` | — | — |
+| `string Path { get; set; }` | — | — |
+| `string? BeforeHash { get; set; }` | — | — |
+| `string? AfterHash { get; set; }` | — | — |
+| `string State { get; set; }` | — | — |
+| `DateTime CreatedUtc { get; set; }` | — | — |
+
+## IPluginAccounts
+
+```csharp
+public interface IPluginAccounts
+```
+
+| API 签名 | EXE method | 权限 / 接口说明 |
+| --- | --- | --- |
+| `Task<PluginListSnapshot<PluginAccount>> GetSnapshotAsync(CancellationToken ct = default)` | — | — |
+| `Task<PluginAccount?> GetSelectedAsync(CancellationToken ct = default)` | — | — |
+
+## IPluginDownloadProvider
+
+```csharp
+public interface IPluginDownloadProvider
+```
+
+| API 签名 | EXE method | 权限 / 接口说明 |
+| --- | --- | --- |
+| `ValueTask<PluginVersionManifest> GetManifestAsync(CancellationToken ct)` | — | — |
+| `ValueTask<string?> ResolveFileAsync(PluginFileRequest request, CancellationToken ct)` | — | — |
+
+## IPluginDownloads
+
+```csharp
+public interface IPluginDownloads
+```
+
+| API 签名 | EXE method | 权限 / 接口说明 |
+| --- | --- | --- |
+| `Task<PluginListSnapshot<PluginDownload>> GetSnapshotAsync(CancellationToken ct = default)` | — | — |
+
+## IPluginEnvironment
+
+```csharp
+public interface IPluginEnvironment
+```
+
+| API 签名 | EXE method | 权限 / 接口说明 |
+| --- | --- | --- |
+| `Task<PluginEnvironmentSnapshot> GetSnapshotAsync(CancellationToken ct = default)` | — | — |
+
+## IPluginInstances
+
+```csharp
+public interface IPluginInstances
+```
+
+| API 签名 | EXE method | 权限 / 接口说明 |
+| --- | --- | --- |
+| `Task<PluginListSnapshot<PluginInstance>> GetSnapshotAsync(PluginInstanceQuery? query = null, CancellationToken ct = default)` | — | — |
+| `Task<PluginInstanceDetails?> GetDetailsAsync(string instanceId, CancellationToken ct = default)` | — | — |
+| `Task<PluginInstance?> GetSelectedAsync(CancellationToken ct = default)` | — | — |
+
+## IPluginLoaderInstaller
+
+```csharp
+public interface IPluginLoaderInstaller
+```
+
+| API 签名 | EXE method | 权限 / 接口说明 |
+| --- | --- | --- |
+| `ValueTask<ImmutableArray<PluginLoaderBuild>> GetBuildsAsync(string minecraftVersion, CancellationToken ct)` | — | — |
+| `ValueTask InstallAsync(PluginInstallWorkspace workspace, PluginLoaderInstallRequest request, CancellationToken ct)` | — | — |
+
+## IPluginLoginProvider
+
+```csharp
+public interface IPluginLoginProvider
+```
+
+| API 签名 | EXE method | 权限 / 接口说明 |
+| --- | --- | --- |
+| `ValueTask<PluginLoginTicket?> LoginAsync(PluginLoginBroker broker, CancellationToken ct)` | — | — |
+
+## IPluginModProvider
+
+```csharp
+public interface IPluginModProvider
+```
+
+| API 签名 | EXE method | 权限 / 接口说明 |
+| --- | --- | --- |
+| `ValueTask<PluginModSearchResult> SearchAsync(PluginModQuery query, CancellationToken ct)` | — | — |
+| `ValueTask<PluginModProject?> GetDetailsAsync(string projectId, CancellationToken ct)` | — | — |
+| `ValueTask<ImmutableArray<PluginModFile>> GetFilesAsync(string projectId, string? gameVersion, string? loader, CancellationToken ct)` | — | — |
+
+## IPluginMods
+
+```csharp
+public interface IPluginMods
+```
+
+| API 签名 | EXE method | 权限 / 接口说明 |
+| --- | --- | --- |
+| `Task<PluginListSnapshot<PluginMod>> GetSnapshotAsync(string instanceId, CancellationToken ct = default)` | — | — |
+
+## IPluginSettings
+
+```csharp
+public interface IPluginSettings
+```
+
+| API 签名 | EXE method | 权限 / 接口说明 |
+| --- | --- | --- |
+| `Task<PluginSettingsSnapshot> GetSnapshotAsync(CancellationToken ct = default)` | — | — |
+
+## IPluginSettingsPanel
+
+```csharp
+public interface IPluginSettingsPanel
+```
+
+| API 签名 | EXE method | 权限 / 接口说明 |
+| --- | --- | --- |
+| `void Save()` | — | 把面板当前的输入状态批量写入 PluginContext.Config。抛出异常会被宿主弹窗 捕获并以警告形式提示用户，弹窗不会关闭，方便用户看到哪里没填对再改。 |
+
+## IPluginSkinModelRenderer
+
+```csharp
+public interface IPluginSkinModelRenderer : IDisposable
+```
+
+| API 签名 | EXE method | 权限 / 接口说明 |
+| --- | --- | --- |
+| `FrameworkElement View { get; }` | — | — |
+| `void SetSkin(BitmapSource skin, bool slimModel)` | — | — |
+| `void SetMotion(string motion)` | — | — |
+| `void RenderFrame(TimeSpan elapsed)` | — | 实际经过时间；可驱动自有引擎。使用独立渲染循环的实现可以留空。 |
+
+## LauncherCommandResult
+
+```csharp
+public sealed record LauncherCommandResult(int SchemaVersion, string Operation, string Status, string Code, int? Pid = null, string? InstanceId = null, string? AccountId = null, JsonElement? Data = null);
+```
+
+## LoadedPluginInfo
+
+```csharp
+public sealed class LoadedPluginInfo
+```
+
+| API 签名 | EXE method | 权限 / 接口说明 |
+| --- | --- | --- |
+| `required string FilePath { get; init; }` | — | 插件 DLL / EXE 的安装路径。 |
+| `IPlugin? Plugin { get; init; }` | — | 成功加载时的插件实例；加载失败（缺依赖/没有实现 IPlugin/构造函数抛异常等） 时为 null，具体原因看 LoadError。 |
+| `string? LoadError { get; init; }` | — | 加载失败时的异常描述；成功加载时为 null。 |
+| `bool Enabled { get; set; }` | — | 用户是否已启用这个插件（持久化在 plugins-state.json 里）。 被禁用的插件文件仍然会被扫描到、显示在列表里，但不会执行 Initialize。 |
+| `PluginContext? Context { get; init; }` | — | 该插件对应的 PluginContext，仅在本轮 DLL 成功初始化时非 null， "配置"按钮据此拿到 ctx 传给 Plugin.CreateSettingsPanel。 |
+| `bool IsExecutable { get; init; }` | — | 外部进程插件；不会按 .NET IPlugin 接口加载。 |
+| `Process? RunningProcess { get; init; }` | — | 由启动器启动并托管的进程，退出/重新扫描时会结束。 |
+| `bool StartedOnce { get; init; }` | — | 仅导入时运行模式下，该插件已成功启动过。 |
+| `PluginMetadata? Metadata { get; init; }` | — | — |
+| `ImmutableArray<PluginLoadDiagnostic> Diagnostics { get; init; }` | — | — |
+| `ImmutableArray<string> GrantedPermissions { get; init; }` | — | — |
+
+## PluginAccount
+
+```csharp
+public sealed record PluginAccount(string Id, PluginAccountKind Kind, string DisplayName, string? Uuid, bool IsSelected, bool IsGuest);
+```
+
+## PluginAccountAdded
+
+```csharp
+public sealed record PluginAccountAdded(PluginAccount Account) : PluginNotification;
+```
+
+## PluginAccountKind
+
+```csharp
+public enum PluginAccountKind
+```
+
+| API 签名 | EXE method | 权限 / 接口说明 |
+| --- | --- | --- |
+| `Offline` | — | — |
+| `Microsoft` | — | — |
+| `AuthServer` | — | — |
+| `Custom` | — | — |
+
+## PluginAccountRemoved
+
+```csharp
+public sealed record PluginAccountRemoved(string AccountId) : PluginNotification;
+```
+
+## PluginAccountSelectionChanged
+
+```csharp
+public sealed record PluginAccountSelectionChanged(PluginAccount? Account) : PluginNotification;
+```
+
+## PluginAccountUpdated
+
+```csharp
+public sealed record PluginAccountUpdated(PluginAccount Account, ImmutableArray<string> ChangedFields) : PluginNotification;
+```
+
+## PluginAppearanceSnapshot
+
+```csharp
+public sealed record PluginAppearanceSnapshot(string UiSkin, bool IsDarkMode, string? CustomAccentColor, int UiZoomPercent, bool EnableWindowTransparency, int WindowOpacityPercent, bool EnableGlobalWindowTransparency, int GlobalWindowOpacityPercent, int TextOpacityPercent, int BrightnessPercent, double CallbackTimeoutSeconds, ImmutableArray<string> AvailableSkins);
+```
+
+## PluginAvatarRenderRequest
+
+```csharp
+public sealed record PluginAvatarRenderRequest(PluginContext Plugin, byte[] SkinPngBytes, int OutputSize, bool IncludeHatLayer);
+```
+
+## PluginBackgroundAsset
+
+```csharp
+public sealed record PluginBackgroundAsset(string RelativeImagePath);
+```
+
+## PluginBackgroundDefinition
+
+```csharp
+public sealed record PluginBackgroundDefinition(string Id, string Name, string RelativeImagePath);
+```
+
+## PluginButtonDefinition
+
+```csharp
+public sealed record PluginButtonDefinition
+```
+
+| API 签名 | EXE method | 权限 / 接口说明 |
+| --- | --- | --- |
+| `required string Id { get; init; }` | — | — |
+| `required string Text { get; init; }` | — | — |
+| `string Target { get; init; }` | — | — |
+| `string? Description { get; init; }` | — | — |
+| `int Order { get; init; }` | — | — |
+| `required Func<PluginUiContext, Task> OnClick { get; init; }` | — | — |
+
+## PluginChoice
+
+```csharp
+public sealed record PluginChoice(string Value, string Label);
+```
+
+## PluginComponentAction
+
+```csharp
+public enum PluginComponentAction
+```
+
+| API 签名 | EXE method | 权限 / 接口说明 |
+| --- | --- | --- |
+| `Add` | — | — |
+| `Move` | — | — |
+| `Remove` | — | — |
+| `Replace` | — | — |
+| `Configure` | — | — |
+
+## PluginComponentDefinition
+
+```csharp
+public sealed record PluginComponentDefinition
+```
+
+| API 签名 | EXE method | 权限 / 接口说明 |
+| --- | --- | --- |
+| `required string Id { get; init; }` | — | — |
+| `required string Target { get; init; }` | — | view:MainWindow、view:SettingsPage 或 dialog:某弹窗类名。 |
+| `PluginComponentAction Action { get; init; }` | — | — |
+| `string? Selector { get; init; }` | — | 组件 Name，或 Inspect 返回的 $root/0/1 路径；Add 时不需要。 |
+| `string? Parent { get; init; }` | — | Add/Move 的容器选择器；$overlay 为自动创建、覆盖整个视图的绝对定位画布。 |
+| `int Index { get; init; }` | — | — |
+| `int Order { get; init; }` | — | — |
+| `PluginComponentLayout Layout { get; init; }` | — | — |
+| `Func<PluginUiContext, FrameworkElement>? CreateContent { get; init; }` | — | Add/Replace 创建全新组件；可返回含自定义渲染后端的 WPF 宿主控件。 |
+
+## PluginComponentInfo
+
+```csharp
+public sealed record PluginComponentInfo(string Path, string Name, string Type, string? ParentPath, double Width, double Height)
+```
+
+| API 签名 | EXE method | 权限 / 接口说明 |
+| --- | --- | --- |
+| `double X { get; init; }` | — | — |
+| `double Y { get; init; }` | — | — |
+| `int ZIndex { get; init; }` | — | — |
+
+## PluginComponentLayout
+
+```csharp
+public sealed record PluginComponentLayout
+```
+
+| API 签名 | EXE method | 权限 / 接口说明 |
+| --- | --- | --- |
+| `int? Row { get; init; }` | — | — |
+| `int? Column { get; init; }` | — | — |
+| `int? RowSpan { get; init; }` | — | — |
+| `int? ColumnSpan { get; init; }` | — | — |
+| `int? ZIndex { get; init; }` | — | — |
+| `double? Left { get; init; }` | — | — |
+| `double? Top { get; init; }` | — | — |
+| `double? Right { get; init; }` | — | — |
+| `double? Bottom { get; init; }` | — | — |
+| `double? Width { get; init; }` | — | — |
+| `double? Height { get; init; }` | — | — |
+| `Thickness? Margin { get; init; }` | — | — |
+| `HorizontalAlignment? HorizontalAlignment { get; init; }` | — | — |
+| `VerticalAlignment? VerticalAlignment { get; init; }` | — | — |
+| `Dock? Dock { get; init; }` | — | — |
+| `double? MinWidth { get; init; }` | — | — |
+| `double? MinHeight { get; init; }` | — | — |
+| `double? MaxWidth { get; init; }` | — | — |
+| `double? MaxHeight { get; init; }` | — | — |
+| `double? Opacity { get; init; }` | — | — |
+| `Visibility? Visibility { get; init; }` | — | — |
+| `bool? IsHitTestVisible { get; init; }` | — | — |
+| `bool? ClipToBounds { get; init; }` | — | — |
+| `Transform? RenderTransform { get; init; }` | — | — |
+| `Point? RenderTransformOrigin { get; init; }` | — | — |
+
+## PluginComponentService
+
+```csharp
+public sealed class PluginComponentService : IDisposable
+```
+
+| API 签名 | EXE method | 权限 / 接口说明 |
+| --- | --- | --- |
+| `IDisposable Register(PluginComponentDefinition definition)` | — | — |
+| `IReadOnlyList<PluginComponentInfo> Inspect(string target)` | — | 检查当前已经加载的视图。命名选择器须唯一；匿名控件使用返回的路径。 |
+| `void Refresh()` | — | 宿主动态重建组件后可显式重新应用当前注册。 |
+| `void Dispose()` | — | — |
+
+## PluginConfigService
+
+```csharp
+public sealed class PluginConfigService
+```
+
+| API 签名 | EXE method | 权限 / 接口说明 |
+| --- | --- | --- |
+| `T Get<T>(string key, T fallback)` | — | 读取一个配置项，key 不存在或者反序列化失败时返回 fallback， 不抛异常——插件不需要为"第一次运行、配置文件还没任何内容"这种正常情况 专门写 try/catch。 |
+| `void Set<T>(string key, T value)` | — | 写入一个配置项并立即落盘。落盘是同步的、按整份文件重写，配置文件通常很小， 不需要为此做增量写入或者异步优化。 |
+| `void Remove(string key)` | — | 删除一个配置项并落盘；key 不存在时静默忽略。 |
+| `IReadOnlyDictionary<string, JsonElement> Snapshot()` | — | 当前已保存的所有 key，供"插件管理"里给不提供图形配置界面的插件 生成一份只读的通用 JSON 预览用，插件自己一般用不上这个方法。 |
+
+## PluginControlService
+
+```csharp
+public sealed class PluginControlService
+```
+
+| API 签名 | EXE method | 权限 / 接口说明 |
+| --- | --- | --- |
+| `Task<ImmutableArray<PluginPageInfo>> GetPagesAsync(CancellationToken ct = default)` | — | — |
+| `Task<bool> NavigateAsync(string pageId, CancellationToken ct = default)` | — | 通过宿主正常页面导航，保留设置页的保存/放弃确认。 |
+| `Task<PluginControlSnapshot> GetSnapshotAsync(CancellationToken ct = default)` | — | — |
+| `Task<PluginWindowSnapshot> GetWindowAsync(CancellationToken ct = default)` | — | — |
+| `Task<PluginWindowSnapshot> UpdateWindowAsync(PluginWindowPatch patch, CancellationToken ct = default)` | — | — |
+| `Task<PluginWindowSnapshot> SetWindowStateAsync(PluginWindowAction action, CancellationToken ct = default)` | — | — |
+| `Task<PluginAppearanceSnapshot> GetAppearanceAsync(CancellationToken ct = default)` | — | — |
+| `Task<PluginAppearanceSnapshot> UpdateSettingsAsync(PluginSettingsPatch patch, CancellationToken ct = default)` | — | — |
+| `Task<bool> SelectAccountAsync(string accountId, CancellationToken ct = default)` | — | — |
+| `Task<bool> SelectInstanceAsync(string instanceId, CancellationToken ct = default)` | — | — |
+| `Task<PluginLaunchAcceptance> LaunchSelectedAsync(CancellationToken ct = default)` | — | Accepted 只表示已进入宿主启动流程；成功与否订阅 PluginGameStarted/PluginGameExited。 |
+| `Task<bool> CancelLaunchAsync(CancellationToken ct = default)` | — | — |
+
+## PluginControlSnapshot
+
+```csharp
+public sealed record PluginControlSnapshot(PluginWindowSnapshot Window, bool IsLaunching, string? InstanceId, string? AccountId);
+```
+
+## PluginDependency
+
+```csharp
+public sealed record PluginDependency(string Id, string VersionRange, bool Optional = false);
+```
+
+## PluginDialogContext
+
+```csharp
+public sealed class PluginDialogContext
+```
+
+| API 签名 | EXE method | 权限 / 接口说明 |
+| --- | --- | --- |
+| `PluginContext Plugin { get; }` | — | — |
+| `object? Parameter { get; }` | — | — |
+| `CancellationToken Stopping { get; }` | — | — |
+| `void Close(bool? result = null)` | — | — |
+
+## PluginDialogDefinition
+
+```csharp
+public sealed record PluginDialogDefinition
+```
+
+| API 签名 | EXE method | 权限 / 接口说明 |
+| --- | --- | --- |
+| `required string Id { get; init; }` | — | — |
+| `required string Title { get; init; }` | — | — |
+| `required Func<PluginDialogContext, FrameworkElement> CreateContent { get; init; }` | — | — |
+| `double Width { get; init; }` | — | — |
+| `bool DismissOnEscape { get; init; }` | — | — |
+| `bool DismissOnBackgroundClick { get; init; }` | — | — |
+
+## PluginDialogEvent
+
+```csharp
+public sealed record PluginDialogEvent(string Target, bool IsOpen, bool? Result);
+```
+
+## PluginDownload
+
+```csharp
+public sealed record PluginDownload(Guid Id, string Name, PluginDownloadState State, double ProgressPercent, string? PhaseCode, string? InstanceId, string? ErrorCode);
+```
+
+## PluginDownloadAcceptance
+
+```csharp
+public sealed record PluginDownloadAcceptance(Guid DownloadId, string Code);
+```
+
+## PluginDownloadCanceled
+
+```csharp
+public sealed record PluginDownloadCanceled(Guid DownloadId, string ReasonCode) : PluginNotification;
+```
+
+## PluginDownloadCompleted
+
+```csharp
+public sealed record PluginDownloadCompleted(PluginDownload Download) : PluginNotification;
+```
+
+## PluginDownloadCreated
+
+```csharp
+public sealed record PluginDownloadCreated(PluginDownload Download) : PluginNotification;
+```
+
+## PluginDownloadDetails
+
+```csharp
+public sealed record PluginDownloadDetails(PluginDownload Download, bool CanPause, bool CanResume, bool CanCancel, bool IsRunning);
+```
+
+## PluginDownloadFailed
+
+```csharp
+public sealed record PluginDownloadFailed(PluginDownload Download) : PluginNotification;
+```
+
+## PluginDownloadPlan
+
+```csharp
+public sealed record PluginDownloadPlan(Guid OperationId, string Url, string FileName, string? ExpectedSha1);
+```
+
+## PluginDownloadProgressChanged
+
+```csharp
+public sealed record PluginDownloadProgressChanged(PluginDownload Download) : PluginNotification;
+```
+
+## PluginDownloadRemoved
+
+```csharp
+public sealed record PluginDownloadRemoved(Guid DownloadId) : PluginNotification;
+```
+
+## PluginDownloadState
+
+```csharp
+public enum PluginDownloadState
+```
+
+| API 签名 | EXE method | 权限 / 接口说明 |
+| --- | --- | --- |
+| `Downloading` | — | — |
+| `Paused` | — | — |
+| `Completed` | — | — |
+| `Failed` | — | — |
+| `Canceled` | — | — |
+
+## PluginEnvironmentSnapshot
+
+```csharp
+public sealed record PluginEnvironmentSnapshot(string LauncherVersion, Version ApiVersion, string DataRootDirectory, string LauncherLanguage);
+```
+
+## PluginEventService
+
+```csharp
+public sealed partial class PluginEventService : IDisposable
+```
+
+| API 签名 | EXE method | 权限 / 接口说明 |
+| --- | --- | --- |
+| `IDisposable Subscribe<TEvent>(Func<TEvent, CancellationToken, ValueTask> callback) where TEvent : PluginNotification` | — | — |
+| `void Dispose()` | — | — |
+| `IDisposable InterceptLaunch(Func<PluginLaunchPlan, CancellationToken, ValueTask<PluginInterception<PluginLaunchPlan>>> callback)` | — | — |
+| `IDisposable InterceptDownload(Func<PluginDownloadPlan, CancellationToken, ValueTask<PluginInterception<PluginDownloadPlan>>> callback)` | — | — |
+| `IDisposable InterceptInstanceCreation(Func<PluginInstanceCreationPlan, CancellationToken, ValueTask<PluginInterception<PluginInstanceCreationPlan>>> callback)` | — | — |
+
+## PluginFileRequest
+
+```csharp
+public sealed record PluginFileRequest(string OriginalUrl, string FileName, string? ExpectedSha1);
+```
+
+## PluginFlowCanceledException
+
+```csharp
+public sealed class PluginFlowCanceledException : PluginOperationException
+```
+
+| API 签名 | EXE method | 权限 / 接口说明 |
+| --- | --- | --- |
+| `string PluginId { get; }` | — | — |
+| `string Reason { get; }` | — | — |
+
+## PluginGameCrashed
+
+```csharp
+public sealed record PluginGameCrashed(string InstanceId, int Pid, int? ExitCode) : PluginNotification;
+```
+
+## PluginGameExited
+
+```csharp
+public sealed record PluginGameExited(string InstanceId, int Pid, int? ExitCode, bool UserRequestedClose) : PluginNotification;
+```
+
+## PluginGameFolder
+
+```csharp
+public sealed record PluginGameFolder(string Id, string Name, string Path, bool IsSelected);
+```
+
+## PluginGameStarted
+
+```csharp
+public sealed record PluginGameStarted(string InstanceId, int Pid) : PluginNotification;
+```
+
+## PluginGameVersion
+
+```csharp
+public sealed record PluginGameVersion(string Id, string Type, string ReleaseTime, bool IsLatestRelease, bool IsLatestSnapshot);
+```
+
+## PluginHostUnavailableException
+
+```csharp
+public sealed class PluginHostUnavailableException : PluginOperationException
+```
+
+| API 签名 | EXE method | 权限 / 接口说明 |
+| --- | --- | --- |
+| `PluginHostUnavailableException() : base("HostUnavailable", "此插件上下文未连接到运行中的启动器。")` | — | — |
+
+## PluginInstallConflictAction
+
+```csharp
+public enum PluginInstallConflictAction
+```
+
+| API 签名 | EXE method | 权限 / 接口说明 |
+| --- | --- | --- |
+| `Cancel` | — | — |
+| `Copy` | — | — |
+| `Replace` | — | — |
+
+## PluginInstallWorkspace
+
+```csharp
+public sealed class PluginInstallWorkspace
+```
+
+| API 签名 | EXE method | 权限 / 接口说明 |
+| --- | --- | --- |
+| `string VersionId { get; }` | — | — |
+| `Task WriteVersionJsonAsync(string json, CancellationToken ct = default)` | — | — |
+| `Task DownloadFileAsync(string url, string relativePath, string? sha1 = null, CancellationToken ct = default)` | — | — |
+| `Task<int> RunJavaInstallerAsync(string relativeJar, ImmutableArray<string> arguments, CancellationToken ct = default)` | — | — |
+
+## PluginInstance
+
+```csharp
+public sealed record PluginInstance(string Id, string Name, string MinecraftVersion, string? LoaderId, string? LoaderVersion, bool IsInstalled, bool IsSelected, bool IsHidden);
+```
+
+## PluginInstanceActionDefinition
+
+```csharp
+public sealed record PluginInstanceActionDefinition(string Id, string Title, Func<PluginInstanceDetails, CancellationToken, ValueTask> ExecuteAsync, int Order = 0);
+```
+
+## PluginInstanceCatalogChanged
+
+```csharp
+public sealed record PluginInstanceCatalogChanged(string ReasonCode) : PluginNotification;
+```
+
+## PluginInstanceCreated
+
+```csharp
+public sealed record PluginInstanceCreated(PluginInstance Instance) : PluginNotification;
+```
+
+## PluginInstanceCreationPlan
+
+```csharp
+public sealed record PluginInstanceCreationPlan(Guid OperationId, string InstanceId, string Name, string Kind);
+```
+
+## PluginInstanceDetails
+
+```csharp
+public sealed record PluginInstanceDetails(PluginInstance Instance, string InstanceDirectory, string GameDirectory, bool Isolated, string? ConfiguredJavaPath, PluginJavaResolutionState JavaResolutionState, ImmutableArray<string> ConfiguredJvmArguments);
+```
+
+## PluginInstanceDirectories
+
+```csharp
+public sealed record PluginInstanceDirectories(string InstanceId, string InstanceDirectory, string GameDirectory, string ModsDirectory, string ResourcePacksDirectory, string ShaderPacksDirectory, string SavesDirectory);
+```
+
+## PluginInstanceQuery
+
+```csharp
+public sealed record PluginInstanceQuery(bool IncludeHidden = false, bool IncludeIncomplete = true);
+```
+
+## PluginInstanceRemoved
+
+```csharp
+public sealed record PluginInstanceRemoved(string InstanceId) : PluginNotification;
+```
+
+## PluginInstanceRenamed
+
+```csharp
+public sealed record PluginInstanceRenamed(string OldInstanceId, string NewInstanceId, string OldName, string NewName) : PluginNotification;
+```
+
+## PluginInstanceSelectionChanged
+
+```csharp
+public sealed record PluginInstanceSelectionChanged(string? InstanceId) : PluginNotification;
+```
+
+## PluginInstanceVisibilityChanged
+
+```csharp
+public sealed record PluginInstanceVisibilityChanged(string InstanceId, bool IsHidden) : PluginNotification;
+```
+
+## PluginInterception
+
+```csharp
+public sealed record PluginInterception<T>(bool IsCanceled, string? Reason, T? Replacement)
+```
+
+| API 签名 | EXE method | 权限 / 接口说明 |
+| --- | --- | --- |
+| `static PluginInterception<T> Continue(T? replacement = default)` | — | — |
+| `static PluginInterception<T> Cancel(string reason)` | — | — |
+
+## PluginJavaResolutionState
+
+```csharp
+public enum PluginJavaResolutionState
+```
+
+| API 签名 | EXE method | 权限 / 接口说明 |
+| --- | --- | --- |
+| `Configured` | — | — |
+| `Unresolved` | — | — |
+
+## PluginJavaRuntime
+
+```csharp
+public sealed record PluginJavaRuntime(string Id, string Name, string JavawPath, int? MajorVersion, string Source, int Priority, bool IsSelected, bool Exists);
+```
+
+## PluginLaunchAcceptance
+
+```csharp
+public sealed record PluginLaunchAcceptance(bool Accepted, string Code);
+```
+
+## PluginLaunchPlan
+
+```csharp
+public sealed record PluginLaunchPlan(Guid OperationId, string InstanceId, ImmutableArray<string> JvmArguments, ImmutableArray<string> GameArguments, ImmutableDictionary<string, string> EnvironmentVariables);
+```
+
+## PluginLaunchRequest
+
+```csharp
+public sealed record PluginLaunchRequest(PluginContext Plugin, LauncherService.LaunchOptions Options);
+```
+
+## PluginLauncherReady
+
+```csharp
+public sealed record PluginLauncherReady : PluginNotification
+```
+
+| API 签名 | EXE method | 权限 / 接口说明 |
+| --- | --- | --- |
+| `string LauncherVersion { get; init; }` | — | — |
+| `Version ApiVersion { get; init; }` | — | — |
+
+## PluginLauncherService
+
+```csharp
+public sealed class PluginLauncherService
+```
+
+| API 签名 | EXE method | 权限 / 接口说明 |
+| --- | --- | --- |
+| `IPluginAccounts Accounts { get; }` | — | — |
+| `IPluginInstances Instances { get; }` | — | — |
+| `IPluginMods Mods { get; }` | — | — |
+| `IPluginDownloads Downloads { get; }` | — | — |
+| `IPluginSettings Settings { get; }` | — | — |
+| `IPluginEnvironment Environment { get; }` | — | — |
+
+## PluginLauncherStopping
+
+```csharp
+public sealed record PluginLauncherStopping : PluginNotification
+```
+
+| API 签名 | EXE method | 权限 / 接口说明 |
+| --- | --- | --- |
+| `string ReasonCode { get; init; }` | — | — |
+
+## PluginListSnapshot
+
+```csharp
+public sealed record PluginListSnapshot<T>(long Revision, DateTimeOffset CapturedAtUtc, ImmutableArray<T> Items);
+```
+
+## PluginLoadDiagnostic
+
+```csharp
+public sealed record PluginLoadDiagnostic(string Code, ImmutableArray<string> RelatedPluginIds, string SafeMessage);
+```
+
+## PluginLoaderBuild
+
+```csharp
+public sealed record PluginLoaderBuild(string Id, string Name, string Version);
+```
+
+## PluginLoaderInstallRequest
+
+```csharp
+public sealed record PluginLoaderInstallRequest(string MinecraftVersion, string BuildId, string InstanceName);
+```
+
+## PluginLoginBroker
+
+```csharp
+public sealed class PluginLoginBroker
+```
+
+| API 签名 | EXE method | 权限 / 接口说明 |
+| --- | --- | --- |
+| `Task<PluginLoginTicket?> AuthorizeAsync(PluginLoginRequest request, CancellationToken ct = default)` | — | — |
+
+## PluginLoginKind
+
+```csharp
+public enum PluginLoginKind
+```
+
+| API 签名 | EXE method | 权限 / 接口说明 |
+| --- | --- | --- |
+| `Offline` | — | — |
+| `MicrosoftDeviceCode` | — | — |
+| `Yggdrasil` | — | — |
+
+## PluginLoginRequest
+
+```csharp
+public sealed record PluginLoginRequest(PluginLoginKind Kind, string? AuthServerUrl = null);
+```
+
+## PluginLoginTicket
+
+```csharp
+public sealed record PluginLoginTicket(Guid Id);
+```
+
+## PluginManagementService
+
+```csharp
+public sealed class PluginManagementService
+```
+
+| API 签名 | EXE method | 权限 / 接口说明 |
+| --- | --- | --- |
+| `Task<ImmutableArray<PluginGameFolder>> GetFoldersAsync(CancellationToken ct = default)` | — | — |
+| `Task<PluginInstanceDirectories> GetInstanceDirectoriesAsync(string instanceId, CancellationToken ct = default)` | — | — |
+| `Task<bool> SetInstanceHiddenAsync(string instanceId, bool hidden, CancellationToken ct = default)` | — | — |
+| `Task<string> RenameInstanceAsync(string instanceId, string newName, CancellationToken ct = default)` | — | 返回改名后的新实例 ID；原 ID 随目录名变化而失效。 |
+| `Task<bool> SetInstanceIsolationAsync(string instanceId, bool? isolated, CancellationToken ct = default)` | — | null 恢复全局隔离设置；只改变设置，不搬移已有存档和模组。 |
+| `Task<PluginMod> SetModEnabledAsync(string instanceId, string fileName, bool enabled, CancellationToken ct = default)` | — | — |
+| `Task<ImmutableArray<PluginJavaRuntime>> GetJavaRuntimesAsync(CancellationToken ct = default)` | — | — |
+| `Task<bool> SelectJavaAsync(string? javaId, string? instanceId = null, CancellationToken ct = default)` | — | instanceId 为空时设置全局默认；javaId 为空则清除覆盖并恢复自动/全局选择。 |
+| `Task<PluginDownloadDetails> GetDownloadAsync(Guid downloadId, CancellationToken ct = default)` | — | — |
+| `Task<PluginDownloadDetails> PauseDownloadAsync(Guid downloadId, CancellationToken ct = default)` | — | — |
+| `Task<PluginDownloadDetails> ResumeDownloadAsync(Guid downloadId, CancellationToken ct = default)` | — | — |
+| `Task<bool> CancelDownloadAsync(Guid downloadId, CancellationToken ct = default)` | — | — |
+| `Task<int> ClearFinishedDownloadsAsync(CancellationToken ct = default)` | — | 仅清理已完成、失败和取消的列表记录；不删除已下载文件。 |
+| `Task<PluginDownloadAcceptance> RepairInstanceAsync(string instanceId, CancellationToken ct = default)` | — | — |
+
+## PluginManager
+
+```csharp
+public sealed class PluginManager
+```
+
+| API 签名 | EXE method | 权限 / 接口说明 |
+| --- | --- | --- |
+| `IReadOnlyList<LoadedPluginInfo> Plugins { get; private set; }` | — | — |
+| `event Action? Changed` | — | — |
+| `PluginLaunchMode StartPolicy { get; set; }` | — | — |
+| `PluginManager(Action<string>? logSink = null) : this(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "XCL2", "Plugins"), logSink)` | — | — |
+| `string InstalledDirectory { get; }` | — | — |
+| `string BackupDirectory { get; }` | — | — |
+| `string? LastBackupPath { get; private set; }` | — | — |
+| `Task<string> BackupBeforeUpgradeAsync(CancellationToken ct)` | — | — |
+| `string BackupBeforeUpgrade()` | — | — |
+| `void RestoreUpgradeBackup(string backup)` | — | — |
+| `string InstallUpgrade(string package, string targetEntry)` | — | — |
+| `string? FindInstallConflict(string sourcePath)` | — | — |
+| `string InstallFromFile(string sourcePath)` | — | 旧的一参数接口仍然保留；有冲突时由三参数调用方显式决定。 |
+| `string? InstallFromFile(string sourcePath, PluginInstallConflictAction action)` | — | — |
+| `void ScanAndLoad()` | — | — |
+| `void SetEnabled(string filePath, bool enabled)` | — | — |
+| `void SetPermissions(string filePath, IEnumerable<string> permissions)` | — | 由用户授权界面调用；仅可授予清单声明的权限。撤销立即影响当前上下文。 |
+| `ImmutableArray<string> GetGrantedPermissions(string filePath)` | — | — |
+| `void SetEnabled(IEnumerable<string> filePaths, bool enabled)` | — | — |
+| `IReadOnlyList<PluginOperationResult> Uninstall(IEnumerable<string> filePaths)` | — | 实际移除安装目录和状态；配置/数据保留，避免丢失用户内容。批量逐项报告。 |
+| `void ShutdownAll()` | — | — |
+
+## PluginMessage
+
+```csharp
+public sealed record PluginMessage(string SenderPluginId, string Channel, JsonElement Payload);
+```
+
+## PluginMessageService
+
+```csharp
+public sealed class PluginMessageService
+```
+
+| API 签名 | EXE method | 权限 / 接口说明 |
+| --- | --- | --- |
+| `ImmutableArray<PluginPeer> GetPeers()` | — | — |
+| `IDisposable Subscribe(string channel, Func<PluginMessage, CancellationToken, ValueTask> callback)` | — | — |
+| `Task<int> SendAsync(string targetPluginId, string channel, JsonElement payload, CancellationToken ct = default)` | — | — |
+
+## PluginMetadata
+
+```csharp
+public sealed record PluginMetadata(string DeclaredId, string InstanceId, string Name, string Version, string Author, string Description, Version MinApiVersion, Version? MaxApiVersion, string? MinLauncherVersion, ImmutableArray<PluginDependency> Dependencies, ImmutableArray<string> Conflicts, ImmutableArray<string> Permissions, int Priority, bool IsLegacy);
+```
+
+## PluginMod
+
+```csharp
+public sealed record PluginMod(string FileName, string DisplayName, string? ModId, string? Version, bool IsEnabled, long FileSizeBytes);
+```
+
+## PluginModCatalogChanged
+
+```csharp
+public sealed record PluginModCatalogChanged(string InstanceId) : PluginNotification;
+```
+
+## PluginModEnabledChanged
+
+```csharp
+public sealed record PluginModEnabledChanged(string InstanceId, string FileName, bool IsEnabled) : PluginNotification;
+```
+
+## PluginModFile
+
+```csharp
+public sealed record PluginModFile(string Id, string Name, string GameVersion, string Loader, string FileName, string Url, string? Sha1);
+```
+
+## PluginModInstalled
+
+```csharp
+public sealed record PluginModInstalled(string InstanceId, PluginMod Mod) : PluginNotification;
+```
+
+## PluginModProject
+
+```csharp
+public sealed record PluginModProject(string Id, string Title, string Description, string Author);
+```
+
+## PluginModQuery
+
+```csharp
+public sealed record PluginModQuery(string Query, string? GameVersion, string? Loader, int Offset = 0, int Limit = 20);
+```
+
+## PluginModRemoved
+
+```csharp
+public sealed record PluginModRemoved(string InstanceId, string FileName) : PluginNotification;
+```
+
+## PluginModSearchResult
+
+```csharp
+public sealed record PluginModSearchResult(ImmutableArray<PluginModProject> Items, int Total);
+```
+
+## PluginNavigationPageDefinition
+
+```csharp
+public sealed record PluginNavigationPageDefinition(string Id, string Title, Func<PluginUiContext, FrameworkElement> CreateContent, bool ShowInSimplifiedMode = false, ImmutableArray<string> Languages = default, int Order = 0);
+```
+
+## PluginNetworkService
+
+```csharp
+public sealed class PluginNetworkService
+```
+
+| API 签名 | EXE method | 权限 / 接口说明 |
+| --- | --- | --- |
+| `Task<string> GetTextAsync(string url, CancellationToken ct = default)` | — | — |
+
+## PluginNotification
+
+```csharp
+public abstract record PluginNotification
+```
+
+| API 签名 | EXE method | 权限 / 接口说明 |
+| --- | --- | --- |
+| `long Sequence { get; init; }` | — | — |
+| `long Revision { get; init; }` | — | — |
+| `DateTimeOffset OccurredAtUtc { get; init; }` | — | — |
+
+## PluginOperationException
+
+```csharp
+public class PluginOperationException : Exception
+```
+
+| API 签名 | EXE method | 权限 / 接口说明 |
+| --- | --- | --- |
+| `string Code { get; }` | — | — |
+| `string SafeMessage { get; }` | — | — |
+| `PluginOperationException(string code, string safeMessage) : base(safeMessage)` | — | — |
+
+## PluginOperationResult
+
+```csharp
+public sealed record PluginOperationResult(string FilePath, bool Success, string? Error = null);
+```
+
+## PluginOptionDefinition
+
+```csharp
+public sealed record PluginOptionDefinition
+```
+
+| API 签名 | EXE method | 权限 / 接口说明 |
+| --- | --- | --- |
+| `required string Id { get; init; }` | — | — |
+| `required string Title { get; init; }` | — | — |
+| `string Target { get; init; }` | — | — |
+| `string? ConfigKey { get; init; }` | — | — |
+| `string? Description { get; init; }` | — | — |
+| `int Order { get; init; }` | — | — |
+| `PluginOptionKind Kind { get; init; }` | — | — |
+| `object? DefaultValue { get; init; }` | — | — |
+| `double Minimum { get; init; }` | — | — |
+| `double Maximum { get; init; }` | — | — |
+| `IReadOnlyList<PluginChoice> Choices { get; init; }` | — | — |
+| `Func<object?, string?>? Validate { get; init; }` | — | 返回 null/空字符串表示合法，否则在控件旁显示错误且不保存。 |
+| `Action<object?>? OnChanged { get; init; }` | — | 成功保存之后调用；回调异常只记录日志，不撤销已经保存的配置。 |
+
+## PluginOptionKind
+
+```csharp
+public enum PluginOptionKind
+```
+
+| API 签名 | EXE method | 权限 / 接口说明 |
+| --- | --- | --- |
+| `Toggle` | — | — |
+| `Text` | — | — |
+| `Number` | — | — |
+| `Choice` | — | — |
+
+## PluginPackageSignature
+
+```csharp
+public static class PluginPackageSignature
+```
+
+| API 签名 | EXE method | 权限 / 接口说明 |
+| --- | --- | --- |
+| `const string FileName = "plugin.signature.json"` | — | — |
+| `static string SignLocal(string directory)` | — | — |
+| `static string Verify(string directory)` | — | — |
+
+## PluginPageInfo
+
+```csharp
+public sealed record PluginPageInfo(string Id, string Title, bool IsPluginPage);
+```
+
+## PluginPanelDefinition
+
+```csharp
+public sealed record PluginPanelDefinition
+```
+
+| API 签名 | EXE method | 权限 / 接口说明 |
+| --- | --- | --- |
+| `required string Id { get; init; }` | — | — |
+| `string Target { get; init; }` | — | — |
+| `int Order { get; init; }` | — | — |
+| `required Func<PluginUiContext, FrameworkElement> CreateContent { get; init; }` | — | 每次创建新控件，不可复用已挂在其他父控件下的 WPF 元素。 |
+
+## PluginPeer
+
+```csharp
+public sealed record PluginPeer(string InstanceId, string DeclaredId, string Version);
+```
+
+## PluginPeerUnavailable
+
+```csharp
+public sealed record PluginPeerUnavailable(string PluginId) : PluginNotification;
+```
+
+## PluginPermissionException
+
+```csharp
+public sealed class PluginPermissionException : PluginOperationException
+```
+
+| API 签名 | EXE method | 权限 / 接口说明 |
+| --- | --- | --- |
+| `string Permission { get; }` | — | — |
+| `PluginPermissionException(string permission) : base("PermissionDenied", "插件没有获准使用权限：" + permission)` | — | — |
+
+## PluginPermissionGrant
+
+```csharp
+public sealed record PluginPermissionGrant(string Permission, bool Declared, bool Granted, bool Available);
+```
+
+## PluginPermissionNames
+
+```csharp
+public static class PluginPermissionNames
+```
+
+| API 签名 | EXE method | 权限 / 接口说明 |
+| --- | --- | --- |
+| `const string ProjectsRead = "projects.read", ProjectsWrite = "projects.write", TasksManage = "tasks.manage"` | — | — |
+| `const string DownloadsControl = "downloads.control", InstancesWrite = "instances.write", ModsWrite = "mods.write", ResourcesRead = "resources.read", ResourcesInstall = "resources.install", JavaRead = "java.read", JavaSelect = "java.select"` | — | — |
+| `const string LauncherControl = "launcher.control", SettingsWrite = "settings.write", UiWindow = "ui.window"` | — | — |
+| `const string UiPreview = "ui.preview", WorldsRead = "worlds.read", WorldsWrite = "worlds.write"` | — | — |
+| `const string AccountsRead = "accounts.read", InstancesRead = "instances.read", ModsRead = "mods.read", DownloadsRead = "downloads.read", SettingsRead = "settings.read", EnvironmentRead = "environment.read", Lifecycle = "events.lifecycle", LaunchModify = "launch.modify", DownloadIntercept = "downloads.intercept", InstanceValidate = "instances.validate", Network = "network", DownloadProvider = "providers.download", ModProvider = "providers.mod", LoaderProvider = "providers.loader", AuthProvider = "auth.provider", InstanceFilesRead = "files.instances.read", InstanceFilesWrite = "files.instances.write", ExternalFilesRead = "files.external.read", ExternalFilesWrite = "files.external.write", ProcessInstall = "process.install", UiBasic = "ui.basic", UiComponents = "ui.components", UiNavigation = "ui.navigation", UiInstanceActions = "ui.instanceActions", UiSettings = "ui.settings", UiBackground = "ui.background", Messaging = "plugin.messaging"` | — | — |
+| `static ImmutableArray<string> All { get; }` | — | — |
+
+## PluginPermissionService
+
+```csharp
+public sealed class PluginPermissionService
+```
+
+| API 签名 | EXE method | 权限 / 接口说明 |
+| --- | --- | --- |
+| `bool Has(string permission)` | — | — |
+| `ImmutableArray<PluginPermissionGrant> GetSnapshot()` | — | — |
+| `void Demand(string permission)` | — | — |
+
+## PluginPreviewService
+
+```csharp
+public sealed class PluginPreviewService
+```
+
+| API 签名 | EXE method | 权限 / 接口说明 |
+| --- | --- | --- |
+| `IDisposable RegisterCard(string id, string title, string description, string destination = "worlds", string accent = "#1BD96A")` | — | — |
+| `void UpdateCard(string id, string title, string description, string accent = "#1BD96A")` | — | — |
+| `IDisposable SetAppearance(string title, string accent = "#1BD96A", bool compact = false)` | — | — |
+
+## PluginProject
+
+```csharp
+public sealed record PluginProject(string Id, string Name, string Root);
+```
+
+## PluginProviderDefinition
+
+```csharp
+public sealed record PluginProviderDefinition(string Id, string Name);
+```
+
+## PluginProviderInfo
+
+```csharp
+public sealed record PluginProviderInfo(string Id, string PluginId, string Name, string Kind);
+```
+
+## PluginProviderService
+
+```csharp
+public sealed class PluginProviderService
+```
+
+| API 签名 | EXE method | 权限 / 接口说明 |
+| --- | --- | --- |
+| `IDisposable RegisterDownloadProvider(PluginProviderDefinition definition, IPluginDownloadProvider provider)` | — | — |
+| `IDisposable RegisterModProvider(PluginProviderDefinition definition, IPluginModProvider provider)` | — | — |
+| `IDisposable RegisterLoaderInstaller(PluginProviderDefinition definition, IPluginLoaderInstaller provider)` | — | — |
+| `IDisposable RegisterLoginProvider(PluginProviderDefinition definition, IPluginLoginProvider provider)` | — | — |
+
+## PluginResourceFile
+
+```csharp
+public sealed record PluginResourceFile(string Token, string Id, string Name, string FileName, ImmutableArray<string> GameVersions, ImmutableArray<string> Loaders, long? SizeBytes, string? Sha1);
+```
+
+## PluginResourceFileQuery
+
+```csharp
+public sealed record PluginResourceFileQuery(string SourceId, PluginResourceKind Kind, string ProjectId, string? GameVersion = null, string? Loader = null);
+```
+
+## PluginResourceInstallRequest
+
+```csharp
+public sealed record PluginResourceInstallRequest(string Token, string InstanceId, bool ReplaceExisting = false);
+```
+
+## PluginResourceKind
+
+```csharp
+public enum PluginResourceKind
+```
+
+| API 签名 | EXE method | 权限 / 接口说明 |
+| --- | --- | --- |
+| `Mod` | — | — |
+| `ResourcePack` | — | — |
+| `Shader` | — | — |
+
+## PluginResourceNotFoundException
+
+```csharp
+public sealed class PluginResourceNotFoundException : PluginOperationException
+```
+
+| API 签名 | EXE method | 权限 / 接口说明 |
+| --- | --- | --- |
+| `PluginResourceNotFoundException() : base("ResourceNotFound", "实例或业务资源已不存在。")` | — | — |
+
+## PluginResourceProject
+
+```csharp
+public sealed record PluginResourceProject(string SourceId, string Id, PluginResourceKind Kind, string Title, string Description, string Author);
+```
+
+## PluginResourceQuery
+
+```csharp
+public sealed record PluginResourceQuery(string SourceId, PluginResourceKind Kind, string Query = "", string? GameVersion = null, string? Loader = null, int Offset = 0, int Limit = 20);
+```
+
+## PluginResourceSearchResult
+
+```csharp
+public sealed record PluginResourceSearchResult(ImmutableArray<PluginResourceProject> Items, int Total, int Offset, int Limit);
+```
+
+## PluginResourceService
+
+```csharp
+public sealed class PluginResourceService
+```
+
+| API 签名 | EXE method | 权限 / 接口说明 |
+| --- | --- | --- |
+| `Task<ImmutableArray<PluginResourceSource>> GetSourcesAsync(CancellationToken ct = default)` | — | — |
+| `Task<PluginResourceSearchResult> SearchAsync(PluginResourceQuery query, CancellationToken ct = default)` | — | — |
+| `Task<ImmutableArray<PluginResourceFile>> GetFilesAsync(PluginResourceFileQuery query, CancellationToken ct = default)` | — | — |
+| `Task<PluginDownloadAcceptance> InstallAsync(PluginResourceInstallRequest request, CancellationToken ct = default)` | — | — |
+| `Task<ImmutableArray<PluginGameVersion>> GetGameVersionsAsync(CancellationToken ct = default)` | — | — |
+| `Task<PluginDownloadAcceptance> InstallGameVersionAsync(string folderId, string versionId, CancellationToken ct = default)` | — | — |
+
+## PluginResourceSource
+
+```csharp
+public sealed record PluginResourceSource(string Id, string Name, bool IsPlugin, ImmutableArray<PluginResourceKind> Kinds);
+```
+
+## PluginRuntimeService
+
+```csharp
+public sealed class PluginRuntimeService : IDisposable
+```
+
+| API 签名 | EXE method | 权限 / 接口说明 |
+| --- | --- | --- |
+| `IDisposable RegisterLaunchMiddleware(string id, PluginLaunchMiddleware middleware, int order = 0)` | — | — |
+| `IDisposable RegisterAvatarRenderer(string id, PluginAvatarRenderer renderer, int order = 0)` | — | — |
+| `IDisposable RegisterSkinModelRenderer(string id, PluginSkinModelRendererFactory factory, int order = 0)` | — | 替换皮肤模型的整个渲染后端；可返回 WPF、D3DImage 或原生窗口宿主。 |
+| `void Dispose()` | — | — |
+
+## PluginSettingsChanged
+
+```csharp
+public sealed record PluginSettingsChanged(ImmutableArray<string> ChangedKeys) : PluginNotification;
+```
+
+## PluginSettingsPatch
+
+```csharp
+public sealed record PluginSettingsPatch
+```
+
+| API 签名 | EXE method | 权限 / 接口说明 |
+| --- | --- | --- |
+| `string? UiSkin { get; init; }` | — | — |
+| `bool? IsDarkMode { get; init; }` | — | — |
+| `string? CustomAccentColor { get; init; }` | — | — |
+| `bool? SimplifiedModeEnabled { get; init; }` | — | — |
+| `bool? EnablePageAnimations { get; init; }` | — | — |
+| `bool? EnableUiAnimations { get; init; }` | — | — |
+| `int? UiZoomPercent { get; init; }` | — | — |
+| `bool? EnableWindowTransparency { get; init; }` | — | — |
+| `int? WindowOpacityPercent { get; init; }` | — | — |
+| `bool? EnableGlobalWindowTransparency { get; init; }` | — | — |
+| `int? GlobalWindowOpacityPercent { get; init; }` | — | — |
+| `int? TextOpacityPercent { get; init; }` | — | — |
+| `int? BrightnessPercent { get; init; }` | — | — |
+| `int? MinMemoryMb { get; init; }` | — | — |
+| `int? MaxMemoryMb { get; init; }` | — | — |
+| `bool? IsolateVersionsByDefault { get; init; }` | — | — |
+| `string? BuiltInDownloadSource { get; init; }` | — | — |
+| `double? CallbackTimeoutSeconds { get; init; }` | — | — |
+
+## PluginSettingsSnapshot
+
+```csharp
+public sealed record PluginSettingsSnapshot(long Revision, string LauncherLanguage, string UiSkin, bool IsDarkMode, bool SimplifiedModeEnabled, bool EnablePageAnimations, bool EnableUiAnimations, int UiZoomPercent, int MinMemoryMb, int MaxMemoryMb, bool IsolateVersionsByDefault, string BuiltInDownloadSource);
+```
+
+## PluginSkinModelRenderRequest
+
+```csharp
+public sealed record PluginSkinModelRenderRequest(PluginContext Plugin, BitmapSource Skin, bool SlimModel, string Username);
+```
+
+## PluginTemplateGenerator
+
+```csharp
+public static class PluginTemplateGenerator
+```
+
+| API 签名 | EXE method | 权限 / 接口说明 |
+| --- | --- | --- |
+| `static void Generate(string targetDir, string pluginId, string displayName)` | — | 在 targetDir（必须是一个空目录或者不存在的目录）下生成模板项目。 pluginId 建议形如 "yourname.plugin-name"，会被用作类名、Id 默认值和项目名。 |
+
+## PluginUiContext
+
+```csharp
+public sealed class PluginUiContext
+```
+
+| API 签名 | EXE method | 权限 / 接口说明 |
+| --- | --- | --- |
+| `PluginContext Plugin { get; }` | — | — |
+| `string Target { get; }` | — | — |
+| `CancellationToken Stopping { get; }` | — | — |
+
+## PluginUiService
+
+```csharp
+public sealed partial class PluginUiService
+```
+
+| API 签名 | EXE method | 权限 / 接口说明 |
+| --- | --- | --- |
+| `IDisposable RegisterNavigationPage(PluginNavigationPageDefinition definition)` | — | — |
+| `IDisposable RegisterInstanceAction(PluginInstanceActionDefinition definition)` | — | — |
+| `IDisposable RegisterSetting(PluginOptionDefinition definition)` | — | — |
+| `IDisposable RegisterBackground(PluginBackgroundDefinition definition)` | — | — |
+| `Task<PluginBackgroundAsset?> ImportBackgroundImageAsync(CancellationToken ct = default)` | — | — |
+| `CancellationToken Stopping { get; }` | — | — |
+| `Task RunOnUiAsync(Action action)` | — | — |
+| `IDisposable RegisterDialog(PluginDialogDefinition definition)` | — | — |
+| `IDisposable RegisterButton(PluginButtonDefinition definition)` | — | — |
+| `IDisposable RegisterOption(PluginOptionDefinition definition)` | — | — |
+| `IDisposable RegisterPanel(PluginPanelDefinition definition)` | — | — |
+| `IDisposable SubscribeDialogs(Action<PluginDialogEvent> observer)` | — | — |
+| `string GetDialogTarget(string id)` | — | — |
+| `Task<bool?> ShowDialogAsync(string id, object? parameter = null)` | — | — |
+| `Task<bool?> ShowMessageAsync(string title, string message)` | — | — |
+| `Task<bool> ConfirmAsync(string title, string message)` | — | — |
+| `void Dispose()` | — | — |
+
+## PluginUiTargets
+
+```csharp
+public static class PluginUiTargets
+```
+
+| API 签名 | EXE method | 权限 / 接口说明 |
+| --- | --- | --- |
+| `const string PluginSettings = "plugin.settings"` | — | — |
+| `const string PluginManager = "dialog:PluginManagerDialog"` | — | — |
+| `const string LoaderChoice = "dialog:LoaderChoiceDialog"` | — | — |
+| `const string MultiLoaderInstall = "dialog:MultiLoaderInstallWindow"` | — | — |
+| `const string CreateServer = "dialog:CreateServerWindow"` | — | — |
+| `const string ExperimentalFeatures = "dialog:ExperimentalFeaturesWindow"` | — | — |
+| `static string ForDialog<T>() where T : FrameworkElement, IOverlayDialog` | — | — |
+
+## PluginUpgradeResult
+
+```csharp
+public sealed record PluginUpgradeResult(string Package, string Report, string Fingerprint);
+```
+
+## PluginVersionEntry
+
+```csharp
+public sealed record PluginVersionEntry(string Id, string Type, string Url, string ReleaseTime);
+```
+
+## PluginVersionManifest
+
+```csharp
+public sealed record PluginVersionManifest(string LatestRelease, string LatestSnapshot, ImmutableArray<PluginVersionEntry> Versions);
+```
+
+## PluginWindowAction
+
+```csharp
+public enum PluginWindowAction
+```
+
+| API 签名 | EXE method | 权限 / 接口说明 |
+| --- | --- | --- |
+| `Activate` | — | — |
+| `Minimize` | — | — |
+| `Maximize` | — | — |
+| `Restore` | — | — |
+
+## PluginWindowPatch
+
+```csharp
+public sealed record PluginWindowPatch
+```
+
+| API 签名 | EXE method | 权限 / 接口说明 |
+| --- | --- | --- |
+| `string? Title { get; init; }` | — | — |
+| `double? Width { get; init; }` | — | — |
+| `double? Height { get; init; }` | — | — |
+| `bool? Topmost { get; init; }` | — | — |
+| `bool? SidebarCollapsed { get; init; }` | — | — |
+
+## PluginWindowSnapshot
+
+```csharp
+public sealed record PluginWindowSnapshot(string Title, string State, double Width, double Height, bool Topmost, bool SidebarCollapsed);
+```
+
+## PluginWorldService
+
+```csharp
+public sealed class PluginWorldService
+```
+
+| API 签名 | EXE method | 权限 / 接口说明 |
+| --- | --- | --- |
+| `Task<IReadOnlyList<WorldArchive>> GetSnapshotAsync(CancellationToken ct = default)` | — | — |
+| `IReadOnlyList<WorldEditField> GetEditSchema()` | — | — |
+| `Task<WorldArchive> GetAsync(string worldPath, CancellationToken ct = default)` | — | — |
+| `Task<string> UpdateAsync(string worldPath, WorldEdit edit, CancellationToken ct = default)` | — | — |
+| `Task<string> GenerateCopyAsync(string worldPath, string destinationPath, WorldEdit edit, CancellationToken ct = default)` | — | — |
+
+## ProjectEntry
+
+```csharp
+public sealed record ProjectEntry(string Path, long Bytes, DateTime ModifiedUtc);
+```
+
+## ProjectFiles
+
+```csharp
+public static class ProjectFiles
+```
+
+| API 签名 | EXE method | 权限 / 接口说明 |
+| --- | --- | --- |
+| `const long MaxFileBytes = 16 * 1024 * 1024` | — | — |
+| `static string Resolve(string root, string relative, bool allowRoot = false)` | — | — |
+| `static IEnumerable<ProjectEntry> Enumerate(string root, string pattern = "*", int limit = 20000, CancellationToken ct = default, Func<string, bool>? allowed = null)` | — | — |
+| `static byte[] ReadBytes(string path)` | — | — |
+| `static string Hash(byte[] bytes)` | — | — |
+| `static string HashFile(string path)` | — | — |
+| `static (string Text, Encoding Encoding, bool Bom) Decode(byte[] bytes)` | — | — |
+| `static byte[] EncodeLike(string text, byte[]? original)` | — | — |
+| `static ProjectTextPage ReadPage(string root, string path, int startLine = 1, int lineCount = 200, CancellationToken ct = default)` | — | — |
+| `static ProjectSearchResult Search(string root, string query, string pattern = "*", bool regex = false, bool caseSensitive = false, int maxResults = 200, CancellationToken ct = default, Func<string, bool>? allowed = null)` | — | — |
+| `static string Patch(string original, string oldText, string newText)` | — | — |
+| `static void AtomicWrite(string path, byte[] bytes)` | — | — |
+
+## ProjectMatch
+
+```csharp
+public sealed record ProjectMatch(string Path, int Line, int Column, string Text);
+```
+
+## ProjectSearchResult
+
+```csharp
+public sealed record ProjectSearchResult(IReadOnlyList<ProjectMatch> Matches, int FilesScanned, bool Truncated, IReadOnlyList<string> Warnings);
+```
+
+## ProjectTextPage
+
+```csharp
+public sealed record ProjectTextPage(string Path, string Sha256, int StartLine, int? NextLine, string Text);
+```
+
+## TaskStore
+
+```csharp
+public sealed class TaskStore(string directory)
+```
+
+| API 签名 | EXE method | 权限 / 接口说明 |
+| --- | --- | --- |
+| `WorkTask Get(string id)` | — | — |
+| `IReadOnlyList<WorkTask> List()` | — | — |
+| `WorkTask Create(string title, string goal, string projectRoot = "")` | — | — |
+| `void Save(WorkTask task)` | — | — |
+| `WorkTask Update(string id, Action<WorkTask> edit)` | — | — |
+| `WorkTask Checkpoint(string id, string text)` | — | — |
+
+## WorkStep
+
+```csharp
+public sealed class WorkStep
+```
+
+| API 签名 | EXE method | 权限 / 接口说明 |
+| --- | --- | --- |
+| `string Id { get; set; }` | — | — |
+| `string Title { get; set; }` | — | — |
+| `string Status { get; set; }` | — | — |
+| `string Evidence { get; set; }` | — | — |
+
+## WorkTask
+
+```csharp
+public sealed class WorkTask
+```
+
+| API 签名 | EXE method | 权限 / 接口说明 |
+| --- | --- | --- |
+| `string Id { get; set; }` | — | — |
+| `string Title { get; set; }` | — | — |
+| `string Goal { get; set; }` | — | — |
+| `string ProjectRoot { get; set; }` | — | — |
+| `string Mode { get; set; }` | — | — |
+| `string Status { get; set; }` | — | — |
+| `string NextAction { get; set; }` | — | — |
+| `string Notes { get; set; }` | — | — |
+| `List<WorkStep> Steps { get; set; }` | — | — |
+| `List<string> ChangeIds { get; set; }` | — | — |
+| `List<string> Checkpoints { get; set; }` | — | — |
+| `DateTime UpdatedUtc { get; set; }` | — | — |
+| `long Revision { get; set; }` | — | — |
+
+## EXE 命名管道 API
+
+| method | params 字段 |
 | --- | --- |
-| `UseCustomApiKey` | `true` 时使用自定义供应商配置 |
-| `BaseUrl` | API 根地址，例如 `https://api.example.com/v1` |
-| `ApiKey` | 自定义服务密钥 |
-| `CustomModels[].Id` | 请求中的 `model` 字段，必须是提供方接受的 ID |
-| `CustomModels[].DisplayName` | 本地显示名称，不替代请求模型 ID |
-| `CustomModels[].ProviderBaseUrl` / `ProviderApiKey` | 某个模型的独立供应商覆盖配置；未提供完整覆盖时使用公共供应商 |
+| `hello` | `token` |
+| `folders.list` | — |
+| `instances.directories` | `instanceId` |
+| `instances.setHidden` | `hidden`, `instanceId` |
+| `instances.rename` | `instanceId`, `newName` |
+| `instances.setIsolation` | `instanceId`, `isolated` |
+| `instances.repair` | `instanceId` |
+| `mods.setEnabled` | `enabled`, `fileName`, `instanceId` |
+| `java.list` | — |
+| `java.select` | `instanceId`, `javaId` |
+| `downloads.get` | `downloadId` |
+| `downloads.pause` | `downloadId` |
+| `downloads.resume` | `downloadId` |
+| `downloads.cancel` | `downloadId` |
+| `downloads.clearFinished` | — |
+| `resources.sources` | — |
+| `resources.search` | `query` |
+| `resources.files` | `query` |
+| `resources.install` | `request` |
+| `gameVersions.list` | — |
+| `gameVersions.install` | `folderId`, `versionId` |
+| `launcher.pages` | — |
+| `launcher.navigate` | `pageId` |
+| `launcher.snapshot` | — |
+| `launcher.selectAccount` | `accountId` |
+| `launcher.selectInstance` | `instanceId` |
+| `launcher.launch` | — |
+| `launcher.cancelLaunch` | — |
+| `window.snapshot` | — |
+| `window.update` | `patch` |
+| `window.setState` | `action` |
+| `appearance.snapshot` | — |
+| `settings.update` | `patch` |
+| `worlds.list` | — |
+| `worlds.get` | `path` |
+| `worlds.schema` | — |
+| `worlds.copy` | `destinationPath`, `edit`, `path` |
+| `worlds.update` | `edit`, `path` |
+| `preview.registerCard` | `accent`, `description`, `destination`, `id`, `title` |
+| `preview.updateCard` | `accent`, `description`, `id`, `title` |
+| `preview.setAppearance` | `accent`, `compact`, `title` |
+| `permissions.snapshot` | — |
+| `accounts.list` | — |
+| `accounts.selected` | — |
+| `instances.list` | `query` |
+| `instances.selected` | — |
+| `instances.details` | `instanceId` |
+| `mods.list` | `instanceId` |
+| `downloads.list` | — |
+| `settings.snapshot` | — |
+| `environment.snapshot` | — |
+| `config.get` | — |
+| `config.set` | `key`, `value` |
+| `config.remove` | `key` |
+| `log` | `message` |
+| `network.getText` | `url` |
+| `registrations.remove` | `registrationId` |
+| `events.subscribe` | `event` |
+| `events.interceptLaunch` | `callbackId` |
+| `events.interceptDownload` | `callbackId` |
+| `events.interceptInstanceCreation` | `callbackId` |
+| `messages.peers` | — |
+| `messages.send` | `channel`, `payload`, `targetPluginId` |
+| `messages.subscribe` | `channel` |
+| `ui.showMessage` | `message`, `title` |
+| `ui.confirm` | `message`, `title` |
+| `ui.dialogTarget` | `id` |
+| `ui.showDialog` | `id`, `parameter` |
+| `ui.subscribeDialogs` | — |
+| `ui.registerDialog` | `content`, `dismissOnBackgroundClick`, `dismissOnEscape`, `id`, `title`, `width` |
+| `ui.registerButton` | `callbackId`, `description`, `id`, `order`, `target`, `text` |
+| `ui.registerPanel` | `content`, `id`, `order`, `target` |
+| `ui.registerBackground` | — |
+| `ui.registerInstanceAction` | `callbackId`, `id`, `title` |
+| `ui.registerSetting` | — |
+| `ui.registerOption` | `choices`, `configKey`, `defaultValue`, `description`, `id`, `kind`, `maximum`, `minimum`, `order`, `target`, `title` |
+| `ui.importBackgroundImage` | — |
+| `ui.registerPage` | `content`, `id`, `languages`, `showInSimplifiedMode`, `title` |
+| `providers.register` | `callbacks`, `definition`, `kind` |
+| `workspace.writeVersionJson` | `json` |
+| `workspace.downloadFile` | `relativePath`, `sha1`, `url` |
+| `workspace.runJavaInstaller` | `arguments`, `relativeJar` |
+| `auth.authorize` | `brokerId`, `request` |
 
-启动器拼接 `BaseUrl.TrimEnd('/') + "/chat/completions"`，因此 Base URL 不要再填写完整的 `/chat/completions` 路径。
-
-请求：`POST <BaseUrl>/chat/completions`。
-
-```http
-Authorization: Bearer <用户填写的 API Key>
-Content-Type: application/json; charset=utf-8
-```
-
-普通模式的请求结构示意：
+| 协议接口 | 类型 / 格式 |
+| --- | --- |
+| 帧 | `uint32 little-endian length` + UTF-8 JSON；1–1048576 字节 |
+| 请求 | `protocol:1, kind:"request", id, method, params` |
+| 成功响应 | `protocol:1, kind:"response", id, result` |
+| 失败响应 | `protocol:1, kind:"response", id, error:{code,message}` |
+| 事件通知 | `protocol:1, kind:"event", subscriptionId, event, payload` |
+| `callbacks.invoke` | 宿主 → EXE；`callbackId, payload` |
+| `XCL2_PLUGIN_PIPE` | 命名管道名称 |
+| `XCL2_PLUGIN_SESSION_TOKEN` | `hello.params.token` |
+| `XCL2_PLUGIN_PROTOCOL_VERSION` | 协议版本 |
+| `XCL2_PLUGIN_DATA_DIR` | 插件专属数据目录 |
 
 ```json
+{"protocol":1,"kind":"request","id":"search-1","method":"workbench.projects.searchText","params":{"projectId":"选择目录返回的 Id","query":"class MainWindow","glob":"*.cs","limit":100}}
+```
+
+## 命令行 API
+
+| 参数 | 行为 |
+| --- | --- |
+| `-help` | 显示本帮助并退出 |
+| `-r --账户名 <账户名> --实例名称 <实例名>` | 使用指定账户与实例直接启动游戏 |
+| `--result-file <路径>` | 将启动操作的实际进程结果写入 JSON |
+| `--list-instances / --list-accounts` | 查询实例 / 账户，不输出凭据；可配合 --result-file |
+| `-gui <页面名>` | 启动后跳转到对应页面，例如：-gui 设置 / -gui 下载中心 / -gui 百宝箱 |
+| `--d --版本 <版本号> --加载器 <加载器>` | 打开下载中心；不填 --版本 时会直接弹出下载页面供手动选择， |
+| `-l` | 以访客模式启动本次会话（会要求重新阅读并同意协议） |
+| `--skip-update-check` | 本次启动跳过自动检查更新 |
+| `--check-update-only` | 只检查一次更新，不进入主界面 |
+| `--offline` | 强制以离线模式启动 |
+| `--portable` | 强制使用便携模式（配置存在启动器目录） |
+| `--no-tray` | 不创建托盘图标 |
+| `--minimized` | 启动后直接最小化 |
+| `--maximized` | 启动后直接最大化 |
+| `--reset-window` | 重置窗口位置/大小为默认值 |
+| `--width <px> --height <px>` | 指定启动窗口大小 |
+| `--lang <代码>` | 本次强制界面语言，例如 zh-CN / en-US |
+| `--theme <light\|dark>` | 本次强制主题 |
+| `--zoom <百分比>` | 本次强制界面缩放，例如 125 |
+| `--no-animation` | 关闭界面动效 |
+| `--safe-mode` | 安全模式启动，跳过公告/AI 悬浮球等增强功能 |
+| `--debug-console` | 额外弹出调试控制台窗口 |
+| `--debug -yrj` | 本次会话无视日期开启愚人节彩蛋（仍尊重 noyrj 禁用） |
+| `--verbose` | 调试控制台输出更详细日志 |
+| `--config-path <路径>` | 使用指定配置文件路径 |
+| `--instance-dir <路径>` | 使用指定实例（.minecraft）根目录 |
+| `--java <路径>` | 启动游戏强制使用指定 Java 路径 |
+| `--min-memory <MB> --max-memory <MB>` | 启动游戏强制使用的 JVM 内存参数 |
+| `--jvm-args <参数>` | 启动游戏额外追加的 JVM 参数 |
+| `--game-args <参数>` | 启动游戏额外追加的游戏参数 |
+| `--server <ip:port>` | 配合 -r 使用，启动后自动直连该服务器 |
+| `--fullscreen` | 配合 -r 使用，游戏以全屏启动 |
+| `--clear-cache` | 启动前先清理下载缓存/临时文件 |
+| `--export-logs <路径>` | 启动后自动打包导出日志/崩溃报告到指定路径 |
+| `--no-single-instance` | 跳过单实例检测，允许多开 |
+| `--no-gpu-accel` | 关闭窗口硬件加速渲染 |
+
+## AI HTTP API
+
+| 接口 | 请求 / 响应字段 |
+| --- | --- |
+| `GET <BaseUrl>/models` | `Authorization: Bearer …`；响应 `data[].id` |
+| `POST <BaseUrl>/chat/completions` | `model, messages, stream, stream_options, temperature, max_tokens, reasoning_effort, tools` |
+| 非流式响应 | `choices[].message.content`；可选 `usage.prompt_tokens, completion_tokens, total_tokens` |
+| 流式响应 | SSE `data:` JSON，`choices[].delta.content`，可选 reasoning/usage；`[DONE]` |
+| `messages[]` | `role: system/user/assistant`, `content: string` |
+| `stream_options` | `include_usage: true` |
+
+## AI 文件与任务工具 API
+
+| action | 参数 | 模式 |
+| --- | --- | --- |
+| `read_log` | `—` | Plan / Build |
+| `read_config` | `key` | Plan / Build |
+| `apply_setting` | `key, value` | Build |
+| `request_directory` | `path, content` | Build |
+| `list_workspace` | `path` | Plan / Build |
+| `read_workspace_file` | `path` | Plan / Build |
+| `write_workspace_file` | `path, content, sha256?` | Build |
+| `delete_workspace_file` | `path` | Build |
+| `run_command` | `command, shell, timeout_seconds` | Build |
+| `registry_read` | `path, key` | Plan / Build |
+| `registry_write` | `path, key, value, type` | Build |
+| `update_task` | `steps[{id,title,status,evidence}], next_action, notes` | Plan / Build |
+| `list_project_files` | `path, glob, limit` | Plan / Build |
+| `search_project` | `path, query, glob, regex, case_sensitive, limit` | Plan / Build |
+| `read_file_range` | `path, start_line, line_count` | Plan / Build |
+| `patch_workspace_file` | `path, sha256, old_text, new_text` | Build |
+
+```text
+<<XCL2_ACCESS:{"action":"read_file_range","path":"src/MainWindow.cs","start_line":201,"line_count":200}>>
+```
+
+## 工作台 API 数据约束
+
+| 接口 | 参数 / 返回约束 |
+| --- | --- |
+| `ctx.Projects.ChooseFolderAsync` | 用户选择目录后返回项目 ID；重启或撤销 projects.read 后重新选择 |
+| `ctx.Projects.GetFiles / GetFileCount / GetTotalBytes / GetExtensionStats / GetLargestFiles` | 文件清单最多 20000 项；统计针对该有界清单；忽略 .git/node_modules/bin/obj/dist/build/.xcl2 和目录链接 |
+| `ProjectFiles.Search` | 最多 20000 文件 / 128 MiB 扫描量；`Truncated` 指示结果或扫描上限；每个正则匹配 100 ms 超时 |
+| `ProjectFiles.ReadPage` | 文本文件 ≤16 MiB，1–2000 行，输出 ≤80000 字符；`NextLine` 为续读行号，`Sha256` 为整文件版本 |
+| `ctx.Changes.Prepare*` | 只保存预览与完整备份；`ApplyAsync` 显示预览后提交；`RollbackAsync` 校验当前内容并确认回滚 |
+| `FileChange.State` | Prepared / Applying / Applied / RollingBack / RolledBack |
+| `WorkStep.Status` | pending / in_progress / completed / blocked；最多 100 步，同时最多一个 in_progress |
+| `WorkTask.Mode` | Plan / Build；任务元数据，不改变宿主授权或 AI 工作模式 |
+| `WorkTask.Status` | paused / running / completed / interrupted / archived |
+| `WorkTask.Revision` | 乐观并发版本；旧版本保存会拒绝覆盖 |
+
+```csharp
+var project = await ctx.Projects.ChooseFolderAsync(ctx.Stopping);
+if (project is not null)
 {
-  "model": "your-model-id",
-  "messages": [
-    { "role": "system", "content": "启动器生成的系统提示" },
-    { "role": "user", "content": "用户输入" }
-  ],
-  "stream": false,
-  "temperature": 0.6
+    var page = ctx.Projects.ReadRange(project.Id, "src/MainWindow.cs", 1, 120);
+    var draft = ctx.Changes.PreparePatch(project.Id, "src/MainWindow.cs",
+        page.Sha256, "old unique fragment", "new fragment");
+    await ctx.Changes.ApplyAsync(project.Id, draft.Id, ctx.Stopping);
+    var task = ctx.Tasks.Create("更新界面", "实现新布局", project.Root);
+    ctx.Tasks.AddChange(task.Id, draft.Id);
+    ctx.Tasks.Checkpoint(task.Id, "已提交变更，等待编译验证");
 }
 ```
-
-对话可包含多条 `system`、`user`、`assistant` 消息。开启深度思考时客户端附加 `reasoning_effort: "high"`；开启联网搜索时附加 `tools: [{"type":"web_search"}]`。这些扩展字段需要上游支持，不支持的服务应在设置中关闭对应选项。
-
-成功响应需要返回 JSON，并提供字符串 `choices[0].message.content`：
-
-```json
-{
-  "choices": [
-    { "message": { "role": "assistant", "content": "返回给用户的 Markdown 文本" } }
-  ]
-}
-```
-
-当前实现使用非流式 JSON 响应，不按 SSE 的 `data:` / `[DONE]` 帧读取，也不按 Responses API 的响应结构读取。接入其他协议时，需要供应商兼容层或修改客户端适配逻辑。
-
-客户端会对部分临时失败进行重试；可识别的配置或鉴权错误会直接反馈。日志交给 AI 的入口还受 `AllowCrashLogReading` 控制，普通插件配置接口不能替代用户的这项授权。
-
-## 7. 宿主侧插件管理接口
-
-命名空间仍为 `XCL2.App.Services.Plugins`。这些方法供维护启动器源码时接入 UI，普通插件优先使用宿主传入的 `PluginContext`。
-
-| API | 返回类型 | 调用约定 |
-| --- | --- | --- |
-| `new PluginManager(Action<string>? logSink = null)` | `PluginManager` | 创建管理器并提供日志回调 |
-| `InstalledDirectory` | `string` | 已安装插件目录 |
-| `Plugins` | `IReadOnlyList<LoadedPluginInfo>` | 最近一次扫描结果 |
-| `StartPolicy` | `PluginLaunchMode` | 扫描前设置为 `EachLaunch` 或 `OnceOnImport` |
-| `InstallFromFile(string sourcePath)` | `string` | 安装 DLL / EXE / `.xclplugin` 并返回实际入口路径；本方法本身不启动插件；单参数重载遇到冲突按 Cancel 语义处理 |
-| `ScanAndLoad()` | `void` | 停止上一轮、扫描、按启用状态和策略启动 |
-| `SetEnabled(string filePath, bool enabled)` | `void` | 保存开关；随后重新扫描使运行状态生效 |
-| `ShutdownAll()` | `void` | 结束当前托管插件并释放加载上下文 |
-| `PluginTemplateGenerator.Generate(string targetDir, string pluginId, string displayName)` | `void` | 在指定目录生成插件源码模板 |
-
-安装和启用操作沿用宿主界面对用户选择的确认流程。典型调用顺序：
-
-```csharp
-// UI 已完成用户选择和导入确认后：
-manager.StartPolicy = config.PluginLaunchMode;
-var installedPath = manager.InstallFromFile(selectedPluginPath);
-manager.ScanAndLoad();
-
-// 用户禁用该插件后：
-manager.SetEnabled(installedPath, false);
-manager.ScanAndLoad();
-
-// 宿主退出时：
-manager.ShutdownAll();
-```
-
-`LoadedPluginInfo` 提供 `FilePath`、`Plugin`、`LoadError`、`Enabled`、`Context`、`IsExecutable`、`RunningProcess` 和 `StartedOnce`。未在本轮运行或加载失败时，`Plugin` / `Context` 可以为 `null`，调用方应先判断。
-
-## 8. 内置 MD 的拉取与导出接口
-
-两份主要帮助文档在仓库根目录和 `XCL2.App/Resources/Docs/` 各保留一份。项目文件仅将项目内的副本编为 `EmbeddedResource`。更新文档时同步两份，随后编译即可更新应用内文档。外部 MD 不在场、单文件发布、离线运行时，查看和导出仍从当前程序集读取。
-
-| 文档 | 项目内源文件 | 程序集资源名 |
-| --- | --- | --- |
-| 解决方法 | `Resources/Docs/PAPERDOLL_FIX.md` | `XCL2.App.Docs.PAPERDOLL_FIX.md` |
-| API 接入说明 | `Resources/Docs/API_REFERENCE.md` | `XCL2.App.Docs.API_REFERENCE.md` |
-
-命名空间：`XCL2.App.Services`。
-
-| API | 返回值 | 用途 |
-| --- | --- | --- |
-| `EmbeddedDocumentationService.SolutionsFileName` | 常量 `PAPERDOLL_FIX.md` | 解决方法文档标识 |
-| `EmbeddedDocumentationService.ApiFileName` | 常量 `API_REFERENCE.md` | API 文档标识 |
-| `GetTitle(string fileName)` | `string` | 返回文档显示标题 |
-| `Read(string fileName)` | `string` | 从程序集读取完整 Markdown |
-| `Export(string fileName, string destination)` | `void` | 将内置原始字节写入指定目标文件 |
-
-`fileName` 只接受以上两种标识，未知标识抛出 `ArgumentException`；缺少嵌入资源抛出 `FileNotFoundException`。导出目标的父目录必须存在，目标文件存在时会覆盖。界面的“导出 MD…”使用保存对话框确认目标和覆盖行为；直接调用接口的代码自行处理目标选择及 IO 异常。
-
-```csharp
-using System.IO;
-using XCL2.App.Services;
-
-string markdown = EmbeddedDocumentationService.Read(EmbeddedDocumentationService.ApiFileName);
-// 可以传给自己的 Markdown 渲染控件。
-
-// destination 是用户选定的保存位置。
-EmbeddedDocumentationService.Export(EmbeddedDocumentationService.ApiFileName, destination);
-```
-
-无需服务封装时，也可从宿主程序集直接拉取：
-
-```csharp
-using System.IO;
-using XCL2.App.Services.Plugins;
-
-using var stream = typeof(IPlugin).Assembly.GetManifestResourceStream("XCL2.App.Docs.API_REFERENCE.md")
-    ?? throw new FileNotFoundException("当前启动器构建未包含 API 文档。");
-using var reader = new StreamReader(stream);
-string markdown = reader.ReadToEnd();
-```
-
-用户入口位于“鸣谢与帮助 → 帮助文档”：两份文档各有“查看”和“导出 MD…”按钮。查看使用启动器内置 Markdown 查看器，不要求系统安装 MD 阅读器，不会自动联网拉取其他版本。
-
-原有插件指南仍保留在根目录和 `Resources/Docs/PLUGIN_GUIDE.md`，其兼容资源名为 `XCL2.App.PLUGIN_GUIDE.md`，现有插件管理页的指南按钮继续使用该资源。
-
-## 9. 源码对应表
-
-| 接口 | 定义 / 调用位置 |
-| --- | --- |
-| 插件契约 | `Services/Plugins/IPlugin.cs` |
-| 上下文与配置 | `Services/Plugins/PluginContext.cs`、`PluginConfigService.cs` |
-| 插件安装与进程协议 | `Services/Plugins/PluginManager.cs` |
-| 模板生成 | `Services/Plugins/PluginTemplateGenerator.cs` |
-| 命令行解析 / 执行 | `Services/CommandLineService.cs`、`App.xaml.cs`、`Views/MainWindow.xaml.cs` |
-| AI 请求与配置 | `Services/AiAssistantService.cs`、`Models/AiAssistantModels.cs` |
-| MD 读取和导出 | `Services/EmbeddedDocumentationService.cs` |
-| 文档界面 | `Views/AboutHelpPage.xaml`、`Views/HelpDocumentDialog.xaml` |
-
-## 10. UI 注册 API（1.1 起，当前宿主 1.9）
-
-本节接口均位于 `XCL2.App.Services.Plugins`，适用于本轮已经运行的 DLL 插件。原有 `IPlugin` 和 `PluginContext` 构造签名保持兼容。新插件通过 `ctx.ApiVersion` 判断 UI API 版本；`ctx.Ui` 是当前插件实例的注册表；`ctx.Stopping` 在插件停止时取消。
-
-### 注册、调用与注销
-
-| API | 返回值 | 行为 |
-| --- | --- | --- |
-| `ctx.ApiVersion` | `Version` | 当前为 `1.9`，与启动器产品版本独立 |
-| `ctx.Ui` | `PluginUiService` | 当前实例的 UI 注册入口 |
-| `ctx.Stopping` / `ctx.Ui.Stopping` | `CancellationToken` | 停止、重载、初始化失败时取消；可传给后台任务 |
-| `Ui.RegisterDialog(PluginDialogDefinition definition)` | `IDisposable` | 注册可多次打开的弹窗工厂 |
-| `Ui.RegisterButton(PluginButtonDefinition definition)` | `IDisposable` | 向目标位置注册异步操作按钮 |
-| `Ui.RegisterOption(PluginOptionDefinition definition)` | `IDisposable` | 自动生成配置控件并保存到本插件 Config |
-| `Ui.RegisterPanel(PluginPanelDefinition definition)` | `IDisposable` | 向目标位置注册任意 WPF 内容工厂 |
-| `Ui.ShowDialogAsync(string id, object? parameter = null)` | `Task<bool?>` | 打开本插件注册的弹窗，关闭后返回结果 |
-| `Ui.GetDialogTarget(string id)` | `string` | 返回本插件某个弹窗的扩展位置 `plugin:<PluginId>/<id>` |
-| `Ui.ShowMessageAsync(string title, string message)` | `Task<bool?>` | 通用提示弹窗；确定返回 true，关闭返回 null |
-| `Ui.ConfirmAsync(string title, string message)` | `Task<bool>` | 通用确认弹窗；仅点确定返回 true；取消、Esc、关闭均返回 false |
-| `Ui.SubscribeDialogs(Action<PluginDialogEvent> observer)` | `IDisposable` | 订阅 Overlay 弹窗打开/关闭通知 |
-| `Ui.RunOnUiAsync(Action action)` | `Task` | 将操作安排到宿主 UI 线程；异常通过任务返回 |
-| `Ui.Dispose()` | `void` | 停止当前 UI 服务；通常由宿主自动调用，重复调用无副作用 |
-| 注册返回值的 `Dispose()` | `void` | 提前注销对应条目或订阅；重复调用无副作用 |
-
-注册 ID 在“当前插件实例 + 条目种类”范围内唯一，空白 ID 和同种类重复 ID 抛出 `ArgumentException`。不同插件可以使用相同局部 ID。弹窗、按钮、选项、面板的同名 ID 也互不冲突。宿主拒绝同时加载会映射到同一插件配置路径的重复插件 ID。
-
-注册、注销、打开弹窗会自动切回 UI 线程；控件工厂、按钮回调、校验、配置保存、通知回调均在 UI 线程执行。按钮回调可以 `await`，执行期间该按钮禁用，异常显示在按钮旁并写日志。需要 CPU 密集工作时使用 `Task.Run`，不要在回调中同步等待 `.Wait()` / `.Result`，也不要在 UI 线程阻塞等待正在调用 UI API 的后台线程。
-
-插件停止时，宿主先取消 `Stopping`、关闭本插件打开的弹窗、移除注册项及订阅，再调用插件自己的 `Shutdown()`。即使 `Initialize` 中途抛出异常，也会清理已注册的 UI；初始化失败不会额外调用 `Shutdown`。`Shutdown` 中仍可使用 `Config` 和 `Log`，不要重新注册 UI。停止后的注册/打开调用抛出 `ObjectDisposedException`。后台任务与插件自行订阅的外部事件仍由插件自己取消、解除。
-
-### 可扩展的位置
-
-| Target | 位置 |
-| --- | --- |
-| `PluginUiTargets.PluginSettings`（默认） | 当前插件的配置界面，仅显示自己的注册项 |
-| `PluginUiTargets.PluginManager` | 插件管理弹窗底部 |
-| `PluginUiTargets.LoaderChoice` | Minecraft 加载器选择弹窗底部 |
-| `PluginUiTargets.MultiLoaderInstall` | 多加载器安装弹窗底部 |
-| `PluginUiTargets.CreateServer` | 创建服务端弹窗底部 |
-| `PluginUiTargets.ExperimentalFeatures` | 实验性功能弹窗底部 |
-| `PluginUiTargets.ForDialog<T>()` | 任意实现 `IOverlayDialog` 的 `FrameworkElement` 弹窗；值为 `dialog:` 加类型短名称 |
-| `Ui.GetDialogTarget(id)` | 本插件注册的自定义弹窗底部 |
-
-所有经 `OverlayDialogService` 显示的弹窗都提供独立扩展区，包括已有的加载器选择、账户选择、Java 选择、帮助文档、插件管理等弹窗。可使用 `PluginUiTargets.ForDialog<XCL2.App.Views.AccountPickerDialog>()` 等类型安全写法。独立的系统文件选择窗口和没有经过 Overlay 宿主的 Window 不提供这个扩展位置。
-
-扩展区支持按钮、配置选项和自定义面板，空间不足时可滚动。动态注册/注销会刷新当前扩展区；被子弹窗覆盖的扩展区在恢复显示时刷新。排列先按 `Order` 升序，再按插件 ID、条目 ID 排序。未知 Target 可以注册，但在对应宿主出现前不会显示；请优先使用常量和 `ForDialog<T>()`。
-
-扩展区是附加 UI，不会把注册按钮自动变成 Minecraft 新加载器的安装实现，不会修改原弹窗的选中项、返回结果或确认按钮。插件如需完整业务交互，应注册自己的弹窗/面板，并在自己的回调中实现逻辑，无需反射宿主私有控件。
-
-### 弹窗定义与结果
-
-`PluginDialogDefinition`：
-
-| 属性 | 类型 / 默认值 | 说明 |
-| --- | --- | --- |
-| `Id`、`Title` | 必填 `string` | 本插件局部 ID、显示标题 |
-| `CreateContent` | 必填 `Func<PluginDialogContext, FrameworkElement>` | 每次打开创建全新的 WPF 内容，不可返回 null 或复用已有父控件的元素 |
-| `Width` | `double`，560 | 允许 240～1600；显示宽度受主窗口可用宽度限制 |
-| `DismissOnEscape` | `bool`，true | 是否允许 Esc 关闭 |
-| `DismissOnBackgroundClick` | `bool`，false | 是否允许点击遮罩关闭 |
-
-`PluginDialogContext` 提供 `Plugin`、`Parameter`、`Stopping`、`Close(bool? result = null)`。`Parameter` 原样传入，不会持久化。`Close(true)` 表示成功，`Close(false)` 表示取消，`Close()` 表示无结果关闭。每次打开都有独立上下文，支持同一种弹窗多次打开与弹窗内再开弹窗。宿主标题和关闭按钮始终可用，内容较多时滚动。
-
-注销一个弹窗注册项会关闭该条目已打开的所有实例。插件停止也会关闭它的弹窗；关闭被另一层遮住的父弹窗只移除父层，不会误关当前子弹窗。关闭期间发出的后续重复关闭请求无效。
-
-### 按钮、选项和面板定义
-
-`PluginButtonDefinition`：必填 `Id`、`Text`、`OnClick: Func<PluginUiContext, Task>`；可选 `Target`（默认插件配置页）、`Description`（提示文字）、`Order`（默认 0）。
-
-`PluginPanelDefinition`：必填 `Id`、`CreateContent: Func<PluginUiContext, FrameworkElement>`；可选 `Target`、`Order`。面板工厂应只创建 UI，不要在每次创建时重复注册条目。手工创建的控件和订阅由插件自己管理；宿主负责移除面板及自己的事件处理。注册表变化会重建扩展区，需保留的编辑状态应存放在插件自己的模型中。
-
-`PluginUiContext` 提供 `Plugin`、`Target`、`Stopping`。操作按钮和面板工厂可据此访问当前插件配置、数据目录、日志或打开弹窗。
-
-`PluginOptionDefinition`：
-
-| 属性 | 类型 / 默认值 | 说明 |
-| --- | --- | --- |
-| `Id`、`Title` | 必填 `string` | 注册 ID、控件标题 |
-| `Target`、`Order`、`Description` | 同按钮定义 | 位置、顺序、说明 |
-| `ConfigKey` | `string?`，null | null 时使用 Id 作为本插件 Config 的键；显式键不可为空 |
-| `Kind` | `PluginOptionKind`，Toggle | Toggle、Text、Number、Choice |
-| `DefaultValue` | `object?`，null | 需要与类型匹配：bool、string、double、string |
-| `Minimum` / `Maximum` | `double` 最小/最大有限值 | Number 的合法范围，要求下限不大于上限 |
-| `Choices` | `IReadOnlyList<PluginChoice>`，空列表 | Choice 必填非空列表；Value 唯一，Value/Label 均非空 |
-| `Validate` | `Func<object?, string?>?` | 保存前校验，null/空字符串通过；错误文本显示在控件旁 |
-| `OnChanged` | `Action<object?>?` | 成功持久化后调用；异常记录日志，不撤销已保存值 |
-
-`PluginChoice(string Value, string Label)` 将机器使用的字符串值与界面标签分开。下拉保存 Value，不保存标签。默认值未提供时，Toggle=false、Text=空字符串、Number=范围内最接近 0 的数、Choice=第一项 Value。数字默认值要写成 `2d` 等 double，NaN/无穷大无效。已存储值类型错误、超出范围或下拉项已移除时，界面使用默认值；直到用户操作才写回。
-
-开关和下拉选择立即保存；文本和数字在点击各自的“应用”按钮后保存，未应用的文本不会因为关闭弹窗而写入。输入不合法或配置文件写入失败会显示错误。原有 `IPluginSettingsPanel.Save()` 仍由配置弹窗的“保存”按钮调用，自动注册选项遵循上述独立保存规则。
-
-### 弹窗生命周期通知
-
-`PluginDialogEvent` 包含 `Target: string`、`IsOpen: bool`、`Result: bool?`。打开通知的 Result 为 null；关闭通知的 Result 为实际结果，Esc/关闭/停止通常为 null。通知只覆盖订阅之后经 Overlay 宿主打开/关闭的弹窗，不回放历史。它是只读通知，不提供取消或替代宿主流程的权力。回调异常记录日志，不阻断其他订阅者。避免在通知里无条件再打开相同弹窗形成递归。
-
-### 完整 UI 注册示例
-
-```csharp
-using System.Windows;
-using System.Windows.Controls;
-using XCL2.App.Services.Plugins;
-
-public sealed class UiExamplePlugin : IPlugin
-{
-    public string Id => "example.open-ui";
-    public string DisplayName => "开放界面示例";
-    public string Version => "1.0.0";
-    public string Description => "注册弹窗、按钮、选项和自定义面板。";
-    public string Author => "Example";
-
-    public void Initialize(PluginContext ctx)
-    {
-        ctx.Ui.RegisterOption(new PluginOptionDefinition
-        {
-            Id = "enabled", Title = "启用扩展", DefaultValue = true,
-            OnChanged = value => ctx.Log($"开关已更新：{value}")
-        });
-        ctx.Ui.RegisterOption(new PluginOptionDefinition
-        {
-            Id = "parallelism", Title = "并发数", Kind = PluginOptionKind.Number,
-            DefaultValue = 2d, Minimum = 1, Maximum = 8,
-            Validate = value => value is double n && n == Math.Truncate(n)
-                ? null : "并发数必须是整数。"
-        });
-        ctx.Ui.RegisterOption(new PluginOptionDefinition
-        {
-            Id = "profile", Title = "配置方案", Kind = PluginOptionKind.Choice,
-            DefaultValue = "normal",
-            Choices = new[] { new PluginChoice("normal", "默认"), new PluginChoice("fast", "快速") }
-        });
-        ctx.Ui.RegisterDialog(new PluginDialogDefinition
-        {
-            Id = "details", Title = "插件详情", Width = 520,
-            CreateContent = dialog =>
-            {
-                var panel = new StackPanel();
-                panel.Children.Add(new TextBlock
-                {
-                    Text = dialog.Parameter as string ?? "来自插件的弹窗",
-                    TextWrapping = TextWrapping.Wrap
-                });
-                var ok = new Button { Content = "完成", Margin = new Thickness(0, 12, 0, 0) };
-                ok.Click += (_, _) => dialog.Close(true);
-                panel.Children.Add(ok);
-                return panel;
-            }
-        });
-        ctx.Ui.RegisterButton(new PluginButtonDefinition
-        {
-            Id = "details-button", Text = "打开详情",
-            OnClick = async ui =>
-            {
-                var accepted = await ui.Plugin.Ui.ShowDialogAsync("details", "可以嵌套打开其他插件弹窗。");
-                if (accepted == true) ui.Plugin.Log("用户已完成操作。");
-            }
-        });
-        ctx.Ui.RegisterButton(new PluginButtonDefinition
-        {
-            Id = "loader-action", Text = "插件操作", Target = PluginUiTargets.LoaderChoice,
-            OnClick = async ui =>
-            {
-                if (await ui.Plugin.Ui.ConfirmAsync("插件操作", "是否运行示例操作？"))
-                    await ui.Plugin.Ui.ShowMessageAsync("已完成", "在这里接入自己的业务逻辑。");
-            }
-        });
-        ctx.Ui.RegisterPanel(new PluginPanelDefinition
-        {
-            Id = "help-panel", Target = ctx.Ui.GetDialogTarget("details"), Order = 100,
-            CreateContent = ui => new TextBlock { Text = "附加说明：" + ui.Plugin.PluginId }
-        });
-        ctx.Ui.SubscribeDialogs(change => ctx.Log($"{change.Target} 打开={change.IsOpen} 结果={change.Result}"));
-    }
-
-    // 宿主会自动清理本示例中的注册项。自行创建的后台任务需响应 ctx.Stopping。
-    public void Shutdown() { }
-}
-```
-
-本例省略 `CreateSettingsPanel`，宿主仍会展示已注册选项和按钮；原有自定义设置面板可以同时保留。只需提前移除某项时，保留 `Register*` 返回的 `IDisposable` 并调用 `Dispose()`。
-
-### 新增源码对应表
-
-| 功能 | 源文件 |
-| --- | --- |
-| 公开定义、目标位置、参数与事件 | `Services/Plugins/PluginUiContracts.cs` |
-| 注册、调用、线程切换、生命周期清理 | `Services/Plugins/PluginUiService.cs`、`PluginContext.cs`、`PluginManager.cs` |
-| 自动控件、插件弹窗、宿主扩展区 | `Views/PluginExtensionPanel.cs` |
-| 弹窗栈接入、按实例关闭、事件通知 | `Services/OverlayDialogService.cs` |
-| 插件配置页合并显示 | `Views/PluginManagerDialog.xaml.cs` |
-| 新插件模板 | `Services/Plugins/PluginTemplateGenerator.cs` |
-
-
-## API 1.3 补充：绝对布局与模型渲染
-
-- 本节描述的是 API 1.3 引入的能力；当前 `PluginContext.ApiVersion` 为 1.9，原有接口继续保留。
-- 组件 Add/Move 可指定 `Parent = "$overlay"`，直接以目标视图为坐标系放置。
-- `PluginComponentLayout` 新增 MinWidth、MinHeight、MaxWidth、MaxHeight、Opacity、Visibility、
-  IsHitTestVisible、ClipToBounds、RenderTransform、RenderTransformOrigin。
-- `PluginComponentInfo` 新增 X、Y、ZIndex。
-- `PluginRuntimeService.RegisterSkinModelRenderer(string id, PluginSkinModelRendererFactory factory, int order = 0)`
-  返回 IDisposable。工厂返回 `IPluginSkinModelRenderer`，完整替换皮肤预览渲染后端。
-- `PluginSkinModelRenderRequest`：Plugin、Skin（原始 BitmapSource）、SlimModel、Username。
-- 后端提供 View、SetSkin、SetMotion、RenderFrame、Dispose；所有方法在 UI 线程执行。
-- 多个渲染后端按 Order、插件 ID、注册 ID 排序选择，工厂异常尝试后续后端；
-  运行异常回退内置后端。卸载插件或关闭预览自动释放。
-- `RegisterLaunchMiddleware` 继续支持完全替换 Java 游戏启动内核；`RegisterAvatarRenderer` 继续支持 PNG 渲染替换。
-
-详见 PLUGIN_GUIDE.md 的 API 1.3 示例。API 1.4–1.9 的清单/依赖/授权、业务快照与事件、拦截链、提供者、登录代理、导航/设置/背景/实例操作、插件消息和 EXE 双向协议，见 `Docs/PluginApiStages/1.md` 至 `7.md`。本次合并已完成静态接线检查；当前交付环境没有 .NET SDK，未执行 Windows/net8.0-windows 实际构建。

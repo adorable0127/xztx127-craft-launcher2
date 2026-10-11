@@ -135,6 +135,14 @@ public enum MemoryOptimizationTiming
 /// </summary>
 public class AppConfig
 {
+    /// <summary>功能搜索范围：false 为当前主页面，true 为全部页面。关键词不保存。</summary>
+    public bool FeatureSearchAllPages { get; set; }
+
+    /// <summary>显示主窗口顶部的功能搜索入口；隐藏入口仍可使用 Ctrl+K 搜索。</summary>
+    public bool ShowFeatureSearch { get; set; } = true;
+
+    public bool EnablePreviewPluginApi { get; set; }
+    public bool EnableWorldPluginApi { get; set; }
     public List<GameFolder> Folders { get; set; } = new();
     public string? SelectedFolderPath { get; set; }
     public string? SelectedVersionId { get; set; }
@@ -170,7 +178,8 @@ public class AppConfig
     /// BMCLAPI 镜像源仍保留，用户可在下载中心的来源下拉框里手动切换（国内网络访问官方源较慢时更适用）。
     /// </summary>
     public DownloadSource Source { get; set; } = DownloadSource.Official;
-    /// <summary>插件事件回调等待上限，宿主限制在 0.1—30 秒；不承诺强停 DLL。</summary>
+    public DownloadMirrorConfig DownloadMirrors { get; set; } = new();
+    /// <summary>插件事件回调等待上限，宿主限制在 0.1—3600 秒；不承诺强停 DLL。</summary>
     public double PluginCallbackTimeoutSeconds { get; set; } = 3;
     public string? PluginDownloadProviderId { get; set; }
     public string? PluginBackgroundId { get; set; }
@@ -279,6 +288,9 @@ public class AppConfig
     /// 入口下的磁贴页，不是被删掉，只是从常驻侧边栏搬到二级页面，减少新手/轻度用户第一眼
     /// 看到的按钮数量。见 MainWindow.RefreshSimplifiedModeNavVisibility / Views/MorePage.xaml。</summary>
     public bool SimplifiedModeEnabled { get; set; } = false;
+
+    /// <summary>顶部功能搜索框样式："Floating"（默认，内容区左上角半透明悬浮窗）或 "Top"（占据页面顶部一行的原样式）。</summary>
+    public string FeatureSearchStyle { get; set; } = "Floating";
 
     /// <summary>工具箱快捷入口：Tab 索引，顺序由用户管理。
     /// 0=成就图片（默认第一个，百宝箱打开时也是默认停留的 Tab——TabControl 没显式设置
@@ -738,10 +750,45 @@ public class AppConfig
     /// <summary>每次真正关闭主窗口前自动备份实例；备份完成后才继续退出。</summary>
     public bool BackupInstanceOnClose { get; set; } = false;
 
-    /// <summary>界面过渡动画开关：最小化到托盘/从托盘还原、F11 全屏切换、侧边栏收起/展开
-    /// 时是否播放淡入淡出动画。默认开启；低配机器/追求极致响应速度的用户可以在设置里关掉，
-    /// 关掉后这几处操作立即生效，不等待任何过渡。</summary>
+    /// <summary>所有界面与皮肤动画的总开关。关闭或启用低性能模式后，各分类均立即生效。</summary>
     public bool EnableUiAnimations { get; set; } = true;
+
+    private double _animationSpeedPercent = 75;
+
+    /// <summary>总动画速度（25~100%），75% 为参考时长；速度与各类动作强度相互独立。</summary>
+    [System.Text.Json.Serialization.JsonNumberHandling(System.Text.Json.Serialization.JsonNumberHandling.AllowNamedFloatingPointLiterals)]
+    public double AnimationSpeedPercent
+    {
+        get => _animationSpeedPercent;
+        set => _animationSpeedPercent = double.IsFinite(value) ? Math.Clamp(value, 25, 100) : 75;
+    }
+
+    /// <summary>立即停用全部动画，并按选定策略减少资源占用；不会覆盖原动画偏好。</summary>
+    public bool CompletelyDisableAnimations { get; set; } = false;
+
+    private NoAnimationOptimization _noAnimationOptimization = global::XCL2.App.Models.NoAnimationOptimization.Balanced;
+
+    public NoAnimationOptimization NoAnimationOptimization
+    {
+        get => _noAnimationOptimization;
+        set => _noAnimationOptimization = Enum.IsDefined(value)
+            ? value : global::XCL2.App.Models.NoAnimationOptimization.Balanced;
+    }
+
+    private Dictionary<string, AnimationOption> _animationSettings = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>分类动画开关和强度。旧配置缺省时全部默认开启；null 条目恢复默认值。</summary>
+    public Dictionary<string, AnimationOption> AnimationSettings
+    {
+        get => _animationSettings;
+        set
+        {
+            _animationSettings = new Dictionary<string, AnimationOption>(StringComparer.OrdinalIgnoreCase);
+            if (value == null) return;
+            foreach (var pair in value)
+                _animationSettings[pair.Key] = pair.Value ?? new AnimationOption();
+        }
+    }
 
     /// <summary>启动公告弹窗——用户已经点过"确定"的公告 Id 集合，见 AnnouncementService。
     /// 只要某条公告的 Id 不在这里面，启动器每次打开(包括更新后重新打开)都会继续弹出，

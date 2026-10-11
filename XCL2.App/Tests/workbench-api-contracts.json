@@ -1,0 +1,547 @@
+[
+  {
+    "route": "workbench.changes.prepareWrite",
+    "type": "PluginChangeService",
+    "signature": "FileChange PrepareWrite(string projectId, string path, string content, string? expectedHash = null)"
+  },
+  {
+    "route": "workbench.changes.preparePatch",
+    "type": "PluginChangeService",
+    "signature": "FileChange PreparePatch(string projectId, string path, string sha256, string oldText, string newText)"
+  },
+  {
+    "route": "workbench.changes.prepareDelete",
+    "type": "PluginChangeService",
+    "signature": "FileChange PrepareDelete(string projectId, string path, string sha256)"
+  },
+  {
+    "route": "workbench.changes.list",
+    "type": "PluginChangeService",
+    "signature": "IReadOnlyList<FileChange> List(string projectId)"
+  },
+  {
+    "route": "workbench.changes.get",
+    "type": "PluginChangeService",
+    "signature": "FileChange Get(string projectId, string changeId)"
+  },
+  {
+    "route": "workbench.changes.before",
+    "type": "PluginChangeService",
+    "signature": "byte[]? GetBefore(string projectId, string changeId)"
+  },
+  {
+    "route": "workbench.changes.after",
+    "type": "PluginChangeService",
+    "signature": "byte[]? GetAfter(string projectId, string changeId)"
+  },
+  {
+    "route": "workbench.changes.diff",
+    "type": "PluginChangeService",
+    "signature": "AiFileDiff GetDiff(string projectId, string changeId)"
+  },
+  {
+    "route": "workbench.changes.apply",
+    "type": "PluginChangeService",
+    "signature": "Task<FileChange> ApplyAsync(string projectId, string changeId, CancellationToken ct = default)"
+  },
+  {
+    "route": "workbench.changes.rollback",
+    "type": "PluginChangeService",
+    "signature": "Task<FileChange> RollbackAsync(string projectId, string changeId, CancellationToken ct = default)"
+  },
+  {
+    "route": "workbench.projects.chooseFolder",
+    "type": "PluginProjectService",
+    "signature": "Task<PluginProject?> ChooseFolderAsync(CancellationToken ct = default)"
+  },
+  {
+    "route": "workbench.projects.openDataProject",
+    "type": "PluginProjectService",
+    "signature": "PluginProject OpenDataProject(string name)"
+  },
+  {
+    "route": "workbench.projects.list",
+    "type": "PluginProjectService",
+    "signature": "IReadOnlyList<PluginProject> GetOpenProjects()"
+  },
+  {
+    "route": "workbench.projects.get",
+    "type": "PluginProjectService",
+    "signature": "PluginProject GetProject(string projectId)"
+  },
+  {
+    "route": "workbench.projects.close",
+    "type": "PluginProjectService",
+    "signature": "bool CloseProject(string projectId)"
+  },
+  {
+    "route": "workbench.projects.files",
+    "type": "PluginProjectService",
+    "signature": "IReadOnlyList<ProjectEntry> GetFiles(string projectId, string glob = \"*\", int limit = 1000)"
+  },
+  {
+    "route": "workbench.projects.directories",
+    "type": "PluginProjectService",
+    "signature": "IReadOnlyList<string> GetDirectories(string projectId, string path = \"\")"
+  },
+  {
+    "route": "workbench.projects.searchText",
+    "type": "PluginProjectService",
+    "signature": "ProjectSearchResult SearchText(string projectId, string query, string glob = \"*\", int limit = 200)"
+  },
+  {
+    "route": "workbench.projects.searchRegex",
+    "type": "PluginProjectService",
+    "signature": "ProjectSearchResult SearchRegex(string projectId, string pattern, string glob = \"*\", int limit = 200)"
+  },
+  {
+    "route": "workbench.projects.readRange",
+    "type": "PluginProjectService",
+    "signature": "ProjectTextPage ReadRange(string projectId, string path, int startLine = 1, int lineCount = 200)"
+  },
+  {
+    "route": "workbench.projects.readHead",
+    "type": "PluginProjectService",
+    "signature": "ProjectTextPage ReadHead(string projectId, string path, int lineCount = 100)"
+  },
+  {
+    "route": "workbench.projects.readTail",
+    "type": "PluginProjectService",
+    "signature": "string ReadTail(string projectId, string path, int lineCount = 100)"
+  },
+  {
+    "route": "workbench.projects.readText",
+    "type": "PluginProjectService",
+    "signature": "string ReadText(string projectId, string path)"
+  },
+  {
+    "route": "workbench.projects.readBytes",
+    "type": "PluginProjectService",
+    "signature": "byte[] ReadBytes(string projectId, string path, long offset = 0, int count = 4096)"
+  },
+  {
+    "route": "workbench.projects.hash",
+    "type": "PluginProjectService",
+    "signature": "string GetHash(string projectId, string path)"
+  },
+  {
+    "route": "workbench.projects.fileInfo",
+    "type": "PluginProjectService",
+    "signature": "ProjectEntry GetFileInfo(string projectId, string path)"
+  },
+  {
+    "route": "workbench.projects.fileExists",
+    "type": "PluginProjectService",
+    "signature": "bool FileExists(string projectId, string path)"
+  },
+  {
+    "route": "workbench.projects.extensionStats",
+    "type": "PluginProjectService",
+    "signature": "IReadOnlyDictionary<string, int> GetExtensionStats(string projectId)"
+  },
+  {
+    "route": "workbench.projects.largestFiles",
+    "type": "PluginProjectService",
+    "signature": "IReadOnlyList<ProjectEntry> GetLargestFiles(string projectId, int count = 20)"
+  },
+  {
+    "route": "workbench.projects.findFiles",
+    "type": "PluginProjectService",
+    "signature": "IReadOnlyList<ProjectEntry> FindFiles(string projectId, string name)"
+  },
+  {
+    "route": "workbench.projects.fileCount",
+    "type": "PluginProjectService",
+    "signature": "int GetFileCount(string projectId)"
+  },
+  {
+    "route": "workbench.projects.totalBytes",
+    "type": "PluginProjectService",
+    "signature": "long GetTotalBytes(string projectId)"
+  },
+  {
+    "route": "workbench.projects.newline",
+    "type": "PluginProjectService",
+    "signature": "string GetNewlineStyle(string projectId, string path)"
+  },
+  {
+    "route": "workbench.projects.encoding",
+    "type": "PluginProjectService",
+    "signature": "string GetEncoding(string projectId, string path)"
+  },
+  {
+    "route": "workbench.projects.readJson",
+    "type": "PluginProjectService",
+    "signature": "JsonElement ReadJson(string projectId, string path)"
+  },
+  {
+    "route": "workbench.projects.jsonProperties",
+    "type": "PluginProjectService",
+    "signature": "IReadOnlyList<string> GetJsonProperties(string projectId, string path)"
+  },
+  {
+    "route": "workbench.projects.jsonPointer",
+    "type": "PluginProjectService",
+    "signature": "JsonElement ReadJsonPointer(string projectId, string path, string pointer)"
+  },
+  {
+    "route": "workbench.query.instances.installed",
+    "type": "PluginQueryService",
+    "signature": "Task<IReadOnlyList<PluginInstance>> GetInstalledInstances(CancellationToken ct = default)"
+  },
+  {
+    "route": "workbench.query.instances.incomplete",
+    "type": "PluginQueryService",
+    "signature": "Task<IReadOnlyList<PluginInstance>> GetIncompleteInstances(CancellationToken ct = default)"
+  },
+  {
+    "route": "workbench.query.instances.hidden",
+    "type": "PluginQueryService",
+    "signature": "Task<IReadOnlyList<PluginInstance>> GetHiddenInstances(CancellationToken ct = default)"
+  },
+  {
+    "route": "workbench.query.instances.visible",
+    "type": "PluginQueryService",
+    "signature": "Task<IReadOnlyList<PluginInstance>> GetVisibleInstances(CancellationToken ct = default)"
+  },
+  {
+    "route": "workbench.query.instances.vanilla",
+    "type": "PluginQueryService",
+    "signature": "Task<IReadOnlyList<PluginInstance>> GetVanillaInstances(CancellationToken ct = default)"
+  },
+  {
+    "route": "workbench.query.instances.byName",
+    "type": "PluginQueryService",
+    "signature": "Task<IReadOnlyList<PluginInstance>> FindInstancesByName(string name, CancellationToken ct = default)"
+  },
+  {
+    "route": "workbench.query.instances.byVersion",
+    "type": "PluginQueryService",
+    "signature": "Task<IReadOnlyList<PluginInstance>> FindInstancesByVersion(string version, CancellationToken ct = default)"
+  },
+  {
+    "route": "workbench.query.instances.byLoader",
+    "type": "PluginQueryService",
+    "signature": "Task<IReadOnlyList<PluginInstance>> FindInstancesByLoader(string loader, CancellationToken ct = default)"
+  },
+  {
+    "route": "workbench.query.instances.get",
+    "type": "PluginQueryService",
+    "signature": "Task<PluginInstance?> GetInstance(string id, CancellationToken ct = default)"
+  },
+  {
+    "route": "workbench.query.instances.exists",
+    "type": "PluginQueryService",
+    "signature": "Task<bool> InstanceExists(string id, CancellationToken ct = default)"
+  },
+  {
+    "route": "workbench.query.instances.count",
+    "type": "PluginQueryService",
+    "signature": "Task<int> GetInstanceCount(CancellationToken ct = default)"
+  },
+  {
+    "route": "workbench.query.instances.versions",
+    "type": "PluginQueryService",
+    "signature": "Task<IReadOnlyList<string>> GetMinecraftVersions(CancellationToken ct = default)"
+  },
+  {
+    "route": "workbench.query.instances.loaders",
+    "type": "PluginQueryService",
+    "signature": "Task<IReadOnlyList<string>> GetLoaders(CancellationToken ct = default)"
+  },
+  {
+    "route": "workbench.query.instances.page",
+    "type": "PluginQueryService",
+    "signature": "Task<IReadOnlyList<PluginInstance>> GetInstancePage(int offset = 0, int limit = 100, CancellationToken ct = default)"
+  },
+  {
+    "route": "workbench.query.mods.enabled",
+    "type": "PluginQueryService",
+    "signature": "Task<IReadOnlyList<PluginMod>> GetEnabledMods(string instanceId, CancellationToken ct = default)"
+  },
+  {
+    "route": "workbench.query.mods.disabled",
+    "type": "PluginQueryService",
+    "signature": "Task<IReadOnlyList<PluginMod>> GetDisabledMods(string instanceId, CancellationToken ct = default)"
+  },
+  {
+    "route": "workbench.query.mods.byId",
+    "type": "PluginQueryService",
+    "signature": "Task<IReadOnlyList<PluginMod>> FindModsById(string instanceId, string modId, CancellationToken ct = default)"
+  },
+  {
+    "route": "workbench.query.mods.byName",
+    "type": "PluginQueryService",
+    "signature": "Task<IReadOnlyList<PluginMod>> FindModsByName(string instanceId, string name, CancellationToken ct = default)"
+  },
+  {
+    "route": "workbench.query.mods.file",
+    "type": "PluginQueryService",
+    "signature": "Task<PluginMod?> GetModByFile(string instanceId, string fileName, CancellationToken ct = default)"
+  },
+  {
+    "route": "workbench.query.mods.count",
+    "type": "PluginQueryService",
+    "signature": "Task<int> GetModCount(string instanceId, CancellationToken ct = default)"
+  },
+  {
+    "route": "workbench.query.mods.bytes",
+    "type": "PluginQueryService",
+    "signature": "Task<long> GetModBytes(string instanceId, CancellationToken ct = default)"
+  },
+  {
+    "route": "workbench.query.mods.largest",
+    "type": "PluginQueryService",
+    "signature": "Task<IReadOnlyList<PluginMod>> GetLargestMods(string instanceId, int count = 20, CancellationToken ct = default)"
+  },
+  {
+    "route": "workbench.query.mods.duplicateIds",
+    "type": "PluginQueryService",
+    "signature": "Task<IReadOnlyList<string>> GetDuplicateModIds(string instanceId, CancellationToken ct = default)"
+  },
+  {
+    "route": "workbench.query.mods.page",
+    "type": "PluginQueryService",
+    "signature": "Task<IReadOnlyList<PluginMod>> GetModPage(string instanceId, int offset = 0, int limit = 100, CancellationToken ct = default)"
+  },
+  {
+    "route": "workbench.query.downloads.active",
+    "type": "PluginQueryService",
+    "signature": "Task<IReadOnlyList<PluginDownload>> GetActiveDownloads(CancellationToken ct = default)"
+  },
+  {
+    "route": "workbench.query.downloads.paused",
+    "type": "PluginQueryService",
+    "signature": "Task<IReadOnlyList<PluginDownload>> GetPausedDownloads(CancellationToken ct = default)"
+  },
+  {
+    "route": "workbench.query.downloads.completed",
+    "type": "PluginQueryService",
+    "signature": "Task<IReadOnlyList<PluginDownload>> GetCompletedDownloads(CancellationToken ct = default)"
+  },
+  {
+    "route": "workbench.query.downloads.failed",
+    "type": "PluginQueryService",
+    "signature": "Task<IReadOnlyList<PluginDownload>> GetFailedDownloads(CancellationToken ct = default)"
+  },
+  {
+    "route": "workbench.query.downloads.canceled",
+    "type": "PluginQueryService",
+    "signature": "Task<IReadOnlyList<PluginDownload>> GetCanceledDownloads(CancellationToken ct = default)"
+  },
+  {
+    "route": "workbench.query.downloads.instance",
+    "type": "PluginQueryService",
+    "signature": "Task<IReadOnlyList<PluginDownload>> GetInstanceDownloads(string instanceId, CancellationToken ct = default)"
+  },
+  {
+    "route": "workbench.query.downloads.get",
+    "type": "PluginQueryService",
+    "signature": "Task<PluginDownload?> GetDownload(Guid id, CancellationToken ct = default)"
+  },
+  {
+    "route": "workbench.query.downloads.count",
+    "type": "PluginQueryService",
+    "signature": "Task<int> GetDownloadCount(CancellationToken ct = default)"
+  },
+  {
+    "route": "workbench.query.accounts.offline",
+    "type": "PluginQueryService",
+    "signature": "Task<IReadOnlyList<PluginAccount>> GetOfflineAccounts(CancellationToken ct = default)"
+  },
+  {
+    "route": "workbench.query.accounts.microsoft",
+    "type": "PluginQueryService",
+    "signature": "Task<IReadOnlyList<PluginAccount>> GetMicrosoftAccounts(CancellationToken ct = default)"
+  },
+  {
+    "route": "workbench.query.accounts.authserver",
+    "type": "PluginQueryService",
+    "signature": "Task<IReadOnlyList<PluginAccount>> GetAuthServerAccounts(CancellationToken ct = default)"
+  },
+  {
+    "route": "workbench.query.accounts.guest",
+    "type": "PluginQueryService",
+    "signature": "Task<IReadOnlyList<PluginAccount>> GetGuestAccounts(CancellationToken ct = default)"
+  },
+  {
+    "route": "workbench.query.accounts.get",
+    "type": "PluginQueryService",
+    "signature": "Task<PluginAccount?> GetAccount(string id, CancellationToken ct = default)"
+  },
+  {
+    "route": "workbench.query.accounts.find",
+    "type": "PluginQueryService",
+    "signature": "Task<IReadOnlyList<PluginAccount>> FindAccounts(string name, CancellationToken ct = default)"
+  },
+  {
+    "route": "workbench.query.accounts.count",
+    "type": "PluginQueryService",
+    "signature": "Task<int> GetAccountCount(CancellationToken ct = default)"
+  },
+  {
+    "route": "workbench.tasks.create",
+    "type": "PluginTaskService",
+    "signature": "WorkTask Create(string title, string goal, string projectRoot = \"\")"
+  },
+  {
+    "route": "workbench.tasks.get",
+    "type": "PluginTaskService",
+    "signature": "WorkTask Get(string id)"
+  },
+  {
+    "route": "workbench.tasks.list",
+    "type": "PluginTaskService",
+    "signature": "IReadOnlyList<WorkTask> List()"
+  },
+  {
+    "route": "workbench.tasks.find",
+    "type": "PluginTaskService",
+    "signature": "IReadOnlyList<WorkTask> Find(string query)"
+  },
+  {
+    "route": "workbench.tasks.active",
+    "type": "PluginTaskService",
+    "signature": "IReadOnlyList<WorkTask> GetActive()"
+  },
+  {
+    "route": "workbench.tasks.completed",
+    "type": "PluginTaskService",
+    "signature": "IReadOnlyList<WorkTask> GetCompleted()"
+  },
+  {
+    "route": "workbench.tasks.archived",
+    "type": "PluginTaskService",
+    "signature": "IReadOnlyList<WorkTask> GetArchived()"
+  },
+  {
+    "route": "workbench.tasks.rename",
+    "type": "PluginTaskService",
+    "signature": "WorkTask Rename(string id, string title)"
+  },
+  {
+    "route": "workbench.tasks.goal",
+    "type": "PluginTaskService",
+    "signature": "WorkTask SetGoal(string id, string goal)"
+  },
+  {
+    "route": "workbench.tasks.project",
+    "type": "PluginTaskService",
+    "signature": "WorkTask SetProjectRoot(string id, string projectRoot)"
+  },
+  {
+    "route": "workbench.tasks.mode",
+    "type": "PluginTaskService",
+    "signature": "WorkTask SetMode(string id, string mode)"
+  },
+  {
+    "route": "workbench.tasks.nextAction",
+    "type": "PluginTaskService",
+    "signature": "WorkTask SetNextAction(string id, string nextAction)"
+  },
+  {
+    "route": "workbench.tasks.notes",
+    "type": "PluginTaskService",
+    "signature": "WorkTask SetNotes(string id, string notes)"
+  },
+  {
+    "route": "workbench.tasks.appendNotes",
+    "type": "PluginTaskService",
+    "signature": "WorkTask AppendNotes(string id, string notes)"
+  },
+  {
+    "route": "workbench.tasks.addStep",
+    "type": "PluginTaskService",
+    "signature": "WorkTask AddStep(string id, string title)"
+  },
+  {
+    "route": "workbench.tasks.removeStep",
+    "type": "PluginTaskService",
+    "signature": "WorkTask RemoveStep(string id, string stepId)"
+  },
+  {
+    "route": "workbench.tasks.renameStep",
+    "type": "PluginTaskService",
+    "signature": "WorkTask RenameStep(string id, string stepId, string title)"
+  },
+  {
+    "route": "workbench.tasks.stepStatus",
+    "type": "PluginTaskService",
+    "signature": "WorkTask SetStepStatus(string id, string stepId, string status)"
+  },
+  {
+    "route": "workbench.tasks.stepEvidence",
+    "type": "PluginTaskService",
+    "signature": "WorkTask SetStepEvidence(string id, string stepId, string evidence)"
+  },
+  {
+    "route": "workbench.tasks.replaceSteps",
+    "type": "PluginTaskService",
+    "signature": "WorkTask ReplaceSteps(string id, List<WorkStep> steps)"
+  },
+  {
+    "route": "workbench.tasks.steps",
+    "type": "PluginTaskService",
+    "signature": "IReadOnlyList<WorkStep> GetSteps(string id)"
+  },
+  {
+    "route": "workbench.tasks.pendingSteps",
+    "type": "PluginTaskService",
+    "signature": "IReadOnlyList<WorkStep> GetPendingSteps(string id)"
+  },
+  {
+    "route": "workbench.tasks.completedSteps",
+    "type": "PluginTaskService",
+    "signature": "IReadOnlyList<WorkStep> GetCompletedSteps(string id)"
+  },
+  {
+    "route": "workbench.tasks.checkpoint",
+    "type": "PluginTaskService",
+    "signature": "WorkTask Checkpoint(string id, string text)"
+  },
+  {
+    "route": "workbench.tasks.checkpoints",
+    "type": "PluginTaskService",
+    "signature": "IReadOnlyList<string> GetCheckpoints(string id)"
+  },
+  {
+    "route": "workbench.tasks.pause",
+    "type": "PluginTaskService",
+    "signature": "WorkTask Pause(string id)"
+  },
+  {
+    "route": "workbench.tasks.resume",
+    "type": "PluginTaskService",
+    "signature": "WorkTask Resume(string id)"
+  },
+  {
+    "route": "workbench.tasks.complete",
+    "type": "PluginTaskService",
+    "signature": "WorkTask Complete(string id)"
+  },
+  {
+    "route": "workbench.tasks.archive",
+    "type": "PluginTaskService",
+    "signature": "WorkTask Archive(string id)"
+  },
+  {
+    "route": "workbench.tasks.addChange",
+    "type": "PluginTaskService",
+    "signature": "WorkTask AddChange(string id, string changeId)"
+  },
+  {
+    "route": "workbench.tasks.changes",
+    "type": "PluginTaskService",
+    "signature": "IReadOnlyList<string> GetChanges(string id)"
+  },
+  {
+    "route": "workbench.tasks.progress",
+    "type": "PluginTaskService",
+    "signature": "double GetProgress(string id)"
+  },
+  {
+    "route": "workbench.tasks.clone",
+    "type": "PluginTaskService",
+    "signature": "WorkTask Clone(string id, string title)"
+  }
+]

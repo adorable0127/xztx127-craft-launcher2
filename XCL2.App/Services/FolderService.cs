@@ -10,14 +10,16 @@ namespace XCL2.App.Services;
 /// </summary>
 public class FolderService
 {
-    public List<GameVersion> ScanVersions(string minecraftDir)
+    public List<GameVersion> ScanVersions(string minecraftDir, CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         var result = new List<GameVersion>();
         var versionsDir = Path.Combine(minecraftDir, "versions");
         if (!Directory.Exists(versionsDir)) return result;
 
-        foreach (var dir in Directory.GetDirectories(versionsDir))
+        foreach (var dir in Directory.EnumerateDirectories(versionsDir))
         {
+            cancellationToken.ThrowIfCancellationRequested();
             var id = Path.GetFileName(dir);
             // 以点开头的文件夹（如 .instance_backups）是启动器/系统的内部目录，不是实例，不放进版本列表。
             if (string.IsNullOrEmpty(id) || id.StartsWith('.')) continue;

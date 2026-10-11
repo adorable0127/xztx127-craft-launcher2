@@ -41,6 +41,8 @@ public partial class ToolboxPage : UserControl
     /// RadioButton.Checked 事件里的保存逻辑，避免刚打开页面就多写一次配置文件。</summary>
     private bool _suppressMemOptTimingSave;
     private bool _suppressToolboxTabSelection = false;
+    private IReadOnlyList<FeatureSearchEntry> _toolboxSearchEntries = Array.Empty<FeatureSearchEntry>();
+    private bool _resumeToolboxSearchOnOpen;
 
     // ===== Tab 1：成就图片 =====
     private byte[]? _achPreviewBytes;
@@ -84,12 +86,12 @@ public partial class ToolboxPage : UserControl
         ColorCodeInputBox_TextChanged(this, null!);
 
         // ===== Tab 12：系统内存监视 =====
-        // 打开百宝箱页时立即刷新一次，之后每 2 秒自动刷新（PageUnloaded 时停掉，
-        // 避免用户切到别的页面后这个定时器还在后台白跑）。
-        MemMonRefresh_Click(this, null!);
-        _memMonTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
+        // 只在内存监视子页可见时刷新；切换其他工具期间不更新隐藏控件，
+        // 返回页面时也会重新启动，避免 Unloaded 停止后永久失效。
+        _memMonTimer = new DispatcherTimer(DispatcherPriority.Background) { Interval = TimeSpan.FromSeconds(2) };
         _memMonTimer.Tick += (_, _) => RefreshMemoryMonitor();
-        _memMonTimer.Start();
+        Loaded += (_, _) => UpdateMemoryMonitorActivity();
+        IsVisibleChanged += (_, _) => UpdateMemoryMonitorActivity();
         Unloaded += (_, _) => _memMonTimer.Stop();
 
         // ===== Tab 13：离线 UUID 生成器 =====
@@ -189,12 +191,12 @@ public partial class ToolboxPage : UserControl
                 Content = $"{ToolboxIcon(idx)} {ToolboxTitle(tabs[idx])}",
                 Tag = idx, Margin = new Thickness(0, 0, 7, 0), Padding = new Thickness(10, 5, 10, 5)
             };
-            button.Click += (_, _) => ToolboxTabControl.SelectedIndex = (int)button.Tag;
+            button.Click += (_, _) => SelectToolboxFeature((int)button.Tag);
             PinnedToolboxButtons.Children.Add(button);
         }
-        AllToolboxItems.Items.Clear();
-        for (int i = 0; i < tabs.Length; i++)
-            AllToolboxItems.Items.Add(new ListBoxItem { Content = $"{ToolboxIcon(i)} {ToolboxTitle(tabs[i])}", Tag = i });
+        _toolboxSearchEntries = FeatureSearchCatalog.Load()
+            .Where(entry => entry.Id.StartsWith("toolbox.tab.", StringComparison.Ordinal)).ToArray();
+        RefreshToolboxSearch(ToolboxTabControl.SelectedIndex);
     }
 
     public static string ToolboxIcon(int index) => index switch
@@ -205,12 +207,153 @@ public partial class ToolboxPage : UserControl
 
     private void ToolboxMore_Click(object sender, RoutedEventArgs e) => ToolboxMorePopup.IsOpen = !ToolboxMorePopup.IsOpen;
 
+    private void ToolboxMorePopup_Opened(object sender, EventArgs e)
+    {
+        // Reopening after an entry-confirmation dialog must preserve the current query/results.
+        if (!_resumeToolboxSearchOnOpen)
+        {
+            _toolboxSearchEntries = FeatureSearchCatalog.Load()
+                .Where(entry => entry.Id.StartsWith("toolbox.tab.", StringComparison.Ordinal)).ToArray();
+            ToolboxSearchBox.Clear();
+            RefreshToolboxSearch(ToolboxTabControl.SelectedIndex);
+        }
+        _resumeToolboxSearchOnOpen = false;
+        Dispatcher.BeginInvoke(DispatcherPriority.Input, new Action(() =>
+        {
+            if (ToolboxMorePopup.IsOpen) ToolboxSearchBox.Focus();
+        }));
+    }
+
+    private void ToolboxSearchBox_TextChanged(object sender, TextChangedEventArgs e)
+    {
+        if (AllToolboxItems == null || ToolboxSearchCountText == null) return;
+        RefreshToolboxSearch();
+    }
+
+    private void RefreshToolboxSearch(int? preferredTabIndex = null)
+    {
+        var matches = string.IsNullOrWhiteSpace(ToolboxSearchBox.Text) ? _toolboxSearchEntries
+            : FeatureSearchMatcher.Match(_toolboxSearchEntries, ToolboxSearchBox.Text, "toolbox");
+        AllToolboxItems.Items.Clear();
+        int selectedIndex = 0;
+        foreach (var entry in matches)
+        {
+            if (entry.TabIndex is not int index || index < 0 || index >= ToolboxTabControl.Items.Count
+                || ToolboxTabControl.Items[index] is not TabItem tab || tab.Visibility != Visibility.Visible || !tab.IsEnabled)
+                continue;
+            if (index == preferredTabIndex) selectedIndex = AllToolboxItems.Items.Count;
+            AllToolboxItems.Items.Add(new ListBoxItem
+            {
+                Content = $"{ToolboxIcon(index)} {ToolboxTitle(tab)}", Tag = index,
+                Padding = new Thickness(8, 7, 8, 7),
+                ToolTip = $"打开 {ToolboxTitle(tab)}"
+            });
+        }
+        AllToolboxItems.SelectedIndex = AllToolboxItems.Items.Count == 0 ? -1 : selectedIndex;
+        if (AllToolboxItems.SelectedItem != null) AllToolboxItems.ScrollIntoView(AllToolboxItems.SelectedItem);
+        UpdateToolboxSearchSelection();
+    }
+
+    private void AllToolboxItems_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        => UpdateToolboxSearchSelection();
+
+    private void UpdateToolboxSearchSelection()
+    {
+        if (ToolboxSearchCountText == null || ToolboxSearchEmptyText == null) return;
+        int count = AllToolboxItems.Items.Count;
+        ToolboxSearchCountText.Text = count == 0 ? "0 个结果" : $"{AllToolboxItems.SelectedIndex + 1} / {count} 个结果";
+        ToolboxSearchPreviousButton.IsEnabled = count > 0;
+        ToolboxSearchNextButton.IsEnabled = count > 0;
+        ToolboxSearchEmptyText.Visibility = count == 0 ? Visibility.Visible : Visibility.Collapsed;
+        AllToolboxItems.Visibility = count == 0 ? Visibility.Collapsed : Visibility.Visible;
+    }
+
+    private void MoveToolboxSearchSelection(int direction)
+    {
+        int count = AllToolboxItems.Items.Count;
+        if (count == 0) return;
+        int current = AllToolboxItems.SelectedIndex;
+        AllToolboxItems.SelectedIndex = current < 0 ? (direction > 0 ? 0 : count - 1) : (current + direction + count) % count;
+        AllToolboxItems.ScrollIntoView(AllToolboxItems.SelectedItem);
+    }
+
+    private void ToolboxSearchPrevious_Click(object sender, RoutedEventArgs e) => JumpToolboxSearchResult(-1);
+    private void ToolboxSearchNext_Click(object sender, RoutedEventArgs e) => JumpToolboxSearchResult(1);
+
+    private void JumpToolboxSearchResult(int direction)
+    {
+        int previousSelection = AllToolboxItems.SelectedIndex;
+        MoveToolboxSearchSelection(direction);
+        if (AllToolboxItems.SelectedItem is not ListBoxItem { Tag: int index }) return;
+
+        // Ordinary arrow jumps keep the floating search available for the next jump.
+        // A Popup is a separate topmost window: close it before the sticky-note modal,
+        // then restore it with the same query so it cannot obscure the confirmation.
+        bool reopen = ToolboxMorePopup.IsOpen
+            && ToolboxTabControl.SelectedIndex != index
+            && ToolboxTabControl.Items[index] == StickyNoteTabItem;
+        if (reopen) ToolboxMorePopup.IsOpen = false;
+
+        if (!SelectToolboxFeature(index))
+        {
+            AllToolboxItems.SelectedIndex = previousSelection;
+            if (AllToolboxItems.SelectedItem != null) AllToolboxItems.ScrollIntoView(AllToolboxItems.SelectedItem);
+            UpdateToolboxSearchSelection();
+        }
+
+        if (reopen)
+        {
+            _resumeToolboxSearchOnOpen = true;
+            ToolboxMorePopup.IsOpen = true;
+        }
+    }
+
+    private void ToolboxSearch_PreviewKeyDown(object sender, KeyEventArgs e)
+    {
+        switch (e.Key)
+        {
+            case Key.Up:
+                MoveToolboxSearchSelection(-1);
+                break;
+            case Key.Down:
+                MoveToolboxSearchSelection(1);
+                break;
+            case Key.Enter:
+                OpenSelectedToolboxSearchResult();
+                break;
+            case Key.Escape:
+                ToolboxMorePopup.IsOpen = false;
+                ToolboxMoreButton.Focus();
+                break;
+            default:
+                return;
+        }
+        e.Handled = true;
+    }
+
     private void AllToolboxItems_MouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+    {
+        // A scrollbar or empty-list click must not open the previously selected item.
+        if (e.OriginalSource is not DependencyObject source
+            || ItemsControl.ContainerFromElement(AllToolboxItems, source) is not ListBoxItem) return;
+        OpenSelectedToolboxSearchResult();
+    }
+
+    private void OpenSelectedToolboxSearchResult()
     {
         if (AllToolboxItems.SelectedItem is not ListBoxItem { Tag: int index }) return;
         ToolboxMorePopup.IsOpen = false;
-        ToolboxTabControl.SelectedIndex = index;
-        AllToolboxItems.SelectedIndex = -1;
+        SelectToolboxFeature(index);
+    }
+
+    /// <summary>Shared by search and pinned tools; normal selection retains each tool's entry checks.</summary>
+    public bool SelectToolboxFeature(int tabIndex)
+    {
+        if (tabIndex < 0 || tabIndex >= ToolboxTabControl.Items.Count
+            || ToolboxTabControl.Items[tabIndex] is not TabItem { Visibility: Visibility.Visible, IsEnabled: true })
+            return false;
+        ToolboxTabControl.SelectedIndex = tabIndex;
+        return ToolboxTabControl.SelectedIndex == tabIndex;
     }
 
     // ============================================================
@@ -252,6 +395,7 @@ public partial class ToolboxPage : UserControl
         {
             _lastNonStickyToolboxTab = selected;
         }
+        UpdateMemoryMonitorActivity();
     }
 
     // ============================================================
@@ -2394,6 +2538,20 @@ public partial class ToolboxPage : UserControl
     // ============================================================
 
     private readonly DispatcherTimer _memMonTimer;
+
+    private void UpdateMemoryMonitorActivity()
+    {
+        // InitializeComponent 内的初始 SelectionChanged 早于计时器赋值。
+        if (_memMonTimer == null) return;
+        if (!IsLoaded || !IsVisible || MemoryMonitorTab.IsSelected != true)
+        {
+            _memMonTimer.Stop();
+            return;
+        }
+        if (_memMonTimer.IsEnabled) return;
+        RefreshMemoryMonitor();
+        _memMonTimer.Start();
+    }
 
     [StructLayout(LayoutKind.Sequential)]
     private struct MEMORYSTATUSEX

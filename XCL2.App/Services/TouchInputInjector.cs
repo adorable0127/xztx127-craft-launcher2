@@ -305,6 +305,14 @@ internal static class TouchInputInjector
         SendInput(1, in input, InputSize);
     }
 
+    public static bool TryMouseMoveRelative(int dx, int dy)
+    {
+        var input = new INPUT { type = INPUT_MOUSE,
+            u = new INPUTUNION { mi = new MOUSEINPUT { dx = dx, dy = dy,
+                dwFlags = MOUSEEVENTF_MOVE | 0x2000u, dwExtraInfo = Signature } } };
+        return SendInput(1, in input, InputSize) == 1;
+    }
+
     /// <summary>滚轮：用于切换快捷栏物品。notches 为正=向上滚（上一格）。</summary>
     public static void MouseWheel(int notches)
     {
