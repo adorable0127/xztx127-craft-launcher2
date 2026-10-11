@@ -10,9 +10,9 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <AssemblyName>XCL2</AssemblyName>
     <RootNamespace>XCL2.App</RootNamespace>
-    <Version>2.2.21</Version>
-    <AssemblyVersion>2.2.21.0</AssemblyVersion>
-    <FileVersion>2.2.21.0</FileVersion>
+    <Version>2.2.22</Version>
+    <AssemblyVersion>2.2.22.0</AssemblyVersion>
+    <FileVersion>2.2.22.0</FileVersion>
     <Platforms>AnyCPU</Platforms>
     <LangVersion>latest</LangVersion>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
